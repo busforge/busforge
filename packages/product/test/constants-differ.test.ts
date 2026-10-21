@@ -18,6 +18,7 @@ const xml = `<?xml version="1.0" encoding="utf-8"?>
 <ParameterRefs><ParameterRef Id="M-0005_A-0009-01-0001_P-1_R-1" RefId="M-0005_A-0009-01-0001_P-1"/><ParameterRef Id="M-0005_A-0009-01-0001_P-2_R-2" RefId="M-0005_A-0009-01-0001_P-2"/></ParameterRefs>
 <ComObjectTable><ComObject Id="M-0005_A-0009-01-0001_O-1" Number="1" Name="Out" Text="Out" ObjectSize="1 Bit" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled"/></ComObjectTable>
 <ComObjectRefs><ComObjectRef Id="M-0005_A-0009-01-0001_O-1_R-1" RefId="M-0005_A-0009-01-0001_O-1"/></ComObjectRefs>
+<AddressTable MaxEntries="16"/><AssociationTable MaxEntries="16"/>
 <LoadProcedures><LoadProcedure MergeId="2"><LdCtrlRelSegment LsmIdx="4" Size="2" Mode="0" Fill="0" AppliesTo="full,par"/></LoadProcedure></LoadProcedures>
 </Static>
 <Dynamic><ParameterBlock Id="M-0005_A-0009-01-0001_PB-1" Name="Main" Text="Main"><ParameterRefRef RefId="M-0005_A-0009-01-0001_P-1_R-1"/><ParameterRefRef RefId="M-0005_A-0009-01-0001_P-2_R-2"/><ComObjectRefRef RefId="M-0005_A-0009-01-0001_O-1_R-1"/></ParameterBlock></Dynamic>

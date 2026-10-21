@@ -69,6 +69,15 @@ Read the LSM state with `PropertyValueRead(obj, PID = 5)`.
   of that form. Only a unit that describes no table property there (it answers with PID 0) has its form
   told by validating that group indices are within the address-table count, and only for a read; a write
   to it is refused. Entries ordered by com-object number, then group index.
+- **Table capacity**: how many group addresses and associations a unit takes is what its application
+  declares (`<AddressTable MaxEntries>`, `<AssociationTable MaxEntries>`), the bound an ETS project
+  holds a device to. The unit's description of the table property (PID 23) is not that bound: its
+  maximum element count equals `MaxEntries` on the GVS AMMA, the Jung 400021SE and the MEAN WELL power
+  supply, but the Theben DALI-Gateway describes 1343 of its application's 1744, the OpenKNX
+  RaumController 4095 of 2047, and the MDT IP Interface/Router 1 of 255. That a unit takes more than
+  it describes is not shown. Busforge refuses tables with more entries than the application declares
+  before any write (`GA_TABLE_TOO_LARGE`), on System B as on System 7, and a System B application
+  that declares none (`GA_TABLE_CAPACITY_UNDECLARED`).
 - **Com-object table**: `[count:2][flags:1][typeOrSize:1] x count`, entry i is com-object i
   (1-based).
 

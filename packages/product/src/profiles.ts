@@ -552,6 +552,23 @@ async function requireLongAssoc(dev: KnxDevice, what: string): Promise<4> {
   return 4;
 }
 
+// How many group addresses and associations a System B unit takes is what its application declares
+// (<AddressTable MaxEntries>, <AssociationTable MaxEntries>), the limit an ETS project holds a device to. The
+// unit's own description of its tables (PID 23 maxElements) is no such limit: it equals the application's on the
+// GVS AMMA, Jung 400021SE and MEAN WELL power supply, but the Theben DALI-Gateway describes fewer (1343 of 1744),
+// the OpenKNX RaumController more (4095 of 2047) and the MDT IP Interface/Router one. Tables with more entries,
+// and an application declaring no capacity, are refused before anything is written.
+function refuseTablesOverCapacity(cfg: AppConfig, addr: Buffer, assoc: Buffer): void {
+  const { addressMaxEntries: maxGas, associationMaxEntries: maxAssoc } = cfg.groupTables;
+  if (maxGas === undefined || maxAssoc === undefined) {
+    throw new ProductError("GA_TABLE_CAPACITY_UNDECLARED", "the application declares no capacity for its address or association table (<AddressTable>/<AssociationTable> MaxEntries), so how many links the unit takes is not known; refusing to write its tables");
+  }
+  const gas = addr.readUInt16BE(0), entries = assoc.readUInt16BE(0);
+  if (gas > maxGas || entries > maxAssoc) {
+    throw new ProductError("GA_TABLE_TOO_LARGE", `the tables hold ${gas} group addresses and ${entries} associations, more than the application declares the unit takes (${maxGas} group addresses, ${maxAssoc} associations); remove links or assign fewer group addresses`);
+  }
+}
+
 // One prepared flash operation, handed to runFlashOp by a profile after it has read the
 // device's current state and computed the diff. The profile supplies only the
 // model-specific pieces; the safety-critical sequencing lives in runFlashOp.
@@ -1219,6 +1236,7 @@ export class SystemBProfile extends DeviceProfile {
     const linked = new Set(ctx.links.map((l) => l.comObjNum));
     const comObj = buildComObjectTable(withInstanceOverrides(view.imageComObjects, ctx.comObjectOverrides), view.maxComObjectNumber, linked);
     const { addr, assoc } = buildGroupTables(ctx.links);
+    refuseTablesOverCapacity(cfg, addr, assoc);
     const security = ctx.security ? buildSecurityObject(ctx.links, comObj.readUInt16BE(0), ctx.security.groupKeys, secureSenders(ctx.security, ctx.ia)) : undefined;
     return { target, comObj, addr, assoc, security };
   }
@@ -1607,6 +1625,9 @@ export class SystemBProfile extends DeviceProfile {
     const flagBaseline = builtBefore(() => baselineComObjects(cfg, ctx));
     // Read the current L3 as well (not just addr/assoc): it is the backup, and its diff against the
     // rebuilt table is what makes the link-driven L3 change visible in the dry-run preview.
+    // The entry counts do not depend on the association table's form, so the capacity is checked before the unit is asked.
+    const counted = buildGroupTables(ctx.links);
+    refuseTablesOverCapacity(cfg, counted.addr, counted.assoc);
     const entryBytes = await assocEntryBytes(dev);
     const cur = await readGroupTables(dev, entryBytes);
     const { addr, assoc } = buildGroupTables(ctx.links, entryBytes);
@@ -1721,6 +1742,7 @@ export class SystemBProfile extends DeviceProfile {
     }
     const comObj = buildComObjectTable(withInstanceOverrides(view.imageComObjects, ctx.comObjectOverrides), view.maxComObjectNumber, new Set(ctx.links.map((l) => l.comObjNum)));
     const { addr, assoc } = buildGroupTables(ctx.links);
+    refuseTablesOverCapacity(cfg, addr, assoc);
     const security = ctx.security ? buildSecurityObject(ctx.links, comObj.readUInt16BE(0), ctx.security.groupKeys, secureSenders(ctx.security, ctx.ia)) : undefined;
     const mcb = declaredMcbWrites(proc, target.size, "par");
     const flagBaseline = builtBefore(() => baselineComObjects(cfg, ctx));

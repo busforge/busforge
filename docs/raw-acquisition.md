@@ -134,8 +134,10 @@ and within the byte budget per property. Skipped, and recorded as skipped with t
 object 2, PID 23 (`PID_TABLE`) before writing, and the maximum element count equals the
 application's `AssociationTable MaxEntries`: 1600 on the Jung 400021SE, 1000 on the GVS AMMA, PDT
 `0x14` (4-byte elements). The same number is also each application's `AddressTable MaxEntries`.
-So on these two devices the device states its own table capacity; that this holds generally, and
-that no product XML is needed to bound the read, is inferred from two devices.
+On these two devices the description states the table capacity, but it does not in general: the
+Theben DALI-Gateway describes 1343 against its application's 1744, the OpenKNX RaumController 4095
+against 2047, the MDT IP Interface/Router 1 against 255 (collections of each). It is not the
+capacity a write is held to; that is the application's ([findings.md](findings.md)).
 
 **Stop conditions for the scan:** an object index past 63, a property index past 255, or a device
 that does not answer the first description request (recorded as "property descriptions

@@ -267,6 +267,7 @@ const en = {
     ASSOC_TABLE_FORMAT_UNKNOWN: "The device does not describe its association table in a form Busforge knows, so it cannot tell how wide its entries are. Busforge neither reads nor writes its links.",
     ASSOC_TABLE_SHORT_UNSUPPORTED: "This device keeps its association table in the short form (one byte per entry field), which this kind of write does not build yet. Nothing was written; the group-address flash writes that form.",
     ASSOC_SHORT_FORM_OVERFLOW: "This device keeps its association table in the short form, which holds object numbers and group indices up to 255 only; a link here goes beyond that. Nothing was written.",
+    GA_TABLE_CAPACITY_UNDECLARED: "This device's application does not declare how many group addresses and links its tables take, so Busforge cannot tell whether they fit. Nothing was written.",
     GA_TABLE_TOO_LARGE: "This device has no room left for more group addresses: its reserved address/association tables are full. Remove some links or assign fewer group addresses to this device.",
     DUPLICATE_DEVICE_INSTANCE: "This project has two devices with the same instance id, which would silently merge their configuration. The import was refused; the source file is likely malformed.",
     DEVICE_READBACK_UNSUPPORTED: "Reading this device's state back off the bus is not supported yet (e.g. an absolute-segment MV-0705 device). Its values cannot be verified against the device, so no read-back was performed.",

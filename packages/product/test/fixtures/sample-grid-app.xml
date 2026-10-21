@@ -56,6 +56,8 @@
             <ComObjectRefs>
               <ComObjectRef Id="M-TEST_A-11_O-1_R-1" RefId="M-TEST_A-11_O-1" />
             </ComObjectRefs>
+            <AddressTable MaxEntries="255" />
+            <AssociationTable MaxEntries="255" />
           </Static>
           <Dynamic>
             <ChannelIndependentBlock>

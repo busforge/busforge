@@ -268,6 +268,16 @@ corpusDescribe("a System B unit holding a flag the project does not record", () 
     expect((await u.memRead(at, 4)).equals(buildGroupTables(one, 2).assoc)).toBe(true);
   });
 
+  // The application declares 1600 group addresses and 1600 associations (<AddressTable>/<AssociationTable> MaxEntries).
+  test("a group-address flash takes the 1600 group addresses the application declares and refuses a 1601st before any write", async () => {
+    const many = (n: number): ComObjectLink[] => [{ comObjNum: 253, gaRaws: Array.from({ length: n }, (_, i) => 0x0801 + i) }];
+    expect([cfg.groupTables.addressMaxEntries, cfg.groupTables.associationMaxEntries]).toEqual([1600, 1600]);
+    expect(await classify(cfg).flashGroupTables(asDev(unit(false)), cfg.mask, ga({ links: many(1600) }))).toMatchObject({ kind: "dryRun" });
+    const u = unit(false);
+    expect(await classify(cfg).flashGroupTables(asDev(u), cfg.mask, ga({ links: many(1601), dryRun: false })).catch((e: unknown) => e)).toMatchObject({ code: "GA_TABLE_TOO_LARGE", message: expect.stringContaining("1601 group addresses") });
+    expect(u.writes).toBe(0);
+  });
+
   // The device page's read-back takes the form from the same description.
   test("a read-back reads a unit describing the short form in that form, at its own length", async () => {
     const { u, at, reads } = shortUnit(links);

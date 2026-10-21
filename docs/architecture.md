@@ -285,8 +285,9 @@ every device model):
 Additional refusals raised by the load path rather than the route: a declared load step the engine
 cannot execute (`LOAD_STEP_UNSUPPORTED`) rather than a partial recipe, a failed pre-flight
 `CompareProp` check (`LOAD_PROC_CHECK_FAILED`), a link pointing at an inactive com-object
-(`LINK_COM_OBJECT_INACTIVE`), a group table that would outgrow the device's declared capacity
-(`GA_TABLE_TOO_LARGE`), and a System B group-address flash that left the application object in a
+(`LINK_COM_OBJECT_INACTIVE`), a group table with more entries than the application declares the
+device takes (`GA_TABLE_TOO_LARGE`; a System B application declaring no capacity,
+`GA_TABLE_CAPACITY_UNDECLARED`), and a System B group-address flash that left the application object in a
 worse load state than it found it (`GA_FLASH_BROKE_APPLICATION`).
 
 ### The three write paths
