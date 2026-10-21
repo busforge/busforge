@@ -61,11 +61,7 @@ Read the LSM state with `PropertyValueRead(obj, PID = 5)`.
 
 - **Address table**: `[count:2][GA:2] x count`, group addresses sorted ascending.
 - **Association table**: `[count:2][groupIdx:2][comObjNum:2] x count` (long form) or 1-byte
-  fields (short form). The unit says which: the description of the association table object's
-  table property (object 2, PID 23) carries `PDT_GENERIC_04` for the long form and `PDT_GENERIC_02`
-  for the short one. ETS reads that description before every System B download and writes the form
-  it names (MDT IP Interface/Router short; GVS AMMA, Jung 400021SE, Theben DALI-Gateway long). A read
-  that has no description tells the form by validating that group indices are within the
+  fields (short form). Detect the form by validating that group indices are within the
   address-table count. Entries ordered by com-object number, then group index.
 - **Com-object table**: `[count:2][flags:1][typeOrSize:1] x count`, entry i is com-object i
   (1-based).
