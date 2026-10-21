@@ -141,7 +141,7 @@ describe("the shipped evidence bundle", () => {
     // Per Product, the full download and the structural flash as its smoke runs drove them: the bench
     // Products every operation, the structural flash only where it is offered (the GVS's firmware rule
     // refuses it); units in service the full download where their runs requested it, the structural
-    // flash where their spec has the step (the Auro's and the Gira's declare it unsafe). The MEAN WELL power supply
+    // flash where their spec has the step (the Auro's, the Gira's and the HMG 6 T's declare it unsafe). The MEAN WELL power supply
     // has no smoke run: its records are API runs driven by hand, in one channel, whose newest parameter
     // flash ended in an error, and no read.
     type Driven = Partial<Record<"readParams" | "readLinks" | "flashParams" | "flashLinks", "tested" | "eligible" | "failed">> & { fullDownload: "tested" | "eligible"; structuralFlash: "tested" | "eligible" };
@@ -155,6 +155,8 @@ describe("the shipped evidence bundle", () => {
       "M-0008_H-8.20.2F.2F.20zxy3.20xx-1_P-5133.2000": { fullDownload: "tested", structuralFlash: "eligible" },
       "M-0048_H-1019610-1_P-1019610": { fullDownload: "tested", structuralFlash: "tested" },
       "M-0083_H-180-0_P-BE.2D06001.2E02": { fullDownload: "tested", structuralFlash: "tested" },
+      "M-0048_H-4930240-2_P-4930240": { fullDownload: "tested", structuralFlash: "eligible" },
+      "M-0048_H-4930250-2_P-4930250": { fullDownload: "tested", structuralFlash: "tested" },
       "M-0162_H-KNX.2D40E.2D1280D-1_P-KNX.2D40E.2D1280D": {
         readParams: "eligible", readLinks: "eligible", flashParams: "failed", flashLinks: "eligible", fullDownload: "eligible", structuralFlash: "eligible",
       },

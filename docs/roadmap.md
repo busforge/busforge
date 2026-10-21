@@ -117,8 +117,7 @@ depends on is hardware-proven.
   flag that writes a decoded transaction log does not.
 - **A com-object flag a device holds otherwise than its project, read back off the bus.** The bench
   smoke runs read every flag on the bus and found the imported project's; units in service take theirs
-  as the project's. A flag set by another tool is shown on emulated units only. The Theben HMG 6 T, whose project sets read flags, is the next unit
-  to show a project-set flag read off hardware.
+  as the project's. A flag set by another tool is shown on emulated units only.
 - **The unread-attribute audit.** [ets-coverage.md](ets-coverage.md) names a script that lists every
   product-XML attribute the parser never reads; it does not exist, the table is maintained by hand.
 

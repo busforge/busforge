@@ -20,6 +20,8 @@ columns are listed per operation below.
 | M-0004 400021SE | `M-0004_A-7072-21-99A7-O000A` | tested | tested | tested | tested | tested | tested |
 | M-0008 5133 00 | `M-0008_A-10D7-11-2783-O000A` | tested | tested | tested | tested | tested | eligible, untested |
 | M-0048 1019610 | `M-0048_A-107E-12-5B58` | tested | tested | tested | tested | tested | tested |
+| M-0048 4930240 | `M-0048_A-493B-21-B471` | tested | tested | tested | tested | tested | eligible, untested |
+| M-0048 4930250 | `M-0048_A-493B-21-B471` | tested | tested | tested | tested | tested | tested |
 | M-0048 9070929 | `M-0048_A-9071-20-F258-O00EF` | tested | tested | tested | tested | tested | tested |
 | M-0081 180-02 | `M-0081_A-FE01-11-75D9` | tested | tested | tested | tested | tested | eligible, untested |
 | M-0083 BE-06001.02 | `M-0083_A-00B4-32-3919` | tested | tested | tested | tested | tested | tested |
@@ -78,6 +80,32 @@ Product `M-0048_H-1019610-1_P-1019610`, application program `M-0048_A-107E-12-5B
 | Group-address flash | tested | pass / pass | pass / pass | pass / pass | none | 1 |
 | Full download | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 1 |
 | Structural flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 1 |
+
+## M-0048 4930240
+
+Product `M-0048_H-4930240-2_P-4930240`, application program `M-0048_A-493B-21-B471`.
+
+| Operation | State | Transfer api / ui | Behaviour api / ui | Persistence api / ui | Reference (tool) | Firmware |
+|---|---|---|---|---|---|---|
+| Read parameters | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | unknown |
+| Read links | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | unknown |
+| Parameter flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | unknown |
+| Group-address flash | tested | pass / pass | pass / pass | pass / pass | none | unknown |
+| Full download | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | unknown |
+| Structural flash | eligible, untested | none / none | none / none | none / none | none | none |
+
+## M-0048 4930250
+
+Product `M-0048_H-4930250-2_P-4930250`, application program `M-0048_A-493B-21-B471`.
+
+| Operation | State | Transfer api / ui | Behaviour api / ui | Persistence api / ui | Reference (tool) | Firmware |
+|---|---|---|---|---|---|---|
+| Read parameters | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | unknown |
+| Read links | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | unknown |
+| Parameter flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | unknown |
+| Group-address flash | tested | pass / pass | pass / pass | pass / pass | none | unknown |
+| Full download | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | unknown |
+| Structural flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | unknown |
 
 ## M-0048 9070929
 
