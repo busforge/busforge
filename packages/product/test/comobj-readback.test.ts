@@ -268,6 +268,29 @@ corpusDescribe("a System B unit holding a flag the project does not record", () 
     expect((await u.memRead(at, 4)).equals(buildGroupTables(one, 2).assoc)).toBe(true);
   });
 
+  // The device page's read-back takes the form from the same description.
+  test("a read-back reads a unit describing the short form in that form, at its own length", async () => {
+    const { u, at, reads } = shortUnit(links);
+    const read = await classify(cfg).readState(asDev(u), cfg.mask, { liveParams: params, baseParams: params, moduleInstances: instances });
+    expect(read).toMatchObject({ linksRead: true, links });
+    expect(reads).toEqual([[at, 2], [at, 2 + 2 * links.length]]);
+  });
+  test("a read-back refuses a unit whose association table description it does not know", async () => {
+    const u = unit(false);
+    u.pdt = 0x13;
+    expect(await classify(cfg).readState(asDev(u), cfg.mask, { liveParams: params, baseParams: params, moduleInstances: instances }).catch((e: unknown) => e))
+      .toMatchObject({ code: "ASSOC_TABLE_FORMAT_UNKNOWN", message: expect.stringContaining("refusing to read it") });
+  });
+  // A unit answering the description with PID 0 describes no table property there: only then is the form detected.
+  test("a read-back of a unit describing no table property detects the form, and a group-address flash refuses it", async () => {
+    const u = unit(false);
+    u.propertyDescription = async (obj: number) => ({ objectIndex: obj, pid: 0, propertyIndex: 0, writable: false, pdt: 0, maxElements: 0, readLevel: 0, writeLevel: 0 });
+    const read = await classify(cfg).readState(asDev(u), cfg.mask, { liveParams: params, baseParams: params, moduleInstances: instances });
+    expect(read).toMatchObject({ linksRead: true, links });
+    expect(await classify(cfg).flashGroupTables(asDev(u), cfg.mask, ga({ dryRun: false })).catch((e: unknown) => e)).toMatchObject({ code: "ASSOC_TABLE_FORMAT_UNKNOWN", message: expect.stringContaining("describes no table property") });
+    expect(u.writes).toBe(0);
+  });
+
   test("a table the unit has not loaded leaves the flags open and the read goes on", async () => {
     const u = unit(false);
     u.addr.set(3, 0);

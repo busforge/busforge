@@ -20,10 +20,11 @@ import { corpusDescribe } from "../../../tools/corpus-test.ts";
 const app = (f: string) => parseAppConfig(catalogueXml(f));
 const APP_PROGRAM = 4; // OBJ.APP_PROGRAM: System B parameter segment number
 
-// A byte-addressed mock exposing only what readState calls: tableAddr + memRead. Group-table
-// pointers point at count bytes seeded to 0, so the link read returns empty and does not
-// interfere with the parameter-drift assertions.
+// A byte-addressed mock exposing only what readState calls: tableAddr + memRead, and the association
+// table's description (the long form, PDT_GENERIC_04). Group-table pointers point at count bytes seeded
+// to 0, so the link read returns empty and does not interfere with the parameter-drift assertions.
 class MockReadDevice {
+  async propertyDescription(obj: number, pid: number) { return { objectIndex: obj, pid, propertyIndex: 0, writable: true, pdt: 0x14, maxElements: 1, readLevel: 3, writeLevel: 3 }; }
   mem = new Map<number, number>();
   constructor(private tableAddrs: Record<number, number>) {}
   async connect() {}

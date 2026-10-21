@@ -7,6 +7,7 @@ import { iaToNum, numToIa, gaToNum, LSM, planSecurityObjectLoad, GROUP_KEY_ENTRY
 import { parseAppConfig, classify, parseLoadProcedures, relParamFillByte, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, differingFF, leaveUnreadUnchanged, buildDeviceConfig, buildComObjectTable, buildGroupTables, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosing, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, withInstanceOverrides, differingBytes, fullDownloadImageCoverage, planSystem1Download, MV0012_DEFAULT_LOAD, absoluteBuildInstances, checkedStamps, buildSecurityObject, writtenGroupKeys, relativeParWriteSet, relativeComObjWriteSet, constantParams, differingConstants, type KnxIpDevice, type ModuleInstance, type ComObjInstanceOverride, type ImageStamp } from "../packages/product/src/index.ts";
 import { catalogueDir, catalogueXml, captureText, capturePath, listCatalogue } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
+import { CollectedUnit, asDevice, type Collection } from "../packages/product/test/collected-unit.ts";
 import { parseCapture, parseTunnelFrame, memoryImage, etsAllocations, reportedTableReferences, compareSegments, parseGa, inferBase, captureDevice } from "./etsdiff.ts";
 
 // One proxy log line carrying a KNXnet/IP TUNNELLING_REQUEST with an L_Data frame.
@@ -2874,6 +2875,17 @@ corpusDescribe("MDT IP Interface/Router (M-0083_A-0137-20-7EB2): group-address d
   test("link: object 1's entry is the only difference between the two com-object tables, its communication flag", () => {
     const linked = gaFlash([...own, TEST]).comObj, unlinked = gaFlash(own).comObj;
     expect([...linked].flatMap((b, i) => (b !== unlinked[i] ? [[i, unlinked[i], b]] : []))).toEqual([[2, 0x4b, 0x4f]]);
+  });
+  // The device page's read-back of the unit as ETS's link download left it (captures/mdt-router-unit-collect-nach-ets-ga-link.json,
+  // a read-only collection holding each table as allocated and nothing past it): it reads the association table in
+  // the form the unit describes, its entries and no byte past them.
+  test("link: the read-back of the unit ETS left takes its links from the short table the unit describes, read at its own length", async () => {
+    const unit = new CollectedUnit(JSON.parse(captureText("mdt-router-unit-collect-nach-ets-ga-link.json")) as Collection);
+    const read = await classify(cfg).readState(asDevice(unit), unit.mask, { liveParams: params, baseParams: params, moduleInstances: [] });
+    const byObject = (ls: ReadonlyArray<{ comObjNum: number; gaRaws: number[] }>) => [...ls].sort((a, b) => a.comObjNum - b.comObjNum);
+    expect(read.linksRead).toBe(true);
+    expect(byObject(read.links)).toEqual(byObject([...own, TEST]));
+    expect((await unit.memRead(await unit.tableAddr(2), 10)).equals(gaFlash([...own, TEST]).assoc)).toBe(true);
   });
 });
 

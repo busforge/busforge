@@ -21,7 +21,7 @@ import { join } from "node:path";
 import { readZip } from "../packages/project/src/zip.ts";
 import { loadKnxproj, readAppProgram, deriveWinzipPassword, appProgramId, deviceParamValues } from "../packages/project/src/index.ts";
 import { parseApplication, buildParameterImage } from "../packages/product/src/index.ts";
-import { KnxIpTunnel, KnxDevice } from "../packages/knx/src/index.ts";
+import { KnxIpTunnel, KnxDevice, assocFormOf, ASSOC_TABLE_DESCRIPTION } from "../packages/knx/src/index.ts";
 import type { EvidenceRecord, Firmware } from "../packages/product/src/index.ts";
 import { readbackEvidence, readFirmwareRevision, gitRevision, sha256, transportOf, type DeclaredOrigin, type ImageComparison } from "./evidence.ts";
 
@@ -76,15 +76,23 @@ async function readTablesFull(dev: KnxDevice) {
   };
   const addr = await counted(1, 2); // group-address table (2 bytes/entry)
   const gcount = addr ? (addr[0] << 8) | addr[1] : 0;
-  // association table: long (4 bytes) unless an entry's group index is out of range.
+  // association table: in the form the unit describes (assocFormOf); only a unit that describes none has it
+  // detected, long (4 bytes) unless an entry's group index is out of range.
   let assoc: Buffer | null = null, long = true;
   const a2 = await dev.tableAddr(2);
   if (a2) {
+    const form = assocFormOf(await dev.propertyDescription(ASSOC_TABLE_DESCRIPTION.object, ASSOC_TABLE_DESCRIPTION.pid, 0));
+    if (form === null) throw new Error("the unit describes its association table with a data type no capture shows; its tables are not read");
     const ah = await dev.memRead(a2, 2);
     const acount = (ah[0] << 8) | ah[1];
-    assoc = await dev.memRead(a2, 2 + acount * 4);
-    for (let k = 0; k < acount; k++) { const gi = (assoc[2 + k * 4] << 8) | assoc[3 + k * 4]; if (gi < 1 || gi > gcount) { long = false; break; } }
-    if (!long) assoc = await dev.memRead(a2, 2 + acount * 2);
+    if (form !== "undescribed") {
+      long = form === 4;
+      assoc = await dev.memRead(a2, 2 + acount * form);
+    } else {
+      assoc = await dev.memRead(a2, 2 + acount * 4);
+      for (let k = 0; k < acount; k++) { const gi = (assoc[2 + k * 4] << 8) | assoc[3 + k * 4]; if (gi < 1 || gi > gcount) { long = false; break; } }
+      if (!long) assoc = await dev.memRead(a2, 2 + acount * 2);
+    }
   }
   const comObj = await counted(3, 2); // com-object table
   const hex = (b: Buffer | null) => (b ? b.toString("hex") : null);

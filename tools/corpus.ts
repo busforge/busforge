@@ -107,6 +107,7 @@ export const CORPUS_FILES: readonly string[] = [
     "mdt-router-ets6log-partial-name-revert.txt",
     "mdt-router-ets6log-partial-name.txt",
     "mdt-router-ets6log-partial-nochange.txt",
+    "mdt-router-unit-collect-nach-ets-ga-link.json",
     "mdt-router-unit-config.json",
     "mdtui-ets-fulldownload.log",
     "mdtui-ets-partial-links.log",

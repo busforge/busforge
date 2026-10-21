@@ -1229,18 +1229,18 @@ describe("readGroupTables entry-count bound", () => {
   }) as unknown as KnxDevice;
 
   test("refuses an implausible count with a coded error instead of reading the table", async () => {
-    expect(readGroupTables(stub(2833))).rejects.toMatchObject({ code: "GROUP_TABLE_UNREADABLE" });
+    expect(readGroupTables(stub(2833), "undescribed")).rejects.toMatchObject({ code: "GROUP_TABLE_UNREADABLE" });
   });
 
   test("accepts a plausible count", async () => {
-    const r = await readGroupTables(stub(2));
+    const r = await readGroupTables(stub(2), "undescribed");
     expect(r.addr).toBeInstanceOf(Buffer);
     expect(r.assoc).toBeInstanceOf(Buffer);
   });
 
   test("skipComObj (the dry-run preview) does not read the com-object table", async () => {
     const calls: number[] = [];
-    await readGroupTables(stub(2, calls), undefined, true);
+    await readGroupTables(stub(2, calls), "undescribed", undefined, true);
     expect(calls).toContain(1);     // address table read
     expect(calls).toContain(2);     // association table read
     expect(calls).not.toContain(3); // com-object table (object 3) skipped

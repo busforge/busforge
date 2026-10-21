@@ -140,9 +140,10 @@ depends on is hardware-proven.
   Interface/Router and the MDT IP Interface Secure, have not run. The router's web interface password
   reads back as `FF` after any write; the parameter flash leaves it alone while the project has not
   changed it since the last programming, so the router's adoption finds nothing to write there (the
-  flash's choice pinned against ETS's captures and a scripted unit; no run on the unit). Neither unit can be emulated from its
-  collections (the router's reads its association table only as far as its count and no collection
-  reads a security object; the IP Interface Secure's none of its KNXnet/IP parameter object).
+  flash's choice pinned against ETS's captures and a scripted unit; no run on the unit). Neither unit's run can be emulated from its
+  collections (no collection reads a security object, and the IP Interface Secure's none of its
+  KNXnet/IP parameter object); the router's read-back can, and is pinned on one taken after ETS's
+  group-address download.
 - **The short association table in the full download and the structural flash.** A System B unit
   that describes its association table with one-byte fields (`PDT_GENERIC_02`, the MDT IP
   Interface/Router) gets that form from the GA flash, as ETS writes it; the full download and the

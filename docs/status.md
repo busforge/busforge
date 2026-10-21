@@ -243,7 +243,9 @@ What each row does not show:
   address table, the security object's elements (no group key for the plain address), and ETS's steps in
   ETS's order, the address table written after the security object (`tools/etsdiff.test.ts`). The unit
   read back after each held ETS's tables, and after the removal what it held before. No Busforge GA flash
-  has run on the unit.
+  has run on the unit. Busforge's read-back takes the association table in the form the unit describes,
+  exactly its entries, as the GA flash does: on the unit's collection after ETS's link download it reads
+  ETS's links and no byte past the table (`tools/etsdiff.test.ts`).
 - **MDT Universal Interface 6-fold BE-06001.02 `M-0083_A-00B4-32-3919`** (MV-0705, module device).
   ETS 6 was captured running a full, a parameter, a group-address and a revert download; Busforge's
   plans equal them (`tools/etsdiff.test.ts`). On a unit, through a logging proxy, each `verified`: the

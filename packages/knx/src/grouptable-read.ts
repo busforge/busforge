@@ -1,4 +1,5 @@
 import { KnxDevice } from "./device.ts";
+import type { PropertyDescription } from "./rawcodec.ts";
 
 // On-device group-table READERS plus the byte-layout facts they share with the
 // builders/decoders in @busforge/product (grouptables.ts). The layouts exist in exactly
@@ -8,7 +9,7 @@ import { KnxDevice } from "./device.ts";
 //
 //   System B (MV-07B0): count is 2 bytes BE; address entries 2 bytes; association
 //     entries 4 bytes (long form: [groupIdx:2][comObjNum:2]) or 2 bytes (short form:
-//     [groupIdx:1][comObjNum:1]) - detected per device, see readGroupTables.
+//     [groupIdx:1][comObjNum:1]) - as the unit describes the table, see readGroupTables.
 //   System 7 (MV-0705): count is 1 byte; address and association entries 2 bytes
 //     (address table leads with the device's own IA; association = [groupIdx:1][comObjNum:1]).
 export interface TableLayout { countBytes: 1 | 2; entryBytes: number; }
@@ -55,10 +56,21 @@ const MAX_TABLE_ENTRIES = 2048;
 
 const readCount = (h: Buffer, layout: TableLayout) => (layout.countBytes === 2 ? (h[0] << 8) | h[1] : h[0]);
 
-// Read a System B device's group tables (address, association, com-object). `assocEntryBytes`: the
-// association table's form as the unit describes it (4 long, 2 short), read exactly; without it the form
-// is detected. `skipComObj` omits the (largest) com-object table.
-export async function readGroupTables(dev: KnxDevice, onStep?: (done: number, total: number) => void, skipComObj = false, assocEntryBytes?: 2 | 4): Promise<{ addr: Buffer; assoc: Buffer; comObj: Buffer; long: boolean }> {
+// The association table's form as the unit describes it (object 2, PID 23): 4 the long form, 2 the short one;
+// "undescribed" where the unit gives no description of that property, and only there is the form detected.
+export type AssocForm = 2 | 4 | "undescribed";
+export const ASSOC_TABLE_DESCRIPTION = { object: 2, pid: 23 } as const;
+// The form a description of the association table's table property names: PDT_GENERIC_02 one byte each for group
+// index and object number (MDT IP Interface/Router), PDT_GENERIC_04 two each (GVS AMMA, Jung 400021SE), as ETS reads
+// it before every System B download. Null for any other data type: no capture shows one.
+export function assocFormOf(d: PropertyDescription): AssocForm | null {
+  if (d.pid === 0) return "undescribed";
+  return d.pdt === 0x12 ? 2 : d.pdt === 0x14 ? 4 : null;
+}
+
+// Read a System B device's group tables (address, association, com-object). A described association table is
+// read in that form, exactly its entries. `skipComObj` omits the (largest) com-object table.
+export async function readGroupTables(dev: KnxDevice, assocForm: AssocForm, onStep?: (done: number, total: number) => void, skipComObj = false): Promise<{ addr: Buffer; assoc: Buffer; comObj: Buffer; long: boolean }> {
   const boundCount = (count: number, what: string): number => {
     if (count > MAX_TABLE_ENTRIES) throw new GroupTableUnreadable(`${what} reports ${count} entries (implausible); this device's group tables are not in the expected System B format`);
     return count;
@@ -78,15 +90,15 @@ export async function readGroupTables(dev: KnxDevice, onStep?: (done: number, to
   const acount = boundCount(readCount(ah, SYSTEM_B_ASSOC_LONG), "association table");
   let assoc: Buffer;
   let long: boolean;
-  if (assocEntryBytes !== undefined) {
-    long = assocEntryBytes === 4;
+  if (assocForm !== "undescribed") {
+    long = assocForm === 4;
     const layout = long ? SYSTEM_B_ASSOC_LONG : SYSTEM_B_ASSOC_SHORT;
     assoc = await dev.memRead(a2, layout.countBytes + acount * layout.entryBytes);
   } else {
     assoc = await dev.memRead(a2, SYSTEM_B_ASSOC_LONG.countBytes + acount * SYSTEM_B_ASSOC_LONG.entryBytes);
-    // Long/short detection: in the long form every entry's 2-byte group index must be a
-    // valid 1-based index into the address table; a short-form table read as long yields
-    // out-of-range indices on the first entry that straddles two real entries.
+    // Long/short detection for a unit that does not describe the table: in the long form every
+    // entry's 2-byte group index must be a valid 1-based index into the address table; a short-form
+    // table read as long yields out-of-range indices on the first entry that straddles two real entries.
     long = true;
     for (let k = 0; k < acount; k++) { const gi = (assoc[2 + k * 4] << 8) | assoc[3 + k * 4]; if (gi < 1 || gi > gcount) { long = false; break; } }
     if (!long) assoc = await dev.memRead(a2, SYSTEM_B_ASSOC_SHORT.countBytes + acount * SYSTEM_B_ASSOC_SHORT.entryBytes);

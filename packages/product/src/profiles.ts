@@ -1,4 +1,4 @@
-import { KnxDevice, KnxError, OBJECT_TYPE_KNXNETIP, type LoadPlan, type SecurityObjectTables, SENDER_ENTRY, planSystemBGaFlash, planSystemBFullDownload, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, loadedTableAddr, crc16Ccitt, crc16CcittFalse, readSegmentCrc, GroupTableUnreadable, OBJ, PID, lsmState, STATE } from "@busforge/knx";
+import { KnxDevice, KnxError, OBJECT_TYPE_KNXNETIP, type LoadPlan, type SecurityObjectTables, SENDER_ENTRY, planSystemBGaFlash, planSystemBFullDownload, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, assocFormOf, ASSOC_TABLE_DESCRIPTION, type AssocForm, loadedTableAddr, crc16Ccitt, crc16CcittFalse, readSegmentCrc, GroupTableUnreadable, OBJ, PID, lsmState, STATE } from "@busforge/knx";
 import { toAppModel, unmappedParamRefs } from "./application.ts";
 import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, differingFF, leaveUnreadUnchanged, verifyMaskedBytes, confirmedMatch, type ConfirmedOnlyRange, buildAbsoluteSegmentTargets, wholeBytes, refuseColorWrites, differingConstants, type ConstantDifference } from "./deviceimage.ts";
 import { resolveModuleInstances } from "./modules.ts";
@@ -532,22 +532,24 @@ function unitMcbRegions(read: ImageStamp[], obj: number): McbRegion[] | null {
   return regions.length ? regions : null;
 }
 
-// The width of the unit's association table entries, as the unit describes the table: ETS reads the description
-// of the association table object's PID 23 (PID_TABLE) before a group-address download and writes entries of that
-// many bytes, PDT_GENERIC_02 one byte each for group index and object number (MDT IP Interface/Router),
-// PDT_GENERIC_04 two each (GVS AMMA, Jung 400021SE). Any other description is refused.
-const PID_TABLE = 23, PDT_GENERIC_02 = 0x12, PDT_GENERIC_04 = 0x14;
+// The width of the unit's association table entries, as the unit describes the table (assocFormOf): ETS reads the
+// description before a download and writes entries of that width. A description of another data type is refused, for
+// a read as for a write; a unit describing no table property there is "undescribed", which only a read takes.
+async function describedAssocForm(dev: KnxDevice, use: "read" | "write"): Promise<AssocForm> {
+  const d = await dev.propertyDescription(ASSOC_TABLE_DESCRIPTION.object, ASSOC_TABLE_DESCRIPTION.pid, 0);
+  const form = assocFormOf(d);
+  if (form === null) throw new ProductError("ASSOC_TABLE_FORMAT_UNKNOWN", `the unit describes its association table with data type 0x${d.pdt.toString(16)}, neither of the two entry widths shown (PDT_GENERIC_02, PDT_GENERIC_04); refusing to ${use} it`);
+  return form;
+}
 async function assocEntryBytes(dev: KnxDevice): Promise<2 | 4> {
-  const d = await dev.propertyDescription(OBJ.ASSOC_TABLE, PID_TABLE, 0);
-  if (d.pid === PID_TABLE && d.pdt === PDT_GENERIC_02) return 2;
-  if (d.pid === PID_TABLE && d.pdt === PDT_GENERIC_04) return 4;
-  throw new ProductError("ASSOC_TABLE_FORMAT_UNKNOWN", d.pid === 0
-    ? "the unit describes no table property of its association table object, so the width of its entries is not known; refusing to write it"
-    : `the unit describes its association table with data type 0x${d.pdt.toString(16)}, neither of the two entry widths shown (PDT_GENERIC_02, PDT_GENERIC_04); refusing to write it`);
+  const form = await describedAssocForm(dev, "write");
+  if (form === "undescribed") throw new ProductError("ASSOC_TABLE_FORMAT_UNKNOWN", "the unit describes no table property of its association table object, so the width of its entries is not known; refusing to write it");
+  return form;
 }
 // The full download and the structural flash build the association table in its long form only.
-async function refuseShortAssoc(dev: KnxDevice, what: string): Promise<void> {
+async function requireLongAssoc(dev: KnxDevice, what: string): Promise<4> {
   if ((await assocEntryBytes(dev)) !== 4) throw new ProductError("ASSOC_TABLE_SHORT_UNSUPPORTED", `the unit's association table holds one byte per group index and object number, which Busforge's ${what} does not build; refusing to write it`);
+  return 4;
 }
 
 // One prepared flash operation, handed to runFlashOp by a profile after it has read the
@@ -1239,7 +1241,7 @@ export class SystemBProfile extends DeviceProfile {
     // For either form.
     const images = builtBefore(() => this.systemBImages(this.requireCfg("full download"), { ...ctx, proc }));
     await runDeclaredChecks(dev, coverage);
-    await refuseShortAssoc(dev, "full download");
+    const assocForm = await requireLongAssoc(dev, "full download");
     // Which form ETS runs: an application declaring PreferPartialDownloadIfApplicationLoaded on a unit
     // holding it takes the partial form. ETS tells by the application object's load state and program
     // id (Jung 400021SE, Theben DALI-Gateway captures). The partial form keeps what the unit holds, so
@@ -1253,7 +1255,7 @@ export class SystemBProfile extends DeviceProfile {
       if (id.equals(programIdStamp(cfg)) && await allLoaded(dev, [OBJ.APP_PROGRAM, OBJ.COMOBJ_TABLE, OBJ.ASSOC_TABLE, OBJ.ADDR_TABLE])) {
         const size = images().target.size;
         const paramsMcb = await readMcbRegions(dev, LSM, size);
-        if (paramsMcb && paramsMcb.reduce((n, r) => n + r.size, 0) === size) return this.downloadPartialForm(dev, mask, ctx, proc, images, paramsMcb);
+        if (paramsMcb && paramsMcb.reduce((n, r) => n + r.size, 0) === size) return this.downloadPartialForm(dev, mask, ctx, proc, images, paramsMcb, assocForm);
       }
     }
     const { plan, imageBytes, target, comObj, addr, assoc, security, segments } = this.planSystemBFull(mask, { ...ctx, proc }, images);
@@ -1343,7 +1345,7 @@ export class SystemBProfile extends DeviceProfile {
         const wantPlain = crc16CcittFalse(target.bytes); // GVS and other CCITT-FALSE firmware
         const { ok } = await verifySettled(
           async () => {
-            const gt = await readGroupTables(dev);
+            const gt = await readGroupTables(dev, assocForm);
             const mcb = await readSegmentCrc(dev, LSM);
             const crcOk = mcb !== null && mcb.size === target.size && (mcb.crc === wantAug || mcb.crc === wantPlain);
             const img = crcOk ? null : await dev.memRead(await loadedTableAddr(dev, LSM, "parameter segment"), target.size);
@@ -1368,11 +1370,11 @@ export class SystemBProfile extends DeviceProfile {
   // segment and com-object table are read first, as the base the owned bytes are merged into and the
   // backup, then only what differs is written. The verify checks every byte the way the structural
   // flash does: the owned bits against the new configuration, the rest against what the unit held.
-  private async downloadPartialForm(dev: KnxDevice, mask: string, ctx: FullDownloadCtx, proc: LoadProcedures, images: () => SystemBImages, paramsMcb: McbRegion[]): Promise<FlashResult> {
+  private async downloadPartialForm(dev: KnxDevice, mask: string, ctx: FullDownloadCtx, proc: LoadProcedures, images: () => SystemBImages, paramsMcb: McbRegion[], assocForm: 4): Promise<FlashResult> {
     const size = images().target.size;
     const paramsAt = await loadedTableAddr(dev, LSM, "parameter segment");
     const current = await dev.memRead(paramsAt, size, undefined, (d, t) => ctx.onProgress?.("backup", d, t), ctx.signal);
-    const cur = await readGroupTables(dev, undefined, false);
+    const cur = await readGroupTables(dev, assocForm);
     const comObjAt = await loadedTableAddr(dev, OBJ.COMOBJ_TABLE, "com-object table");
     const unitMemory: RelativeUnitMemory = {
       params: current, paramsAt, paramsMcb,
@@ -1408,7 +1410,7 @@ export class SystemBProfile extends DeviceProfile {
             app: await lsmState(dev, OBJ.APP_PROGRAM),
             tablesLoaded: await allLoaded(dev, [OBJ.COMOBJ_TABLE, OBJ.ASSOC_TABLE, OBJ.ADDR_TABLE]),
             back: await dev.memRead(verifyAt, params.length, undefined, (d, t) => ctx.onProgress?.("verify", d, t)),
-            tables: await readGroupTables(dev),
+            tables: await readGroupTables(dev, assocForm),
             sec: security ? await readSecurityObject(dev, security) : null,
           }),
           ({ app, tablesLoaded, back, tables, sec }) => app === STATE.LOADED && tablesLoaded && match(back) !== null
@@ -1447,7 +1449,7 @@ export class SystemBProfile extends DeviceProfile {
     if (support.readLinks) {
       if (ctx.signal?.aborted) throw new ProductError("READ_ABORTED", "read aborted");
       ctx.onProgress?.("links", 0, 2);
-      gt = await readGroupTables(dev, (d, total) => ctx.onProgress?.("links", d, total), true);
+      gt = await readGroupTables(dev, await describedAssocForm(dev, "read"), (d, total) => ctx.onProgress?.("links", d, total), true);
       const bound = declared();
       comObj = await readComObjTable(() => readSystemBComObjTable(dev, bound, ctx.signal), ctx.signal);
     }
@@ -1606,7 +1608,7 @@ export class SystemBProfile extends DeviceProfile {
     // Read the current L3 as well (not just addr/assoc): it is the backup, and its diff against the
     // rebuilt table is what makes the link-driven L3 change visible in the dry-run preview.
     const entryBytes = await assocEntryBytes(dev);
-    const cur = await readGroupTables(dev, undefined, false, entryBytes);
+    const cur = await readGroupTables(dev, entryBytes);
     const { addr, assoc } = buildGroupTables(ctx.links, entryBytes);
     // The security object is compared, not backed up: its group keys are secrets, and the project
     // holds them anyway.
@@ -1680,7 +1682,7 @@ export class SystemBProfile extends DeviceProfile {
             "the group-address flash left the device's application program object out of the LOADED state (it was LOADED before): the tables were written but the device is no longer running its application, so the links are not functional. Recover the device with a full download.");
         }
         const { ok } = await verifySettled(
-          async () => ({ tables: await readGroupTables(dev, undefined, false, entryBytes), sec: security ? await readSecurityObject(dev, security) : null }),
+          async () => ({ tables: await readGroupTables(dev, entryBytes), sec: security ? await readSecurityObject(dev, security) : null }),
           ({ tables: back, sec }) => back.addr.equals(addr) && back.assoc.equals(assoc) && back.comObj.equals(comObj)
             && (!security || (sec !== null && sameSecurityObject(sec, security))),
         );
@@ -1724,12 +1726,12 @@ export class SystemBProfile extends DeviceProfile {
     const flagBaseline = builtBefore(() => baselineComObjects(cfg, ctx));
 
     await runDeclaredChecks(dev, coverage);
-    await refuseShortAssoc(dev, "structural flash");
+    const assocForm = await requireLongAssoc(dev, "structural flash");
     const paramsAt = await loadedTableAddr(dev, LSM, "parameter segment");
     const current = await dev.memRead(paramsAt, target.size, undefined, (d, t) => ctx.onProgress?.("backup", d, t), ctx.signal);
     const { image, diffBytes: paramDiff } = mergeRelativeTarget(current, target);
     const constantsDiffer = paramDiff === 0 ? differingConstants(cfg, target.constants, current, image) : [];
-    const cur = await readGroupTables(dev, undefined, false);
+    const cur = await readGroupTables(dev, assocForm);
     const comObjAt = await loadedTableAddr(dev, OBJ.COMOBJ_TABLE, "com-object table");
     const curSecurity = security ? await readSecurityObject(dev, security) : undefined;
     const prefix = `${ctx.deviceId}-structure-${Date.now()}`;
@@ -1773,7 +1775,7 @@ export class SystemBProfile extends DeviceProfile {
             app: await lsmState(dev, OBJ.APP_PROGRAM),
             tablesLoaded: await allLoaded(dev, [OBJ.COMOBJ_TABLE, OBJ.ASSOC_TABLE, OBJ.ADDR_TABLE]),
             params: await dev.memRead(verifyAt, image.length, undefined, (d, t) => ctx.onProgress?.("verify", d, t)),
-            tables: await readGroupTables(dev),
+            tables: await readGroupTables(dev, assocForm),
             sec: security ? await readSecurityObject(dev, security) : null,
           }),
           ({ app, tablesLoaded, params, tables, sec }) => app === STATE.LOADED && tablesLoaded && match(params) !== null

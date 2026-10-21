@@ -64,9 +64,11 @@ Read the LSM state with `PropertyValueRead(obj, PID = 5)`.
   fields (short form). The unit says which: the description of the association table object's
   table property (object 2, PID 23) carries `PDT_GENERIC_04` for the long form and `PDT_GENERIC_02`
   for the short one. ETS reads that description before every System B download and writes the form
-  it names (MDT IP Interface/Router short; GVS AMMA, Jung 400021SE, Theben DALI-Gateway long). A read
-  that has no description tells the form by validating that group indices are within the
-  address-table count. Entries ordered by com-object number, then group index.
+  it names (MDT IP Interface/Router short; GVS AMMA, Jung 400021SE, Theben DALI-Gateway long). Busforge
+  reads the same description before it reads the table back or writes it, and reads exactly the entries
+  of that form. Only a unit that describes no table property there (it answers with PID 0) has its form
+  told by validating that group indices are within the address-table count, and only for a read; a write
+  to it is refused. Entries ordered by com-object number, then group index.
 - **Com-object table**: `[count:2][flags:1][typeOrSize:1] x count`, entry i is com-object i
   (1-based).
 

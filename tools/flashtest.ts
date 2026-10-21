@@ -17,7 +17,7 @@
 import fs from "node:fs";
 import { KnxIpTunnel, KnxDevice, gaToNum, cemiLDataGroup, groupValueRead, iaToNum, runLoadPlan } from "../packages/knx/src/index.ts";
 import { planSystemBGaFlash } from "../packages/knx/src/flash.ts";
-import { readGroupTables } from "../packages/knx/src/grouptable-read.ts";
+import { readGroupTables, assocFormOf, ASSOC_TABLE_DESCRIPTION } from "../packages/knx/src/grouptable-read.ts";
 import { formatGa } from "../packages/knx/src/ga.ts";
 
 const ip = process.argv[2];
@@ -38,7 +38,10 @@ async function readTables() {
   const tun = new KnxIpTunnel(ip); await tun.connect();
   const dev = new KnxDevice(tun, ia); await dev.connect();
   const mask = await dev.deviceDescriptor();
-  const { addr, assoc, comObj } = await readGroupTables(dev); // the shared System B reader (one layout home)
+  // The association table is written back as read, so it is read in the form the unit describes.
+  const form = assocFormOf(await dev.propertyDescription(ASSOC_TABLE_DESCRIPTION.object, ASSOC_TABLE_DESCRIPTION.pid, 0));
+  if (form === null) { console.error("the device describes its association table with a data type no capture shows"); process.exit(1); }
+  const { addr, assoc, comObj } = await readGroupTables(dev, form); // the shared System B reader (one layout home)
   await dev.disconnect(); await tun.disconnect();
   return { mask, addr, assoc, comObj };
 }
