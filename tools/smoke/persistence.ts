@@ -19,11 +19,19 @@ import { flagsNotRead, type ConfigView } from "./client.ts";
 export interface RebootObservation { rebooted: boolean; unproven?: true; detail: string }
 
 // The connection-oriented part of a device that `restartInConnection` uses (KnxDevice).
-export interface RestartConnection { connect(): Promise<void>; deviceDescriptor(): Promise<unknown>; sendRestart(): Promise<boolean>; takeTransportReply(): boolean; disconnect(): Promise<void> }
+export interface RestartConnection {
+  connect(): Promise<void>; deviceDescriptor(): Promise<unknown>; sendRestart(): Promise<boolean>; takeTransportReply(): boolean; disconnect(): Promise<void>;
+  // KnxDevice: the device's T_Disconnect came ahead of the last request's first frame; the last A_Restart
+  // went out a second time.
+  closedAheadOfLastRequest?(): boolean; readonly restartWasResent?: boolean;
+}
 
 // What a restart sent by restartInConnection showed: the interface's confirmation (sendRestart) and how
 // the device took the descriptor read sent behind A_Restart in the same connection, as a probe outcome.
-export interface RestartSent { confirmed: boolean; inConnection: ProbeOutcome }
+// "undecided": the connection was closed, but by a T_Disconnect that came ahead of the read (a link that
+// stalled past the device's 6 s idle timeout delivers that timeout's close so) or after a restart sent a
+// second time; it is no silence, and the fresh probes decide.
+export interface RestartSent { confirmed: boolean; inConnection: ProbeOutcome | "undecided" }
 
 // The restart observeReboot sends, in the order of the server's plain restart (KnxDevice.restart): a
 // fresh connection in which the device answers a descriptor read (any answer: one with another service
@@ -53,13 +61,14 @@ export async function restartInConnection(dev: RestartConnection): Promise<Resta
     }
     const confirmed = await dev.sendRestart();
     dev.takeTransportReply();
-    let inConnection: ProbeOutcome;
+    let inConnection: ProbeOutcome | "undecided";
     try { await dev.deviceDescriptor(); inConnection = "answered"; }
     catch (e) {
       const code = codeOf(e);
       if (code === "ANSWER_SERVICE_MISMATCH") inConnection = "answered";
       else if (code === "BUS_SEND_FAILED") inConnection = "unacknowledged";
       else if (code === "DEVICE_NOT_ANSWERING") inConnection = dev.takeTransportReply() ? "answered" : "silent";
+      else if (code === "DEVICE_CLOSED_CONNECTION" && (dev.closedAheadOfLastRequest?.() || dev.restartWasResent)) inConnection = "undecided";
       else if (code === "DEVICE_CLOSED_CONNECTION" || code === "SECURE_SYNC_NO_RESPONSE") inConnection = "silent";
       else throw e;
     }
@@ -117,7 +126,7 @@ export async function observeReboot(
   const inConnection = typeof sent === "boolean" ? null : sent.inConnection;
   const where = inConnection === "silent" || (confirmed && inConnection === "unacknowledged") ? ", first in the restart's own connection" : "";
   const rebooted = (): RebootObservation => ({ rebooted: true, detail: `silent ${silentAt} ms after A_Restart${where}, answering again after ${now() - start} ms${note}` });
-  if (inConnection !== null && see(inConnection)) return rebooted();
+  if (inConnection !== null && inConnection !== "undecided" && see(inConnection)) return rebooted();
   while (now() - start < windowMs) {
     if (see(await probe())) return rebooted();
     await sleep(intervalMs);

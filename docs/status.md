@@ -592,5 +592,13 @@ report a device family as working on the strength of a passing test suite.
   a System B or System 7 operation compares bytes (the System 1 download builds its small plan after one
   read): a few milliseconds on the units emulated from their collections and with the largest application
   in the corpus. A run on hardware from a slow host is not shown. A closed tunnel
-  ends the operation with `TUNNEL_CLOSED`, a closed connection with `DEVICE_CLOSED_CONNECTION`; over TCP
+  ends the operation with `TUNNEL_CLOSED`, a connection the device closed with `DEVICE_CLOSED_CONNECTION`
+  unless it closed before a request reached it, which a new connection then asks once more (§25); over TCP
   the bridge needs no acknowledgement.
+- **A stalled TCP link to the interface is waited out against a scripted interface only.** A send
+  waits for the interface's confirmation while the interface answers no connection-state request
+  written behind the frame, up to the three unanswered requests that end the tunnel; a request whose
+  connection the device closed before it reached the device is asked once more on a new connection,
+  and an A_Restart that met a closed connection is sent again ([findings.md](findings.md) §25). Stalls
+  of 2, 5, 8 and 15 s at a read, a write, the load bracket and the restart pass against a scripted
+  interface and unit; none is shown on hardware. Over UDP a stall of two seconds still costs the tunnel.

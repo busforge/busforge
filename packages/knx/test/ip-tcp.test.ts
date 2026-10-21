@@ -71,10 +71,15 @@ class FakeTcpSocket implements TcpSocket {
   connect(_port: number, _ip: string, onConnect: () => void, onError: (e: Error) => void): void {
     if (this.connectError) onError(this.connectError); else onConnect();
   }
-  // A gateway confirms every tunnelled frame with an L_Data.con; `autoCon` plays that gateway.
+  // A gateway confirms every tunnelled frame with an L_Data.con; `autoCon` plays that gateway. It also
+  // answers every connection-state request (`autoState`), as a live gateway on a flowing stream does.
   autoCon = true;
+  autoState = true;
   write(frame: Buffer): void {
     this.sent.push(Buffer.from(frame));
+    if (this.autoState && frame.readUInt16BE(2) === SVC.CONNECTIONSTATE_REQ) {
+      queueMicrotask(() => this.dataCb?.(knxFrame(SVC.CONNECTIONSTATE_RES, Buffer.from([frame[6]!, 0x00]))));
+    }
     if (this.autoCon && frame.readUInt16BE(2) === SVC.TUNNEL_REQ) {
       const con = Buffer.from(frame.subarray(10)); con[0] = CEMI.LDATA_CON;
       queueMicrotask(() => this.dataCb?.(knxFrame(SVC.TUNNEL_REQ, Buffer.concat([Buffer.from([0x04, frame[7]!, 0x00, 0x00]), con]))));
@@ -188,6 +193,7 @@ describe("KnxIpTunnel over TCP", () => {
 
   test("a TCP gateway that answers no heartbeat is brought down and the socket ended", async () => {
     const { sock, tunnel } = await connectedTcp();
+    sock.autoState = false;
     tunnel["stateTimeoutMs"] = 5;
     const closed: string[] = [];
     tunnel.onClosed = (r) => closed.push(r);
@@ -252,6 +258,28 @@ describe("KnxIpTunnel over TCP", () => {
     const con = Buffer.from(cemi); con[0] = CEMI.LDATA_CON;
     sock.inject(knxFrame(SVC.TUNNEL_REQ, Buffer.concat([Buffer.from([0x04, CHANNEL, 0x00, 0x00]), con]))); // the first frame's, late
     expect(((await second) as KnxError).code).toBe("TUNNEL_CON_TIMEOUT");
+  });
+
+  test("a confirmation still missing once the interface has gone on answering for a whole heartbeat round is TUNNEL_CON_TIMEOUT, however the answers are counted", async () => {
+    const { sock, tunnel } = await connectedTcp();
+    sock.autoCon = false;
+    sock.autoState = false;
+    tunnel["conTimeoutMs"] = 20;
+    tunnel["stateTimeoutMs"] = 30;
+    // Leaves the heartbeat round's first request, written before the frame, unanswered and answers the
+    // rest: by count the answer that would show the interface read the frame never arrives, while the
+    // round counts the tunnel alive.
+    let requests = 0;
+    const write = sock.write.bind(sock);
+    sock.write = (frame: Buffer) => {
+      write(frame);
+      if (frame.readUInt16BE(2) === SVC.CONNECTIONSTATE_REQ && requests++ > 0) queueMicrotask(() => sock.inject(knxFrame(SVC.CONNECTIONSTATE_RES, Buffer.from([CHANNEL, 0x00]))));
+    };
+    void tunnel["heartbeat"]();
+    const e = await tunnel.sendCemi(cemiLData(CLIENT_IA, iaToNum("1.2.7"), Buffer.from([0x43, 0x00]))).catch((x: unknown) => x);
+    expect((e as KnxError).code).toBe("TUNNEL_CON_TIMEOUT");
+    expect((e as KnxError).message).toMatch(/with the link not shown dead/);
+    await tunnel.disconnect();
   });
 
   test("a transport-layer control frame (T_ACK) is sent without waiting for a confirmation", async () => {

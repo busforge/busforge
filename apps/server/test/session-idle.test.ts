@@ -10,7 +10,8 @@ import { SimSystemB, systemBObjects } from "../../../packages/product/test/colle
 import type { Connection } from "../src/db/connections.ts";
 
 // A device closes a transport connection that carries no request for the transport layer's connection
-// timeout (6 s), and a read or a write then fails on DEVICE_CLOSED_CONNECTION. A step that builds or
+// timeout (6 s), and a read or a write then goes out again on a new connection, after a pause, or fails on
+// DEVICE_CLOSED_CONNECTION where the connection carried an A_Restart. A step that builds or
 // decodes from a large application takes seconds on a slow host, so none may run inside a device session.
 // Here every such step (the application's parse, its model, the image builds, the configuration and the
 // decoding of an image, and the read-back's configuration callback) moves a virtual clock on by 7 s, and
@@ -154,7 +155,7 @@ const appXml = readFileSync(join(import.meta.dir, "..", "..", "..", "packages", 
   comObjTable = buildComObjectTable(view.imageComObjects, view.maxComObjectNumber, new Set());
 }
 const connection: Connection = { id: "c", name: "GW", type: "ip", host: "198.51.100.10", port: 3671, ipTransport: "udp", usbVendorId: null, usbProductId: null, usbSerial: null, createdAt: 0 };
-const scope = { projectId: "p", dataDir: dir, ia: "1.2.10", connection, deviceId: "d" };
+const scope = { projectId: "p", dataDir: dir, ia: "1.1.10", connection, deviceId: "d" };
 const params = new Map<string, string>();
 // Every operation runs with the slow steps slowed and a fresh unit; it returns the unit with the result.
 async function onUnit<T>(run: () => Promise<T>): Promise<{ result: T; unit: IdleClosingUnit }> {
@@ -163,15 +164,16 @@ async function onUnit<T>(run: () => Promise<T>): Promise<{ result: T; unit: Idle
   try { return { result: await run(), unit: u }; } finally { slow = false; unit = null; }
 }
 
-test("the emulated unit closes a connection left without a frame for 6 s, and the next request fails on it", async () => {
+test("the emulated unit closes a connection left without a frame for 6 s, and the next request goes out again on a new connection", async () => {
   const u = new IdleClosingUnit();
-  const dev = new KnxDevice(u, "1.2.10");
+  const dev = new KnxDevice(u, "1.1.10", undefined, { reconnectGapMs: 10 });
   await dev.connect();
   expect(await dev.deviceDescriptor()).toBe("MV-07B0");
   lag += SLOW_MS;
-  expect(await dev.propRead(4, 7).catch((e: unknown) => e)).toMatchObject({ code: "DEVICE_CLOSED_CONNECTION" });
+  await dev.propRead(4, 7);
   expect(u.closed).toEqual([expect.any(Number)]);
   expect(u.closed[0]).toBeGreaterThan(IDLE_CLOSE_MS);
+  expect(u.sessions).toBe(2);
 });
 
 test("a read-back decodes after its session, and the checks of a never-programmed unit's read run each in a session of its own", async () => {
@@ -280,7 +282,7 @@ test("a device of another mask fails the session at its first request", async ()
 
 test("a device whose session opens at its first request holds its settings until then and refuses any other use before it", async () => {
   let opens = 0;
-  const real = new KnxDevice(new IdleClosingUnit(), "1.2.10");
+  const real = new KnxDevice(new IdleClosingUnit(), "1.1.10");
   const { dev } = ops.openedOnFirstRequest(async () => { opens++; await real.connect(); return { dev: real }; }, false, false);
   dev.setExtendedMemoryServices(true);
   dev.acceptUnprovenRestart(true);

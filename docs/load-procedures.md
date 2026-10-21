@@ -1243,6 +1243,8 @@ and the task API's outcome, the server's bus log line (`restartUnproven`) and th
 configuration for good is not proven. The same holds where the link to the interface failed while the
 restart was being proven, after the `A_Restart` went out: a device whose restart takes the interface's
 tunnels down (a power supply that cuts the bus voltage, a router beside the interface) ends the proof so.
+It holds too where a stalled link to the interface leaves a `T_Disconnect` ahead of the probe undecided
+([findings.md](findings.md) §25).
 A KNXnet/IP tunnel is opened again and the device read back: the flash ends `verified` or not, with
 `restartUnproven`. A KNX-USB interface that is gone cannot be opened again by the operation, so the flash
 ends at once as unverified (`FLASH_UNVERIFIED_LINK_DOWN`, it may have landed); any other link failure

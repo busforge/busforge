@@ -791,8 +791,9 @@ refuse the service.
 A request machine that recognises only the numbered control frames (`T_ACK`/`T_NAK`, `0xC0` and
 above) parses `0x81` as a data frame with service `0x100`, acknowledges it and reports an answer.
 In Busforge a device's `T_Connect`/`T_Disconnect` is never acknowledged or delivered, and a
-`T_Disconnect` ends the request in flight as `DEVICE_CLOSED_CONNECTION` without asking again: a
-closed connection takes no further numbered frame. It is deliberately not `DEVICE_NOT_ANSWERING`,
+`T_Disconnect` ends the request in flight as `DEVICE_CLOSED_CONNECTION`, and it is not asked again on
+that connection: a closed connection takes no further numbered frame (a new connection asks it once
+more only where the device closed before the request reached it, §25). It is deliberately not `DEVICE_NOT_ANSWERING`,
 which callers read as silence: a device that closes is present. The address check before an
 individual-address write counts it as taken (a device in another tool's connection answers a
 stranger's frame this way), and the read after a restart reconnects and reads once more, as it does
@@ -811,12 +812,79 @@ about 2 s each. Neither the device nor Data Secure is the cause: a stream that s
 seconds cuts off a long run of management requests.
 
 Busforge tells the two apart by waiting, over TCP, for the interface's confirmation of every send
-(§15), matched by destination and TPDU. A missing confirmation within 3 s is `TUNNEL_CON_TIMEOUT`
-("the link to the interface stalled, or the interface is stuck; whether the device answered is
-unknown"), not `DEVICE_NOT_ANSWERING`. It is not retried (a repetition would queue behind the stuck
-frame), and the load runner and the reconnect after a restart pass it on rather than report the
-device as silent. Shown on hardware: the confirmation matches against Busforge's bridge and an MDT
-KNX IP interface (reads and a secured smoke run). Not shown: `TUNNEL_CON_TIMEOUT` on a real stall.
+(§15), matched by destination and TPDU, and by not giving up on it while the stream is stalled.
+
+- **The confirmation wait.** A cEMI client waits for a confirmation before its next request, 3 s
+  being the recommended time (KNX 3/6/3 §4.1.5.1, a recommendation, not a rule to end the
+  operation; Calimero and xknx use 3 s and close nothing when it passes). ETS goes on as well: its log
+  of a partial download through a TCP link that stalled for several seconds shows `ConfTimeout after
+  1026 ms` and the next frame sent, and the answers arriving with the stream. So a confirmation
+  missing after 3 s is not yet a failure. Busforge writes a `CONNECTIONSTATE_REQUEST` behind the
+  frame; the interface reads the stream in order, so its answer shows the interface has read the
+  frame (an answer to a request written before the frame shows nothing about it). From that answer
+  the confirmation gets 3 s more, and missing then it is `TUNNEL_CON_TIMEOUT`: the interface answers
+  on the link and did not take the frame, is stuck, or the link stalled again; whether the device
+  answered is unknown. While the requests go unanswered the stream is stalled and the send waits, until
+  the heartbeat declares the tunnel dead (three requests 10 s apart, KNX 3/8/2 §5.4), which fails it as
+  `TUNNEL_CLOSED`. However the answers go, a send waits no longer than that round can last, 3 s on
+  each side of it.
+  Neither is retried at this layer, and the load runner and the reconnect after a restart pass both
+  on rather than report the device as silent.
+- **The device's connection timers keep running.** A device closes a connection that carried no
+  frame for 6 s, and one whose frame of its own we do not acknowledge after three repetitions 3 s
+  apart (thelsing/OpenKNX `transport_layer.cpp`, Calimero `TransportLayerImpl`). A stall that long
+  ends the connection under the request. A closed connection answers a numbered frame with
+  `T_Disconnect` and passes nothing on (thelsing A10), and a stalled stream delivers the device's
+  `T_Disconnect`, our frame's confirmation and what follows in order, in one burst: Busforge hands
+  each frame behind a confirmation in that burst on one event-loop turn later, so the request the
+  confirmation settles sees what came before it, not what came after. Over USB each frame arrives as
+  its own event; over UDP the send ends at the interface's acknowledgement, before the bus, so there a
+  `T_Disconnect` counts as ahead of the frame only when it came before that acknowledgement.
+- **Asked again on a new connection.** A request whose connection the device closed before the
+  request's first frame reached it (its `T_Disconnect` came while the request waited for the frame's
+  confirmation, or between two requests after the device had taken a frame of the connection), and of
+  which the device acknowledged or refused no try, never reached the device. A `T_Disconnect` that
+  lands on a new connection before the device took anything on it may still belong to the connection
+  before, and does not count.
+  As ETS does after `Connection closed by remote device` (it logs `Waiting 2289.6548 ms before
+  reconnect`, opens a new connection and sends the request again, a read as well as a property
+  write), Busforge waits 2.3 s, so the device's `T_Disconnect` to the frame that met the closed
+  connection lands in the old connection, connects again and asks the request once more. Not after an
+  A_Restart on that connection, where a closed connection is the reboot the restart's proof reads (its
+  probes included), not for a request sent only once (the tool key write), and not for the first frame of
+  a connection, where a `T_Disconnect` is the refusal of a device that holds another connection (§37). A
+  device that took the request and then closed (the MDT BE-02001.02 of §24) is not asked again.
+- **The restart.** An A_Restart that met a closed connection was dropped by the device, and the
+  silence after it would pass for the reboot. So a connection the device closed is opened again
+  before A_Restart (and before the master reset), and a restart whose confirmation came after the
+  device's `T_Disconnect` is sent once more on a new connection; a restart sent twice reboots the
+  device twice, which changes nothing it stores. The proof of a restart sent again counts from the one
+  that went out on the open connection, and the device's connection timer from that connection's
+  `T_Connect`. Met by a `T_Disconnect` ahead of it again, it is `RESTART_NOT_DELIVERED`: the restart
+  most likely never reached the device, so whether it restarted, and stored its configuration, is not
+  proven.
+- **The restart's proof.** A device that ignored A_Restart closes the idle connection 6 s after it, and
+  a link stalled that long delivers that `T_Disconnect` ahead of the probe, where it looks like the
+  device going away. So a `T_Disconnect` ahead of the probe proves the reboot only from a device that
+  closes as it takes A_Restart: within the proof window (4 s) of the restart's send, which keeps clear of
+  the 6 s idle timeout, the restart confirmed in time (a stall around it hides the order), and not after
+  a restart sent again (the first
+  one's closed connection may still answer); after a restart sent again only a `T_Disconnect` in
+  answer to a probe counts. Otherwise the restart is `RESTART_UNPROVEN`, which a flash takes as an
+  unproven restart and settles by its read-back ([load-procedures.md](load-procedures.md), "An unproven
+  restart in a flash").
+
+Shown on hardware: the confirmation matches against Busforge's bridge and an MDT KNX IP interface
+(reads and a secured smoke run). Shown against a scripted interface and unit (`link-stall.test.ts`):
+stalls of 2, 5, 8 and 15 s in both directions, at a read, a write, the load bracket's `LoadCompleted`
+and the restart, end in the device's bytes, each write and event carried out once and one proven
+reboot; a stall longer than the heartbeat's three requests ends the tunnel as `TUNNEL_CLOSED`; a device
+that ignores A_Restart is not taken as rebooted, with the probe held by a stall in both directions or
+towards the interface only and the restart's confirmation late or not, and a device that closes as it takes
+A_Restart behind a late confirmation is reported unproven. The smoke runner's persistence check takes such
+a close behind A_Restart as no silence. Not
+shown: any of it on a real stall. Over UDP the confirmation is not awaited and a stall costs the tunnel
+after two seconds (§35).
 
 What it does not change: a server with one tunnel address that still holds the dead channel refuses
 every new tunnel with `0x24` until it reaps that channel, 120 to 130 s after the channel's last frame
@@ -1074,8 +1142,10 @@ address, below the added one, this does not tell its first association from its 
 ## 37. A device closes a connection that carries no request for six seconds
 
 A transport-layer connection has a connection timeout of 6 s: a device that has taken no frame on it for
-that long sends `T_Disconnect` (`0x81`) and takes no further numbered frame, so the next request ends as
-`DEVICE_CLOSED_CONNECTION` (§24). The OpenKNX RaumController does exactly this, its `T_Disconnect` 6.0 s
+that long sends `T_Disconnect` (`0x81`) and takes no further numbered frame, so the next request meets a
+closed connection: it is asked once more on a new connection 2.3 s later (§25), or 12 s later where the
+device had taken nothing on the connection yet (below), and on a connection that carried an A_Restart it
+ends as `DEVICE_CLOSED_CONNECTION` (§24). The OpenKNX RaumController does exactly this, its `T_Disconnect` 6.0 s
 after the client's last frame. A client that works between two requests (parsing a large application,
 building an image or a configuration from it, decoding what it read) loses the connection once that work
 takes six seconds, and on a host under load it takes a multiple of its idle time. Over UDP the same pause

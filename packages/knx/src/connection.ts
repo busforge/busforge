@@ -77,7 +77,9 @@ function realTcpSocket(): TcpSocket {
 // requests both directions, acknowledged over UDP only) and surfaces incoming cEMI L_Data
 // (source IA + raw TPDU) to a listener. The connection-oriented KNX transport
 // lives one layer up in KnxDevice.
-type ConWaiter = { key: string; promise: Promise<void>; resolve: () => void; reject: (e: Error) => void };
+// `probe`: once the confirmation is overdue, the number of the connection-state request whose answer
+// shows the interface has read the frame (see awaitCon).
+type ConWaiter = { key: string; promise: Promise<void>; resolve: () => void; reject: (e: Error) => void; probe?: number; grace?: ReturnType<typeof setTimeout>; cap?: ReturnType<typeof setTimeout> };
 
 export class KnxIpTunnel implements KnxTransport {
   private sock!: TunnelSocket;
@@ -98,12 +100,22 @@ export class KnxIpTunnel implements KnxTransport {
   private ackReleases = new Set<() => void>();
   // Per-send wait for a tunnelling ACK over UDP; an instance field so a test can shorten it.
   private ackTimeoutMs = 1500;
-  // TCP: the sends waiting for the gateway's L_Data.con, oldest first, and how long each may wait (an
-  // instance field so a test can shorten it). Over TCP the confirmation is the only sign that a frame
-  // left the gateway; a stream that stalls (lost segments in retransmission back-off, seen on
-  // the bench's Wi-Fi) otherwise looks exactly like a device that stopped answering.
+  // TCP: the sends waiting for the gateway's L_Data.con, oldest first, and how long each waits before
+  // the link is asked whether it still carries anything (an instance field so a test can shorten it):
+  // the 3 s a cEMI client waits for a confirmation (KNX 3/6/3 §4.1.5.1, a recommendation). Over TCP
+  // the confirmation is the only sign that a frame left the gateway; a stream that stalls (lost
+  // segments in retransmission back-off, a Wi-Fi roam) otherwise looks exactly like a device that
+  // stopped answering.
   private conWaiters: ConWaiter[] = [];
   private conTimeoutMs = 3000;
+  // TCP: the connection-state requests written on this channel and the answers read back, counted. The
+  // interface reads the stream in order and answers each request, so the answer to request n shows it
+  // has read every frame written before request n.
+  private stateSent = 0;
+  private stateAnswered = 0;
+  private heartbeatRunning = false;
+  // Set by a confirmation that settled a send, for the TCP reader (connectTcp).
+  private settledCon = false;
   // Frames whose confirmation timed out: a confirmation that turns up later is theirs, never the
   // confirmation of an identical frame sent after them (a repeated request, a repeated group write).
   private lateCons: string[] = [];
@@ -186,6 +198,8 @@ export class KnxIpTunnel implements KnxTransport {
     this.txSeq = 0;
     this.generation++;
     this.stopHeartbeat();
+    this.stateSent = 0;
+    this.stateAnswered = 0;
     if (this.mode === "tcp") return this.connectTcp();
     const sock = this.sock = this.createSocket();
     // Open from here on, so a disconnect while the socket binds closes it.
@@ -269,18 +283,33 @@ export class KnxIpTunnel implements KnxTransport {
     // A byte stream: reassemble it into whole frames and feed each through the SAME dispatch the UDP
     // path uses. A stream that cannot be kept in frame has no safe resync point, so the connection is
     // reaped rather than guessed at.
+    // A frame read behind a confirmation in the same chunk waits for the next turn of the event loop,
+    // so the send that confirmation settles carries on before it: one stalled stream delivers the
+    // device's T_Disconnect, our frame's confirmation and the device's next frame in one burst, and
+    // the device layer tells by their order whether the device closed the connection before our
+    // frame reached it.
     const parser = new KnxIpStreamParser();
+    const pending: Buffer[] = [];
+    let draining = false;
+    const drain = () => {
+      draining = false;
+      while (pending.length > 0) {
+        if (sock !== this.tcpSock) { pending.length = 0; return; }
+        this.settledCon = false;
+        void this.onMessage(pending.shift()!).catch((err: unknown) => {
+          if (this.closed) return; // a frame lost to teardown is not a failure, it is the teardown
+          console.error(`KNX/IP: dropped a frame: ${err instanceof Error ? err.message : "unknown error"}`);
+        });
+        if (this.settledCon && pending.length > 0) { draining = true; setTimeout(drain, 0); return; }
+      }
+    };
     sock.onData((chunk) => {
       if (sock !== this.tcpSock) return;
       let frames: Buffer[];
       try { frames = parser.push(chunk); }
       catch (e) { this.reap(`the TCP stream desynchronised: ${e instanceof Error ? e.message : String(e)}`); return; }
-      for (const m of frames) {
-        void this.onMessage(m).catch((err: unknown) => {
-          if (this.closed) return; // a frame lost to teardown is not a failure, it is the teardown
-          console.error(`KNX/IP: dropped a frame: ${err instanceof Error ? err.message : "unknown error"}`);
-        });
-      }
+      pending.push(...frames);
+      if (!draining) drain();
     });
     // TCP guarantees the socket, not the peer: when the connection drops, so does the channel.
     sock.onClose(() => { if (sock === this.tcpSock) this.reap("the TCP connection to the gateway closed"); });
@@ -314,21 +343,30 @@ export class KnxIpTunnel implements KnxTransport {
 
   // One heartbeat round: a CONNECTIONSTATE_REQUEST and its answer, retried per the spec, and if the
   // gateway answers none of them the tunnel is brought down honestly rather than left looking alive.
+  // Also started early by a confirmation that is overdue (awaitCon), so one round at a time.
   private async heartbeat(): Promise<void> {
+    if (this.heartbeatRunning) return;
+    this.heartbeatRunning = true;
     const generation = this.generation;
-    for (let i = 0; i < CONNECTIONSTATE_TRIES; i++) {
-      if (this.closed || generation !== this.generation) return;
-      const answered = new Promise<boolean>((resolve) => {
-        this.stateWaiter = resolve;
-        setTimeout(() => { if (this.stateWaiter === resolve) { this.stateWaiter = null; resolve(false); } }, this.stateTimeoutMs);
-      });
-      // The control HPAI exactly as the CONNECT_REQ sent it: NAT mode on UDP, the zero IPV4_TCP HPAI on TCP.
-      const controlHpai = this.mode === "tcp" ? hpaiTcp() : hpai("0.0.0.0", 0);
-      try { await this.send(knxFrame(SVC.CONNECTIONSTATE_REQ, Buffer.concat([Buffer.from([this.channel, 0x00]), controlHpai]))); }
-      catch { /* socket gone: the missing answer below is treated as the failure it is */ }
-      if (await answered) return; // a positive CONNECTIONSTATE_RESPONSE: the channel is alive
-    }
-    if (generation === this.generation) this.reap("the gateway did not answer three connection-state requests; the tunnel is considered dead");
+    try {
+      for (let i = 0; i < CONNECTIONSTATE_TRIES; i++) {
+        if (this.closed || generation !== this.generation) return;
+        const answered = new Promise<boolean>((resolve) => {
+          this.stateWaiter = resolve;
+          setTimeout(() => { if (this.stateWaiter === resolve) { this.stateWaiter = null; resolve(false); } }, this.stateTimeoutMs).unref?.();
+        });
+        await this.sendStateRequest();
+        if (await answered) return; // a positive CONNECTIONSTATE_RESPONSE: the channel is alive
+      }
+      if (generation === this.generation) this.reap("the gateway did not answer three connection-state requests; the tunnel is considered dead");
+    } finally { this.heartbeatRunning = false; }
+  }
+
+  private async sendStateRequest(): Promise<void> {
+    // The control HPAI exactly as the CONNECT_REQ sent it: NAT mode on UDP, the zero IPV4_TCP HPAI on TCP.
+    const controlHpai = this.mode === "tcp" ? hpaiTcp() : hpai("0.0.0.0", 0);
+    try { await this.send(knxFrame(SVC.CONNECTIONSTATE_REQ, Buffer.concat([Buffer.from([this.channel, 0x00]), controlHpai]))); this.stateSent++; }
+    catch { /* socket gone: the missing answer is treated as the failure it is */ }
   }
 
   private stopHeartbeat() {
@@ -401,7 +439,11 @@ export class KnxIpTunnel implements KnxTransport {
     if (this.connectResWaiter?.match(m)) { this.connectResWaiter.resolve(m); return; }
     if (svc === SVC.CONNECTIONSTATE_RES) {
       // The answer to our heartbeat: body = [channel, status]. Status 0 means the channel is alive.
-      if (this.stateWaiter && body[0] === this.channel) { const w = this.stateWaiter; this.stateWaiter = null; w(body[1] === 0); }
+      if (body[0] === this.channel) {
+        this.stateAnswered++;
+        if (this.stateWaiter) { const w = this.stateWaiter; this.stateWaiter = null; w(body[1] === 0); }
+        this.interfaceReadUpTo();
+      }
     } else if (svc === SVC.DISCONNECT_REQ) {
       // The gateway is closing the channel (its own 120 s timeout, a reboot, an operator action).
       // Answer so it stops retransmitting, then surface the closure rather than keep a dead channel
@@ -443,7 +485,7 @@ export class KnxIpTunnel implements KnxTransport {
       const control = (cemi[2 + (cemi[1] ?? 0) + 7] ?? 0) & 0x80;
       const w = control ? null : this.awaitCon(cemi);
       try { await this.send(knxFrame(SVC.TUNNEL_REQ, Buffer.concat([Buffer.from([0x04, this.channel, seq, 0x00]), cemi]))); }
-      catch (e) { if (w) { this.dropCon(w); w.promise.catch(() => undefined); } throw e; }
+      catch (e) { if (w) { this.dropCon(w); w.promise.catch(() => undefined); w.reject(e instanceof Error ? e : new Error(String(e))); } throw e; }
       if (w) await w.promise;
       return;
     }
@@ -471,19 +513,42 @@ export class KnxIpTunnel implements KnxTransport {
     const p = 2 + (cemi[1] ?? 0);
     return cemi.subarray(p + 4).toString("hex");
   }
+  // A confirmation still missing after conTimeoutMs is not yet a failure: the stream may be stalled,
+  // with the frame, or its confirmation, held in TCP's retransmission. A connection-state request
+  // written now goes behind the frame, so its answer shows the interface has read the frame: from that
+  // answer the confirmation gets conTimeoutMs more, and missing then it is TUNNEL_CON_TIMEOUT. While
+  // the requests go unanswered the stream is stalled and the wait goes on, until the heartbeat round
+  // they belong to declares the tunnel dead (three requests 10 s apart, KNX 3/8/2 §5.4), which fails
+  // the send as TUNNEL_CLOSED. ETS goes on after an unconfirmed frame as well (it logs a ConfTimeout
+  // after about 1 s and sends the next one). However the answers go, the wait ends as TUNNEL_CON_TIMEOUT
+  // once it has lasted as long as that round can (conTimeoutMs on each side of three requests).
   private awaitCon(cemi: Buffer): ConWaiter {
     const key = KnxIpTunnel.conKey(cemi);
     let resolve!: () => void, reject!: (e: Error) => void;
     const promise = new Promise<void>((res, rej) => { resolve = res; reject = rej; });
-    const w: ConWaiter = { key, promise, resolve: () => { clearTimeout(t); resolve(); }, reject: (e) => { clearTimeout(t); reject(e); } };
+    const clear = () => { clearTimeout(t); if (w.grace) clearTimeout(w.grace); if (w.cap) clearTimeout(w.cap); };
+    const w: ConWaiter = { key, promise, resolve: () => { clear(); resolve(); }, reject: (e) => { clear(); reject(e); } };
     const t = setTimeout(() => {
-      if (!this.dropCon(w)) return;
-      this.lateCons.push(key);
-      if (this.lateCons.length > 16) this.lateCons.shift();
-      reject(new KnxError("TUNNEL_CON_TIMEOUT", `the interface at ${this.ifaceIp}:${this.port} did not confirm the frame within ${this.conTimeoutMs} ms: the link to the interface stalled, or the interface is stuck; whether the device answered is unknown`));
+      if (!this.conWaiters.includes(w)) return;
+      w.probe = this.stateSent + 1;
+      w.cap = setTimeout(() => this.conTimedOut(w, `did not confirm the frame within ${Math.round((2 * this.conTimeoutMs + CONNECTIONSTATE_TRIES * this.stateTimeoutMs) / 1000)} s, with the link not shown dead`), this.conTimeoutMs + CONNECTIONSTATE_TRIES * this.stateTimeoutMs);
+      if (this.heartbeatRunning) void this.sendStateRequest();
+      else void this.heartbeat();
     }, this.conTimeoutMs);
     this.conWaiters.push(w);
     return w;
+  }
+  private interfaceReadUpTo(): void {
+    for (const w of this.conWaiters) {
+      if (w.probe === undefined || w.grace !== undefined || this.stateAnswered < w.probe) continue;
+      w.grace = setTimeout(() => this.conTimedOut(w, `answered on the link but did not confirm the frame within ${Math.round(this.conTimeoutMs / 1000)} s of answering`), this.conTimeoutMs);
+    }
+  }
+  private conTimedOut(w: ConWaiter, what: string): void {
+    if (!this.dropCon(w)) return;
+    this.lateCons.push(w.key);
+    if (this.lateCons.length > 16) this.lateCons.shift();
+    w.reject(new KnxError("TUNNEL_CON_TIMEOUT", `the interface at ${this.ifaceIp}:${this.port} ${what}: it did not take the frame, it is stuck, or the link stalled again; whether the device answered is unknown`));
   }
   private dropCon(w: ConWaiter): boolean {
     const i = this.conWaiters.indexOf(w);
@@ -498,6 +563,7 @@ export class KnxIpTunnel implements KnxTransport {
     const w = this.conWaiters.find((x) => x.key === key);
     if (!w) return;
     this.dropCon(w);
+    this.settledCon = true;
     const ctrl1 = cemi[2 + (cemi[1] ?? 0)] ?? 0;
     if (ctrl1 & 0x01) w.reject(new KnxError("BUS_SEND_FAILED", "the KNX interface reports that the telegram did not reach the bus (negative L_Data.con); the line is dead, disconnected, or no device acknowledged the frame"));
     else w.resolve();

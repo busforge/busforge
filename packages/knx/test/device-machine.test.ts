@@ -13,7 +13,7 @@ import { KnxError } from "../src/errors.ts";
 const DEV = 0x110b; // 1.1.11 = (1<<12)|(1<<8)|11
 // The scripted transport answers inside the send or not at all, so a device timeout only ever measures
 // a silence: the bus timeouts shrink to milliseconds, in the order they have on the bus.
-const FAST: DeviceTimeouts = { ackMs: 15, responseMs: 20, retryGapMs: 1, syncResponseMs: 30, restartAnswerMs: 20, restartProofMs: 150, droppedRepeatMs: 12_000, staleConnectionMs: 50 };
+const FAST: DeviceTimeouts = { ackMs: 15, responseMs: 20, retryGapMs: 1, syncResponseMs: 30, restartAnswerMs: 20, restartProofMs: 150, droppedRepeatMs: 12_000, staleConnectionMs: 50, reconnectGapMs: 10, confirmLateMs: 20 };
 
 class FakeTransport implements KnxTransport {
   assignedIa = 0x1101; // 1.1.1 (tunnel-assigned source)

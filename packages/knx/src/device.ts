@@ -219,7 +219,8 @@ async function waitForSyncGap(dst: number): Promise<void> {
 // answer to a confirmed restart. Code that talks to a device on the bus takes these; a test whose
 // scripted transport answers at once or never passes shorter ones, so a silence costs it no time.
 // restartProofMs: after a negatively confirmed A_Restart, how long from the device's last frame to us a
-// T_Disconnect still counts as its reboot (restart(), proveUnconfirmedRestart). It stays well below the
+// T_Disconnect still counts as its reboot (proveUnconfirmedRestart), and after a confirmed one how long
+// from the restart's send a T_Disconnect ahead of the probe does (restart()). It stays well below the
 // 6 s after which a device closes an idle transport connection by itself.
 // droppedRepeatMs: how long a dropped frame's exact repetition is recognised. The transport layer
 // repeats an unacknowledged frame at most three times, 3 s apart; after that a frame with the same
@@ -227,8 +228,15 @@ async function waitForSyncGap(dst: number): Promise<void> {
 // staleConnectionMs: how long a device may still hold a transport connection whose link to us was lost.
 // It closes an idle one after 6 s, and one with a frame of its own we never acknowledged after three
 // repetitions 3 s apart and the acknowledgement timeout behind the last: 12 s.
-export interface DeviceTimeouts { ackMs: number; responseMs: number; retryGapMs: number; syncResponseMs: number; restartAnswerMs: number; restartProofMs: number; droppedRepeatMs: number; staleConnectionMs: number }
-export const DEVICE_TIMEOUTS: Readonly<DeviceTimeouts> = { ackMs: 1500, responseMs: 2000, retryGapMs: 200, syncResponseMs: 3000, restartAnswerMs: 2000, restartProofMs: 4000, droppedRepeatMs: 12_000, staleConnectionMs: 12_000 };
+// confirmLateMs: how long the interface's confirmation of a frame takes before it counts as late, the
+// 3 s a cEMI client waits for it (KNX 3/6/3 §4.1.5.1): a link that held a frame that long may have
+// changed the order in which the device's frames and ours met on the bus.
+// reconnectGapMs: the pause before a new connection to a device that closed ours before a frame of it
+// arrived (request, sendOnOpenConnection), as ETS pauses ("Waiting 2289.6548 ms before reconnect" in its
+// log of a partial download through a stalling TCP link); the device's T_Disconnect to the frame that
+// reached the closed connection arrives in it, not in the new connection.
+export interface DeviceTimeouts { ackMs: number; responseMs: number; retryGapMs: number; syncResponseMs: number; restartAnswerMs: number; restartProofMs: number; droppedRepeatMs: number; staleConnectionMs: number; reconnectGapMs: number; confirmLateMs: number }
+export const DEVICE_TIMEOUTS: Readonly<DeviceTimeouts> = { ackMs: 1500, responseMs: 2000, retryGapMs: 200, syncResponseMs: 3000, restartAnswerMs: 2000, restartProofMs: 4000, droppedRepeatMs: 12_000, staleConnectionMs: 12_000, reconnectGapMs: 2300, confirmLateMs: 3000 };
 
 // Transport connections to a device that may still be open in it although the link to the interface
 // they ran over failed, so their T_Disconnect may never have reached it: the tunnel address each ran
@@ -302,6 +310,37 @@ export class KnxDevice {
   // since acknowledged, refused or sent any frame to us (request).
   private numberedSinceConnect = -1;
   private takenSinceConnect = false;
+  // Whether the device has closed this connection (T_Disconnect to us) since connect(), and whether an
+  // A_Restart went out on it: after that a closed connection is the device rebooting, which the
+  // restart's proof reads, so no request on it reconnects.
+  private closedSinceConnect = false;
+  private restartSentSinceConnect = false;
+  // T_Disconnects that came as their own event, not handed back inside a send call, counted: only those
+  // can have been on the bus ahead of a frame of ours. A transport that hands a frame back inside the send call
+  // (a scripted one) answers the frame it was given; a real link delivers nothing synchronously.
+  private closesAhead = 0;
+  private inSendCall = 0;
+  // Whether such a T_Disconnect came between two requests, after the device had taken a frame of this
+  // connection: a T_Disconnect of the connection before it, still under way when this one opened, lands
+  // before that.
+  private closedAheadAfterTaken = false;
+  // When this connection's T_Connect went out: the device's connection timer runs from no earlier.
+  private connectedAt: number | null = null;
+  // The A_Restart that sendOnOpenConnection delivered: when it went out, when its send ended (the
+  // interface's confirmation, or for the confirmed restart the device's T_ACK), and whether it is the
+  // second one, after the first met a closed connection.
+  private restartSentAt = 0;
+  private restartConfirmedAt = 0;
+  private restartResent = false;
+  // When the last T_Disconnect that came as its own event arrived, and, for the request in flight, when
+  // the one ahead of its first frame did (null where none was ahead).
+  private closedAheadAt = 0;
+  private closeAheadAt: number | null = null;
+  // Of the request in flight: whether the device closed the connection before the interface confirmed
+  // its first frame, so before that frame reached the device (the interface delivers the bus's frames
+  // in their order), and whether the device acknowledged or refused any try of it.
+  private closedBeforeDelivery = false;
+  private requestTaken = false;
   // Called while a request is in flight when the device repeats a frame of its own to us (see onCemi).
   private peerRepeated: (() => void) | null = null;
   // The answer of a read asked again under a new number (requestTries), and that read (its APDU without
@@ -332,8 +371,12 @@ export class KnxDevice {
   private async sendCemi(cemi: Buffer, quiet = false): Promise<void> {
     const tpci = cemi[2 + (cemi[1] ?? 0) + 7] ?? 0;
     if ((tpci & 0x80) === 0 && this.numberedSinceConnect >= 0) this.numberedSinceConnect++;
-    try { await this.tun.sendCemi(cemi); }
-    catch (e) {
+    try {
+      this.inSendCall++;
+      let sent: Promise<void>;
+      try { sent = this.tun.sendCemi(cemi); } finally { this.inSendCall--; }
+      await sent;
+    } catch (e) {
       const code = (e as { code?: unknown }).code;
       if (!quiet && typeof code === "string" && (code.startsWith("TUNNEL_") || code.startsWith("USB_"))) {
         unclosed.set(this.dst, { ia: this.me, until: Date.now() + this.timeouts.staleConnectionMs, by: this });
@@ -351,6 +394,8 @@ export class KnxDevice {
     if ((tpdu[0] & 0xc0) === 0x80) {
       if ((tpdu[0] & 0x03) === 0x01 && dst === this.me) {
         this.peerClosedAt = Date.now();
+        this.closedSinceConnect = true;
+        if (this.inSendCall === 0) { this.closesAhead++; this.closedAheadAt = Date.now(); if (this.takenSinceConnect && this.inFlight === null) this.closedAheadAfterTaken = true; }
         if (unclosed.get(this.dst)?.ia === this.me) unclosed.delete(this.dst);
         this.peerClosed?.();
       }
@@ -449,6 +494,10 @@ export class KnxDevice {
     if (old && old.ia === this.me && old.until > Date.now()) await this.sendCemi(cemiLData(this.me, this.dst, tpDisconnect()));
     this.numberedSinceConnect = 0;
     this.takenSinceConnect = false;
+    this.closedSinceConnect = false;
+    this.closedAheadAfterTaken = false;
+    this.restartSentSinceConnect = false;
+    this.connectedAt = Date.now();
     await this.sendCemi(cemiLData(this.me, this.dst, tpConnect()));
     if (this.secure) await this.runSync(this.secure);
   }
@@ -501,19 +550,37 @@ export class KnxDevice {
   // that races the send is already taken under whatever it sets up.
   // `deviceAckSuffices`: the device's T_ACK proves the frame arrived, so the interface's L_Data.con
   // is not waited for once it is there, and its absence is no error (the confirmed restart, below).
-  private async request(build: (seq: number) => Buffer, expectResponse: boolean, tries = Number(process.env.KNX_TRIES) || 3, afterWrap?: () => void, deviceAckSuffices = false): Promise<ParsedApdu | null> {
+  // `reconnected`: the request is already the one asked again on a new connection (below).
+  private async request(build: (seq: number) => Buffer, expectResponse: boolean, tries = Number(process.env.KNX_TRIES) || 3, afterWrap?: () => void, deviceAckSuffices = false, reconnected = false): Promise<ParsedApdu | null> {
     // A caller awaiting an answer past the request (the confirmed restart) set it before; it stays.
     const awaitedBefore = this.answers;
     const first = this.numberedSinceConnect === 0;
     try {
       try { return await this.requestTries(build, expectResponse, tries, afterWrap, deviceAckSuffices); }
       catch (e) {
+        // The device closed the connection before the request's first frame reached it, and took no
+        // try of it: a closed connection answers a numbered frame with T_Disconnect and passes nothing
+        // on (KNX 3/3/4; thelsing/OpenKNX transport_layer.cpp A10), so the device never saw the request.
+        // A device closes a connection that carried nothing for 6 s, and one whose frame we did not
+        // acknowledge after its repetitions, so a link to the interface that stalls that long (a Wi-Fi
+        // roam, TCP retransmission back-off) ends it under us. As ETS does, a new connection asks the
+        // request once more. Not where a closed connection means something: after an A_Restart (the
+        // reboot its proof reads, its probes included), for a request sent only once (the tool key
+        // write), and for the first frame of a connection, where a device that holds another connection
+        // closes the new one at once (below).
+        const code = (e as { code?: string }).code;
+        if (code === "DEVICE_CLOSED_CONNECTION" && this.closedBeforeDelivery && !this.requestTaken && !reconnected && !first && tries > 1 && !this.restartSentSinceConnect) {
+          this.peerClosed = null; this.peerRepeated = null; this.inFlight = null; this.answers = awaitedBefore; this.otherServices.clear();
+          await sleep(this.timeouts.reconnectGapMs);
+          await this.connect();
+          return await this.request(build, expectResponse, tries, afterWrap, deviceAckSuffices, true);
+        }
         // A T_Disconnect to the first numbered frame of a new connection, before the device took or answered
         // any frame of it: the device refused the connection, holding another one (one whose link
         // failed, or another tool's). It ends that one by itself within staleConnectionMs; then the
         // connection is opened again and the request asked once more. A secured session is not: its
         // Sync, not the request, is the first frame of its connection.
-        if (!first || this.secure || this.takenSinceConnect || (e as { code?: string }).code !== "DEVICE_CLOSED_CONNECTION") throw e;
+        if (!first || reconnected || this.secure || this.takenSinceConnect || (e as { code?: string }).code !== "DEVICE_CLOSED_CONNECTION") throw e;
         await sleep(this.timeouts.staleConnectionMs);
         await this.connect();
         try { return await this.requestTries(build, expectResponse, tries, afterWrap, deviceAckSuffices); }
@@ -548,6 +615,10 @@ export class KnxDevice {
     let reasked = false;
     // The answer that came between two tries, after the window of the one before had closed.
     let between: ParsedApdu | null = null;
+    this.closedBeforeDelivery = false;
+    this.requestTaken = false;
+    let delivered = false;
+    const aheadBefore = this.closesAhead;
     for (let i = 0; i < tries; i++) {
       this.unauthentic = 0;
       this.otherServices.clear();
@@ -562,7 +633,7 @@ export class KnxDevice {
       let ackTimeout = (): void => undefined;
       let respTimeout = (): void => undefined;
       let refused = false;
-      const ackP = new Promise<boolean>((res) => { this.ackResolve = (nak) => { refused = nak; res(true); }; ackTimeout = () => res(false); });
+      const ackP = new Promise<boolean>((res) => { this.ackResolve = (nak) => { refused = nak; this.requestTaken = true; this.closedAheadAfterTaken = false; res(true); }; ackTimeout = () => res(false); });
       const respP = expectResponse
         ? new Promise<ParsedApdu | null>((res) => { this.respResolve = (p) => res(p); respTimeout = () => res(null); })
         : Promise.resolve<ParsedApdu | null>(null);
@@ -601,6 +672,7 @@ export class KnxDevice {
         if (i < tries - 1) continue;
         throw e;
       }
+      if (!delivered) { delivered = true; this.closedBeforeDelivery = this.closesAhead !== aheadBefore || this.closedAheadAfterTaken; this.closeAheadAt = this.closedBeforeDelivery ? this.closedAheadAt : null; }
       setTimeout(ackTimeout, this.timeouts.ackMs);
       let respTimer = setTimeout(respTimeout, this.timeouts.responseMs);
       restartWindow = () => { clearTimeout(respTimer); respTimer = setTimeout(respTimeout, this.timeouts.responseMs); };
@@ -778,6 +850,11 @@ export class KnxDevice {
   // which clears it: a request it then leaves unanswered still found it on the connection, as restart()
   // reads it for its own probe. For a caller that sends its own probe behind A_Restart.
   takeTransportReply(): boolean { const seen = this.ackSeen || this.nakSeen; this.ackSeen = false; this.nakSeen = false; return seen; }
+  // Whether the device's T_Disconnect came ahead of the last request's first frame, and whether the last
+  // A_Restart went out a second time (sendOnOpenConnection): either way a closed connection after a
+  // restart is no sign of the reboot, it may be the idle timeout or the first restart's connection.
+  closedAheadOfLastRequest(): boolean { return this.closedBeforeDelivery; }
+  get restartWasResent(): boolean { return this.restartResent; }
   // When the device last sent us a frame, and when it closed our connection (T_Disconnect to us).
   private lastFromDeviceAt: number | null = null;
   private peerClosedAt: number | null = null;
@@ -1166,19 +1243,53 @@ export class KnxDevice {
   // CON-NEG with the unit's startup telegrams 2 s later; meanwell-ets6log-restart.txt "Restart_con ...
   // C"). Such a restart counts as sent but unconfirmed: false. Any other negative con stays an error.
   async sendRestart(): Promise<boolean> {
-    try {
-      await this.sendCemi(cemiLData(this.me, this.dst, this.onWire(apdu(this.seq, APCI.RESTART))));
-    } catch (e) {
-      if ((e as { code?: string }).code !== "BUS_SEND_FAILED") throw e;
+    return this.sendOnOpenConnection(async () => {
+      try {
+        await this.sendCemi(cemiLData(this.me, this.dst, this.onWire(apdu(this.seq, APCI.RESTART))));
+      } catch (e) {
+        if ((e as { code?: string }).code !== "BUS_SEND_FAILED") throw e;
+        this.seq = (this.seq + 1) & 0x0f;
+        return false;
+      }
       this.seq = (this.seq + 1) & 0x0f;
-      return false;
+      return true;
+    });
+  }
+
+  // A_Restart (and the master reset) on a connection the device has not closed. A closed connection
+  // drops the frame (it answers a numbered frame with T_Disconnect and passes nothing on), and the
+  // device's silence after it would pass for its reboot: so a connection the device closed is opened
+  // again first, and a restart the device closed the connection before (its T_Disconnect came ahead
+  // of the frame's confirmation, which a link that stalled longer than the device's 6 s connection
+  // timeout delivers in one burst) is sent once more on a new connection. A restart sent twice reboots
+  // the device twice, which changes nothing it stores. `notDelivered` reads the send's outcome where the
+  // send waits past the frame's confirmation (the confirmed restart, whose answer window a device's own
+  // T_Disconnect may fall into); without it a T_Disconnect that came during the send, which ends at the
+  // confirmation, was ahead of the frame.
+  private async sendOnOpenConnection<T>(send: () => Promise<T>, notDelivered?: (r: T) => boolean): Promise<T> {
+    for (let attempt = 0; ; attempt++) {
+      if (this.closedSinceConnect) await this.connect();
+      this.restartSentSinceConnect = true;
+      const ahead = this.closesAhead;
+      this.restartResent = attempt > 0;
+      this.restartSentAt = Date.now();
+      this.restartConfirmedAt = 0;
+      const r = await send();
+      if (this.restartConfirmedAt === 0) this.restartConfirmedAt = Date.now();
+      if (!(notDelivered ? notDelivered(r) : this.closesAhead !== ahead)) return r;
+      if (attempt > 0) {
+        throw new KnxError("RESTART_NOT_DELIVERED", "the device's T_Disconnect came ahead of the restart again on a new connection: the restart most likely never reached it, so whether it restarted, and stored its configuration, is not proven");
+      }
+      await sleep(this.timeouts.reconnectGapMs);
     }
-    this.seq = (this.seq + 1) & 0x0f;
-    return true;
   }
   // answered: the device answered the restart with error code 0. unconfirmed: the interface confirmed
-  // the frame negatively (see sendRestart), which counts as sent, not as an error.
-  private async sendConfirmedRestart(): Promise<{ answered: boolean; unconfirmed: boolean }> {
+  // the frame negatively (see sendRestart), which counts as sent, not as an error. notDelivered: the
+  // device closed the connection before the frame reached it.
+  private async sendConfirmedRestart(): Promise<{ answered: boolean; unconfirmed: boolean; notDelivered?: true }> {
+    return this.sendOnOpenConnection(() => this.sendConfirmedRestartOnce(), (r) => r.notDelivered === true);
+  }
+  private async sendConfirmedRestartOnce(): Promise<{ answered: boolean; unconfirmed: boolean; notDelivered?: true }> {
     let take: (p: ParsedApdu | null) => void = () => undefined;
     const answer = new Promise<ParsedApdu | null>((res) => { take = res; });
     let unconfirmed = false;
@@ -1195,12 +1306,18 @@ export class KnxDevice {
     } catch (e) {
       const code = (e as { code?: string }).code;
       if (code !== "DEVICE_NOT_ANSWERING" && code !== "DEVICE_CLOSED_CONNECTION" && code !== "BUS_SEND_FAILED") { this.respResolve = null; this.answers = NO_ANSWER; throw e; }
+      if (code === "DEVICE_CLOSED_CONNECTION" && this.closedBeforeDelivery && !this.requestTaken) {
+        this.respResolve = null; this.answers = NO_ANSWER;
+        return { answered: false, unconfirmed: false, notDelivered: true };
+      }
       unconfirmed = code === "BUS_SEND_FAILED";
       // Unacknowledged, the frame still counts as sent, as the basic restart's does: the probe in
       // restart() must not go out with the restart's sequence number, which a device that took the
       // restart and kept running would discard as a repetition and so look rebooted.
       this.seq = (this.seq + 1) & 0x0f;
     }
+    // Its send ended here, before the wait for its answer.
+    this.restartConfirmedAt = Date.now();
     const timer = setTimeout(() => take(null), this.timeouts.restartAnswerMs);
     const r = await answer;
     clearTimeout(timer);
@@ -1266,12 +1383,13 @@ export class KnxDevice {
     // An A_Restart (plain or confirmed) the interface confirmed negatively (see sendRestart) has its own
     // proof (proveUnconfirmedRestart).
     let unconfirmed: boolean;
-    const sentAt = Date.now();
     if (confirmed) {
       const sent = await this.sendConfirmedRestart();
       if (sent.answered) return;
       unconfirmed = sent.unconfirmed;
     } else unconfirmed = !(await this.sendRestart());
+    // The A_Restart that went out on an open connection, which may be a new one (sendOnOpenConnection).
+    const sentAt = this.restartSentAt;
     if (unconfirmed) return this.proveUnconfirmedRestart(sentAt);
     try {
       this.nakSeen = false; this.ackSeen = false;
@@ -1283,6 +1401,22 @@ export class KnxDevice {
       // T_NAK or T_ACK without an answer: the device is still there on this connection.
       if ((this.nakSeen || this.ackSeen) && requireReboot) {
         throw new KnxError("RESTART_IGNORED", `the device ${this.nakSeen ? "refused" : "acknowledged"} the probe after A_Restart on the same connection (T_${this.nakSeen ? "NAK" : "ACK"}): it is still there and did not reboot`);
+      }
+      // A T_Disconnect that came ahead of the probe proves the reboot only from a device that closes the
+      // connection as it takes A_Restart: right behind the restart's confirmation, on a link that held
+      // neither. A device that ignored the restart closes the idle connection 6 s after it, and a link
+      // stalled that long delivers that T_Disconnect ahead of the probe too; a stall around the restart
+      // itself hides the order, and after a restart sent again the first one's closed connection may
+      // still answer.
+      if ((e as { code?: string }).code === "DEVICE_CLOSED_CONNECTION" && this.closedBeforeDelivery) {
+        // Measured from the send: the device took the restart no earlier, and closes an idle
+        // connection 6 s after the last frame it took, so a close within restartProofMs of the send is
+        // not that timeout.
+        const late = this.restartConfirmedAt - sentAt >= this.timeouts.confirmLateMs
+          || this.closeAheadAt === null || this.closeAheadAt - sentAt > this.timeouts.restartProofMs;
+        if (late || this.restartResent) {
+          return this.restartNotProven("the device closed the connection ahead of the probe after A_Restart, but the link to the interface stalled around them (or the restart went out a second time), so the close may be the idle timeout of a device that did not restart: whether it restarted, and so stored its configuration, is not proven");
+        }
       }
       return;                        // gone. It restarted, and it wrote its flash on the way out.
     }
@@ -1303,12 +1437,22 @@ export class KnxDevice {
   // Without the device's decision by then the restart is not proven (RESTART_UNPROVEN), and where a
   // probe failed on the link to the interface, whether the probes reached the device at all is unknown
   // (linkLostInProof).
+  // A restart whose proof the link left undecided: taken by a caller that reads the device back after
+  // it (acceptUnprovenRestart), refused for every other.
+  private restartNotProven(why: string): void {
+    if (this.unprovenRestartAccepted) { this.unprovenRestartSeen = true; return; }
+    throw new KnxError("RESTART_UNPROVEN", why);
+  }
   private async proveUnconfirmedRestart(sentAt: number): Promise<void> {
-    const deadline = Math.min(this.lastFromDeviceAt ?? sentAt, sentAt) + this.timeouts.restartProofMs;
+    // The device's connection timer runs from the last frame it took from us: no earlier than its last
+    // frame to us, or than the T_Connect of this connection.
+    const timerFrom = Math.max(this.lastFromDeviceAt ?? 0, this.connectedAt ?? 0) || sentAt;
+    const deadline = Math.min(timerFrom, sentAt) + this.timeouts.restartProofMs;
     let linkFailure: Error | null = null;
     const unproven = (): void => {
-      // A T_Disconnect between two probes, inside the window, is the proof as well.
-      if (this.peerClosedAt !== null && this.peerClosedAt <= deadline) return;
+      // A T_Disconnect between two probes, inside the window, is the proof as well, except after a
+      // restart sent again, where it may come from the connection the first one met closed.
+      if (!this.restartResent && this.peerClosedAt !== null && this.peerClosedAt <= deadline) return;
       if (linkFailure !== null) return this.linkLostInProof(linkFailure);
       if (this.unprovenRestartAccepted) { this.unprovenRestartSeen = true; return; }
       throw new KnxError("RESTART_UNPROVEN",
@@ -1333,6 +1477,12 @@ export class KnxDevice {
         // A T_ACK or T_NAK before the T_Disconnect: the device still held the connection.
         if (this.nakSeen || this.ackSeen) throw present();
         if (code === "DEVICE_CLOSED_CONNECTION") {
+          // After a restart sent again only the device's answer to a probe counts, not a T_Disconnect
+          // that came ahead of it.
+          if (this.restartResent && this.closedBeforeDelivery) {
+            if (linkFailure !== null) return this.linkLostInProof(linkFailure);
+            return this.restartNotProven("the interface confirmed the A_Restart sent a second time negatively, and the device's T_Disconnect came ahead of the probe, where it may belong to the connection the first restart met closed: whether it restarted, and so stored its configuration, is not proven");
+          }
           if (this.peerClosedAt !== null && this.peerClosedAt <= deadline) return;
           return unproven();
         }
@@ -1373,9 +1523,11 @@ export class KnxDevice {
     // holds its full configuration, and reporting that as a completed factory reset is exactly the
     // silent-failure the restart() comment describes. Only the device's post-send silence (it
     // reboots and does not ack) is tolerated, and that is not what sendCemi rejects on.
-    await this.sendCemi(cemiLData(this.me, this.dst,
-      this.onWire(apdu(this.seq, APCI.RESTART | RESTART_MASTER, Buffer.from([eraseCode, channel])))));
-    this.seq = (this.seq + 1) & 0x0f;
+    await this.sendOnOpenConnection(async () => {
+      await this.sendCemi(cemiLData(this.me, this.dst,
+        this.onWire(apdu(this.seq, APCI.RESTART | RESTART_MASTER, Buffer.from([eraseCode, channel])))));
+      this.seq = (this.seq + 1) & 0x0f;
+    });
   }
 }
 

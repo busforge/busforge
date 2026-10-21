@@ -72,13 +72,31 @@ requests, which the client ignores. Over UDP the acknowledge-and-retransmit loop
 What takes the acknowledgement's place over TCP is the interface's `L_Data.con`. Each send waits for
 it, matched by destination and TPDU (never by sequence: a gateway numbers the confirmations with its
 own counter, and it fills in a source of `0.0.0` and sets bits in the control field). A negative
-confirmation is `BUS_SEND_FAILED`, as on USB. No confirmation within 3 s is `TUNNEL_CON_TIMEOUT`: the
-link to the interface stalled or the interface is stuck, and whether the device answered is unknown.
-Without it a stalled stream would look exactly like a device that stopped answering
-([findings.md](findings.md) §25). A stalled or closed link is not retried. Transport-layer control
-frames (T_Connect, T_Disconnect, T_ACK) are sent without waiting. Confirmations are shown matching
-on hardware through the Busforge bridge and an MDT KNX IP interface; the timeout and a negative
-confirmation are tested against a scripted gateway only.
+confirmation is `BUS_SEND_FAILED`, as on USB. Without the wait a stalled stream would look exactly
+like a device that stopped answering ([findings.md](findings.md) §25). A confirmation still missing
+after 3 s is not yet a failure, since the stream may be stalled with the frame in it:
+
+```text
+frame written ──3 s, no confirmation──▶ CONNECTIONSTATE_REQUEST written behind it
+   │                                        │
+   │  answered: the interface has read      │  unanswered: the stream is stalled,
+   │  the frame ──3 s more, no confirmation │  keep waiting; three requests 10 s apart
+   ▼                                        ▼  unanswered end the tunnel
+TUNNEL_CON_TIMEOUT                       TUNNEL_CLOSED
+(interface did not take it, is stuck,    (the heartbeat declares the tunnel dead)
+ or the link stalled again)
+```
+
+A confirmation that arrives in between settles the send, and no send waits longer than that heartbeat
+round can last, 3 s on each side of it. Neither failure is retried at this layer;
+the device layer opens a new connection for a request whose connection the device closed during the
+stall before the request reached it, and sends an A_Restart that met a closed connection again
+([findings.md](findings.md) §25). Frames that a stalled stream delivers in one burst are handed on in
+order, each frame behind a confirmation one event-loop turn later, so the send that confirmation
+settles sees only what came before it. Transport-layer control frames (T_Connect, T_Disconnect,
+T_ACK) are sent without waiting. Confirmations are shown matching on hardware through the Busforge
+bridge and an MDT KNX IP interface; the stall handling, the timeout and a negative confirmation are
+tested against a scripted gateway only.
 
 **Over UDP the client must keep acknowledging while it works.** Every TUNNELLING_REQUEST the gateway
 sends, including the `L_Data.con` of the client's own last frame, needs its TUNNELLING_ACK within
@@ -270,6 +288,19 @@ UDP and TCP on the same port.
 
 A refusal for want of a free address is logged with each holder: its channel, its peer and how long
 it has been silent. A channel whose client vanished keeps its address until the reaper below takes it.
+
+### A client whose link stalls
+
+The bridge does not see a client's stall. Over TCP it writes each frame for the client (the
+confirmation of the client's frame, the device's answers, the other tunnels' traffic) once into the
+connection and moves on; while the path stalls the frames wait in the connection's buffers and reach
+the client in order when it clears, none dropped, none repeated. The client's own frames reach the
+bridge late and in order, and each goes on the bus as it arrives. The channel ends only with its TCP
+connection or after 120 s without a connection-state request. Over UDP the bridge repeats a frame the
+client does not acknowledge once after 1 s and then closes the channel, as the specification asks, so
+a stall of two seconds while the bridge has something for the client costs a UDP tunnel
+([findings.md](findings.md) §35). How a stall at the device's end plays out is in
+[findings.md](findings.md) §25.
 
 ### When the USB interface goes away
 

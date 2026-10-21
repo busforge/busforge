@@ -222,6 +222,20 @@ describe("restartInConnection", () => {
     expect(String(await failure(restartInConnection(fake({ after: "TUNNEL_CON_TIMEOUT" }).dev)))).toContain("TUNNEL_CON_TIMEOUT");
   });
 
+  test("a closed connection behind the restart whose T_Disconnect came ahead of the read, or after a restart sent twice, is no silence", async () => {
+    for (const extra of [{ closedAheadOfLastRequest: () => true }, { restartWasResent: true }]) {
+      const dev = { ...fake({ after: "DEVICE_CLOSED_CONNECTION" }).dev, ...extra };
+      const sent = await restartInConnection(dev);
+      expect(sent).toEqual({ confirmed: true, inConnection: "undecided" });
+      // A device that answers every fresh probe after it did not reboot.
+      expect((await observeReboot(async () => sent, async () => "answered", { windowMs: 30, intervalMs: 5 })).rebooted).toBe(false);
+      // Nor is it a probe the device left unanswered, after a negatively confirmed restart.
+      const unconfirmed = await observeReboot(async () => ({ ...sent, confirmed: false }), async () => "answered", { windowMs: 30, intervalMs: 5 });
+      expect(unconfirmed).toMatchObject({ rebooted: false });
+      expect(unconfirmed.unproven).toBeUndefined();
+    }
+  });
+
   test("a read behind the restart the device acknowledged and left unanswered counts as answered: it is still on the connection", async () => {
     expect(await restartInConnection(fake({ after: "DEVICE_NOT_ANSWERING", acked: true }).dev)).toEqual({ confirmed: true, inConnection: "answered" });
     // The restart's own T_ACK, taken before the read, does not count for the read.
