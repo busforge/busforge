@@ -112,6 +112,8 @@ corpusDescribe("full download against the real M-0162 application", () => {
       for (let i = 0; i < target.size; i++) b[i] = this.mem.get(this.addrs[OBJ.LSM] + i) ?? 0;
       return b;
     }
+    // The association table described as the long form (PDT_GENERIC_04), as the tables this unit holds.
+    async propertyDescription(obj: number, pid: number) { return { objectIndex: obj, pid, propertyIndex: 0, writable: true, pdt: 0x14, maxElements: 1, readLevel: 3, writeLevel: 3 }; }
     async propRead(obj: number, pid: number) {
       if (pid === PID_LSM) return Buffer.from([this.state.get(obj) ?? STATE.LOADED]);
       if (pid === PID_MCB && obj === OBJ.LSM) {

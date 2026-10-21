@@ -142,8 +142,13 @@ depends on is hardware-proven.
   changed it since the last programming, so the router's adoption finds nothing to write there (the
   flash's choice pinned against ETS's captures and a scripted unit; no run on the unit). Neither unit can be emulated from its
   collections (the router's reads its association table only as far as its count and no collection
-  reads a security object; the IP Interface Secure's none of its KNXnet/IP parameter object), and no
-  ETS capture shows a group-address download of the router.
+  reads a security object; the IP Interface Secure's none of its KNXnet/IP parameter object).
+- **The short association table in the full download and the structural flash.** A System B unit
+  that describes its association table with one-byte fields (`PDT_GENERIC_02`, the MDT IP
+  Interface/Router) gets that form from the GA flash, as ETS writes it; the full download and the
+  structural flash build the long form only and refuse such a unit (`ASSOC_TABLE_SHORT_UNSUPPORTED`).
+  ETS's full download of the router writes the short form; the router's full download is refused for
+  its tunnelling entries anyway, and no other product is known to use the short form.
 - **Input-to-output behaviours on a device in service.** The mode places one test link, so only a
   behaviour of that one object (`output`, `heartbeat`) can be observed; an input driving an output
   needs two.

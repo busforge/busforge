@@ -114,12 +114,15 @@ describe("where the security object sits in a System B plan", () => {
     expect(secured.filter((o) => !o.startsWith("sec") && o !== "writeSecurityProp")).toEqual(plain);
   });
 
-  test("group-address flash: reloaded in the same bracket, before the tables complete", () => {
+  // ETS's group-address downloads (MDT IP Interface/Router, GVS AMMA, Jung 400021SE; their ETS logs pin it in
+  // tools/etsdiff.test.ts): the association table, then the security object, then the address table.
+  test("group-address flash: reloaded in the same bracket after the association table, the address table after it", () => {
     const tables = { addr: Buffer.alloc(4), assoc: Buffer.alloc(2), comObj: Buffer.alloc(4) };
     const plain = ops(planSystemBGaFlash(tables, true, true));
     const secured = ops(planSystemBGaFlash(tables, true, true, sec));
     expect(secured.indexOf("sec4")).toBe(plain.indexOf("unload1") + 1);
-    expect(secured[secured.indexOf("loadCompleted3") - 1]).toBe("sec2");
+    expect(secured.slice(secured.indexOf("writeSegment2") + 1, secured.indexOf("writeSegment2") + 2)).toEqual(["sec1"]);
+    expect(secured.slice(secured.indexOf("loadCompleted3") - 2, secured.indexOf("loadCompleted3"))).toEqual(["sec2", "writeSegment1"]);
     expect(secured.filter((o) => !o.startsWith("sec") && o !== "writeSecurityProp")).toEqual(plain);
   });
 });

@@ -42,6 +42,8 @@ function unit(bytes: number[]) {
     memRead: async (a: number, n: number) => Buffer.from(Array.from({ length: n }, (_, i) => mem.get(a + i) ?? 0)),
     memWrite: async (a: number) => { writes.push(a); },
     propReadIfPresent: async () => null,
+    // The association table described as the long form (PDT_GENERIC_04), as the tables this unit holds.
+    propertyDescription: async (o: number, pid: number) => ({ objectIndex: o, pid, propertyIndex: 0, writable: true, pdt: 0x14, maxElements: 1, readLevel: 3, writeLevel: 3 }),
     propRead: async (o: number, pid: number) => (pid === 5 ? Buffer.from([STATE.LOADED]) : pid === 7 ? Buffer.from([0, 0, at(o) >> 8, at(o) & 0xff]) : Buffer.alloc(0)),
   };
   return { dev: dev as unknown as KnxDevice, writes };

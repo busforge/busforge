@@ -8,8 +8,9 @@
 // descriptors, so a layout change in either place fails the build instead of
 // desynchronizing read and write. Layout facts, System B:
 // - Address table:     [count:2][GA:2]xN, GAs sorted ascending.
-// - Association table:  [count:2][groupIdx:2][comObjNum:2]xN (long form), entries
-//   in ETS's order (associations(), below).
+// - Association table:  [count:2][groupIdx:2][comObjNum:2]xN (long form) or
+//   [count:2][groupIdx:1][comObjNum:1]xN (short form), as the unit describes the table
+//   (assocEntryBytes in profiles.ts); entries in ETS's order (associations(), below).
 //
 // The com-object table (flags/size) is NOT built here: it is read from the
 // device and written back unchanged, so flashing only re-points which group
@@ -30,7 +31,8 @@ function associations(links: ComObjectLink[], idx: Map<number, number>): { gi: n
   return [...links.filter((l) => l.gaRaws.length > 0).map((l) => ({ gi: idx.get(l.gaRaws[0])!, co: l.comObjNum })).sort(byObject), ...all(1).sort(byObject)];
 }
 
-export function buildGroupTables(links: ComObjectLink[]): GroupTables {
+// `assocEntryBytes`: 4 for the long form, 2 for the short one.
+export function buildGroupTables(links: ComObjectLink[], assocEntryBytes: 2 | 4 = 4): GroupTables {
   const gas = [...new Set(links.flatMap((l) => l.gaRaws))].sort((a, b) => a - b);
   const idx = new Map(gas.map((g, i) => [g, i + 1])); // 1-based group index
 
@@ -39,9 +41,15 @@ export function buildGroupTables(links: ComObjectLink[]): GroupTables {
   gas.forEach((g, i) => addr.writeUInt16BE(g, 2 + i * 2));
 
   const entries = associations(links, idx);
-  const assoc = Buffer.alloc(2 + entries.length * 4);
+  const assoc = Buffer.alloc(2 + entries.length * assocEntryBytes);
   assoc.writeUInt16BE(entries.length, 0);
-  entries.forEach((e, i) => { assoc.writeUInt16BE(e.gi, 2 + i * 4); assoc.writeUInt16BE(e.co, 4 + i * 4); });
+  if (assocEntryBytes === 2) {
+    const wide = entries.find((e) => e.gi > 0xff || e.co > 0xff);
+    if (wide) throw new ProductError("ASSOC_SHORT_FORM_OVERFLOW", `the unit's association table holds one byte per group index and object number, and object ${wide.co} with group index ${wide.gi} does not fit`);
+    entries.forEach((e, i) => { assoc[2 + i * 2] = e.gi; assoc[3 + i * 2] = e.co; });
+  } else {
+    entries.forEach((e, i) => { assoc.writeUInt16BE(e.gi, 2 + i * 4); assoc.writeUInt16BE(e.co, 4 + i * 4); });
+  }
 
   return { addr, assoc };
 }

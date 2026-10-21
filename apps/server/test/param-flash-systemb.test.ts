@@ -56,6 +56,8 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
     async setVerifyMode() {}
     async memWrite(addr: number, data: Buffer) { this.writes++; for (let i = 0; i < data.length; i++) { this.mem.set(addr + i, data[i]); this.written.add(addr + i); } }
     async propRead(obj: number, pid: number) { if (pid === 27) return Buffer.from(this.stamps.get(obj) ?? this.stamp, "hex"); if (pid === 5) return Buffer.from([this.state.get(obj) ?? STATE.UNLOADED]); if (pid === 7) return Buffer.from([0, 0, (await this.tableAddr(obj)) >> 8, (await this.tableAddr(obj)) & 0xff]); return Buffer.alloc(0); }
+    // The association table described as the long form (PDT_GENERIC_04), as the tables this unit holds.
+    async propertyDescription(obj: number, pid: number) { return { objectIndex: obj, pid, propertyIndex: 0, writable: true, pdt: 0x14, maxElements: 1, readLevel: 3, writeLevel: 3 }; }
     async propReadIfPresent() { return null; }
     // The stamps the download's closing reads take (PID 27), on a standard-frame device.
     async propValueDataMax() { return 10; }

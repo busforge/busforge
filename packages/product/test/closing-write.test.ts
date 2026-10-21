@@ -40,6 +40,8 @@ corpusDescribe("the GVS AMMA's closing PID 67 write, through the profile", () =>
     // The stamps the download's closing reads take (PID 27), on a standard-frame device.
     async propValueDataMax() { return 10; }
     async propReadCounted(obj: number, pid: number, start: number, count = 1) { return { objectIndex: obj, pid, count, start, value: Buffer.alloc(8 * count) }; }
+    // The association table described as the long form (PDT_GENERIC_04), as the tables this unit holds.
+    async propertyDescription(obj: number, pid: number) { return { objectIndex: obj, pid, propertyIndex: 0, writable: true, pdt: 0x14, maxElements: 1, readLevel: 3, writeLevel: 3 }; }
     async propRead(obj: number, pid: number) {
       if (pid === 5) return Buffer.from([this.state.get(obj) ?? STATE.UNLOADED]);
       if (pid === 7) return Buffer.from([0, 0, (A[obj] >> 8) & 0xff, A[obj] & 0xff]);

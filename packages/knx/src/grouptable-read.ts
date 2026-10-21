@@ -55,9 +55,10 @@ const MAX_TABLE_ENTRIES = 2048;
 
 const readCount = (h: Buffer, layout: TableLayout) => (layout.countBytes === 2 ? (h[0] << 8) | h[1] : h[0]);
 
-// Read a System B device's group tables (address, association, com-object), detecting
-// the long vs short association format. `skipComObj` omits the (largest) com-object table.
-export async function readGroupTables(dev: KnxDevice, onStep?: (done: number, total: number) => void, skipComObj = false): Promise<{ addr: Buffer; assoc: Buffer; comObj: Buffer; long: boolean }> {
+// Read a System B device's group tables (address, association, com-object). `assocEntryBytes`: the
+// association table's form as the unit describes it (4 long, 2 short), read exactly; without it the form
+// is detected. `skipComObj` omits the (largest) com-object table.
+export async function readGroupTables(dev: KnxDevice, onStep?: (done: number, total: number) => void, skipComObj = false, assocEntryBytes?: 2 | 4): Promise<{ addr: Buffer; assoc: Buffer; comObj: Buffer; long: boolean }> {
   const boundCount = (count: number, what: string): number => {
     if (count > MAX_TABLE_ENTRIES) throw new GroupTableUnreadable(`${what} reports ${count} entries (implausible); this device's group tables are not in the expected System B format`);
     return count;
@@ -75,13 +76,21 @@ export async function readGroupTables(dev: KnxDevice, onStep?: (done: number, to
   const a2 = await loadedTableAddr(dev, 2, "association table");
   const ah = await dev.memRead(a2, SYSTEM_B_ASSOC_LONG.countBytes);
   const acount = boundCount(readCount(ah, SYSTEM_B_ASSOC_LONG), "association table");
-  let assoc = await dev.memRead(a2, SYSTEM_B_ASSOC_LONG.countBytes + acount * SYSTEM_B_ASSOC_LONG.entryBytes);
-  // Long/short detection: in the long form every entry's 2-byte group index must be a
-  // valid 1-based index into the address table; a short-form table read as long yields
-  // out-of-range indices on the first entry that straddles two real entries.
-  let long = true;
-  for (let k = 0; k < acount; k++) { const gi = (assoc[2 + k * 4] << 8) | assoc[3 + k * 4]; if (gi < 1 || gi > gcount) { long = false; break; } }
-  if (!long) assoc = await dev.memRead(a2, SYSTEM_B_ASSOC_SHORT.countBytes + acount * SYSTEM_B_ASSOC_SHORT.entryBytes);
+  let assoc: Buffer;
+  let long: boolean;
+  if (assocEntryBytes !== undefined) {
+    long = assocEntryBytes === 4;
+    const layout = long ? SYSTEM_B_ASSOC_LONG : SYSTEM_B_ASSOC_SHORT;
+    assoc = await dev.memRead(a2, layout.countBytes + acount * layout.entryBytes);
+  } else {
+    assoc = await dev.memRead(a2, SYSTEM_B_ASSOC_LONG.countBytes + acount * SYSTEM_B_ASSOC_LONG.entryBytes);
+    // Long/short detection: in the long form every entry's 2-byte group index must be a
+    // valid 1-based index into the address table; a short-form table read as long yields
+    // out-of-range indices on the first entry that straddles two real entries.
+    long = true;
+    for (let k = 0; k < acount; k++) { const gi = (assoc[2 + k * 4] << 8) | assoc[3 + k * 4]; if (gi < 1 || gi > gcount) { long = false; break; } }
+    if (!long) assoc = await dev.memRead(a2, SYSTEM_B_ASSOC_SHORT.countBytes + acount * SYSTEM_B_ASSOC_SHORT.entryBytes);
+  }
   onStep?.(2, total);
   const comObj = skipComObj ? Buffer.alloc(0) : await counted(3, SYSTEM_B_ADDR);
   if (!skipComObj) onStep?.(3, total);

@@ -40,6 +40,15 @@ describe("buildGroupTables", () => {
     expect(assoc.toString("hex")).toBe("0005" + "00010002" + "00040005" + "00020016" + "00030002" + "00030016");
   });
 
+  // The MDT IP Interface/Router describes its association table as PDT_GENERIC_02: one byte for group index and
+  // object number (its ETS group-address download, tools/etsdiff.test.ts).
+  test("the short form: one byte each for group index and object number, and a number above 255 refused", () => {
+    const { assoc } = buildGroupTables([{ comObjNum: 2, gaRaws: [0x1901] }, { comObjNum: 1, gaRaws: [0x7fc8] }, { comObjNum: 3, gaRaws: [0x1900] }], 2);
+    expect(assoc.toString("hex")).toBe("0003" + "0301" + "0202" + "0103");
+    expect(decodeGroupTables(Buffer.from("000319001901 7fc8".replace(/ /g, ""), "hex"), assoc, false)).toEqual([{ comObjNum: 1, gaRaws: [0x7fc8] }, { comObjNum: 2, gaRaws: [0x1901] }, { comObjNum: 3, gaRaws: [0x1900] }]);
+    expect(() => buildGroupTables([{ comObjNum: 256, gaRaws: [0x0a01] }], 2)).toThrow(expect.objectContaining({ code: "ASSOC_SHORT_FORM_OVERFLOW" }));
+  });
+
   test("an empty link set yields empty tables", () => {
     const { addr, assoc } = buildGroupTables([]);
     expect(addr.toString("hex")).toBe("0000");

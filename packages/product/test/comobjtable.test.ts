@@ -151,7 +151,7 @@ corpusDescribe("the GROUP-ADDRESS flash is gated too (the parameter flash alone 
 
   test("an unchanged configuration passes the gate and reaches the bus", async () => {
     const err = await profile
-      .flashGroupTables(dev({ tableAddr: async () => { throw new Error("BUS-REACHED"); } }), "07B0", gaCtx(new Map(), new Map()))
+      .flashGroupTables(dev({ tableAddr: async () => { throw new Error("BUS-REACHED"); }, propertyDescription: async () => { throw new Error("BUS-REACHED"); } }), "07B0", gaCtx(new Map(), new Map()))
       .then(() => null, (e) => e);
     expect((err as Error).message).toBe("BUS-REACHED"); // gate passed
   });

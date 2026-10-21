@@ -338,6 +338,11 @@ search over the ascending table could land on it or miss a written key behind it
 shows how a device does. The GA flash, the full download's partial form and the structural flash
 refuse it before anything is written; the full download's full form reads no security object
 before it writes, so there it leaves the download unverified.
+A group-address download writes the security object's bracket between the association table and the
+address table: ETS's group-address downloads of the MDT IP Interface/Router, the GVS AMMA and the Jung
+400021SE write the com-object and association tables, load the security object, then write the address
+table and complete the tables; their full and parameter downloads write every table before the
+bracket. Busforge's GA flash does the same, pinned against those captures (`tools/etsdiff.test.ts`).
 On the GVS AMMA: a GA flash that put a plain address on the index of a removed secured one verified,
 and the device answered it plain. Whether such a device also takes a telegram secured with the old
 key on that address is not shown; ETS leaves the same state.

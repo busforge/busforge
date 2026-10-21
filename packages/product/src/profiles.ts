@@ -532,6 +532,24 @@ function unitMcbRegions(read: ImageStamp[], obj: number): McbRegion[] | null {
   return regions.length ? regions : null;
 }
 
+// The width of the unit's association table entries, as the unit describes the table: ETS reads the description
+// of the association table object's PID 23 (PID_TABLE) before a group-address download and writes entries of that
+// many bytes, PDT_GENERIC_02 one byte each for group index and object number (MDT IP Interface/Router),
+// PDT_GENERIC_04 two each (GVS AMMA, Jung 400021SE). Any other description is refused.
+const PID_TABLE = 23, PDT_GENERIC_02 = 0x12, PDT_GENERIC_04 = 0x14;
+async function assocEntryBytes(dev: KnxDevice): Promise<2 | 4> {
+  const d = await dev.propertyDescription(OBJ.ASSOC_TABLE, PID_TABLE, 0);
+  if (d.pid === PID_TABLE && d.pdt === PDT_GENERIC_02) return 2;
+  if (d.pid === PID_TABLE && d.pdt === PDT_GENERIC_04) return 4;
+  throw new ProductError("ASSOC_TABLE_FORMAT_UNKNOWN", d.pid === 0
+    ? "the unit describes no table property of its association table object, so the width of its entries is not known; refusing to write it"
+    : `the unit describes its association table with data type 0x${d.pdt.toString(16)}, neither of the two entry widths shown (PDT_GENERIC_02, PDT_GENERIC_04); refusing to write it`);
+}
+// The full download and the structural flash build the association table in its long form only.
+async function refuseShortAssoc(dev: KnxDevice, what: string): Promise<void> {
+  if ((await assocEntryBytes(dev)) !== 4) throw new ProductError("ASSOC_TABLE_SHORT_UNSUPPORTED", `the unit's association table holds one byte per group index and object number, which Busforge's ${what} does not build; refusing to write it`);
+}
+
 // One prepared flash operation, handed to runFlashOp by a profile after it has read the
 // device's current state and computed the diff. The profile supplies only the
 // model-specific pieces; the safety-critical sequencing lives in runFlashOp.
@@ -1221,6 +1239,7 @@ export class SystemBProfile extends DeviceProfile {
     // For either form.
     const images = builtBefore(() => this.systemBImages(this.requireCfg("full download"), { ...ctx, proc }));
     await runDeclaredChecks(dev, coverage);
+    await refuseShortAssoc(dev, "full download");
     // Which form ETS runs: an application declaring PreferPartialDownloadIfApplicationLoaded on a unit
     // holding it takes the partial form. ETS tells by the application object's load state and program
     // id (Jung 400021SE, Theben DALI-Gateway captures). The partial form keeps what the unit holds, so
@@ -1582,12 +1601,13 @@ export class SystemBProfile extends DeviceProfile {
     }
     const linked = new Set(ctx.links.map((l) => l.comObjNum));
     const comObj = buildComObjectTable(withInstanceOverrides(view.imageComObjects, ctx.comObjectOverrides), view.maxComObjectNumber, linked);
-    const { addr, assoc } = buildGroupTables(ctx.links);
     const security = ctx.security ? buildSecurityObject(ctx.links, comObj.readUInt16BE(0), ctx.security.groupKeys, secureSenders(ctx.security, ctx.ia)) : undefined;
     const flagBaseline = builtBefore(() => baselineComObjects(cfg, ctx));
     // Read the current L3 as well (not just addr/assoc): it is the backup, and its diff against the
     // rebuilt table is what makes the link-driven L3 change visible in the dry-run preview.
-    const cur = await readGroupTables(dev, undefined, false);
+    const entryBytes = await assocEntryBytes(dev);
+    const cur = await readGroupTables(dev, undefined, false, entryBytes);
+    const { addr, assoc } = buildGroupTables(ctx.links, entryBytes);
     // The security object is compared, not backed up: its group keys are secrets, and the project
     // holds them anyway.
     const curSecurity = security ? await readSecurityObject(dev, security) : undefined;
@@ -1660,7 +1680,7 @@ export class SystemBProfile extends DeviceProfile {
             "the group-address flash left the device's application program object out of the LOADED state (it was LOADED before): the tables were written but the device is no longer running its application, so the links are not functional. Recover the device with a full download.");
         }
         const { ok } = await verifySettled(
-          async () => ({ tables: await readGroupTables(dev), sec: security ? await readSecurityObject(dev, security) : null }),
+          async () => ({ tables: await readGroupTables(dev, undefined, false, entryBytes), sec: security ? await readSecurityObject(dev, security) : null }),
           ({ tables: back, sec }) => back.addr.equals(addr) && back.assoc.equals(assoc) && back.comObj.equals(comObj)
             && (!security || (sec !== null && sameSecurityObject(sec, security))),
         );
@@ -1704,6 +1724,7 @@ export class SystemBProfile extends DeviceProfile {
     const flagBaseline = builtBefore(() => baselineComObjects(cfg, ctx));
 
     await runDeclaredChecks(dev, coverage);
+    await refuseShortAssoc(dev, "structural flash");
     const paramsAt = await loadedTableAddr(dev, LSM, "parameter segment");
     const current = await dev.memRead(paramsAt, target.size, undefined, (d, t) => ctx.onProgress?.("backup", d, t), ctx.signal);
     const { image, diffBytes: paramDiff } = mergeRelativeTarget(current, target);

@@ -41,6 +41,8 @@ corpusDescribe("the structural flash against real applications", () => {
       if (pid === 7) { const a = this.addr.get(obj) ?? 0; return Buffer.from([(a >> 24) & 0xff, (a >> 16) & 0xff, (a >> 8) & 0xff, a & 0xff]); }
       return this.props.get(`${obj}/${pid}`) ?? Buffer.alloc(0);
     }
+    // The association table described as the long form (PDT_GENERIC_04), as the tables this unit holds.
+    async propertyDescription(obj: number, pid: number) { return { objectIndex: obj, pid, propertyIndex: 0, writable: true, pdt: 0x14, maxElements: 1, readLevel: 3, writeLevel: 3 }; }
     async propReadIfPresent() { return null; }
     // The stamps the download's closing reads take (PID 27), on a standard-frame device.
     async propValueDataMax() { return 10; }

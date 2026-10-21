@@ -3,13 +3,13 @@
 // writes that change them as the device would (load-state events on PID 5, a System 7 segment
 // declaration moving a table reference, memory). It answers only what the collection holds: a read of
 // memory or a property the collection did not read throws, so no path runs on invented bytes.
-import { STATE, transferChunks, type KnxDevice } from "@busforge/knx";
+import { STATE, transferChunks, type KnxDevice, type PropertyDescription } from "@busforge/knx";
 import { isMemoryMappedLsm } from "../src/masks.ts";
 
 const MM_CTRL = 0x0104, MM_STATE = 46825;
 
 // One record of a collection, as far as the emulator reads it.
-export interface CollectedRecord { step: string; space: string; target: { object?: number; pid?: number; start?: number; count?: number; address?: number; length?: number }; outcome: string; bytes?: string }
+export interface CollectedRecord { step: string; space: string; target: { object?: number; pid?: number; start?: number; count?: number; address?: number; length?: number; propertyIndex?: number }; outcome: string; bytes?: string; description?: PropertyDescription }
 export interface Collection { mask: string; records: CollectedRecord[] }
 
 export class CollectedUnit {
@@ -17,6 +17,8 @@ export class CollectedUnit {
   mem = new Map<number, number>();
   // "object/pid/start" -> the element as answered; null where the unit refused the property.
   props = new Map<string, Buffer | null>();
+  // "object/pid" -> the description the unit gave of that property.
+  descriptions = new Map<string, PropertyDescription>();
   ops: string[] = [];
   // Objects whose PID 5 no longer answers as collected: a memory-mapped load event changed their state,
   // and no capture shows whether the unit's PID 5 follows it.
@@ -28,6 +30,7 @@ export class CollectedUnit {
       if (r.space === "property" && r.target.object !== undefined && r.target.pid !== undefined && (r.target.count ?? 1) === 1 && (r.outcome === "bytes" || r.outcome === "refused")) {
         this.props.set(`${r.target.object}/${r.target.pid}/${r.target.start ?? 1}`, r.outcome === "bytes" ? Buffer.from(r.bytes!, "hex") : null);
       }
+      if (r.space === "property-description" && r.outcome === "bytes" && r.description && r.description.pid !== 0) this.descriptions.set(`${r.description.objectIndex}/${r.description.pid}`, r.description);
     }
   }
   private prop(obj: number, pid: number, start = 1): Buffer | null {
@@ -96,6 +99,11 @@ export class CollectedUnit {
     }
     if (this.ops.at(-1) !== "write") this.ops.push("write");
     data.forEach((b, i) => this.mem.set(addr + i, b));
+  }
+  async propertyDescription(obj: number, pid: number) {
+    const d = this.descriptions.get(`${obj}/${pid}`);
+    if (!d) throw new Error(`the collection did not read the description of property ${obj}/${pid}`);
+    return d;
   }
   async propRead(obj: number, pid: number, start = 1) { return this.prop(obj, pid, start) ?? Buffer.alloc(0); }
   async propReadIfPresent(obj: number, pid: number) { const v = this.prop(obj, pid); return v?.length ? v : null; }

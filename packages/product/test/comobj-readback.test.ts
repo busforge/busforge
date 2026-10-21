@@ -3,7 +3,7 @@ import { LSM, STATE, type KnxDevice } from "@busforge/knx";
 import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
 import {
-  parseAppConfig, parseLoadProcedures, classify, buildDeviceConfig, resolveModuleInstances, placeComObjOverrides, type ComObjectLink,
+  parseAppConfig, parseLoadProcedures, classify, buildDeviceConfig, resolveModuleInstances, placeComObjOverrides, buildGroupTables, type ComObjectLink,
   buildComObjectTable, buildComObjectTableMv0705, decodeComObjectTable, decodeComObjectTableMv0705, deviceComObjOverrideRows, comObjFlagsDiffering, changedEntryBits,
   type CfgComObjImage, type ComObjInstanceOverride, type ObservedComObjFlags,
 } from "../src/index.ts";
@@ -162,6 +162,9 @@ corpusDescribe("a System B unit holding a flag the project does not record", () 
     setExtendedMemoryServices() {}
     acceptUnprovenRestart() {}
     async memWrite(addr: number, data: Buffer) { this.writes++; data.forEach((b, i) => this.mem.set(addr + i, b)); }
+    // The association table described as the long form (PDT_GENERIC_04), as the tables this unit holds.
+    pdt = 0x14;
+    async propertyDescription(obj: number, pid: number) { return { objectIndex: obj, pid, propertyIndex: 0, writable: true, pdt: this.pdt, maxElements: 1, readLevel: 3, writeLevel: 3 }; }
     async propRead(obj: number, pid: number) {
       if (pid === 5) return Buffer.from([this.state.get(obj) ?? STATE.UNLOADED]);
       if (pid === 7) { const a = this.addr.get(obj) ?? 0; return Buffer.from([(a >> 24) & 0xff, (a >> 16) & 0xff, (a >> 8) & 0xff, a & 0xff]); }
@@ -225,6 +228,44 @@ corpusDescribe("a System B unit holding a flag the project does not record", () 
     const more = [...links, { comObjNum: 254, gaRaws: [0x0802] }];
     expect(await classify(cfg).flashGroupTables(asDev(u), cfg.mask, ga({ links: more, comObjectOverrides: placed, comObjectOverrideBase: placed, dryRun: false }))).toMatchObject({ kind: "flashed", verified: true });
     expect(u.mem.get(entry(253))).toBe(before);
+  });
+
+  // The association table's entry width comes from the unit's description of it (PID 23), as ETS reads it.
+  test("a group-address flash refuses a unit whose association table description it does not know", async () => {
+    const u = unit(false);
+    u.pdt = 0x13;
+    expect(await classify(cfg).flashGroupTables(asDev(u), cfg.mask, ga({ dryRun: false })).catch((e: unknown) => (e as { code?: string }).code)).toBe("ASSOC_TABLE_FORMAT_UNKNOWN");
+    expect(u.writes).toBe(0);
+  });
+
+  // A unit describing PDT_GENERIC_02 (the MDT IP Interface/Router) holds and gets the short form: one byte each for
+  // group index and object number. Its table is read in that form only, so nothing past it is read.
+  const shortUnit = (held: typeof links) => {
+    const u = unit(false);
+    u.pdt = 0x12;
+    const at = u.addr.get(2)!;
+    for (let i = 0; i < 64; i++) u.mem.delete(at + i);
+    buildGroupTables(held, 2).assoc.forEach((b, i) => u.mem.set(at + i, b));
+    const reads: [number, number][] = [];
+    const read = u.memRead.bind(u);
+    u.memRead = async (a: number, len: number) => { if (a === at) reads.push([a, len]); return read(a, len); };
+    return { u, at, reads };
+  };
+  test("a unit describing the short form gets its links in the short form, verified, and its table is read at its own length", async () => {
+    const more = [...links, { comObjNum: 254, gaRaws: [0x0802] }];
+    const { u, at, reads } = shortUnit(links);
+    expect(await classify(cfg).flashGroupTables(asDev(u), cfg.mask, ga({ links: more }))).toMatchObject({ kind: "dryRun" });
+    expect(reads).toEqual([[at, 2], [at, 2 + 2 * links.length]]);
+    expect(await classify(cfg).flashGroupTables(asDev(u), cfg.mask, ga({ links: more, dryRun: false }))).toMatchObject({ kind: "flashed", verified: true });
+    const want = buildGroupTables(more, 2).assoc;
+    expect((await u.memRead(at, want.length)).equals(want)).toBe(true);
+  });
+  test("a unit describing the short form with an empty association table takes its first link", async () => {
+    const { u, at } = shortUnit([]);
+    const one = [links[0]];
+    const res = await classify(cfg).flashGroupTables(asDev(u), cfg.mask, ga({ links: one, dryRun: false })).catch((e: unknown) => e);
+    expect(res).toMatchObject({ kind: "flashed", verified: true });
+    expect((await u.memRead(at, 4)).equals(buildGroupTables(one, 2).assoc)).toBe(true);
   });
 
   test("a table the unit has not loaded leaves the flags open and the read goes on", async () => {

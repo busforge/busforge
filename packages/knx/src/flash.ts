@@ -198,8 +198,11 @@ export function planSystemBGaFlash(tables: { addr: Buffer; assoc: Buffer; comObj
       ? { op: "writeSegmentOwned", lsm: C, image: tables.comObj, owned: tables.comObjKept.owned, keptAt: tables.comObjKept.keptAt }
       : { op: "writeSegment", lsm: C, bytes: tables.comObj },
     { op: "writeSegment", lsm: A, bytes: tables.assoc },
-    { op: "writeSegment", lsm: D, bytes: tables.addr },
+    // A secured unit's address table goes after its security object, as ETS's group-address download
+    // writes it (MDT IP Interface/Router, GVS AMMA, Jung 400021SE); its full and parameter downloads write it
+    // before.
     ...(security ? planSecurityObjectLoad(security) : []),
+    { op: "writeSegment", lsm: D, bytes: tables.addr },
     { op: "loadCompleted", lsm: C, assert: false },
     { op: "loadCompleted", lsm: A, assert: false },
     { op: "loadCompleted", lsm: D, assert: false },
