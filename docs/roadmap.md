@@ -12,7 +12,7 @@ depends on is hardware-proven.
   the ABB US/U 4.2 and MDT BE-02001.02 full download and group-address flash, the MDT's structural
   flash, every download of the Jung 400021SE and the GVS AMMA, the
   System B partial form of the full download on the Jung 400021SE, the Theben DALI-Gateway's full
-  download onto a unit without the application, the structural flash newly offered on the Auro,
+  download onto a unit without the application, the structural flash newly offered on the
   Gira, Meteodata 140 S, Theben MIX 2, ABB US/U 4.2 and MEAN WELL power supply. Each needs its
   run on the device.
 - **The interface's maximum APDU from the Busforge bridge.** Over TCP the bridge does not answer the

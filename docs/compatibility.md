@@ -24,7 +24,7 @@ columns are listed per operation below.
 | M-0048 4930240 | `M-0048_A-493B-21-B471` | tested | tested | tested | tested | tested | eligible, untested |
 | M-0048 4930250 | `M-0048_A-493B-21-B471` | tested | tested | tested | tested | tested | tested |
 | M-0048 9070929 | `M-0048_A-9071-20-F258-O00EF` | tested | tested | tested | tested | tested | tested |
-| M-0081 180-02 | `M-0081_A-FE01-11-75D9` | tested | tested | tested | tested | tested | eligible, untested |
+| M-0081 180-02 | `M-0081_A-FE01-11-75D9` | tested | tested | tested | tested | tested | tested |
 | M-0083 SCN-IP000.03 | `M-0083_A-0138-21-F18E-O0072` | tested | tested | tested | refused | tested | refused |
 | M-0083 BE-06001.02 | `M-0083_A-00B4-32-3919` | tested | tested | tested | tested | tested | tested |
 | M-0083 BE-02001.02 | `M-0083_A-00B6-32-9642` | tested | tested | tested | tested | tested | tested |
@@ -147,7 +147,7 @@ Product `M-0081_H-GeneratedNumber.2D22017-0_P-180.2D02`, application program `M-
 | Parameter flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 6 |
 | Group-address flash | tested | pass / pass | pass / pass | pass / pass | none | 6 |
 | Full download | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 6 |
-| Structural flash | eligible, untested | none / none | none / none | none / none | none | none |
+| Structural flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 6 |
 
 ## M-0083 SCN-IP000.03
 

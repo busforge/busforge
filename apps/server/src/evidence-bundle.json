@@ -1170,7 +1170,7 @@
     "behaviour": {
      "state": "pass",
      "method": "independent witness connection observed output",
-     "detail": "the object's first address answered the read of the test address with 0x0258, and left the same read unanswered once the test address was removed"
+     "detail": "the object's first address answered the read of the test address with 0x000a, and left the same read unanswered once the test address was removed"
     },
     "persistence": {
      "state": "not-assessed"
@@ -1241,7 +1241,7 @@
     "persistence": {
      "state": "pass",
      "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
-     "detail": "silent 4564 ms after A_Restart, answering again after 13679 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
+     "detail": "silent 3827 ms after A_Restart, first in the restart's own connection, answering again after 6762 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
@@ -1304,7 +1304,7 @@
     "behaviour": {
      "state": "pass",
      "method": "independent witness connection observed output",
-     "detail": "the object's first address answered the read of the test address with 0x0258, and left the same read unanswered once the test address was removed"
+     "detail": "the object's first address answered the read of the test address with 0x000a, and left the same read unanswered once the test address was removed"
     },
     "persistence": {
      "state": "not-assessed"
@@ -1375,7 +1375,7 @@
     "persistence": {
      "state": "pass",
      "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
-     "detail": "silent 4382 ms after A_Restart, answering again after 13520 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
+     "detail": "silent 3982 ms after A_Restart, first in the restart's own connection, answering again after 8607 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
@@ -1895,6 +1895,138 @@
      "state": "pass",
      "method": "parameter memory read and decoded completely; not compared with a built image",
      "detail": "parameter image read back and decoded, equal to the configuration found"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0081",
+    "productRef": "M-0081_H-GeneratedNumber.2D22017-0_P-180.2D02",
+    "appProgramId": "M-0081_A-FE01-11-75D9",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "6",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "auro-m0081-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "180-02 structuralFlash api transfer",
+   "scope": {
+    "operation": "structuralFlash",
+    "channel": "api",
+    "configuration": "the device's own configuration, taken over by read-back, then the structuralFlash driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "a change that alters the com-object table, and its revert, each written as one structural flash the server reported verified, zero drift on read-back",
+     "detail": "P-42_R-42 0→1 (5 B, verified) →0 (5 B, verified), zero drift on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0081",
+    "productRef": "M-0081_H-GeneratedNumber.2D22017-0_P-180.2D02",
+    "appProgramId": "M-0081_A-FE01-11-75D9",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "6",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "auro-m0081-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "180-02 structuralFlash ui transfer",
+   "scope": {
+    "operation": "structuralFlash",
+    "channel": "ui",
+    "configuration": "the device's own configuration, taken over by read-back, then the structuralFlash driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "a change that alters the com-object table, and its revert, each written as one structural flash the server reported verified, zero drift on read-back",
+     "detail": "P-42_R-42 0→1 (verified) →0 (verified), zero drift on read-back"
     },
     "reference": {
      "state": "not-assessed"
