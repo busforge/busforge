@@ -3887,7 +3887,7 @@
     "persistence": {
      "state": "pass",
      "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
-     "detail": "silent 1001 ms after A_Restart, answering again after 5698 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
+     "detail": "silent 968 ms after A_Restart, first in the restart's own connection, answering again after 2417 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
@@ -4017,7 +4017,7 @@
     "persistence": {
      "state": "pass",
      "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
-     "detail": "silent 970 ms after A_Restart, answering again after 5661 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
+     "detail": "silent 959 ms after A_Restart, first in the restart's own connection, answering again after 2425 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
@@ -4137,6 +4137,134 @@
      "state": "pass",
      "method": "each change and its revert reported verified by the server, zero drift on read-back",
      "detail": "P-781_R-832 20→12 (verified) →20 (verified), zero drift on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0048",
+    "productRef": "M-0048_H-9070929-1-O00EF_P-9070929",
+    "appProgramId": "M-0048_A-9071-20-F258-O00EF",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "unknown"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "theben-dali-gateway-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "9070929 fullDownload api transfer",
+   "scope": {
+    "operation": "fullDownload",
+    "channel": "api",
+    "configuration": "the device's own configuration, taken over by read-back, then the fullDownload driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the server reported the download verified (read-back or device CRC, per profile)",
+     "detail": "the configuration found, downloaded (3082 B, verified), zero drift on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0048",
+    "productRef": "M-0048_H-9070929-1-O00EF_P-9070929",
+    "appProgramId": "M-0048_A-9071-20-F258-O00EF",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "unknown"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "theben-dali-gateway-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "9070929 fullDownload ui transfer",
+   "scope": {
+    "operation": "fullDownload",
+    "channel": "ui",
+    "configuration": "the device's own configuration, taken over by read-back, then the fullDownload driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the server reported the download verified (read-back or device CRC, per profile)",
+     "detail": "the configuration found, downloaded (verified), zero drift on read-back"
     },
     "reference": {
      "state": "not-assessed"

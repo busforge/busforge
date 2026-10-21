@@ -20,7 +20,7 @@ columns are listed per operation below.
 | M-0004 400021SE | `M-0004_A-7072-21-99A7-O000A` | tested | tested | tested | tested | tested | tested |
 | M-0008 5133 00 | `M-0008_A-10D7-11-2783-O000A` | tested | tested | tested | tested | tested | eligible, untested |
 | M-0048 1019610 | `M-0048_A-107E-12-5B58` | tested | tested | tested | tested | tested | tested |
-| M-0048 9070929 | `M-0048_A-9071-20-F258-O00EF` | tested | tested | tested | tested | eligible, untested | tested |
+| M-0048 9070929 | `M-0048_A-9071-20-F258-O00EF` | tested | tested | tested | tested | tested | tested |
 | M-0081 180-02 | `M-0081_A-FE01-11-75D9` | tested | tested | tested | tested | tested | eligible, untested |
 | M-0083 BE-06001.02 | `M-0083_A-00B4-32-3919` | tested | tested | tested | tested | tested | tested |
 | M-0083 BE-02001.02 | `M-0083_A-00B6-32-9642` | tested | tested | tested | tested | tested | tested |
@@ -89,7 +89,7 @@ Product `M-0048_H-9070929-1-O00EF_P-9070929`, application program `M-0048_A-9071
 | Read links | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | unknown |
 | Parameter flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | unknown |
 | Group-address flash | tested | pass / pass | pass / pass | pass / pass | none | unknown |
-| Full download | eligible, untested | none / none | none / none | none / none | none | none |
+| Full download | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | unknown |
 | Structural flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | unknown |
 
 ## M-0081 180-02
