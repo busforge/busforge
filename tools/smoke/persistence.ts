@@ -16,6 +16,8 @@ import { flagsNotRead, type ConfigView } from "./client.ts";
 // load states and the configuration back; if they hold, nothing speaks against the reboot and nothing
 // shows it, so the step is not assessed, as the product's flash reports such a restart
 // (restartUnproven). A device that answers every probe after the restart did not reboot: no unproven.
+// Also unproven: the run's tunnel failed at or after the restart and the device answered on that tunnel
+// or a new one without the probes finding the silence (the loss may have hidden it).
 export interface RebootObservation { rebooted: boolean; unproven?: true; detail: string }
 
 // The connection-oriented part of a device that `restartInConnection` uses (KnxDevice).
@@ -30,8 +32,10 @@ export interface RestartConnection {
 // the device took the descriptor read sent behind A_Restart in the same connection, as a probe outcome.
 // "undecided": the connection was closed, but by a T_Disconnect that came ahead of the read (a link that
 // stalled past the device's 6 s idle timeout delivers that timeout's close so) or after a restart sent a
-// second time; it is no silence, and the fresh probes decide.
-export interface RestartSent { confirmed: boolean; inConnection: ProbeOutcome | "undecided" }
+// second time, or by the run's tunnel failing; it is no silence, and the fresh probes decide.
+// `tunnelLost`: the run's tunnel failed (`linkLost`) while A_Restart was being sent, so no confirmation
+// came at all (`confirmed` false, not a negative confirmation).
+export interface RestartSent { confirmed: boolean; inConnection: ProbeOutcome | "undecided"; tunnelLost?: true }
 
 // The restart observeReboot sends, in the order of the server's plain restart (KnxDevice.restart): a
 // fresh connection in which the device answers a descriptor read (any answer: one with another service
@@ -46,7 +50,8 @@ export interface RestartSent { confirmed: boolean; inConnection: ProbeOutcome | 
 // connection and counts as answered, as restart() counts it.
 // A device silent before the restart, as the probes count silence (no answer, the connection closed, no
 // acknowledgement on the bus, a secure Sync unanswered: the probe just before answered with the same
-// key), gets none (RestartNotSent). A failure of the link to the interface is thrown as it is.
+// key), gets none (RestartNotSent). A failure of the link to the interface is thrown as it is, unless
+// `linkLost` says the interface drops its tunnels at this unit's restart.
 export class RestartNotSent extends Error {}
 const DEVICE_SILENT = new Set(["DEVICE_NOT_ANSWERING", "DEVICE_CLOSED_CONNECTION", "BUS_SEND_FAILED", "SECURE_SYNC_NO_RESPONSE"]);
 const codeOf = (e: unknown): unknown => (e as { code?: unknown }).code;
@@ -61,7 +66,13 @@ export async function restartInConnection(dev: RestartConnection, linkLost: (e: 
       else if (typeof code === "string" && DEVICE_SILENT.has(code)) throw new RestartNotSent(`the device did not answer in the restart's connection (${code}), so A_Restart was not sent`);
       else throw e;
     }
-    const confirmed = await dev.sendRestart();
+    // A tunnel dropped anywhere in sending A_Restart (a reconnect, the secure Sync, the frame itself)
+    // leaves open whether the frame reached the unit (a unit whose restart drops the interface's tunnels
+    // may drop them before the interface confirms it): taken as sent and not confirmed, and the probes
+    // on a new tunnel decide.
+    let confirmed: boolean;
+    try { confirmed = await dev.sendRestart(); }
+    catch (e) { if (linkLost(e)) return { confirmed: false, inConnection: "undecided", tunnelLost: true }; throw e; }
     dev.takeTransportReply();
     let inConnection: ProbeOutcome | "undecided";
     try { await dev.deviceDescriptor(); inConnection = "answered"; }
@@ -114,13 +125,18 @@ export async function observeReboot(
   try { sent = await restart(); }
   catch (e) { if (e instanceof RestartNotSent) return { rebooted: false, detail: e.message }; throw e; }
   const confirmed = typeof sent === "boolean" ? sent : sent.confirmed;
+  const sendLost = typeof sent !== "boolean" && sent.tunnelLost === true;
   const silentNeeded = confirmed ? 1 : 2;
-  const note = confirmed ? "" : " (A_Restart confirmed negatively)";
+  const note = confirmed ? "" : sendLost ? " (A_Restart unconfirmed: the run's tunnel failed while it was sent)" : " (A_Restart confirmed negatively)";
   let silentAt: number | null = null;
   let silentRun = 0;
   let gap = false;
   let answeredAfterGap = false;
-  let linkLost = false;
+  // A loss while A_Restart was sent counts as the first loss, even where the probes still get through on
+  // the old tunnel: an answer without the silence after it is unproven, not a device that did not reboot.
+  let linkLost = sendLost;
+  // Whether a probe met a dropped tunnel and connected a new one.
+  let probeLost = false;
   let answeredAfterLoss = false;
   let silenceInConnection = false;
   // Whether the run of silences now counting began in the restart's own connection.
@@ -137,7 +153,7 @@ export async function observeReboot(
   const see = (outcome: ProbeOutcome, inConnection = false): boolean => {
     lastWasLoss = outcome === "link-lost";
     if (outcome === "link-lost") {
-      linkLost = true; silentRun = 0; silentAt = null; gap = false; answeredAfterGap = false; answeredAfterLoss = false; silenceInConnection = false; runFromConnection = false;
+      linkLost = true; probeLost = true; silentRun = 0; silentAt = null; gap = false; answeredAfterGap = false; answeredAfterLoss = false; silenceInConnection = false; runFromConnection = false;
       if (windows < MAX_WINDOWS) { windows++; windowStart = now(); }
       return false;
     }
@@ -153,7 +169,7 @@ export async function observeReboot(
   };
   // The record says where a silence was seen first: in the restart's own connection, or by the probes.
   const inConnection = typeof sent === "boolean" ? null : sent.inConnection;
-  const rebooted = (): RebootObservation => ({ rebooted: true, detail: `silent ${silentAt} ms after A_Restart${silenceInConnection ? ", first in the restart's own connection" : ""}${linkLost ? ", on a new tunnel after the interface dropped the run's" : ""}, answering again after ${now() - start} ms${note}` });
+  const rebooted = (): RebootObservation => ({ rebooted: true, detail: `silent ${silentAt} ms after A_Restart${silenceInConnection ? ", first in the restart's own connection" : ""}${probeLost ? ", on a new tunnel after the interface dropped the run's" : sendLost ? ", after the run's tunnel failed while A_Restart was sent" : ""}, answering again after ${now() - start} ms${note}` });
   if (inConnection !== null && inConnection !== "undecided" && see(inConnection, inConnection === "silent" || (confirmed && inConnection === "unacknowledged"))) return rebooted();
   while (now() - windowStart < windowMs) {
     if (see(await probe())) return rebooted();
@@ -162,14 +178,14 @@ export async function observeReboot(
   // The tunnel loss may have hidden the device's silence: with no silence of its own seen and an answer
   // after the new tunnel, nothing shows the reboot and nothing speaks against it.
   if (silentAt === null && linkLost && answeredAfterLoss) {
-    return { rebooted: false, unproven: true, detail: `the interface dropped the run's tunnel after A_Restart${note}, and on the new tunnel the device answered without the probes finding the silence the proof needs: the tunnel loss is no proof of the reboot, so the reboot cannot be seen` };
+    return { rebooted: false, unproven: true, detail: `${sendLost ? "the run's tunnel failed while A_Restart was sent, so it is unconfirmed" : `the interface dropped the run's tunnel after A_Restart${note}`}, and ${probeLost ? "on the new tunnel " : ""}the device answered without the probes finding the silence the proof needs: the tunnel loss is no proof of the reboot, so the reboot cannot be seen` };
   }
   // Nothing about the device: a harness failure, not a result of this check.
   if (lastWasLoss) {
     throw new Error(`the interface dropped the run's tunnel after A_Restart${note}, the last time as the check ended, so no probe reached the device on the new tunnel: nothing shows the reboot or its absence`);
   }
   // The window the probes had: from A_Restart, or from the last new tunnel.
-  const within = linkLost ? `within ${windowMs} ms of the last new tunnel after the interface dropped the run's` : `within ${windowMs} ms of A_Restart`;
+  const within = probeLost ? `within ${windowMs} ms of the last new tunnel after the interface dropped the run's` : `within ${windowMs} ms of A_Restart`;
   if (silentAt === null && !confirmed && answeredAfterGap) {
     return { rebooted: false, unproven: true, detail: `the device left a probe unanswered and answered again, but never went silent on two probes in a row ${within}${note}: the reboot cannot be seen` };
   }

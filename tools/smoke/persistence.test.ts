@@ -334,6 +334,38 @@ describe("restartInConnection", () => {
     expect(await failure(restartInConnection(fake({ after: "TUNNEL_CLOSED" }).dev))).toMatchObject({ code: "TUNNEL_CLOSED" });
   });
 
+  test("a tunnel lost while A_Restart is sent counts as a restart sent and not confirmed, and only the probes on a new tunnel decide", async () => {
+    const lost = (e: unknown) => (e as { code?: string }).code === "TUNNEL_CLOSED";
+    const sending = () => {
+      const f = fake();
+      const dev = { ...f.dev, sendRestart: async () => { f.calls.push("restart"); throw coded("TUNNEL_CLOSED"); } };
+      return { dev, calls: f.calls };
+    };
+    const { dev, calls } = sending();
+    expect(await restartInConnection(dev, lost)).toEqual({ confirmed: false, inConnection: "undecided", tunnelLost: true });
+    expect(calls).toEqual(["connect", "descriptor", "restart", "disconnect"]);
+    // Through any interface that keeps its tunnels the loss is thrown.
+    expect(await failure(restartInConnection(sending().dev))).toMatchObject({ code: "TUNNEL_CLOSED" });
+    // Two silences on the new tunnel and an answer show the reboot.
+    const seen = await observeReboot(() => restartInConnection(sending().dev, lost), scripted(["answered", "link-lost", "silent", "silent", "answered"]), clock());
+    // No confirmation came: the record does not call it a negative one.
+    expect(seen.detail).toContain("the run's tunnel failed while it was sent");
+    expect(seen.detail).not.toContain("confirmed negatively");
+    expect(seen).toMatchObject({ rebooted: true, detail: expect.stringContaining("on a new tunnel") });
+    // One silence is not enough after an unconfirmed restart; an answer without the silence leaves it unproven.
+    const one = await observeReboot(() => restartInConnection(sending().dev, lost), scripted(["answered", "link-lost", "silent", "answered"]), clock());
+    expect(one).toMatchObject({ rebooted: false, unproven: true });
+    const none = await observeReboot(() => restartInConnection(sending().dev, lost), scripted(["answered", "link-lost", "answered"]), clock());
+    expect(none.detail).not.toContain("confirmed negatively");
+    expect(none).toMatchObject({ rebooted: false, unproven: true, detail: expect.stringContaining("no proof of the reboot") });
+    // A loss in the send whose old tunnel still carries the probes: an answer without the silence is
+    // unproven, never a device that did not reboot.
+    const kept = await observeReboot(() => restartInConnection(sending().dev, lost), scripted(["answered"]), clock());
+    expect(kept).toMatchObject({ rebooted: false, unproven: true, detail: expect.stringContaining("while A_Restart was sent") });
+    const keptSilent = await observeReboot(() => restartInConnection(sending().dev, lost), scripted(["answered", "silent", "silent", "answered"]), clock());
+    expect(keptSilent).toMatchObject({ rebooted: true, detail: expect.stringContaining("after the run's tunnel failed while A_Restart was sent") });
+  });
+
   test("a failure of the link to the interface before the restart is thrown as it is, no restart sent", async () => {
     const { dev, calls } = fake({ descriptorError: coded("TUNNEL_CON_TIMEOUT") });
     const e = await failure(restartInConnection(dev));
