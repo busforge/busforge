@@ -61,7 +61,11 @@ Read the LSM state with `PropertyValueRead(obj, PID = 5)`.
 
 - **Address table**: `[count:2][GA:2] x count`, group addresses sorted ascending.
 - **Association table**: `[count:2][groupIdx:2][comObjNum:2] x count` (long form) or 1-byte
-  fields (short form). Detect the form by validating that group indices are within the
+  fields (short form). The unit says which: the description of the association table object's
+  table property (object 2, PID 23) carries `PDT_GENERIC_04` for the long form and `PDT_GENERIC_02`
+  for the short one. ETS reads that description before every System B download and writes the form
+  it names (MDT IP Interface/Router short; GVS AMMA, Jung 400021SE, Theben DALI-Gateway long). A read
+  that has no description tells the form by validating that group indices are within the
   address-table count. Entries ordered by com-object number, then group index.
 - **Com-object table**: `[count:2][flags:1][typeOrSize:1] x count`, entry i is com-object i
   (1-based).
@@ -200,6 +204,24 @@ Connection-oriented KNX management on top of the tunnel. What matters on a busy 
   confirmed restart, which awaits only the `A_Restart_Response`. A device that takes the request and
   answers it with nothing but other services, try after try, is refused as such
   (`ANSWER_SERVICE_MISMATCH`), not taken for silence (§31).
+- A device that **repeats a frame of its own while a request waits** took that request while it was
+  still waiting for our `T_ACK` of the frame (the transport layer's OPEN_WAIT): our `T_ACK` went out
+  beside the request and the interface confirmed it negatively. The specification has the device keep
+  the answer and send it once a `T_ACK` lets it go on; a Theben DALI-Gateway drops it instead. It
+  acknowledges the request, never answers it, and acknowledges each repetition of it without passing it
+  on, since a frame it acknowledged holds its number. Busforge therefore acknowledges the repetition and
+  gives the request a full answer window from there, in which the keeping device answers once our
+  `T_ACK` of the repetition reached it (an answer that lands between two tries is taken too). A
+  **read** that is still unanswered is asked again **under the next number**, which the device takes as
+  a new request; should it then answer both, the second answer, identical to the first, is acknowledged
+  and dropped while no request or another read waits; the same read asked again takes it, being its
+  answer, and so does a write answered alike (one writing the value just read). Any other request (a write, a function property
+  command) is not asked twice, since the device would carry it out twice: it fails as unanswered. After
+  a request the device acknowledged and did not answer, the next request takes the next number. A
+  `T_ACK` is not sent again on a negative confirmation: the specification takes no action on that
+  confirmation, and a `T_ACK` of a number the device has already moved past makes it disconnect when it
+  is waiting for the `T_ACK` of its next frame. The ETS captures hold no `T_ACK` that was confirmed
+  negatively, so they show no other way.
 
 Short per-operation timeouts (about 1.5 s) so a lost ACK fails fast and the **whole
 procedure** is retried on a fresh connection (idempotent when writing identical content),

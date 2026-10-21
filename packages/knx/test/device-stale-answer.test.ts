@@ -59,12 +59,15 @@ describe("a numbered answer of another service than the one asked for", () => {
 });
 
 // A device that acknowledges every request; the one with sequence number 0 (all its tries) it answers
-// only with another service, every later one with its device descriptor.
+// only with another service, each time a new frame under the next number, every later one with its
+// device descriptor. `repeat` makes the other service the same frame each time, a repetition.
 class OtherServiceDevice implements KnxTransport {
   assignedIa = 0x0001;
   onCemi: ((src: number, dst: number, tpdu: Buffer, isGroup: boolean) => void) | null = null;
   onClosed: ((reason: string) => void) | null = null;
   private txSeq = 0;
+  private otherSeq = 7;
+  constructor(private readonly repeat = false) {}
   async connect() {}
   async disconnect() {}
   private send(tpdu: Buffer) { queueMicrotask(() => this.onCemi?.(0x1203, this.assignedIa, tpdu, false)); }
@@ -73,7 +76,11 @@ class OtherServiceDevice implements KnxTransport {
     const p = parseApdu(cemi.subarray(9));
     if (p.control) return;
     this.send(tpAck(p.seq));
-    if (p.seq === 0) { this.send(apdu(7, APCI.MEMORY_RESPONSE, Buffer.from([0x44, 0xa5, 0x08]), 1)); return; }
+    if (p.seq === 0) {
+      this.send(apdu(this.otherSeq, APCI.MEMORY_RESPONSE, Buffer.from([0x44, 0xa5, 0x08]), 1));
+      if (!this.repeat) this.otherSeq = (this.otherSeq + 1) & 0x0f;
+      return;
+    }
     this.send(apdu(this.txSeq, APCI.DEVICE_DESCRIPTOR_RESPONSE, Buffer.from([0x07, 0x05])));
     this.txSeq = (this.txSeq + 1) & 0x0f;
   }
@@ -86,6 +93,15 @@ describe("a request answered only with another service", () => {
     const err = await dev.deviceDescriptor().then(() => null, (e: { code?: string; message?: string }) => e);
     expect(err?.code).toBe("ANSWER_SERVICE_MISMATCH");
     expect(err?.message).toContain("0x240");
+    expect(await dev.deviceDescriptor()).toBe("MV-0705");
+  });
+
+  // The same frame again is taken for a repetition: the device waiting for our T_ACK of it while it
+  // took the read, which is then asked again under the next number. This pins that rule only; the
+  // transport layer behind it is modelled in device-lost-tack.test.ts.
+  test("whose other service is repeated is asked again under the next number and answered", async () => {
+    const dev = new KnxDevice(new OtherServiceDevice(true), "1.2.3", undefined, { responseMs: 50, retryGapMs: 1 });
+    await dev.connect();
     expect(await dev.deviceDescriptor()).toBe("MV-0705");
   });
 

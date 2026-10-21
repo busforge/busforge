@@ -247,6 +247,12 @@ const ANSWER_OF: Readonly<Record<number, number>> = {
   [APCI.FUNCTION_PROPERTY_EXT_STATE_READ]: APCI.FUNCTION_PROPERTY_EXT_STATE_RESPONSE,
   [APCI.MEMORY_EXT_READ]: APCI.MEMORY_EXT_READ_RESP, [APCI.MEMORY_EXT_WRITE]: APCI.MEMORY_EXT_WRITE_RESP,
 };
+// The reads, which a device may carry out twice: only these are asked again under a new number
+// (requestTries). Classic memory services are keyed by their service bits alone.
+const REASKABLE: ReadonlySet<number> = new Set([
+  APCI.DEVICE_DESCRIPTOR_READ, APCI.PROPERTY_READ, APCI.PROPERTY_DESCRIPTION_READ, APCI.PROPERTY_EXT_READ,
+  APCI.MEMORY_READ, APCI.MEMORY_EXT_READ, APCI.FUNCTION_PROPERTY_EXT_STATE_READ,
+]);
 // No answer awaited: between requests, and during a request the device answers with nothing.
 const NO_ANSWER = (): boolean => false;
 function answerOf(request: number): ((answer: number) => boolean) | undefined {
@@ -261,7 +267,7 @@ function answerOf(request: number): ((answer: number) => boolean) | undefined {
 export class KnxDevice {
   private dst: number;
   private seq = 0;
-  private ackResolve: (() => void) | null = null;
+  private ackResolve: ((nak: boolean) => void) | null = null;
   private respResolve: ((p: ParsedApdu) => void) | null = null;
   // Sequence number of the last numbered data frame taken from the device on this connection. A frame
   // with the same number is the device repeating it because our T_ACK did not reach it (the interface
@@ -279,6 +285,15 @@ export class KnxDevice {
   // is taken for the repetition: the request then fails as unanswered, it never takes another's octets.
   private lastDropped: { frame: Buffer; at: number } | null = null;
   private peerClosed: (() => void) | null = null;
+  // Called while a request is in flight when the device repeats a frame of its own to us (see onCemi).
+  private peerRepeated: (() => void) | null = null;
+  // The answer of a read asked again under a new number (requestTries), and that read (its APDU without
+  // the sequence number): the device may have taken both and answer twice. Its second answer is
+  // acknowledged and dropped, never taken by another request. A request for that same read takes it,
+  // since its octets are that read's answer.
+  private owedAnswer: { apci: number; data: Buffer; request: Buffer; at: number } | null = null;
+  // The request in flight, its APDU without the sequence number.
+  private inFlight: Buffer | null = null;
   // During the Sync handshake, raw frames are diverted here (the Sync response is not
   // a normal secure data frame, so it bypasses the request machinery).
   private rawInbox: Buffer[] | null = null;
@@ -306,7 +321,7 @@ export class KnxDevice {
     if (this.rawInbox) { this.rawInbox.push(Buffer.from(tpdu)); this.rawNotify?.(); return; }
     const outer = parseApdu(tpdu);
     if (outer.control) {
-      if (outer.seq === this.seq) { if ((tpdu[0] & 0x03) === 0x03) this.nakSeen = true; else this.ackSeen = true; this.ackResolve?.(); }
+      if (outer.seq === this.seq) { const nak = (tpdu[0] & 0x03) === 0x03; if (nak) this.nakSeen = true; else this.ackSeen = true; this.ackResolve?.(nak); }
       return;
     }
     // For a secure session the data frame is a wrapped secure APDU: ACK the outer
@@ -318,9 +333,20 @@ export class KnxDevice {
     if (this.secure) {
       const inner = this.secure.unwrap(tpdu);
       if (inner.status === "invalid") { this.unauthentic++; return; }
-      if (inner.status === "replay") { this.tun.sendCemi(cemiLData(this.me, this.dst, tpAck(outer.seq))).catch(() => {}); return; }
+      if (inner.status === "replay") {
+        if (dst === this.me) this.peerRepeated?.();
+        this.tun.sendCemi(cemiLData(this.me, this.dst, tpAck(outer.seq))).catch(() => {});
+        return;
+      }
       p = parseApdu(inner.apdu);
     } else if (outer.seq === this.lastRxSeq || this.isDroppedRepeat(tpdu)) {
+      if (dst === this.me) this.peerRepeated?.();
+      this.tun.sendCemi(cemiLData(this.me, this.dst, tpAck(outer.seq))).catch(() => {});
+      return;
+    }
+    if (this.isOwedAnswer(p)) {
+      this.owedAnswer = null;
+      if (!this.secure) this.lastRxSeq = outer.seq;
       this.tun.sendCemi(cemiLData(this.me, this.dst, tpAck(outer.seq))).catch(() => {});
       return;
     }
@@ -337,6 +363,21 @@ export class KnxDevice {
     // device's repetition of it is then the only copy, which has to get through.
     const plain = !this.secure;
     this.tun.sendCemi(cemiLData(this.me, this.dst, tpAck(outer.seq))).then(() => { if (plain) this.lastRxSeq = outer.seq; this.respResolve?.(p); }).catch(() => {});
+  }
+
+  private owe(r: ParsedApdu): void {
+    this.owedAnswer = { apci: r.apci, data: Buffer.from(r.data), request: this.inFlight!, at: Date.now() };
+  }
+  // Whether a frame is the second answer of a read asked twice: identical to the first, and coming
+  // between requests or during another read (a write is answered alike when it writes the value read,
+  // and takes that answer as its own).
+  private isOwedAnswer(p: ParsedApdu): boolean {
+    const owed = this.owedAnswer;
+    if (!owed || Date.now() - owed.at >= this.timeouts.droppedRepeatMs || p.apci !== owed.apci || !p.data.equals(owed.data)) return false;
+    const now = this.inFlight;
+    if (now === null) return true;
+    const service = ((now[0] & 0x03) << 8) | (now[1] ?? 0);
+    return !now.equals(owed.request) && (REASKABLE.has(service) || REASKABLE.has(service & 0x3c0));
   }
 
   private isDroppedRepeat(tpdu: Buffer): boolean {
@@ -359,6 +400,7 @@ export class KnxDevice {
     this.seq = 0;
     this.lastRxSeq = null;
     this.lastDropped = null;
+    this.owedAnswer = null;
     this.maxApdu = undefined;
     await this.tun.sendCemi(cemiLData(this.me, this.dst, tpConnect()));
     if (this.secure) await this.runSync(this.secure);
@@ -416,29 +458,55 @@ export class KnxDevice {
     // A caller awaiting an answer past the request (the confirmed restart) set it before; it stays.
     const awaitedBefore = this.answers;
     try { return await this.requestTries(build, expectResponse, tries, afterWrap, deviceAckSuffices); }
-    finally { this.peerClosed = null; this.answers = awaitedBefore; this.otherServices.clear(); }
+    finally { this.peerClosed = null; this.peerRepeated = null; this.inFlight = null; this.answers = awaitedBefore; this.otherServices.clear(); }
   }
   private async requestTries(build: (seq: number) => Buffer, expectResponse: boolean, tries: number, afterWrap?: () => void, deviceAckSuffices = false): Promise<ParsedApdu | null> {
     // Whether the last try was acknowledged and then got only unauthentic answers: the device
     // answered and was not believed, which is a different failure from silence.
     let rejectedAfterAck = false;
     const answeredOtherwise = new Set<number>();
+    // The device acknowledged a try under the current number: it holds that number, and the same
+    // number again reaches only its transport layer, as a repetition it acknowledges and does not pass
+    // on. A try under it gives a late answer another window without the request being taken twice.
+    let held = false;
+    // A repetition of a frame of the device's own since the current number first went out means our
+    // T_ACK of that frame did not reach it (the interface confirmed it negatively), so the device took
+    // the request while it waited for that T_ACK (OPEN_WAIT). The specification has it keep the answer
+    // and send it once our T_ACK of the repetition lets it go on, so the answer window starts again
+    // from the repetition. A Theben DALI-Gateway drops the answer instead: a read is then asked again
+    // under the next number. Any other request is not, since the device would carry it out twice.
+    let repeated = false;
+    let repeatedAt = 0;
+    let restartWindow = (): void => undefined;
+    this.peerRepeated = () => { repeated = true; repeatedAt = Date.now(); restartWindow(); };
+    let reaskable = false;
+    let reasked = false;
+    // The answer that came between two tries, after the window of the one before had closed.
+    let between: ParsedApdu | null = null;
     for (let i = 0; i < tries; i++) {
       this.unauthentic = 0;
       this.otherServices.clear();
       rejectedAfterAck = false;
       if (i > 0) await new Promise((r) => setTimeout(r, this.timeouts.retryGapMs));
+      if (between) { this.seq = (this.seq + 1) & 0x0f; if (reasked) this.owe(between); return between; }
+      // Only once a whole answer window has passed since the repetition: a repetition that came after
+      // the last try's window gets it from a try under the same number first.
+      if (held && repeated && reaskable && Date.now() - repeatedAt >= this.timeouts.responseMs) { this.seq = (this.seq + 1) & 0x0f; held = false; repeated = false; reasked = true; }
       // The waiters are registered before the send, the device's timeouts start after it: over UDP
       // the send resolves on the tunnelling ACK, and a late ACK must not eat the device's time.
       let ackTimeout = (): void => undefined;
       let respTimeout = (): void => undefined;
-      const ackP = new Promise<boolean>((res) => { this.ackResolve = () => res(true); ackTimeout = () => res(false); });
+      let refused = false;
+      const ackP = new Promise<boolean>((res) => { this.ackResolve = (nak) => { refused = nak; res(true); }; ackTimeout = () => res(false); });
       const respP = expectResponse
         ? new Promise<ParsedApdu | null>((res) => { this.respResolve = (p) => res(p); respTimeout = () => res(null); })
         : Promise.resolve<ParsedApdu | null>(null);
       let closedByDevice = false;
       this.peerClosed = () => { closedByDevice = true; ackTimeout(); respTimeout(); };
       const plainApdu = build(this.seq);
+      this.inFlight = Buffer.concat([Buffer.from([plainApdu[0] & 0x03]), plainApdu.subarray(1)]);
+      const service = parseApdu(plainApdu).apci;
+      reaskable = REASKABLE.has(service) || REASKABLE.has(service & 0x3c0);
       if (expectResponse) {
         const answers = answerOf(parseApdu(plainApdu).apci);
         if (!answers) throw new KnxError("ANSWER_SERVICE_UNKNOWN", `no answer service is known for the request service 0x${parseApdu(plainApdu).apci.toString(16)}`);
@@ -465,11 +533,21 @@ export class KnxDevice {
         throw e;
       }
       setTimeout(ackTimeout, this.timeouts.ackMs);
-      setTimeout(respTimeout, this.timeouts.responseMs);
+      let respTimer = setTimeout(respTimeout, this.timeouts.responseMs);
+      restartWindow = () => { clearTimeout(respTimer); respTimer = setTimeout(respTimeout, this.timeouts.responseMs); };
       const acked = await ackP;
-      if (!acked && !closedByDevice) continue;
-      if (acked && !expectResponse) { this.seq = (this.seq + 1) & 0x0f; return null; }
+      // A T_NAK is the device refusing the frame: it took no number.
+      if (acked && !refused) held = true;
+      if (!acked && !closedByDevice) {
+        clearTimeout(respTimer); restartWindow = () => undefined;
+        if (expectResponse) this.respResolve = (p) => { between ??= p; };
+        continue;
+      }
+      if (acked && !expectResponse) { clearTimeout(respTimer); this.seq = (this.seq + 1) & 0x0f; return null; }
       const r = await respP;
+      clearTimeout(respTimer);
+      restartWindow = () => undefined;
+      if (r === null && expectResponse) this.respResolve = (p) => { between ??= p; };
       // A device that closes its transport connection takes no further numbered frame, so asking
       // again is pointless. It is present, so this is not DEVICE_NOT_ANSWERING (silence).
       if (r === null && closedByDevice) throw new KnxError("DEVICE_CLOSED_CONNECTION", "the device closed the connection without answering");
@@ -478,16 +556,20 @@ export class KnxDevice {
       if (r === null && this.otherServices.size > 0) for (const a of this.otherServices) answeredOtherwise.add(a);
       if (r === null) { rejectedAfterAck = this.unauthentic > 0; continue; }
       this.seq = (this.seq + 1) & 0x0f;
+      if (reasked) this.owe(r);
       return r;
     }
+    // The next request takes the next number.
+    if (held) this.seq = (this.seq + 1) & 0x0f;
     if (answeredOtherwise.size > 0) {
       const seen = [...answeredOtherwise].map((a) => `0x${a.toString(16)}`).join(", ");
-      // The device acknowledged the request and holds its number: the next request takes the next one.
-      this.seq = (this.seq + 1) & 0x0f;
       throw new KnxError("ANSWER_SERVICE_MISMATCH", `the device answered only with service ${seen}, not with the answer to this request`);
     }
     if (rejectedAfterAck) {
       throw new KnxError("SECURE_ANSWER_REJECTED", `the device acknowledged the request and answered, but ${this.unauthentic} answer(s) could not be authenticated (a failed MAC, or an answer not secured at all); nothing from them was used`);
+    }
+    if (held && repeated) {
+      throw new KnxError("DEVICE_NOT_ANSWERING", "no reliable response (device not answering): it took the request while it waited for our acknowledgement of an earlier frame and did not answer; a request other than a read is not asked twice");
     }
     throw new KnxError("DEVICE_NOT_ANSWERING", "no reliable response (device not answering)");
   }
@@ -500,6 +582,11 @@ export class KnxDevice {
   async propRead(obj: number, pid: number, start = 1, count = 1): Promise<Buffer> {
     const tail = Buffer.from([obj, pid, (count << 4) | ((start >> 8) & 0x0f), start & 0xff]);
     const r = await this.request((s) => apdu(s, APCI.PROPERTY_READ, tail), true);
+    const d = r!.data;
+    const echoedStart = d.length < 4 ? -1 : ((d[2] & 0x0f) << 8) | d[3];
+    if (d.length < 4 || d[0] !== obj || d[1] !== pid || (d[2] >> 4 > 0 && echoedStart !== start)) {
+      throw new KnxError("PROPERTY_RESPONSE_MISMATCH", `a read of object ${obj} PID ${pid} from ${start} was answered for ${d.length < 4 ? "no property" : `object ${d[0]} PID ${d[1]} from ${echoedStart}`}`);
+    }
     return r!.data.subarray(4); // skip obj,pid,start echo
   }
   // ---- extended property services (object type + instance, see APCI.PROPERTY_EXT_*) ----
@@ -842,6 +929,9 @@ export class KnxDevice {
   async propWrite(obj: number, pid: number, data: Buffer, start = 1, count = 1): Promise<Buffer> {
     const tail = Buffer.concat([Buffer.from([obj, pid, (count << 4) | ((start >> 8) & 0x0f), start & 0xff]), data]);
     const r = await this.request((s) => apdu(s, APCI.PROPERTY_WRITE, tail), true);
+    if (r && r.data.length >= 2 && (r.data[0] !== obj || r.data[1] !== pid)) {
+      throw new KnxError("PROPERTY_RESPONSE_MISMATCH", `a write of object ${obj} PID ${pid} was answered for object ${r.data[0]} PID ${r.data[1]}`);
+    }
     return r ? r.data.subarray(4) : Buffer.alloc(0); // device echoes the written value
   }
   // Switch the device's verify mode (PID_DEVICE_CONTROL bit 2) on or off, preserving the other
