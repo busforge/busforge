@@ -4,6 +4,7 @@
 // only BETWEEN server bus operations (the bench bridge has one tunnel channel; the server
 // releases it after each queued op), so the runner must not run a witness check while an API
 // bus op is in flight.
+import { connectTunnel } from "./tunnel.ts";
 import { KnxIpTunnel, cemiLDataGroup, groupValueRead, decodeGroupApdu, gaToNum, secureEncode, openSecureGroupTpdu, isSecureApdu, SCF, toolSequenceNow } from "../../packages/knx/src/index.ts";
 
 // The host is injected, never defaulted: a hard-coded address would silently point a hardware
@@ -15,12 +16,12 @@ export class Witness {
   private readonly lastSecureSeq = new Map<number, bigint>();
   // The bridge listens on 3681 by default (apps/bridge --port 3681); override with
   // BUSFORGE_BENCH_PORT. A standard KNXnet/IP gateway uses 3671.
-  constructor(private readonly host: string, private readonly port = Number(process.env.BUSFORGE_BENCH_PORT ?? 3681)) {}
+  // `drops`: the unit's restart drops the tunnels of the interface the run goes through, so a connect
+  // the interface refuses right after the server's write is tried again (tunnel.ts).
+  constructor(private readonly host: string, private readonly port = Number(process.env.BUSFORGE_BENCH_PORT ?? 3681), private readonly o: { drops: boolean } = { drops: false }) {}
 
   async connect(): Promise<void> {
-    const tun = KnxIpTunnel.tcp(this.host, this.port);
-    await tun.connect();
-    this.tun = tun;
+    this.tun = await connectTunnel<KnxIpTunnel>(this.host, this.port, { drops: this.o.drops });
   }
   async close(): Promise<void> {
     if (this.tun) { try { await this.tun.disconnect(); } catch { /* already gone */ } this.tun = null; }

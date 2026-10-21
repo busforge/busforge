@@ -67,6 +67,7 @@ interface Script {
 function scripted(sc: Script = {}) {
   let controlReads = 0;
   const calls: string[] = [];
+  const logs: string[] = [];
   const device: { params: Record<string, string>; links: Record<string, number[]> } = { params: { [PARAM]: "1", [STRUCT]: "1", ...sc.params }, links: { [OBJ]: [], [OTHER_OBJ]: [gaToNum("2/0/10")], ...sc.links } };
   const project: { params: Record<string, string>; links: Record<string, number[]> } = { params: { ...device.params, ...(sc.placedWithDefaults ? { [STRUCT]: "0" } : {}), ...(sc.memoryless ? { [MEMLESS]: "1" } : {}) }, links: structuredClone(device.links) };
   // The server counts a device link on an object the project's parameters hide as unresolved.
@@ -177,10 +178,10 @@ function scripted(sc: Script = {}) {
         return { reboot, before: new Map([[1, 1], [2, 1], [3, 1], [4, 1]]), after: new Map([[1, 1], [2, 1], [3, 1], [4, sc.unloadedAfterReboot ? 0 : 1]]) };
       },
     },
-    log: () => undefined,
+    log: (m: string) => { logs.push(m); },
     settle: async () => undefined,
   };
-  return { io, calls, device, start: structuredClone(device), objOnDevice, plain };
+  return { io, calls, logs, device, start: structuredClone(device), objOnDevice, plain };
 }
 const NO_FULL: InServiceOptions = { fullDownload: false, testGa: GA };
 const WRITES = new Set(["flashParams", "flashLinks", "structuralFlash", "fullDownload", "restart"]);
@@ -884,11 +885,11 @@ describe("a device in service: the interface the run goes through", () => {
     expect(r.route).toBe("interface 1.1.250 (serial 00fa00000001), tunnel address 1.1.251");
   });
 
-  test("a unit whose restart drops an interface's tunnels is refused through that interface, before it is read", async () => {
-    const { io, calls } = scripted();
+  test("a unit whose restart drops an interface's tunnels runs through that interface, and the log says the runner reconnects", async () => {
+    const { io, logs } = scripted();
     const r = await runInService(behind("drops"), io, NO_FULL);
-    expect(r.stopped).toEqual({ phase: "fingerprint", detail: "the run goes through 1.1.250, whose tunnels a restart of this unit drops, the run's own included; reach the unit through another interface" });
-    expect(calls).toEqual(["route"]);
+    expect(r.ok).toBe(true);
+    expect(logs).toContain("route through 1.1.250, whose tunnels a restart of this unit drops: the runner's own tunnels reconnect after each restart");
   });
 
   test("the unit itself, reported as the interface, is refused as the interface would be", async () => {
@@ -898,7 +899,7 @@ describe("a device in service: the interface the run goes through", () => {
     expect(calls).toEqual(["route"]);
   });
 
-  test("an interface that does not say which it is cannot show the run avoids that one", async () => {
+  test("an interface that does not say which it is cannot show the run avoids the unit itself", async () => {
     const { io, calls } = scripted({ route: { interfaceIa: null, interfaceSerial: null, tunnelIa: "1.1.100" } });
     const r = await runInService(behind("drops"), io, NO_FULL);
     expect(r.stopped?.detail).toContain("reports no individual address of its own");
@@ -912,8 +913,8 @@ describe("a device in service: the interface the run goes through", () => {
     expect((await runInService(behind("keeps"), same.io, NO_FULL)).ok).toBe(true);
   });
 
-  test("the plan names the route and the refusal", () => {
-    expect(planInService(behind("drops"), NO_FULL).find((p) => p.text.startsWith("route:"))?.text).toBe("route: the individual address the interface reports for itself (KNXnet/IP device information) and the run's tunnel address; refused when the interface is 1.1.250, whose tunnels a restart of this unit drops");
+  test("the plan names the route, the reconnect and the refusal", () => {
+    expect(planInService(behind("drops"), NO_FULL).find((p) => p.text.startsWith("route:"))?.text).toBe("route: the individual address the interface reports for itself (KNXnet/IP device information) and the run's tunnel address; through 1.1.250 too, whose tunnels a restart of this unit drops (a run through it): the runner's own tunnels reconnect after it, and a tunnel loss is no proof of the reboot; refused when the interface is the unit itself");
   });
 
   test("an interface named by something other than an individual address, or without where it was shown, is refused", () => {

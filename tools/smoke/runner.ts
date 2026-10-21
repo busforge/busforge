@@ -28,6 +28,7 @@ import { transportOf, gitRevision, sha256, readFirmwareRevision } from "../evide
 import { KnxIpTunnel, KnxDevice, KnxError, lsmState, SecureSession, iaToNum, numToIa, gaToNum, type KnxTransport } from "../../packages/knx/src/index.ts";
 import { loadKnxproj } from "../../packages/project/src/index.ts";
 import { FaultProxy } from "./faultproxy.ts";
+import { connectTunnel, onFreshTunnel, isLinkLost } from "./tunnel.ts";
 import { runInService, planInService, optionProblems, type InServiceIo, type InServiceOptions, type FoundConfiguration } from "./inservice.ts";
 import { BCU1_EEPROM, BCU1_RUN_ERROR, isMemoryMappedLsm, maskInfo, type Firmware } from "../../packages/product/src/index.ts";
 
@@ -69,9 +70,8 @@ function deviceOn(tun: KnxTransport, ia: string, creds: Creds, toolKey = creds?.
 
 // Read the device's firmware revision over the bench interface, like the witness: only while the
 // server holds no bus operation, because the bench bridge has one tunnel channel.
-async function readBenchFirmware(host: string, ia: string, creds: Creds): Promise<Firmware> {
-  const tun = KnxIpTunnel.tcp(host, Number(process.env.BUSFORGE_BENCH_PORT ?? 3681));
-  await tun.connect();
+async function readBenchFirmware(host: string, ia: string, creds: Creds, drops = false): Promise<Firmware> {
+  const tun = await connectTunnel<KnxIpTunnel>(host, Number(process.env.BUSFORGE_BENCH_PORT ?? 3681), { drops });
   const dev = deviceOn(tun, ia, creds);
   try { await dev.connect(); return await readFirmwareRevision(dev); }
   finally { try { await dev.disconnect(); } catch { /* link already gone */ } await tun.disconnect(); }
@@ -101,46 +101,53 @@ async function readRunError(tun: KnxIpTunnel, ia: string, creds: Creds): Promise
 // Restart the device over the bench interface and observe the reboot (persistence.ts), with the
 // load states before the restart and after the reboot. Like the firmware read, only while the
 // server holds no bus operation.
-async function rebootOnBench(host: string, ia: string, mask: string, creds: Creds): Promise<{ reboot: RebootObservation; before: LoadStates; after: LoadStates }> {
-  const r = await rebootObserved(host, ia, creds, (tun) => readLoadStates(tun, ia, mask, creds), new Map());
+async function rebootOnBench(host: string, ia: string, mask: string, creds: Creds, drops = false): Promise<{ reboot: RebootObservation; before: LoadStates; after: LoadStates }> {
+  const r = await rebootObserved(host, ia, creds, (tun) => readLoadStates(tun, ia, mask, creds), new Map(), drops);
   return { reboot: r.reboot, before: r.before, after: r.after };
 }
 
 // The same for a unit in service: on a System 1 unit, which has no load-state machines, its run error
-// byte before and after.
-async function rebootInService(host: string, ia: string, mask: string, creds: Creds): Promise<Awaited<ReturnType<InServiceIo["bus"]["reboot"]>>> {
-  if (maskInfo(mask).memoryModel !== "bcu1") return rebootOnBench(host, ia, mask, creds);
-  const r = await rebootObserved<number | null>(host, ia, creds, (tun) => readRunError(tun, ia, creds), null);
+// byte before and after. `drops`: the unit's restart drops the tunnels of the interface the run goes
+// through (tunnel.ts).
+async function rebootInService(host: string, ia: string, mask: string, creds: Creds, drops: boolean): Promise<Awaited<ReturnType<InServiceIo["bus"]["reboot"]>>> {
+  if (maskInfo(mask).memoryModel !== "bcu1") return rebootOnBench(host, ia, mask, creds, drops);
+  const r = await rebootObserved<number | null>(host, ia, creds, (tun) => readRunError(tun, ia, creds), null, drops);
   return { reboot: r.reboot, runError: { before: r.before, after: r.after } };
 }
 
-async function rebootObserved<S>(host: string, ia: string, creds: Creds, states: (tun: KnxIpTunnel) => Promise<S>, unread: S): Promise<{ reboot: RebootObservation; before: S; after: S }> {
-  const tun = KnxIpTunnel.tcp(host, Number(process.env.BUSFORGE_BENCH_PORT ?? 3681));
-  await tun.connect();
+async function rebootObserved<S>(host: string, ia: string, creds: Creds, states: (tun: KnxIpTunnel) => Promise<S>, unread: S, drops = false): Promise<{ reboot: RebootObservation; before: S; after: S }> {
+  const port = Number(process.env.BUSFORGE_BENCH_PORT ?? 3681);
+  const linkLost = (e: unknown) => drops && isLinkLost(e);
+  // With `drops` the interface may drop this tunnel at the restart; a new one replaces it.
+  let tun = await connectTunnel(host, port, { drops });
+  const renew = async () => { await tun.disconnect().catch(() => undefined); tun = await connectTunnel(host, port, { drops }); };
   try {
     const before = await states(tun);
-    const restart = () => restartInConnection(deviceOn(tun, ia, creds));
+    const restart = () => restartInConnection(deviceOn(tun, ia, creds), linkLost);
     // Only the device's own silence is "silent"; an interface or tunnel error is thrown. On a secure
     // device a rebooting device leaves the Sync unanswered, which is the same silence. An interface
     // that confirms every frame (the bench's KNX-USB stick behind the bridge) reports a device that
     // does not acknowledge as BUS_SEND_FAILED: "unacknowledged", which observeReboot takes as silence
-    // only after a restart the interface confirmed.
+    // only after a restart the interface confirmed. A tunnel the interface dropped (`drops`) is replaced
+    // and the probe counts as "link-lost", which shows nothing about the device.
     const probe = async (): Promise<ProbeOutcome> => {
       const dev = deviceOn(tun, ia, creds);
       try { await dev.connect(); await dev.deviceDescriptor(); return "answered"; }
       catch (e) {
+        if (linkLost(e)) { await renew(); return "link-lost"; }
         if (e instanceof KnxError && (e.code === "DEVICE_NOT_ANSWERING" || (creds && e.code === "SECURE_SYNC_NO_RESPONSE"))) return "silent";
         if (e instanceof KnxError && e.code === "BUS_SEND_FAILED") return "unacknowledged";
         // It acknowledged and sent another service: it is up.
         if (e instanceof KnxError && e.code === "ANSWER_SERVICE_MISMATCH") return "answered";
         throw e;
       }
-      finally { await dev.disconnect(); }
+      finally { await dev.disconnect().catch((e) => { if (!linkLost(e)) throw e; }); }
     };
     const reboot = await observeReboot(restart, probe);
-    const after = reboot.rebooted || reboot.unproven ? await states(tun) : unread;
+    const readAfter = async (): Promise<S> => { try { return await states(tun); } catch (e) { if (!linkLost(e)) throw e; await renew(); return states(tun); } };
+    const after = reboot.rebooted || reboot.unproven ? await readAfter() : unread;
     return { reboot, before, after };
-  } finally { await tun.disconnect(); }
+  } finally { await tun.disconnect().catch((e) => { if (!linkLost(e)) throw e; }); }
 }
 
 // The Data Secure robustness checks for a secure device: each is an outcome Busforge must report with
@@ -274,9 +281,12 @@ async function restoreToImport(client: Client, pid: string, did: string, importe
 // The in-service sequence's view of this run: the API bound to the project, the channel under test,
 // and the runner's own bus connections (fingerprint, witness, reboot), each opened only while the
 // server holds no bus operation; to a Data Secure unit under its secure session (`creds`).
-function inServiceIo(o: { client: Client; ui: UiDriver | null; pid: string; did: string; channel: Channel; host: string; spec: DeviceSpec; witness: Witness; creds: Creds; log: (m: string) => void; settle: (ms: number) => Promise<void> }): InServiceIo {
-  const { client, ui, pid, did, host, spec, witness, creds, log, settle } = o;
+// `linkDrops`: whether the run's tunnels go through the interface whose tunnels the unit's restart drops,
+// set by the route phase from what the interface reports (tunnel.ts); shared with the witness.
+function inServiceIo(o: { client: Client; ui: UiDriver | null; pid: string; did: string; channel: Channel; host: string; spec: DeviceSpec; witness: Witness; creds: Creds; linkDrops: { drops: boolean }; log: (m: string) => void; settle: (ms: number) => Promise<void> }): InServiceIo {
+  const { client, ui, pid, did, host, spec, witness, creds, log, settle, linkDrops } = o;
   const port = Number(process.env.BUSFORGE_BENCH_PORT ?? 3681);
+  const iface = spec.inService?.ipInterface;
   const written = (r: FlashResult) => ({ structural: r.structural === true, result: r });
   // A parameter write through the dialog, with the server's record of it (its task's outcome: verified, and
   // the bytes it verified on the write confirmation alone), which the dialog shows but does not hand over.
@@ -295,11 +305,11 @@ function inServiceIo(o: { client: Client; ui: UiDriver | null; pid: string; did:
   // One read on a connection of its own; a secure session's Sync keeps its distance from the server's last.
   const onDevice = async <T>(f: (dev: KnxDevice) => Promise<T>): Promise<T> => {
     if (creds) await settle(2000);
-    const tun = KnxIpTunnel.tcp(host, port);
-    await tun.connect();
-    const dev = deviceOn(tun, spec.device.ia, creds);
-    try { await dev.connect(); return await f(dev); }
-    finally { try { await dev.disconnect(); } catch { /* link already gone */ } await tun.disconnect(); }
+    return onFreshTunnel(host, port, { drops: linkDrops.drops }, async (tun: KnxIpTunnel) => {
+      const dev = deviceOn(tun, spec.device.ia, creds);
+      try { await dev.connect(); return await f(dev); }
+      finally { try { await dev.disconnect(); } catch { /* link already gone */ } }
+    });
   };
   return {
     api: {
@@ -341,17 +351,20 @@ function inServiceIo(o: { client: Client; ui: UiDriver | null; pid: string; did:
       readProperty: (object, pidNo) => onDevice((dev) => dev.propReadIfPresent(object, pidNo)),
       readMemory: (address, length) => onDevice((dev) => dev.memRead(address, length)),
       route: async () => {
-        const tun = KnxIpTunnel.tcp(host, port);
-        await tun.connect();
+        // A second channel starts right after the first one's last restart: the connect may be refused
+        // where the spec's interface drops its tunnels at the unit's restart.
+        const tun = await connectTunnel<KnxIpTunnel>(host, port, { drops: iface?.restart === "drops" });
         try {
           const info = await tun.queryDeviceInfo();
-          return { interfaceIa: info ? numToIa(info.ia) : null, interfaceSerial: info?.serial ?? null, tunnelIa: numToIa(tun.assignedIa) };
+          const interfaceIa = info ? numToIa(info.ia) : null;
+          linkDrops.drops = iface?.restart === "drops" && interfaceIa === iface.ia;
+          return { interfaceIa, interfaceSerial: info?.serial ?? null, tunnelIa: numToIa(tun.assignedIa) };
         } finally { await tun.disconnect(); }
       },
       groupRead: (ga) => withWitness(() => witness.groupRead(ga)),
       groupReadAnsweredOn: (readGa, ownGas) => withWitness(() => witness.groupReadAnsweredOn(readGa, ownGas, iaToNum(spec.device.ia))),
       listen: (ga, windowMs) => withWitness(() => witness.listen(ga, windowMs)),
-      reboot: async () => { await settle(2000); return rebootInService(host, spec.device.ia, spec.device.mask, creds); },
+      reboot: async () => { await settle(2000); return rebootInService(host, spec.device.ia, spec.device.mask, creds, linkDrops.drops); },
     },
     log, settle,
   };
@@ -371,7 +384,9 @@ const REFUSAL_PROBES: { key: keyof DeviceCapabilities; probe: (c: Client, pid: s
 async function runSpec(spec: DeviceSpec, channel: Channel, seed: number, opts: InServiceOptions): Promise<RunResult> {
   const client = new Client();
   const host = process.env.BUSFORGE_BENCH_HOST ?? "";
-  const witness = new Witness(host);
+  // Set by an in-service run's route phase (inServiceIo); the witness reads it at each connect.
+  const linkDrops = { drops: false };
+  const witness = new Witness(host, undefined, linkDrops);
   const ui = channel === "ui" ? new UiDriver() : null;
   const startedAt = Date.now();
   const log = (m: string) => process.stdout.write(`    …${m}\n`);
@@ -485,7 +500,7 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number, opts: I
     if (inService) {
       // ── a device in service: its own configuration, two surgical writes, each reverted ──
       process.stdout.write(`  → in-service sequence (${channel})\n`);
-      const r = await runInService(spec, inServiceIo({ client, ui, pid, did, channel, host, spec, witness, creds, log, settle }), opts);
+      const r = await runInService(spec, inServiceIo({ client, ui, pid, did, channel, host, spec, witness, creds, linkDrops, log, settle }), opts);
       capabilities.push(...r.capabilities);
       behaviours.push(...r.behaviours);
       persistence = r.persistence;
@@ -609,7 +624,7 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number, opts: I
     // ── firmware: recorded when the device reports it, unknown otherwise ────────
     // Its secure Sync comes from this process right after the server's last session (§21 spacing).
     if (creds) await settle(2000);
-    firmware = await readBenchFirmware(host, spec.device.ia, creds).catch((e): Firmware => { log(`firmware revision not read: ${e instanceof Error ? e.message : String(e)}`); return { state: "unknown" }; });
+    firmware = await readBenchFirmware(host, spec.device.ia, creds, linkDrops.drops).catch((e): Firmware => { log(`firmware revision not read: ${e instanceof Error ? e.message : String(e)}`); return { state: "unknown" }; });
     process.stdout.write(`  · firmware revision: ${firmware.state === "observed" ? firmware.value : "unknown"}\n`);
 
     // ── Data Secure robustness: each refusal must come with its own code ──────

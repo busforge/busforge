@@ -86,9 +86,10 @@ export interface InServiceSpec {
   dataSecure?: true;
   // The unit is a KNXnet/IP interface, shares its housing with one, or supplies the line one sits on:
   // `ia` is that interface's individual address, `restart` what a restart of the unit does to the
-  // interface's tunnels, the run's own included. "drops": the run must reach the unit through another
-  // interface and refuses this one; "keeps": shown on a unit, `shown` says where and with which tunnel
-  // (the run's own or a bystander's), so the run may go through it.
+  // interface's tunnels, the run's own included, and `shown` says where that was shown (and with which
+  // tunnel). "drops": the run may go through that interface, and the runner's own tunnels reconnect
+  // after each restart (tunnel.ts), where a tunnel loss counts as no proof of the reboot; the run never
+  // goes through the unit itself. "keeps": the run goes through it as through any interface.
   ipInterface?: { ia: string; restart: "drops" | "keeps"; shown: string };
   // The unit is a weather station whose alarms protect the installation (an awning's wind lock) and
   // which sends none while it restarts: the run needs the operator's weather guard (--weather-guard,

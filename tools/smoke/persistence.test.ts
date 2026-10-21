@@ -100,6 +100,62 @@ const full = { paramsRead: true, linksRead: true, linkGaps: 0 };
 // Replayed through the runner's probe (rebootObserved in runner.ts: a fresh connection and a device
 // descriptor read, three tries of ackMs 1500 plus retryGapMs 200 when nothing answers), on a clock
 // each probe advances by its own duration.
+describe("observeReboot where the interface drops the run's tunnel at the restart", () => {
+  test("a tunnel loss is no silence: with the device answering on the new tunnel and never silent, the reboot cannot be seen", async () => {
+    const r = await observeReboot(noop, scripted(["answered", "link-lost", "answered"]), clock());
+    expect(r).toMatchObject({ rebooted: false, unproven: true, detail: expect.stringContaining("the tunnel loss is no proof of the reboot") });
+  });
+
+  test("the device's own silence on the new tunnel, then its answer, shows the reboot", async () => {
+    const r = await observeReboot(noop, scripted(["answered", "link-lost", "silent", "answered"]), clock());
+    expect(r).toMatchObject({ rebooted: true });
+  });
+
+  test("silences on either side of a tunnel loss are not in a row", async () => {
+    const r = await observeReboot(unconfirmed, scripted(["answered", "silent", "link-lost", "silent", "answered"]), clock());
+    expect(r).toMatchObject({ rebooted: false, unproven: true });
+    const two = await observeReboot(unconfirmed, scripted(["answered", "link-lost", "silent", "silent", "answered"]), clock());
+    expect(two.rebooted).toBe(true);
+  });
+
+  test("a silence before the tunnel loss is wiped by it: the interface may have stopped forwarding before it dropped the tunnel", async () => {
+    const probes = await observeReboot(noop, scripted(["answered", "silent", "link-lost", "answered"]), clock());
+    expect(probes).toMatchObject({ rebooted: false, unproven: true });
+    const inConnection = await observeReboot(async () => ({ confirmed: true, inConnection: "silent" }), scripted(["answered", "link-lost", "answered"]), clock());
+    expect(inConnection).toMatchObject({ rebooted: false, unproven: true });
+    const after = await observeReboot(async () => ({ confirmed: true, inConnection: "silent" }), scripted(["answered", "link-lost", "silent", "answered"]), clock());
+    expect(after.rebooted).toBe(true);
+    expect(after.detail).toContain("on a new tunnel");
+    expect(after.detail).not.toContain("first in the restart's own connection");
+  });
+
+  test("a loss restarts the window, so the probes on the new tunnel get their time; a check ending on a loss is a harness failure", async () => {
+    // One probe per 50 ms tick in a 1000 ms window: the loss at the window's end gets a new window.
+    const late = [...Array(18).fill("answered"), "link-lost", "silent", "answered"] as ProbeOutcome[];
+    expect(await observeReboot(noop, scripted(["answered", ...late]), clock())).toMatchObject({ rebooted: true });
+    const lossy = await observeReboot(noop, scripted(["answered", "link-lost"]), clock()).then(() => null, (e: unknown) => e);
+    expect(String(lossy)).toContain("no probe reached the device on the new tunnel");
+  });
+
+  test("after a loss the failure names the window from the new tunnel, not from A_Restart", async () => {
+    const r = await observeReboot(noop, scripted(["answered", "link-lost", "silent"]), clock());
+    expect(r.detail).toContain("of the last new tunnel");
+  });
+
+  test("a tunnel loss before the restart sends none and is a harness failure", async () => {
+    let sent = false;
+    const e = await observeReboot(async () => { sent = true; return true; }, scripted(["link-lost"]), clock()).then(() => null, (x: unknown) => x);
+    expect(String(e)).toContain("before the restart");
+    expect(sent).toBe(false);
+  });
+
+  test("a device that never answers on the new tunnel is a failure, not unproven", async () => {
+    const r = await observeReboot(noop, scripted(["answered", "link-lost", "silent"]), clock());
+    expect(r).toMatchObject({ rebooted: false, detail: expect.stringContaining("did not answer again") });
+    expect(r.unproven).toBeUndefined();
+  });
+});
+
 describe("observeReboot on the MEAN WELL power supply's recorded restart", () => {
   const replay = (restartConfirmed: boolean) => {
     let t = 0;
@@ -272,6 +328,12 @@ describe("restartInConnection", () => {
     expect(mw).toMatchObject({ rebooted: false, unproven: true, detail: expect.stringContaining("(A_Restart confirmed negatively)") });
   });
 
+  test("a tunnel lost behind the restart is undecided where the caller says the interface drops it, and thrown otherwise", async () => {
+    const lost = (e: unknown) => (e as { code?: string }).code === "TUNNEL_CLOSED";
+    expect(await restartInConnection(fake({ after: "TUNNEL_CLOSED" }).dev, lost)).toEqual({ confirmed: true, inConnection: "undecided" });
+    expect(await failure(restartInConnection(fake({ after: "TUNNEL_CLOSED" }).dev))).toMatchObject({ code: "TUNNEL_CLOSED" });
+  });
+
   test("a failure of the link to the interface before the restart is thrown as it is, no restart sent", async () => {
     const { dev, calls } = fake({ descriptorError: coded("TUNNEL_CON_TIMEOUT") });
     const e = await failure(restartInConnection(dev));
@@ -281,6 +343,12 @@ describe("restartInConnection", () => {
 });
 
 describe("observeReboot with the read in the restart's connection", () => {
+  test("an unconfirmed restart's silence in its own connection starts the run that proves the reboot, and the detail says so", async () => {
+    const r = await observeReboot(async () => ({ confirmed: false, inConnection: "silent" }), scripted(["answered", "silent", "answered"]), clock());
+    expect(r.rebooted).toBe(true);
+    expect(r.detail).toContain("first in the restart's own connection");
+  });
+
   test("a device that left the restart's connection needs only to answer a probe again (the Gira)", async () => {
     const r = await observeReboot(async () => ({ confirmed: true, inConnection: "silent" }), scripted(["answered", "answered"]), clock());
     expect(r.rebooted).toBe(true);

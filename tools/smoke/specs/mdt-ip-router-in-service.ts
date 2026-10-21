@@ -15,11 +15,12 @@ import type { DeviceSpec } from "../spec.ts";
 //
 // The unit is the second application of the box whose other one, the MDT IP Interface Secure, is the
 // installation's KNXnet/IP interface. Every restart of this unit (each write ends with one, and the
-// persistence check adds one) makes that interface stop serving its tunnels for up to a minute and then
-// drop them, so the run reaches the unit through another interface (a USB interface on the line behind
-// Busforge's bridge, the route of its verified parameter flashes in docs/status.md) and refuses that one,
-// and the unit itself, should the box's KNXnet/IP server report its address. The other clients of
-// that interface lose their tunnels at each restart all the same.
+// persistence check adds one) made that interface stop serving its tunnels for up to a minute and then
+// drop them, where it was shown (through a USB interface on the line). The run may go through that
+// interface, the installation's only KNXnet/IP route to the unit: the server's writes reconnect after
+// the restart, the runner's own tunnels too (tunnel.ts), and a lost tunnel is no proof of the reboot.
+// It refuses the unit itself, should the box's KNXnet/IP server report its address. The other clients
+// of that interface lose their tunnels at each restart all the same.
 //
 // Fingerprint: the application id (object 4, PID 13) and the version (object 0, PID 25), as a secured
 // read-only collection of a unit shows them; the unit refuses PID 9.

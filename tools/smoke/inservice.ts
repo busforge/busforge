@@ -271,7 +271,7 @@ export function planInService(spec: DeviceSpec, opts: InServiceOptions): PlanSte
       if (g && !("refused" in g)) read(`weather guard, before the channel and before every write and restart (the undo's included): wind ${g.wind.ga} must answer below ${WIND_MARGIN * 100} % of ${g.wind.thresholdMs} m/s${g.bits.length ? `, ${g.bits.map((b) => `${b.name} ${b.ga}`).join(", ")} must answer 0` : ""}; an address the unit itself does not answer stops the run`);
       if (s.dataSecure) read(`the project file given with --knxproj is imported; the unit at ${spec.device.ia} must be this spec's product, and the file must hold its tool key: the server takes the unit's keys and those of its group addresses with it, and the runner's own connections (fingerprint, restart) open the unit's secure session`);
       const iface = s.ipInterface;
-      read(`route: the individual address the interface reports for itself (KNXnet/IP device information) and the run's tunnel address${!iface ? "" : iface.restart === "drops" ? `; refused when the interface is ${iface.ia}, whose tunnels a restart of this unit drops` : `; through ${iface.ia} too, whose tunnels a restart of this unit keeps (${iface.shown})`}`);
+      read(`route: the individual address the interface reports for itself (KNXnet/IP device information) and the run's tunnel address${!iface ? "" : iface.restart === "drops" ? `; through ${iface.ia} too, whose tunnels a restart of this unit drops (${iface.shown}): the runner's own tunnels reconnect after it, and a tunnel loss is no proof of the reboot; refused when the interface is the unit itself` : `; through ${iface.ia} too, whose tunnels a restart of this unit keeps (${iface.shown})`}`);
       read(`fingerprint: ${s.fingerprint.map((f) => `${fingerprintTarget(f)} (${f.name}) = ${f.expect}`).join(", ")}`);
     }
     if (phase === "adopt") read(`read-back${s.assumeParams?.length ? `, assuming ${s.assumeParams.map((e) => `${short(e.paramRefId)} (${e.name}) = ${e.value}`).join(", ")} (parameters the device does not hold: the server takes them only if the device's configuration then shows an object for every link and a parameter dry run under them finds nothing to write)` : ""}; the project takes the device's values; a second read-back under them must resolve every association (the server then no longer counts the device as never programmed from this project); the dry runs of the writes the product offers (parameter flash, GA flash) must find nothing to write (the server keeps their backups; a download that always writes, as System 1's: no byte that differs); the configuration found is recorded${s.expectParams?.length ? `; the device's own values: ${s.expectParams.map((e) => `${short(e.paramRefId)} (${e.name}) = ${e.value}`).join(", ")}` : ""}`);
@@ -590,16 +590,18 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
     for (const phase of inServicePhases(spec, opts)) {
       at = phase;
       if (phase === "fingerprint") {
-        // Which interface the run goes through, before anything reaches the unit: where the unit's
-        // restart drops an interface's tunnels, the run must not depend on that interface.
+        // Which interface the run goes through, before anything reaches the unit. Where the unit's
+        // restart drops an interface's tunnels, the run may go through that interface (the runner's
+        // own tunnels reconnect after the restart, tunnel.ts), but never through the unit itself.
         const r = await io.bus.route().catch((e) => { throw new Stop(phase, `the interface could not be asked which it is: ${errText(e)}`); });
         route = `${r.interfaceIa ? `interface ${r.interfaceIa}${r.interfaceSerial ? ` (serial ${r.interfaceSerial})` : ""}` : "an interface that reports no device information"}, tunnel address ${r.tunnelIa}`;
         io.log(`route: ${route}`);
         const iface = si.ipInterface;
         if (iface?.restart === "drops") {
-          if (!r.interfaceIa) throw new Stop(phase, `the interface reports no individual address of its own, so the run cannot show it does not go through ${iface.ia}, whose tunnels a restart of this unit drops`);
+          if (!r.interfaceIa) throw new Stop(phase, `the interface reports no individual address of its own, so the run cannot show it does not go through this unit, whose restart drops the tunnels of ${iface.ia}`);
           // The unit itself may be what the box's KNXnet/IP server reports.
-          if (r.interfaceIa === iface.ia || r.interfaceIa === spec.device.ia) throw new Stop(phase, `the run goes through ${r.interfaceIa}, ${r.interfaceIa === iface.ia ? "whose tunnels a restart of this unit drops" : "this unit, whose restart drops the tunnels of the interface it shares its housing with"}, the run's own included; reach the unit through another interface`);
+          if (r.interfaceIa === spec.device.ia) throw new Stop(phase, `the run goes through ${r.interfaceIa}, this unit, whose restart drops the tunnels of the interface it shares its housing with, the run's own included; reach the unit through another interface`);
+          if (r.interfaceIa === iface.ia) io.log(`route through ${iface.ia}, whose tunnels a restart of this unit drops: the runner's own tunnels reconnect after each restart`);
         }
         // The unit the spec was written for, before anything else touches it.
         for (const f of si.fingerprint) {
