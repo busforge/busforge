@@ -323,6 +323,7 @@ const de: Messages = {
     READBACK_IMAGE_NO_FLASH: "Das Produkt hat keinen Parameter- oder Gruppenadress-Download, mit dem Busforge das Abbild des Geräts vergleichen könnte.",
     SECURE_SYNC_FAILED: "Es konnte keine sichere Sitzung mit dem Gerät aufgebaut werden (Authentifizierung fehlgeschlagen). Prüfe, ob der richtige Tool-Key im Projekt liegt.",
     SECURE_SYNC_NO_RESPONSE: "Das Gerät hat die Anfrage für die sichere Sitzung nicht beantwortet. Ein falscher Tool-Key im Projekt oder ein Gerät, das nicht im Secure-Modus ist, sieht genau so aus.",
+    SECURE_NOT_SYNCED: "Die sichere Sitzung ist auf eine andere Tunneladresse gewechselt und unter ihr noch nicht mit dem Gerät synchronisiert, daher wurde nichts gesendet. Führe den Vorgang erneut aus.",
     SECURE_MODE_OFF: "Das Gerät hat die Anfrage für die sichere Sitzung nicht beantwortet, und ohne Key gelesen meldet es seinen Sicherheitsmodus als aus: Es ist nicht aktiviert (Werkszustand, etwa nach einem Master-Reset). Aktiviere es mit seinem Gerätezertifikat.",
     SECURE_TABLES_UNSUPPORTED: "Dieses Gerät läuft mit KNX Data Secure. Das Schreiben seiner Gruppenadressen oder eine Inbetriebnahme braucht auch seine Sicherheitseinstellungen (Gruppenschlüssel, Sicherheitsflags). Busforge lädt sie nur bei System-B-Geräten und lehnt hier ab, statt die Schlüssel hinter den Gruppenadressen zurückzulassen. Parameter programmieren funktioniert weiterhin.",
     SENDER_NOT_FOUND: "Diese Adresse ist kein Absender dieser Gruppenadresse.",

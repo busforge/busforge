@@ -323,6 +323,7 @@ const en = {
     READBACK_IMAGE_NO_FLASH: "The product has no parameter or group-address download to compare the image on the device with.",
     SECURE_SYNC_FAILED: "Could not establish a secure session with the device (authentication failed). Check that the correct tool key is in the project.",
     SECURE_SYNC_NO_RESPONSE: "The device did not answer the secure session request. A wrong tool key in the project, or a device that is not in secure mode, looks exactly like this.",
+    SECURE_NOT_SYNCED: "The secure session moved to another tunnel address and has not been synchronised with the device under it yet, so nothing was sent. Run the operation again.",
     SECURE_MODE_OFF: "The device did not answer the secure session request, and read without a key it states that its security mode is off: it is not activated (factory state, for example after a master reset). Activate it from its device certificate.",
     SECURE_TABLES_UNSUPPORTED: "This device runs KNX Data Secure. Writing its group addresses or commissioning it also needs its security settings (group keys, security flags) loaded, which Busforge does for System B devices only, so it refuses rather than leave the keys behind the group addresses. Parameter programming still works.",
     SENDER_NOT_FOUND: "That address is not a sender of this group address.",
