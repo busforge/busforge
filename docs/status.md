@@ -39,7 +39,7 @@ All hardware verification is on **twisted pair**.
 | Capability | Implemented | Proven | Note |
 |---|---|---|---|
 | Import a `.knxproj` (ETS 5/6, AES) and a manufacturer `.knxprod` catalog | yes | real input files | Own ZIP + WinZip-AES + XML implementation. Nothing that cannot be rendered is dropped silently; it is surfaced as a visible "not supported" marker. |
-| Render and edit a device configuration (parameters, channels, modules, i18n) | yes | hardware | Click-through against the device's own read-back on four products (see the device table). Several group addresses per com-object, with the sending address chosen on the page: browser and route tests; the table order is ETS's two captures of such links (see [Known unproven](#known-unproven)). The flags shown are the application's with the project's own laid over them. Editing an object's flags and priority: browser and route tests; the group-address flash writes an edit with the bytes ETS's group-address download wrote for one on the MDT BE-02001.02 and the Jung 400021SE (capture comparison), not run by Busforge on a device (see [Known unproven](#known-unproven)). |
+| Render and edit a device configuration (parameters, channels, modules, i18n) | yes | hardware | Click-through against the device's own read-back on every product with a ui smoke run (see the device table). Several group addresses per com-object, with the sending address chosen on the page: browser and route tests; the table order is ETS's two captures of such links (see [Known unproven](#known-unproven)). The flags shown are the application's with the project's own laid over them. Editing an object's flags and priority: browser and route tests; the group-address flash writes an edit with the bytes ETS's group-address download wrote for one on the MDT BE-02001.02 and the Jung 400021SE (capture comparison), not run by Busforge on a device (see [Known unproven](#known-unproven)). |
 | Read parameters back from a device | yes | hardware | Both memory models (relative/System B, absolute/System 7). |
 | Read group-address links back from a device | yes | hardware | Both memory models. |
 | Read com-object flags and priority back from a device | yes (System B; System 7 where the application names its com-object table's segment) | hardware (smoke runs, see [Known unproven](#known-unproven)); offline byte-match | The tables ETS wrote in its flag-change captures (MDT BE-02001.02, Jung 400021SE) read back as exactly the project's flags; the smoke runs read them on the bus (MDT BE-02001.02, ABB US/U 4.2, Jung 400021SE, and the units in service whose runs the device-in-service rows below list), emulated units otherwise. The flags become the baseline and a difference shows as a change. The GA and structural flash refuse to change flags the device holds otherwise than the baseline records ([load-procedures.md](load-procedures.md#project-level-com-object-flags)). |
@@ -115,7 +115,7 @@ value.
 | Theben TheLuxa P300 (M-0048, MV-0705 product) | MV-0705 | absolute, dynamic tables | hardware | hardware, ETS's bracket, the changed byte and the download marker (see below) | hardware, add and remove with the tables re-declared as one region, wire equal to ETS's (see below) | hardware, declared order with `LdCtrlTaskCtrl1`, exactly the bytes of ETS's image, wire equal to ETS's; on a unit already holding the application, every byte but the download marker already equal (see below) | hardware: answers group reads after each write, an added address answers and stops after its removal |
 | Theben Meteodata 140 S (M-0048, MV-0701 product) | MV-0701 | absolute, dynamic tables, memory-mapped LSM | hardware | hardware, ETS's bracket over `0x0104`, the changed byte and the download marker, wire equal to ETS's (see below) | hardware, add and remove with the tables re-declared as one region, every byte ETS wrote equal (see below) | hardware, declared order with `LdCtrlTaskCtrl1` over `0x0104`, the bytes of ETS's image; on a unit already holding the application, every byte but the download marker already equal (see below) | hardware: answers group reads after each write, an added address answers and stops after its removal |
 | MDT IP Interface/Router (KNX Data Secure) | MV-07B0 in the product data, opaque on the bus (`0xFFFF` to plain reads) | relative (product data); none exposed plainly | hardware, secure identify only | hardware, under a secured session; the password field on the write confirmation (see below) | not proven on a unit; its plan equals ETS's group-address downloads (see below) | refused (`FULL_DOWNLOAD_TUNNELING_ENTRIES`, see below) | not proven |
-| MDT IP Interface Secure (KNX Data Secure) | MV-0012 in the product data, opaque on the bus (`0xFFFF` to plain reads) | System 1, EEPROM segment at `0x0100` | hardware, Busforge's read-back under the secure session, on a unit ETS programmed: no drift; its memory (collector) holds in every parameter byte Busforge's image of the project, the group tables empty (reference) | hardware, under the secured session through the unit's own tunnel: every write equal to ETS's download, in ETS's order, verified (segment and KNXnet/IP properties read back), the unit's memory afterwards equal to its memory after ETS's download (see below) | not applicable: the application has no group objects (`SYSTEM1_GROUP_TABLES_UNCAPTURED`) | the same procedure as the parameter download (no partial download); not run on its own route | the unit kept serving the tunnels it carries (the download's own and the other clients'), with the same individual addresses, through the restart |
+| MDT IP Interface Secure (KNX Data Secure) | MV-0012 in the product data, opaque on the bus (`0xFFFF` to plain reads) | System 1, EEPROM segment at `0x0100` | hardware, Busforge's read-back under the secure session, on a unit ETS programmed: no drift; its memory (collector) holds in every parameter byte Busforge's image of the project, the group tables empty (reference) | hardware, under the secured session through the unit's own tunnel: every write equal to ETS's download, in ETS's order, verified (segment and KNXnet/IP properties read back), the unit's memory afterwards equal to its memory after ETS's download (see below) | not applicable: the application has no group objects (`SYSTEM1_GROUP_TABLES_UNCAPTURED`) | the same procedure as the parameter download (no partial download); run on its own route in both channels of the device-in-service spec, verified | the unit kept serving the tunnels it carries (the download's own and the other clients'), with the same individual addresses, through the restart |
 
 What each row does not show:
 
@@ -143,8 +143,9 @@ What each row does not show:
   a logging proxy, each `verified`: ETS's load controls on the wire, the group-address flash's bytes
   equal to ETS's, and the read after each restart equal to the reference (after the added link, equal
   to the unit after ETS's group-address download). Its full download writes exactly the bytes of ETS's
-  full download (`tools/etsdiff.test.ts`); that write set has not run on the device ([Known
-  unproven](#known-unproven)). Its parameter flash, with the stamp record ETS keeps, writes ETS's one
+  full download (`tools/etsdiff.test.ts`); that write set ran on a commissioned unit in both channels
+  of the device-in-service spec, each `verified`, every memory and property write on the wire equal to
+  ETS's full download of the unit. Its parameter flash, with the stamp record ETS keeps, writes ETS's one
   byte (`tools/etsdiff.test.ts`). Where Busforge still differs from ETS: the
   device gets a settle and a reconnect before the restart, where ETS restarts at once. In this
   firmware (thelsing/knx with OpenKNX Common) a surgical flash and a full download take the same path,
@@ -154,7 +155,7 @@ What each row does not show:
   unanswered. Persistence is the restart each write ends with. The from-factory smoke spec keeps both
   surgical capabilities out of automated runs, because recovering a failed run needs the device's
   serial console; the device-in-service spec drives them on a commissioned unit, each reverted, and
-  passes on hardware in both channels.
+  passes on hardware in both channels, its full download of the configuration found included.
 - **Theben DALI gateway.** ETS 6 was captured running a full download (after unloading the
   application), its partial form on a unit holding the application, a parameter, a group-address
   and a revert download. Busforge's plans equal them (`tools/etsdiff.test.ts`): ETS's bracket in each,
@@ -346,9 +347,8 @@ What each row does not show:
   (`tools/etsdiff.test.ts`). All three ran on each unit through a logging proxy, each `verified`: ETS's
   load controls, the PID 27 reads and the confirmed restart on the wire, the parameter and table bytes
   ETS wrote written with the same values. The full download writes exactly ETS's bytes. That write
-  set ran on a commissioned HMG 6 T and JMG 4 T in both channels of the device-in-service spec, each
-  `verified`, every memory and property write on the wire equal to ETS's full download of that unit;
-  on the RMG 8 T it has not run ([Known unproven](#known-unproven)).
+  set ran on a commissioned unit of each in both channels of the device-in-service spec, each
+  `verified`, every memory and property write on the wire equal to ETS's full download of that unit.
   Of the full download's bytes only the download marker
   differed from the unit, so the transfer of changed bytes is shown by the two flashes (one parameter
   and one link each, changed and reverted). The reverts are Busforge's parameter and group-address
@@ -387,7 +387,8 @@ What each row does not show:
   (`SYSTEM1_IP_CHANGE_UNCAPTURED`): the capture writes the values the unit holds. Busforge writes the
   friendly name in the language the unit holds where it is the product's text in one of the
   catalogue's languages, else in the catalogue's default language; ETS writes it in its own. The full
-  download route runs the same procedure and has not run on its own. Not shown: the procedure on a
+  download route runs the same procedure; it ran on a commissioned unit in both channels of the
+  device-in-service spec, through the unit's own tunnel, each `verified`. Not shown: the procedure on a
   unit that did not hold the application, and a run over USB (refused).
 - **A wider set carries the weaker proof of a read-back match** (build the image, read the device's
   memory, compare the bytes we own, `tools/verify-images.ts`): 28 of 32 reachable devices of an
@@ -426,7 +427,7 @@ spec states why no behaviour is observable.
 | `jung-400021se` | Jung 400021SE Tasterschnittstelle 2fach Secure, plain | MV-07B0 | hardware | hardware | hardware, both channels | **met** in plain mode; not rerun since the device went secure (the plain spec needs a master reset first) |
 | `jung-400021se-secure` | the same Jung, in Data Secure mode | MV-07B0 | hardware | hardware | hardware, both channels | **met**, plus robustness refusals and restore |
 | `openknx-raumcontroller` | OpenKNX RaumController (AB-SmartHouse AB-PRE) | MV-07B0 | not proven | not proven | not proven | **not met** |
-| `openknx-raumcontroller-in-service` | the same product, a commissioned unit (parameter flash and GA flash, each reverted; full download on request) | MV-07B0 | hardware | hardware | hardware, both channels | **not met**: parameter and GA flash, behaviour and click-through pass in both channels; the full download, offered on request, has not run; its records do not ship yet (see the note) |
+| `openknx-raumcontroller-in-service` | the same product, a commissioned unit (parameter flash and GA flash, each reverted; full download on request) | MV-07B0 | hardware | hardware | hardware, both channels | **met, as a unit in service** (taken over by read-back, not provisioned; its full download rewrote the configuration found, in the full form): parameter and GA flash, full download and behaviour pass in both channels, the click-through in the ui channel; the structural flash is refused by the firmware rule |
 | `gira-m0008-in-service` | Gira Tastsensor 3 Komfort (M-0008_A-10D7), a commissioned unit (parameter flash and GA flash, each reverted; full download on request; structural flash declared unsafe) | MV-0705 | hardware | hardware | hardware, both channels | **not met**: parameter flash, GA flash and full download pass in both channels, the click-through in the ui channel, to the byte only (the spec declares no behaviour); the structural flash the product claims is declared unsafe on a unit in service (never written to it), untested |
 | `theben-theluxa-p300-in-service` | Theben TheLuxa P300, a commissioned unit (parameter, GA and structural flash, each reverted; full download on request) | MV-0705 | hardware | hardware | hardware, both channels | **met, as a unit in service** (taken over by read-back, not provisioned; its full download rewrote the configuration found): parameter, GA and structural flash, full download and behaviour pass in both channels, the click-through in the ui channel |
 | `theben-meteodata-140s-in-service` | Theben Meteodata 140 S, a commissioned unit (parameter and GA flash, each reverted; full download on request; structural flash declared unsafe) | MV-0701 | not proven | not proven | not proven | **not met** |
@@ -434,10 +435,10 @@ spec states why no behaviour is observable.
 | `auro-m0081-in-service` | Auro presence detector (M-0081_A-FE01), a commissioned unit (parameter flash, and a GA flash that adds the test address to a linked object, each reverted; full download on request; structural flash declared unsafe) | MV-0705 | hardware | hardware | hardware, both channels | **not met**: parameter flash, GA flash, full download and behaviour pass in both channels, the click-through in the ui channel; the structural flash the product claims is declared unsafe on a unit in service (never written to it), untested |
 | `theben-hmg6t-in-service` | Theben HMG 6 T heating actuator (MIX 2), a commissioned unit (parameter and GA flash, each reverted; full download on request; structural flash declared unsafe) | MV-07B0 | hardware | hardware | hardware, both channels | **not met**: parameter flash, GA flash, full download and behaviour pass in both channels, the click-through in the ui channel; the structural flash the product claims is declared unsafe on a unit in service (never written to it), untested |
 | `theben-jmg4t-in-service` | Theben JMG 4 T blind actuator (MIX 2), a commissioned unit (parameter, GA and structural flash, each reverted; full download on request) | MV-07B0 | hardware | hardware | hardware, both channels | **met, as a unit in service** (taken over by read-back, not provisioned; its full download rewrote the configuration found): parameter, GA and structural flash, full download and behaviour pass in both channels, the click-through in the ui channel |
-| `theben-rmg8t-in-service` | Theben RMG 8 T switch actuator (MIX 2), a commissioned unit (parameter and GA flash, each reverted; full download on request; structural flash declared unsafe) | MV-07B0 | not proven | not proven | not proven | **not met** |
+| `theben-rmg8t-in-service` | Theben RMG 8 T switch actuator (MIX 2), a commissioned unit (parameter and GA flash, each reverted; full download on request; structural flash declared unsafe) | MV-07B0 | hardware | hardware | hardware, both channels | **not met**: parameter flash, GA flash, full download and behaviour pass in both channels, the click-through in the ui channel; the structural flash the product claims is declared unsafe on a unit in service (never written to it), untested |
 | `theben-dali-gateway-in-service` | Theben DALI-Gateway KNX plus, a commissioned unit (parameter, GA and structural flash, each reverted; full download on request) | MV-07B0 | hardware | hardware | hardware, both channels | **met, as a unit in service** (taken over by read-back, not provisioned; its full download rewrote the configuration found, in the partial form on the loaded unit): parameter, GA and structural flash, full download and behaviour pass in both channels, the click-through in the ui channel; its DALI configuration in interface object 6 unchanged through every run, only runtime counters moved |
 | `mdt-ip-router-in-service` | MDT IP Interface/Router, a commissioned unit in Data Secure mode, reached through another interface than the one its restart cuts (parameter and GA flash, each reverted; the product offers no full download) | MV-07B0 | not proven | not proven | not proven | **not met**; not run. Its adoption takes the web interface password as bytes the unit does not give back, for each parameter write to show on its write confirmation ([testing.md](testing.md#devices-in-service)) |
-| `mdt-ip-secure-in-service` | MDT IP Interface Secure, a commissioned unit in Data Secure mode and the KNXnet/IP interface the run goes through (parameter download there and back; full download on request; no group objects) | MV-0012 | not proven | not proven | not proven | **not met** |
+| `mdt-ip-secure-in-service` | MDT IP Interface Secure, a commissioned unit in Data Secure mode and the KNXnet/IP interface the run goes through (parameter download there and back; full download on request; no group objects) | MV-0012 | hardware | hardware | hardware, both channels | **met, as a unit in service** (taken over by read-back, not provisioned; its full download rewrote the configuration found): parameter download there and back and the full download pass in both channels, the click-through in the ui channel; no behaviour, the application has no group objects |
 | `meanwell-knx40e-in-service` | MEAN WELL KNX-40E-1280D power supply, the commissioned supply of the line the run talks to, reached through the installation's KNXnet/IP interface, whose tunnels its restarts kept (parameter and GA flash, each reverted; full download on request; structural flash declared unsafe) | MV-07B0 | not proven | not proven | not proven | **not met**; not run. On the restart this unit showed through a USB interface the persistence check does not see the reboot (it needs two silent probes after a negatively confirmed restart and gets one), so it reports the step not assessed |
 
 - **ABB US/U 4.2**: its outputs are write-only, so its spec declares no behaviour. Every claimed
@@ -452,10 +453,8 @@ spec states why no behaviour is observable.
   spec stays unrun: driving it would program a device somebody depends on. Its two surgical
   capabilities are excluded from automated runs, so even a green run could not clear the bar for
   them. The device-in-service spec drives exactly those two on a commissioned unit, each reverted, and
-  offers a full download of the configuration found on request; the two writes pass on hardware in both
-  channels, with the witness's read answered and the link surviving the restart, and the full download
-  has not run there. Its records are not in the shipped evidence yet, so
-  [compatibility.md](compatibility.md) has no row for the product.
+  offers a full download of the configuration found on request; the two writes and the full download pass on
+  hardware in both channels, with the witness's read answered and the link surviving the restart.
 
 ## What green tests prove, and what they do not
 
@@ -487,17 +486,18 @@ report a device family as working on the strength of a passing test suite.
   `COM_OBJECT_FLAGS_UNKNOWN`; after the read-back takes it they run and keep it). On the bus, the bench
   smoke runs' read-backs took every object's flags and found them equal to the imported project's on
   the MDT BE-02001.02, the ABB US/U 4.2 and the Jung 400021SE (secure), also after the restart. On the
-  commissioned OpenKNX RaumController, Theben DALI-Gateway, Theben HMG 6 T and JMG 4 T the read-back
-  took every object's flags as the project's own (no independent project to compare with), and the
-  read-backs after each write and the restart found them unchanged; the HMG 6 T's and JMG 4 T's test
+  commissioned OpenKNX RaumController, Theben DALI-Gateway, Theben HMG 6 T, JMG 4 T and RMG 8 T the
+  read-back took every object's flags as the project's own (no independent project to compare with),
+  and the read-backs after each write and the restart found them unchanged; the MIX 2 units' test
   objects carry a read flag, read off the unit, with which they answered the read of their flashed
-  link. No run has seen a device hold a flag its project does not. Products other
-  than these rest on the same table code.
+  link. No run has seen a device hold a flag its project does not. Products other than these rest on
+  the same table code.
   On System B the communication flag of an object without a group address is written off whatever the
   project sets; whether ETS does the same for a project's flag is not captured.
-- **A device in service, taken over by read-back, has run on hardware for eight products only:** the
+- **A device in service, taken over by read-back, has run on hardware for ten products only:** the
   OpenKNX RaumController, the Theben DALI-Gateway, the Auro M-0081_A-FE01, the Gira M-0008, the Theben
-  TheLuxa P300, the MDT BE-06001.02 and the Theben HMG 6 T and JMG 4 T (MIX 2), both channels (the
+  TheLuxa P300, the MDT BE-06001.02, the Theben HMG 6 T, JMG 4 T and RMG 8 T (MIX 2) and the MDT IP
+  Interface Secure (in Data Secure mode), both channels (the
   DALI-Gateway's ECG group assignments taken as assumed, unproven by the device, as its spec names
   them). Every
   device-in-service spec runs against the real server and the real read and write paths on its unit
@@ -519,12 +519,12 @@ report a device family as working on the strength of a passing test suite.
   last download that wrote the parameters and with it writes ETS's differential bytes (pinned by
   `tools/etsdiff.test.ts` against every captured pair); on the MEAN WELL power supply, after a Busforge
   full download, it wrote the one changed byte. The record across a server restart has not run.
-- **The System B full download's write set has run on three devices.** It writes exactly the bytes
+- **The System B full download's write set has run on five devices.** It writes exactly the bytes
   ETS's full downloads write ([load-procedures.md](load-procedures.md#the-rules-by-level)); on the MEAN
-  WELL power supply and on the Theben HMG 6 T and JMG 4 T (MIX 2) the bytes written equal ETS's. The
-  earlier hardware runs of a System B full download (OpenKNX RaumController, the Theben MIX 2's
-  logging-proxy runs, Theben DALI-Gateway, Jung 400021SE, GVS AMMA) wrote a wider set of the same
-  values, which leaves the unit the same.
+  WELL power supply, the Theben HMG 6 T, JMG 4 T and RMG 8 T (MIX 2) and the OpenKNX RaumController the
+  bytes written equal ETS's. The earlier hardware runs of a System B full download (the OpenKNX
+  RaumController's and the Theben MIX 2's logging-proxy runs, Theben DALI-Gateway, Jung 400021SE, GVS
+  AMMA) wrote a wider set of the same values, which leaves the unit the same.
 - **Our image equals what ETS would write** is checked only where an ETS capture of the same
   device exists (`tools/etsdiff.ts`, its records shipped with the others, [compatibility.md](compatibility.md)). Full
   download: the MDT BE-02001.02, the ABB US/U 4.2, the GVS AMMA, the Jung 400021SE and the MEAN WELL

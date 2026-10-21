@@ -10,7 +10,7 @@ depends on is hardware-proven.
   KNX-wide rules ([load-procedures.md](load-procedures.md#the-rules-by-level)); where that changed a
   plan, the new one is capture-tested only ([status.md](status.md#devices-driven-on-real-hardware)):
   the ABB US/U 4.2 and MDT BE-02001.02 full download and group-address flash, the MDT's structural
-  flash, every download of the Jung 400021SE and the GVS AMMA, the OpenKNX full download, the
+  flash, every download of the Jung 400021SE and the GVS AMMA, the
   System B partial form of the full download on the Jung 400021SE, the Theben DALI-Gateway's full
   download onto a unit without the application, the structural flash newly offered on the Auro,
   Gira, Meteodata 140 S, Theben MIX 2, ABB US/U 4.2 and MEAN WELL power supply. Each needs its
@@ -128,10 +128,8 @@ depends on is hardware-proven.
 - **OpenKNX surgical flashes under an automated run.** The device-in-service spec
   (`openknx-raumcontroller-in-service`) drives the parameter flash and the GA flash on a commissioned
   unit, each reverted and read back, with a bus check and a restart; it passes on hardware in both
-  channels, and its records enter the shipped evidence once the application program is in the
-  catalogue the bundle reads. Its full download of the configuration found, offered on request, has not
-  run. Still open: the
-  comparison with the full download and an ETS partial download (on a unit with a matching ETS
+  channels, its full download of the configuration found included. Still open: the
+  comparison with an ETS partial download (on a unit with a matching ETS
   project), and a power cut.
 - **Devices in service with KNX Data Secure.** The device-in-service mode takes a secured unit from
   the installation's project file and runs under its secure session, and it refuses an interface the

@@ -20,13 +20,16 @@ columns are listed per operation below.
 | M-0004 400021SE | `M-0004_A-7072-21-99A7-O000A` | tested | tested | tested | tested | tested | tested |
 | M-0008 5133 00 | `M-0008_A-10D7-11-2783-O000A` | tested | tested | tested | tested | tested | eligible, untested |
 | M-0048 1019610 | `M-0048_A-107E-12-5B58` | tested | tested | tested | tested | tested | tested |
+| M-0048 4930200 | `M-0048_A-493B-21-B471` | tested | tested | tested | tested | tested | eligible, untested |
 | M-0048 4930240 | `M-0048_A-493B-21-B471` | tested | tested | tested | tested | tested | eligible, untested |
 | M-0048 4930250 | `M-0048_A-493B-21-B471` | tested | tested | tested | tested | tested | tested |
 | M-0048 9070929 | `M-0048_A-9071-20-F258-O00EF` | tested | tested | tested | tested | tested | tested |
 | M-0081 180-02 | `M-0081_A-FE01-11-75D9` | tested | tested | tested | tested | tested | eligible, untested |
+| M-0083 SCN-IP000.03 | `M-0083_A-0138-21-F18E-O0072` | tested | tested | tested | refused | tested | refused |
 | M-0083 BE-06001.02 | `M-0083_A-00B4-32-3919` | tested | tested | tested | tested | tested | tested |
 | M-0083 BE-02001.02 | `M-0083_A-00B6-32-9642` | tested | tested | tested | tested | tested | tested |
 | M-0085 AMMA-04/06.S | `M-0085_A-0072-30-69AA` | tested | tested | tested | tested | tested | refused |
+| M-00FA OpenKnxRaumController | `M-00FA_A-A012-55-0000` | tested | tested | tested | tested | tested | refused |
 | M-0162 KNX-40E-1280D | `M-0162_A-0004-11-F245` | eligible, untested | eligible, untested | **failed** | eligible, untested | eligible, untested | eligible, untested |
 
 ## M-0002 GH Q631 0070 R0111
@@ -81,6 +84,19 @@ Product `M-0048_H-1019610-1_P-1019610`, application program `M-0048_A-107E-12-5B
 | Full download | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 1 |
 | Structural flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 1 |
 
+## M-0048 4930200
+
+Product `M-0048_H-4930200-2_P-4930200`, application program `M-0048_A-493B-21-B471`.
+
+| Operation | State | Transfer api / ui | Behaviour api / ui | Persistence api / ui | Reference (tool) | Firmware |
+|---|---|---|---|---|---|---|
+| Read parameters | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | unknown |
+| Read links | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | unknown |
+| Parameter flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | unknown |
+| Group-address flash | tested | pass / pass | pass / pass | pass / pass | none | unknown |
+| Full download | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | unknown |
+| Structural flash | eligible, untested | none / none | none / none | none / none | none | none |
+
 ## M-0048 4930240
 
 Product `M-0048_H-4930240-2_P-4930240`, application program `M-0048_A-493B-21-B471`.
@@ -133,6 +149,19 @@ Product `M-0081_H-GeneratedNumber.2D22017-0_P-180.2D02`, application program `M-
 | Full download | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 6 |
 | Structural flash | eligible, untested | none / none | none / none | none / none | none | none |
 
+## M-0083 SCN-IP000.03
+
+Product `M-0083_H-135-3-O0072_P-SCN.2DIP000.2E03`, application program `M-0083_A-0138-21-F18E-O0072`.
+
+| Operation | State | Transfer api / ui | Behaviour api / ui | Persistence api / ui | Reference (tool) | Firmware |
+|---|---|---|---|---|---|---|
+| Read parameters | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 0 |
+| Read links | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 0 |
+| Parameter flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 0 |
+| Group-address flash | refused | none / none | none / none | none / none | none | none |
+| Full download | tested | pass / pass | not-assessed / not-assessed | pass / pass | none | 0 |
+| Structural flash | refused | none / none | none / none | none / none | none | none |
+
 ## M-0083 BE-06001.02
 
 Product `M-0083_H-180-0_P-BE.2D06001.2E02`, application program `M-0083_A-00B4-32-3919`.
@@ -170,6 +199,19 @@ Product `M-0085_H-AM22AA-16_P-AMMA.2D04.2F06.2ES`, application program `M-0085_A
 | Parameter flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | pass | 81 |
 | Group-address flash | tested | pass / pass | pass / pass | pass / pass | pass | 81 |
 | Full download | tested | pass / pass | not-assessed / not-assessed | pass / pass | pass | 81 |
+| Structural flash | refused | none / none | none / none | none / none | none | none |
+
+## M-00FA OpenKnxRaumController
+
+Product `M-00FA_H-0xA012-1_P-OpenKnxRaumController`, application program `M-00FA_A-A012-55-0000`.
+
+| Operation | State | Transfer api / ui | Behaviour api / ui | Persistence api / ui | Reference (tool) | Firmware |
+|---|---|---|---|---|---|---|
+| Read parameters | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | unknown |
+| Read links | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | unknown |
+| Parameter flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | unknown |
+| Group-address flash | tested | pass / pass | pass / pass | pass / pass | none | unknown |
+| Full download | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | unknown |
 | Structural flash | refused | none / none | none / none | none / none | none | none |
 
 ## M-0162 KNX-40E-1280D

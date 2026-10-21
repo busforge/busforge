@@ -37,6 +37,7 @@ const ORACLE: Record<string, { flashParams: boolean; flashLinks: boolean; fullDo
   "M-0083_A-0138-21-F18E-O0072.xml.gz": { flashParams: true, flashLinks: false, fullDownload: true },
   "M-0085_A-0072-30-69AA.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
   "M-008E_A-7079-10-9C41.xml.gz": { flashParams: true, flashLinks: true, fullDownload: false },
+  "M-00FA_A-A012-55-0000.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
   "M-0162_A-0004-11-F245.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
 };
 

@@ -508,6 +508,23 @@
       }
     }
   },
+  "M-00FA_A-A012-55-0000.xml.gz": {
+    "shape": {
+      "types": 406,
+      "params": 3259,
+      "refs": 72143,
+      "comObjects": 1255,
+      "segments": 1,
+      "hasModules": true
+    },
+    "modelHash": "8b6d75e2841fbcc4",
+    "lsms": {
+      "4": {
+        "build": "152dea0fcf0accb8",
+        "decodeHash": "07d8770a2b5a0992"
+      }
+    }
+  },
   "M-0162_A-0004-11-F245.xml.gz": {
     "shape": {
       "types": 31,
