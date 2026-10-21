@@ -224,8 +224,21 @@ async function waitForSyncGap(dst: number): Promise<void> {
 // droppedRepeatMs: how long a dropped frame's exact repetition is recognised. The transport layer
 // repeats an unacknowledged frame at most three times, 3 s apart; after that a frame with the same
 // number and octets is a new one (the 4-bit numbering comes round every 16 frames).
-export interface DeviceTimeouts { ackMs: number; responseMs: number; retryGapMs: number; syncResponseMs: number; restartAnswerMs: number; restartProofMs: number; droppedRepeatMs: number }
-export const DEVICE_TIMEOUTS: Readonly<DeviceTimeouts> = { ackMs: 1500, responseMs: 2000, retryGapMs: 200, syncResponseMs: 3000, restartAnswerMs: 2000, restartProofMs: 4000, droppedRepeatMs: 12_000 };
+// staleConnectionMs: how long a device may still hold a transport connection whose link to us was lost.
+// It closes an idle one after 6 s, and one with a frame of its own we never acknowledged after three
+// repetitions 3 s apart and the acknowledgement timeout behind the last: 12 s.
+export interface DeviceTimeouts { ackMs: number; responseMs: number; retryGapMs: number; syncResponseMs: number; restartAnswerMs: number; restartProofMs: number; droppedRepeatMs: number; staleConnectionMs: number }
+export const DEVICE_TIMEOUTS: Readonly<DeviceTimeouts> = { ackMs: 1500, responseMs: 2000, retryGapMs: 200, syncResponseMs: 3000, restartAnswerMs: 2000, restartProofMs: 4000, droppedRepeatMs: 12_000, staleConnectionMs: 12_000 };
+
+// Transport connections to a device that may still be open in it although the link to the interface
+// they ran over failed, so their T_Disconnect may never have reached it: the tunnel address each ran
+// under, until when the device may hold it, and the KnxDevice that opened it. Keyed by individual
+// address alone, like lastSync. A device holding a connection takes a T_Connect from the same address
+// as nothing and keeps that connection's numbering, answers one from another address with a
+// T_Disconnect, and ignores a T_Disconnect from another address (KNX 3/3/4; thelsing/OpenKNX
+// transport_layer.cpp A0, A10, E3).
+const unclosed = new Map<number, { ia: number; until: number; by: KnxDevice }>();
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // A failure of the link between this tool and the interface (KNXnet/IP tunnel, USB), or one without a
 // code: it says nothing about the device.
@@ -285,6 +298,10 @@ export class KnxDevice {
   // is taken for the repetition: the request then fails as unanswered, it never takes another's octets.
   private lastDropped: { frame: Buffer; at: number } | null = null;
   private peerClosed: (() => void) | null = null;
+  // Numbered frames sent since connect() (none before the first connect()), and whether the device has
+  // since acknowledged, refused or sent any frame to us (request).
+  private numberedSinceConnect = -1;
+  private takenSinceConnect = false;
   // Called while a request is in flight when the device repeats a frame of its own to us (see onCemi).
   private peerRepeated: (() => void) | null = null;
   // The answer of a read asked again under a new number (requestTries), and that read (its APDU without
@@ -308,16 +325,38 @@ export class KnxDevice {
   }
   private get me() { return this.tun.assignedIa; }
 
+  // Every frame of this connection goes out here. A link failure leaves the connection noted as
+  // possibly open in the device (unclosed); a numbered frame the interface confirmed shows the link
+  // works again. A control frame proves nothing: over TCP its send ends before the interface confirms.
+  // `quiet`: a failure is not noted (a frame the device's T_ACK already proved delivered).
+  private async sendCemi(cemi: Buffer, quiet = false): Promise<void> {
+    const tpci = cemi[2 + (cemi[1] ?? 0) + 7] ?? 0;
+    if ((tpci & 0x80) === 0 && this.numberedSinceConnect >= 0) this.numberedSinceConnect++;
+    try { await this.tun.sendCemi(cemi); }
+    catch (e) {
+      const code = (e as { code?: unknown }).code;
+      if (!quiet && typeof code === "string" && (code.startsWith("TUNNEL_") || code.startsWith("USB_"))) {
+        unclosed.set(this.dst, { ia: this.me, until: Date.now() + this.timeouts.staleConnectionMs, by: this });
+      }
+      throw e;
+    }
+    if ((tpci & 0x80) === 0 && unclosed.get(this.dst)?.by === this) unclosed.delete(this.dst);
+  }
+
   private onCemi(src: number, dst: number, tpdu: Buffer, isGroup: boolean) {
     if (isGroup || src !== this.dst) return;
     // T_Connect/T_Disconnect from the device: unnumbered control frames, never acknowledged and
     // never an answer. A T_Disconnect to us ends the request in flight; one to another tool's
     // address is about that tool's connection, not ours.
     if ((tpdu[0] & 0xc0) === 0x80) {
-      if ((tpdu[0] & 0x03) === 0x01 && dst === this.me) { this.peerClosedAt = Date.now(); this.peerClosed?.(); }
+      if ((tpdu[0] & 0x03) === 0x01 && dst === this.me) {
+        this.peerClosedAt = Date.now();
+        if (unclosed.get(this.dst)?.ia === this.me) unclosed.delete(this.dst);
+        this.peerClosed?.();
+      }
       return;
     }
-    if (dst === this.me) this.lastFromDeviceAt = Date.now();
+    if (dst === this.me) { this.lastFromDeviceAt = Date.now(); this.takenSinceConnect = true; }
     if (this.rawInbox) { this.rawInbox.push(Buffer.from(tpdu)); this.rawNotify?.(); return; }
     const outer = parseApdu(tpdu);
     if (outer.control) {
@@ -335,19 +374,19 @@ export class KnxDevice {
       if (inner.status === "invalid") { this.unauthentic++; return; }
       if (inner.status === "replay") {
         if (dst === this.me) this.peerRepeated?.();
-        this.tun.sendCemi(cemiLData(this.me, this.dst, tpAck(outer.seq))).catch(() => {});
+        this.sendCemi(cemiLData(this.me, this.dst, tpAck(outer.seq))).catch(() => {});
         return;
       }
       p = parseApdu(inner.apdu);
     } else if (outer.seq === this.lastRxSeq || this.isDroppedRepeat(tpdu)) {
       if (dst === this.me) this.peerRepeated?.();
-      this.tun.sendCemi(cemiLData(this.me, this.dst, tpAck(outer.seq))).catch(() => {});
+      this.sendCemi(cemiLData(this.me, this.dst, tpAck(outer.seq))).catch(() => {});
       return;
     }
     if (this.isOwedAnswer(p)) {
       this.owedAnswer = null;
       if (!this.secure) this.lastRxSeq = outer.seq;
-      this.tun.sendCemi(cemiLData(this.me, this.dst, tpAck(outer.seq))).catch(() => {});
+      this.sendCemi(cemiLData(this.me, this.dst, tpAck(outer.seq))).catch(() => {});
       return;
     }
     // A frame that is not the answer awaited: acknowledged so the device stops repeating it, its number
@@ -356,13 +395,13 @@ export class KnxDevice {
     if (!this.answers(p.apci)) {
       this.otherServices.add(p.apci);
       if (!this.secure && dst === this.me) this.lastDropped = { frame: Buffer.from(tpdu), at: Date.now() };
-      this.tun.sendCemi(cemiLData(this.me, this.dst, tpAck(outer.seq))).catch(() => {});
+      this.sendCemi(cemiLData(this.me, this.dst, tpAck(outer.seq))).catch(() => {});
       return;
     }
     // Taken only once our T_ACK is out: a frame whose T_ACK failed to send is not delivered, and the
     // device's repetition of it is then the only copy, which has to get through.
     const plain = !this.secure;
-    this.tun.sendCemi(cemiLData(this.me, this.dst, tpAck(outer.seq))).then(() => { if (plain) this.lastRxSeq = outer.seq; this.respResolve?.(p); }).catch(() => {});
+    this.sendCemi(cemiLData(this.me, this.dst, tpAck(outer.seq))).then(() => { if (plain) this.lastRxSeq = outer.seq; this.respResolve?.(p); }).catch(() => {});
   }
 
   private owe(r: ParsedApdu): void {
@@ -402,12 +441,20 @@ export class KnxDevice {
     this.lastDropped = null;
     this.owedAnswer = null;
     this.maxApdu = undefined;
-    await this.tun.sendCemi(cemiLData(this.me, this.dst, tpConnect()));
+    // A connection the device may still hold from a failed link under this tunnel address is closed
+    // first; a T_Connect alone would join it under its old numbering. Under another address the device
+    // refuses the new connection while it holds the old one: see request().
+    const old = unclosed.get(this.dst);
+    if (old && (old.ia === this.me || old.until <= Date.now())) unclosed.delete(this.dst);
+    if (old && old.ia === this.me && old.until > Date.now()) await this.sendCemi(cemiLData(this.me, this.dst, tpDisconnect()));
+    this.numberedSinceConnect = 0;
+    this.takenSinceConnect = false;
+    await this.sendCemi(cemiLData(this.me, this.dst, tpConnect()));
     if (this.secure) await this.runSync(this.secure);
   }
   // Teardown. A T_Disconnect the device never sees is the same as one it did: the connection is
   // over either way, and there is nothing a caller could do about the failure.
-  async disconnect() { try { await this.tun.sendCemi(cemiLData(this.me, this.dst, tpDisconnect())); } catch { /* the link may already be gone */ } }
+  async disconnect() { try { await this.sendCemi(cemiLData(this.me, this.dst, tpDisconnect())); } catch { /* the link may already be gone */ } }
 
   // Data Secure Sync: agree the live tool-access sequence before any secured request.
   private async runSync(sec: SecureSession): Promise<void> {
@@ -415,9 +462,9 @@ export class KnxDevice {
     this.rawInbox = [];
     try {
       await waitForSyncGap(this.dst);
-      await this.tun.sendCemi(cemiLData(this.me, this.dst, sec.buildSyncRequest(sec.serial, challenge, this.seq)));
+      await this.sendCemi(cemiLData(this.me, this.dst, sec.buildSyncRequest(sec.serial, challenge, this.seq)));
       const rsp = await this.rawNext();
-      await this.tun.sendCemi(cemiLData(this.me, this.dst, tpAck((rsp[0] >> 2) & 0x0f))); // ACK the device's Sync.res
+      await this.sendCemi(cemiLData(this.me, this.dst, tpAck((rsp[0] >> 2) & 0x0f))); // ACK the device's Sync.res
       if (!sec.applySyncResponse(rsp, challenge)) throw new KnxError("SECURE_SYNC_FAILED", "secure Sync failed (MAC mismatch)");
       this.seq = (this.seq + 1) & 0x0f; // the Sync request consumed this T-sequence
     } finally { this.rawInbox = null; this.rawNotify = null; }
@@ -457,7 +504,25 @@ export class KnxDevice {
   private async request(build: (seq: number) => Buffer, expectResponse: boolean, tries = Number(process.env.KNX_TRIES) || 3, afterWrap?: () => void, deviceAckSuffices = false): Promise<ParsedApdu | null> {
     // A caller awaiting an answer past the request (the confirmed restart) set it before; it stays.
     const awaitedBefore = this.answers;
-    try { return await this.requestTries(build, expectResponse, tries, afterWrap, deviceAckSuffices); }
+    const first = this.numberedSinceConnect === 0;
+    try {
+      try { return await this.requestTries(build, expectResponse, tries, afterWrap, deviceAckSuffices); }
+      catch (e) {
+        // A T_Disconnect to the first numbered frame of a new connection, before the device took or answered
+        // any frame of it: the device refused the connection, holding another one (one whose link
+        // failed, or another tool's). It ends that one by itself within staleConnectionMs; then the
+        // connection is opened again and the request asked once more. A secured session is not: its
+        // Sync, not the request, is the first frame of its connection.
+        if (!first || this.secure || this.takenSinceConnect || (e as { code?: string }).code !== "DEVICE_CLOSED_CONNECTION") throw e;
+        await sleep(this.timeouts.staleConnectionMs);
+        await this.connect();
+        try { return await this.requestTries(build, expectResponse, tries, afterWrap, deviceAckSuffices); }
+        catch (again) {
+          if ((again as { code?: string }).code !== "DEVICE_CLOSED_CONNECTION" || this.takenSinceConnect) throw again;
+          throw new KnxError("DEVICE_CLOSED_CONNECTION", `the device refused the connection twice, ${Math.round(this.timeouts.staleConnectionMs / 1000)} s apart: it holds a connection with another partner`);
+        }
+      }
+    }
     finally { this.peerClosed = null; this.peerRepeated = null; this.inFlight = null; this.answers = awaitedBefore; this.otherServices.clear(); }
   }
   private async requestTries(build: (seq: number) => Buffer, expectResponse: boolean, tries: number, afterWrap?: () => void, deviceAckSuffices = false): Promise<ParsedApdu | null> {
@@ -515,7 +580,7 @@ export class KnxDevice {
       const tpdu = this.onWire(plainApdu);
       afterWrap?.();
       try {
-        const sent = this.tun.sendCemi(cemiLData(this.me, this.dst, tpdu));
+        const sent = this.sendCemi(cemiLData(this.me, this.dst, tpdu), deviceAckSuffices);
         if (deviceAckSuffices) {
           sent.catch(() => undefined);
           await Promise.race([sent, ackP.then((acked) => (acked ? undefined : new Promise<never>(() => undefined)))]);
@@ -524,6 +589,10 @@ export class KnxDevice {
         // A link to the interface that stalled or closed takes no retry: the frame may be stuck in
         // it, and a repetition would queue behind it.
         const code = (e as { code?: string }).code;
+        // Failed before the device's T_ACK came: noted as any link failure is (sendCemi).
+        if (deviceAckSuffices && isLinkFailure(e) && typeof code === "string") {
+          unclosed.set(this.dst, { ia: this.me, until: Date.now() + this.timeouts.staleConnectionMs, by: this });
+        }
         if (code === "TUNNEL_CON_TIMEOUT" || code === "TUNNEL_CLOSED") throw e;
         // A negative L_Data.con (BUS_SEND_FAILED) or a tunnel ack timeout means the frame did not
         // reach the device this time. On a device that intermittently misses its L2-ACK window
@@ -1098,7 +1167,7 @@ export class KnxDevice {
   // C"). Such a restart counts as sent but unconfirmed: false. Any other negative con stays an error.
   async sendRestart(): Promise<boolean> {
     try {
-      await this.tun.sendCemi(cemiLData(this.me, this.dst, this.onWire(apdu(this.seq, APCI.RESTART))));
+      await this.sendCemi(cemiLData(this.me, this.dst, this.onWire(apdu(this.seq, APCI.RESTART))));
     } catch (e) {
       if ((e as { code?: string }).code !== "BUS_SEND_FAILED") throw e;
       this.seq = (this.seq + 1) & 0x0f;
@@ -1304,7 +1373,7 @@ export class KnxDevice {
     // holds its full configuration, and reporting that as a completed factory reset is exactly the
     // silent-failure the restart() comment describes. Only the device's post-send silence (it
     // reboots and does not ack) is tolerated, and that is not what sendCemi rejects on.
-    await this.tun.sendCemi(cemiLData(this.me, this.dst,
+    await this.sendCemi(cemiLData(this.me, this.dst,
       this.onWire(apdu(this.seq, APCI.RESTART | RESTART_MASTER, Buffer.from([eraseCode, channel])))));
     this.seq = (this.seq + 1) & 0x0f;
   }

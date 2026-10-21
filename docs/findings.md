@@ -1089,3 +1089,22 @@ A new connection to a device needs the old one closed first. The OpenKNX RaumCon
 from the partner it is connected to as nothing: it keeps that connection's sequence numbers, and a request
 of the new one, numbered from 0, gets `T_NAK` each time it is sent. After `T_Disconnect` and `T_Connect`
 the same request is answered.
+
+A connection whose link to the interface failed may still be open in the device: the `T_Disconnect`
+that ends it went into the stalled link and never reached the bus, and the device still waits for the
+`T_ACK` of its last answer, repeating it. A device holding a connection takes a `T_Connect` from the
+same address as nothing (it keeps the old numbering), answers one from another address with a
+`T_Disconnect` at once, and ignores a `T_Disconnect` from another address (the transport layer's A0,
+A10 and E3): the OpenKNX RaumController closed a new connection that way when the new tunnel had
+another tunnel address than the failed one. Only the device ends that connection, after 6 s without a
+frame, or 3 s after the third repetition of a frame never acknowledged, 12 s after the frame.
+Busforge therefore:
+
+- notes a connection when a frame of it fails on the link, and the next connection to that device
+  under the same tunnel address, within 12 s, closes it first with a `T_Disconnect`;
+- takes a `T_Disconnect` to the first frame of a new connection, before the device acknowledged or sent
+  anything on it, for a refusal: it waits 12 s, connects again and asks once more, and a second refusal
+  is reported as the device holding a connection with another partner. A secured session is not
+  reopened this way.
+
+The ETS captures show no failed link.
