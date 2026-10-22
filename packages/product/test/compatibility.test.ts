@@ -140,11 +140,10 @@ describe("the shipped evidence bundle", () => {
     const owners = [...new Map(records.map((r) => [`${r.subject.productRef}|${r.subject.appProgramId}`, r])).values()];
     // Per Product, the full download and the structural flash as its smoke runs drove them: the bench
     // Products every operation, the structural flash only where it is offered (the GVS's firmware rule
-    // refuses it); units in service the full download where their runs requested it (not on the MEAN
-    // WELL power supply), the structural flash where their spec has the step (the OpenKNX's firmware rule
-    // refuses it); the MDT IP Interface Secure has no group objects, so no GA flash; the MDT IP
-    // Interface/Router's product refuses the full download (tunnelling entries) and the structural flash,
-    // so its runs drive neither.
+    // refuses it); units in service the full download where their runs requested it, the structural
+    // flash where their spec has the step (the OpenKNX's firmware rule refuses it); the MDT IP Interface
+    // Secure has no group objects, so no GA flash; the MDT IP Interface/Router's product refuses the full
+    // download (tunnelling entries) and the structural flash, so its runs drive neither.
     type Driven = Partial<Record<"readParams" | "readLinks" | "flashParams" | "flashLinks", "tested" | "eligible">> & { fullDownload: "tested" | "eligible"; structuralFlash: "tested" | "eligible" };
     const expected: Record<string, Driven> = {
       "M-0002_H-2.20.2F.2F.20GHQ.20631.200070-1_P-GH.20Q631.200070.20R0111": { fullDownload: "tested", structuralFlash: "tested" },
@@ -162,7 +161,7 @@ describe("the shipped evidence bundle", () => {
       "M-00FA_H-0xA012-1_P-OpenKnxRaumController": { fullDownload: "tested", structuralFlash: "eligible" },
       "M-0083_H-135-3_P-SCN.2DIP000.2E03": { fullDownload: "eligible", structuralFlash: "eligible" },
       "M-0083_H-135-3-O0072_P-SCN.2DIP000.2E03": { flashLinks: "eligible", fullDownload: "tested", structuralFlash: "eligible" },
-      "M-0162_H-KNX.2D40E.2D1280D-1_P-KNX.2D40E.2D1280D": { fullDownload: "eligible", structuralFlash: "tested" },
+      "M-0162_H-KNX.2D40E.2D1280D-1_P-KNX.2D40E.2D1280D": { fullDownload: "tested", structuralFlash: "tested" },
     };
     expect(owners).toHaveLength(Object.keys(expected).length);
     expect(new Set(owners.map((r) => r.subject.productRef))).toEqual(new Set(Object.keys(expected)));

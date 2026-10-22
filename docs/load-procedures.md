@@ -1293,7 +1293,7 @@ Limits of this proof:
 - A device that drops a frame on a connection it no longer has, without a `T_Disconnect`, never
   proves a negatively confirmed restart: the MEAN WELL power supply acknowledges the probes on layer 2
   after its reboot and answers none of them, so its restart is unproven; under the rule above its flashes
-  end `verified` with `restartUnproven` (pinned on the recorded sequence by a test, and shown on the unit by its parameter, GA and structural flashes).
+  end `verified` with `restartUnproven` (pinned on the recorded sequence by a test, and shown on the unit by its parameter, GA and structural flashes and its full download).
 - A device whose connection was already closed (it lost the `T_Connect` before the restart) answers
   every probe with `T_Disconnect`, as a rebooted one does, and ignores the restart.
 - A plan that pauses and opens the link again right before the restart (the thelsing/OpenKNX settle)

@@ -12165,7 +12165,6 @@
   },
   {
    "schema": "busforge.evidence/1",
-   "id": "KNX-40E-1280D fullDownload api transfer",
    "recordedAt": null,
    "subject": {
     "manufacturer": "M-0162",
@@ -12179,29 +12178,43 @@
    "medium": "TP",
    "transport": {
     "kind": "ip-tcp",
-    "via": "busforge-bridge"
+    "via": "direct"
    },
    "build": {
     "server": null,
-    "runner": null,
-    "spec": null
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "meanwell-knx40e-in-service",
+     "revision": null
+    }
    },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "KNX-40E-1280D fullDownload api transfer",
    "scope": {
     "operation": "fullDownload",
     "channel": "api",
-    "configuration": "the installation's configuration of the unit (10 parameter values, 6 linked objects), taken over from the project; full download",
+    "configuration": "the device's own configuration, taken over by read-back, then the fullDownload driver's own change",
     "configurationFingerprint": null
-   },
-   "origin": {
-    "configuredBy": "ets",
-    "reference": "self-written",
-    "priorBusforgeWrites": "some"
    },
    "results": {
     "transfer": {
      "state": "pass",
-     "method": "the server reported the download verified (read-back)",
-     "detail": "326 B image, verified"
+     "method": "the server reported the download verified (read-back or device CRC, per profile)",
+     "detail": "the configuration found, downloaded (326 B, verified, restart not confirmed by the device), zero drift on read-back"
     },
     "reference": {
      "state": "not-assessed"
@@ -12210,16 +12223,8 @@
      "state": "not-assessed"
     },
     "persistence": {
-     "state": "not-assessed",
-     "detail": "the unit's start-up telegrams came about 2.2 s after the negatively confirmed A_Restart, on the flash's connection and on a second connection through another interface, and the read-back after them equals the image; the contract takes no start-up telegrams as a restart proof, and the unit held the same bytes before the download, so a read afterwards cannot tell whether what Busforge wrote survived"
+     "state": "not-assessed"
     }
-   },
-   "supersedes": [],
-   "supersedeReason": null,
-   "source": {
-    "kind": "manual",
-    "artifact": null,
-    "sha256": null
    }
   },
   {
@@ -12282,6 +12287,70 @@
     "kind": "etsdiff",
     "artifact": "captures/meanwell-ets-fulldownload.log",
     "sha256": "a255581619a67e45bc4e2030318c172d772e816acb9628ee933114fb7d33bfa0"
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0162",
+    "productRef": "M-0162_H-KNX.2D40E.2D1280D-1_P-KNX.2D40E.2D1280D",
+    "appProgramId": "M-0162_A-0004-11-F245",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "unknown"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "meanwell-knx40e-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "KNX-40E-1280D fullDownload ui transfer",
+   "scope": {
+    "operation": "fullDownload",
+    "channel": "ui",
+    "configuration": "the device's own configuration, taken over by read-back, then the fullDownload driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the server reported the download verified (read-back or device CRC, per profile)",
+     "detail": "the configuration found, downloaded (verified), zero drift on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
    }
   },
   {

@@ -31,7 +31,7 @@ columns are listed per operation below.
 | M-0083 BE-02001.02 | `M-0083_A-00B6-32-9642` | tested | tested | tested | tested | tested | tested |
 | M-0085 AMMA-04/06.S | `M-0085_A-0072-30-69AA` | tested | tested | tested | tested | tested | refused |
 | M-00FA OpenKnxRaumController | `M-00FA_A-A012-55-0000` | tested | tested | tested | tested | tested | refused |
-| M-0162 KNX-40E-1280D | `M-0162_A-0004-11-F245` | tested | tested | tested | tested | eligible, untested | tested |
+| M-0162 KNX-40E-1280D | `M-0162_A-0004-11-F245` | tested | tested | tested | tested | tested | tested |
 
 ## M-0002 GH Q631 0070 R0111
 
@@ -238,5 +238,5 @@ Product `M-0162_H-KNX.2D40E.2D1280D-1_P-KNX.2D40E.2D1280D`, application program 
 | Read links | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | unknown |
 | Parameter flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | pass | unknown |
 | Group-address flash | tested | pass / pass | pass / pass | not-assessed / not-assessed | pass | unknown |
-| Full download | eligible, untested | pass / none | not-assessed / none | not-assessed / none | pass | unknown |
+| Full download | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | pass | unknown |
 | Structural flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | unknown |
