@@ -24,9 +24,17 @@ stores. Generate it once and keep it with your other secrets. It is not part of 
 directory, and without it a restored database cannot open those keys
 ([deployment.md](deployment.md#state-and-the-master-key)).
 
-With the `docker-compose.yml` from the repository, put a small overlay that publishes the port and
-an `.env` file next to it. Compose reads `.env` on every command, so the key and the overlay are
-in place for each later update too:
+With compose, fetch the repository's `docker-compose.yml` into an empty directory, then put a small
+overlay that publishes the port and an `.env` file next to it. Compose reads `.env` on every
+command, so the key and the overlay are in place for each later update too:
+
+```bash
+mkdir busforge && cd busforge
+curl -fsSLO https://raw.githubusercontent.com/busforge/busforge/main/docker-compose.yml
+```
+
+Until the repository is public, that download needs a GitHub token with read access
+(`-H "Authorization: Bearer <token>"`); or copy the file from a checkout.
 
 ```yaml
 # docker-compose.deploy.yml
@@ -133,7 +141,7 @@ SUBSYSTEM=="hidraw", ATTRS{idVendor}=="<vid>", ATTRS{idProduct}=="<pid>", MODE="
 
 Add it in Busforge as a KNXnet/IP connection with the bridge machine's address and port `3671`,
 transport **Auto** or **TCP** ([limitations.md](limitations.md#known-issues) explains why not UDP
-on a slow host). Device management works on the USB interface's own individual address only, so
+on a slow host or an unsteady network). Device management works on the USB interface's own individual address only, so
 one programming client at a time ([connections.md](connections.md#the-bridge-a-local-usb-interface-on-the-network)).
 
 ## 5. Before the first write

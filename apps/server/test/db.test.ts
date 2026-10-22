@@ -818,8 +818,36 @@ describe("catalog (products + placement)", () => {
     expect(backfillCatalogFromDevices(db)).toBe(1);
     const list = listCatalogProducts(db);
     expect(list).toHaveLength(1);
-    expect(list[0]).toMatchObject({ appRef: "M-9_H-1_HP-1", name: "Switch", orderNumber: "" });
+    expect(list[0]).toMatchObject({ appRef: "M-9_H-1_HP-1", orderNumber: "" });
     expect(backfillCatalogFromDevices(db)).toBe(0); // idempotent
+  });
+
+  // The device's name is the installer's ("Kitchen light"), never the product's. Without the
+  // Hardware data only the application program names the product, in the manufacturer's words.
+  test("backfill names a product by its application program, never by a device's name", () => {
+    const db = fresh();
+    createProject(db, "p1", "Blank", 1000);
+    db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer) VALUES ('p1','d1','1.1.1','Kitchen light','M-9_P-1','M-9_H-1_HP-1',9)").run();
+    db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer) VALUES ('p1','d2','1.1.2','Hall dimmer','M-9_P-2','M-9_H-2_HP-2',9)").run();
+    putAppProgram(db, "M-9_A-1", `<KNX><ManufacturerData><Manufacturer RefId="M-9"><ApplicationPrograms><ApplicationProgram Id="M-9_A-1" Name="Switch actuator 4-fold"/></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`);
+    putAppProgram(db, "M-9_A-2", "<ApplicationProgram/>");
+
+    expect(backfillCatalogFromDevices(db)).toBe(2);
+    expect(getCatalogProduct(db, "M-9_H-1_HP-1", "M-9_P-1")).toMatchObject({ name: "Switch actuator 4-fold", orderNumber: "" });
+    // No name known: empty, and the picker shows the product id.
+    expect(getCatalogProduct(db, "M-9_H-2_HP-2", "M-9_P-2")).toMatchObject({ name: "", orderNumber: "" });
+  });
+
+  test("backfill lists a product whose program does not parse without a name, and the others with theirs", () => {
+    const db = fresh();
+    createProject(db, "p1", "Blank", 1000);
+    db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer) VALUES ('p1','d1','1.1.1','A','M-9_P-1','M-9_H-1_HP-1',9)").run();
+    db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer) VALUES ('p1','d2','1.1.2','B','M-9_P-2','M-9_H-2_HP-2',9)").run();
+    putAppProgram(db, "M-9_A-1", `<KNX><ManufacturerData><Manufacturer RefId="M-9"><ApplicationPrograms><ApplicationProgram Id="M-9_A-1" Name="Broken">`);
+    putAppProgram(db, "M-9_A-2", `<KNX><ManufacturerData><Manufacturer RefId="M-9"><ApplicationPrograms><ApplicationProgram Id="M-9_A-2" Name="Dimmer"/></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`);
+    expect(backfillCatalogFromDevices(db)).toBe(2);
+    expect(getCatalogProduct(db, "M-9_H-1_HP-1", "M-9_P-1")!.name).toBe("");
+    expect(getCatalogProduct(db, "M-9_H-2_HP-2", "M-9_P-2")!.name).toBe("Dimmer");
   });
 
   test("addDevice allocates the next free address and references the catalog", () => {

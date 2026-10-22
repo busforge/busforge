@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: How to report, and what stays out of a public issue
+    url: https://github.com/busforge/busforge/blob/main/docs/reporting.md
+    about: What the app's prefilled report carries, what not to paste (keys, project files, addresses), and how to share a diagnostic package.

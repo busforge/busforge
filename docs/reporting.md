@@ -12,6 +12,9 @@ in your browser, and you review and submit it there with your own account.
 | **Problem** | [`problem.yml`](../.github/ISSUE_TEMPLATE/problem.yml) | Something went wrong, or Busforge refuses or does not support a device. Also for problems that involve no device. |
 | **Device feedback** | [`device-feedback.yml`](../.github/ISSUE_TEMPLATE/device-feedback.yml) | How one device works with Busforge in your use of it overall: works, works with limitations, does not work. |
 
+A new issue starts from one of these two forms; blank issues are switched off
+([`config.yml`](../.github/ISSUE_TEMPLATE/config.yml)), and the chooser links back to this page.
+
 Device feedback is about the whole time you used the device with Busforge, not about the last
 operation, and it is not a full qualification of the device. Limitations belong in it.
 

@@ -3,13 +3,16 @@ import type { Connection } from "./db/connections.ts";
 
 // An IP transport that decides TCP-vs-UDP at connect() time. TCP tunnelling is what reaches a bridge
 // through an `ssh -L` forward or a multi-homed host where UDP source selection fails, so it is tried
-// first; ONLY a refused/unreachable TCP connect (a coded TUNNEL_CONNECT_FAILED) falls back to classic
-// UDP. Any other error is a real bus/protocol failure and propagates unchanged, so it is never masked
+// first; ONLY a TCP connect that is refused, unreachable or not answered in time (a coded
+// TUNNEL_CONNECT_FAILED) falls back to classic UDP. Once a connect succeeded, every later connect (the
+// reopen after a device restart took the interface down) uses that transport alone, so an interface
+// that answers TCP a little late is not taken over UDP for the rest of the session. Any other error is a real bus/protocol failure and propagates unchanged, so it is never masked
 // as "the gateway only speaks UDP". The callbacks may be set before connect() (bus.ts) or after it
 // (a KnxDevice installs its onCemi on a connected transport), so each one is held here and also
 // forwarded to the inner tunnel whenever it is set.
 export class AutoIpTunnel implements KnxTransport {
   private inner: KnxTransport | null = null;
+  private chosen: "tcp" | "udp" | null = null;
   private cemiCb: KnxTransport["onCemi"] = null;
   private rawCemiCb: KnxTransport["onRawCemi"] = null;
   private closedCb: KnxTransport["onClosed"] = null;
@@ -34,16 +37,24 @@ export class AutoIpTunnel implements KnxTransport {
   }
 
   async connect(): Promise<void> {
+    if (this.chosen) {
+      const t = this.chosen === "tcp" ? this.makeTcp(this.host, this.port) : this.makeUdp(this.host, this.port);
+      this.inner = t;
+      this.wire(t);
+      try { await t.connect(); } catch (e) { this.inner = null; throw e; }
+      return;
+    }
     const tcp = this.makeTcp(this.host, this.port);
     this.inner = tcp;
     this.wire(tcp);
     let tcpFailure: KnxError;
     try {
       await tcp.connect();
+      this.chosen = "tcp";
       return;
     } catch (e) {
       this.inner = null;
-      // A refused/unreachable TCP endpoint is the one signal that says "try UDP". Everything else
+      // A refused, unreachable or unanswered TCP endpoint is the one signal that says "try UDP". Everything else
       // (a rejected channel, a protocol error, a timeout after the socket was up) is a real failure
       // the caller must see, not a reason to silently retry on a different transport.
       if (!(e instanceof KnxError) || e.code !== "TUNNEL_CONNECT_FAILED") throw e;
@@ -52,7 +63,7 @@ export class AutoIpTunnel implements KnxTransport {
     const udp = this.makeUdp(this.host, this.port);
     this.inner = udp;
     this.wire(udp);
-    try { await udp.connect(); } catch (e) {
+    try { await udp.connect(); this.chosen = "udp"; } catch (e) {
       this.inner = null;
       // Both transports failed. The UDP error keeps its code, but the TCP failure before it is often
       // the telling one (a UDP timeout says nothing about why TCP could not connect either).

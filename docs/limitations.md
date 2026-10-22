@@ -47,7 +47,7 @@ KNX Secure is two separate mechanisms, and Busforge implements one of them.
 |---|---|---|
 | Protects | each management and group telegram to and from a device | the connection between a tool and its KNXnet/IP interface |
 | Busforge | reads and programs Data Secure devices, activates a factory device from its certificate, sends and decodes secured group telegrams | **not supported** |
-| Shown on | two products, plus the download of one Data Secure KNXnet/IP interface ([status.md](status.md#capabilities)) | |
+| Shown on | three products: the Jung 400021SE and the GVS AMMA (full download, parameter and group-address flash), the MDT IP Interface/Router (parameter flash, and the group-address flash of a plain address; its full download is refused); plus the download of one Data Secure KNXnet/IP interface, the MDT IP Interface Secure ([status.md](status.md#devices-driven-on-real-hardware)) | |
 
 Busforge drives a secure device only under a tool key it holds: imported from your ETS project,
 entered by hand, or written by Busforge when it activates the device. Details in
@@ -66,6 +66,17 @@ bracket (power loss, a lost connection, a container killed mid-write) ends as
 `FLASH_INTERRUPTED_UNLOADED`, and the device may stay unloaded. The flash dialog then offers the full
 download, which rewrites the whole configuration. A container stop waits for a running write
 ([deployment.md](deployment.md#stopping-and-updating)); a `SIGKILL` or a host reboot does not.
+
+**A UDP tunnel is lost on a stall of about two seconds.** Over UDP an interface wants each of its
+messages acknowledged within a second and closes the tunnel after one repetition, as the KNXnet/IP
+specification asks; Busforge's bridge does the same. A pause of about two seconds on the network
+path or on the host (Wi-Fi, a VPN, a busy small NAS) while the interface has something for Busforge
+therefore ends the operation with `TUNNEL_CLOSED`. A write already inside its load bracket ends as
+`FLASH_INTERRUPTED_UNLOADED`, and the flash dialog offers the full download. Apart from the
+reconnect after a device's restart, Busforge does not rebuild a lost tunnel inside an operation. Workaround: set the connection's transport to **TCP**, or
+**Auto**, which tries TCP first. Over TCP no acknowledgements exist, and Busforge waits out a stall of up to
+about half a minute instead of ending the operation (shown against a scripted interface;
+[connections.md](connections.md#the-ip-transport-auto-tcp-or-udp)).
 
 ## Shown on few devices
 

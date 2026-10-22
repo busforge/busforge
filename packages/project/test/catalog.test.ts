@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { extractCatalogProducts, extractAppPrograms, appProgramId } from "../src/index.ts";
+import { extractCatalogProducts, extractAppPrograms, appProgramId, appProgramName } from "../src/index.ts";
 import { storeZip } from "./ziputil.ts";
 
 const hardwareXml = `<?xml version="1.0" encoding="utf-8"?>
@@ -107,5 +107,18 @@ describe("a plain manufacturer XML (no zip): the OpenKNX shape", () => {
     const bytes = plainProductDb(["M-00FA_A-A012-55-0000", "M-00FA_A-B013-01-0000"]);
     const products = extractCatalogProducts(bytes);
     expect(() => extractAppPrograms(bytes, products.map((p) => p.appRef))).toThrow(/several|application programs/i);
+  });
+});
+
+describe("appProgramName", () => {
+  const doc = (program: string) => `<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0083"><ApplicationPrograms>${program}</ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+  test("is the program's own Name, entities decoded", () => {
+    expect(appProgramName(doc(`<ApplicationProgram Id="M-0083_A-AAAA-1-0001" Name="Switch &amp; dim 4-fold" MaskVersion="MV-07B0"><Static/></ApplicationProgram>`), "M-0083_A-AAAA-1-0001")).toBe("Switch & dim 4-fold");
+  });
+  test("is empty where the document names no such program, or the program no name", () => {
+    expect(appProgramName(doc(`<ApplicationProgram Id="M-0083_A-AAAA-1-0001" Name="Switch"/>`), "M-0083_A-BBBB-1-0001")).toBe("");
+    expect(appProgramName(doc(`<ApplicationProgram Id="M-0083_A-AAAA-1-0001"/>`), "M-0083_A-AAAA-1-0001")).toBe("");
+    expect(appProgramName("<ApplicationProgram/>", "M-0083_A-AAAA-1-0001")).toBe("");
   });
 });

@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { appProgramId, type CatalogProduct } from "@busforge/project";
+import { appProgramId, appProgramName, type CatalogProduct } from "@busforge/project";
 
 // Catalog layer: manufacturer application programs, keyed by application-program
 // id (the value of appProgramId(appRef)). Global and shared across projects; a
@@ -50,17 +50,30 @@ export function getCatalogProduct(db: Database, appRef: string, productRef: stri
   ).get(appRef, productRef) as CatalogProduct | null;
 }
 
-// Derive catalog products from already-imported device rows, for projects imported
-// before catalog_products existed (their Hardware.xml is no longer kept, so only
-// the device's own fields are available: name falls back to the instance name,
-// order number and hardware version are unknown). Only products whose application
-// program is in the catalog are added, so every entry stays placeable. Idempotent
-// (INSERT OR IGNORE on the existing key). Returns the number of rows added.
+// Derive catalog products from device rows that have none, for projects whose Hardware.xml was
+// not kept (a .busforge archive carries no catalog rows). Only the application program is at hand:
+// the name is the manufacturer's name of that program (never a device's own name, which is the
+// installer's), order number and hardware version are unknown. Only products whose application
+// program is in the catalog are added, so every entry stays placeable. Idempotent (only keys not
+// yet in the catalog). Returns the number of rows added.
 export function backfillCatalogFromDevices(db: Database): number {
   const stored = new Set((db.query("SELECT id FROM app_programs").all() as { id: string }[]).map((r) => r.id));
   const rows = db.query(
-    "SELECT app_ref AS appRef, product_ref AS productRef, manufacturer, MAX(name) AS name FROM devices GROUP BY app_ref, product_ref, manufacturer",
-  ).all() as { appRef: string; productRef: string; manufacturer: number; name: string }[];
+    "SELECT DISTINCT d.app_ref AS appRef, d.product_ref AS productRef, d.manufacturer FROM devices d LEFT JOIN catalog_products c ON c.app_ref = d.app_ref AND c.product_ref = d.product_ref WHERE c.app_ref IS NULL",
+  ).all() as { appRef: string; productRef: string; manufacturer: number }[];
+  // One parse per program (several products can share one, and a program can be tens of MB). A program
+  // whose XML does not parse names nothing here; the picker then shows the product id, and the list of
+  // every other product stays available.
+  const names = new Map<string, string>();
+  const nameOf = (id: string) => {
+    if (!names.has(id)) {
+      let name = "";
+      try { name = appProgramName(getAppProgram(db, id) ?? "", id); }
+      catch (e) { console.error(`catalog: application program ${id} does not parse, listed without a name: ${(e as Error).message}`); }
+      names.set(id, name);
+    }
+    return names.get(id)!;
+  };
   let n = 0;
   db.transaction(() => {
     for (const r of rows) {
@@ -68,7 +81,7 @@ export function backfillCatalogFromDevices(db: Database): number {
       if (!stored.has(id)) continue; // not placeable without its program XML
       n += db.prepare(
         "INSERT OR IGNORE INTO catalog_products (app_ref, product_ref, app_program_id, manufacturer, name, order_number, hw_version) VALUES (?, ?, ?, ?, ?, '', '')",
-      ).run(r.appRef, r.productRef, id, r.manufacturer, r.name ?? "").changes;
+      ).run(r.appRef, r.productRef, id, r.manufacturer, nameOf(id)).changes;
     }
   })();
   return n;

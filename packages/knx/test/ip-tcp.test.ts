@@ -65,10 +65,13 @@ class FakeTcpSocket implements TcpSocket {
   sent: Buffer[] = [];
   ended = false;
   connectError: Error | null = null;
+  // Nothing answers the connect: neither callback ever fires.
+  silent = false;
   private dataCb: ((c: Buffer) => void) | null = null;
   private closeCb: (() => void) | null = null;
 
   connect(_port: number, _ip: string, onConnect: () => void, onError: (e: Error) => void): void {
+    if (this.silent) return;
     if (this.connectError) onError(this.connectError); else onConnect();
   }
   // A gateway confirms every tunnelled frame with an L_Data.con; `autoCon` plays that gateway. It also
@@ -160,6 +163,26 @@ describe("KnxIpTunnel over TCP", () => {
     const err = await tunnel.connect().then(() => null, (e: unknown) => e as Error);
     expect(err!.message).toContain("ETIMEDOUT");
     expect(err!.message).not.toContain("cannot tell a refusal from");
+  });
+
+  // Nothing answers the SYN (a host that is not there, a firewall that drops): the kernel would retry
+  // for minutes before it reports anything.
+  test("a TCP connect nothing answers fails as TUNNEL_CONNECT_FAILED after the connect timeout, and the socket is given up", async () => {
+    const sock = new FakeTcpSocket();
+    sock.silent = true;
+    const tunnel = KnxIpTunnel.tcp("192.0.2.10", 3671, () => sock);
+    tunnel["tcpConnectTimeoutMs"] = 20;
+    const t0 = Date.now();
+    const err = await tunnel.connect().then(() => null, (e: unknown) => e as Error & { code?: string });
+    expect(Date.now() - t0).toBeLessThan(1000);
+    expect(err!.code).toBe("TUNNEL_CONNECT_FAILED");
+    expect(err!.message).toBe("TCP connect to 192.0.2.10:3671 got no answer within 0.02 s: no host there, or a firewall drops it");
+    expect(sock.ended).toBe(true);
+    expect(sock.sent).toHaveLength(0);
+  });
+
+  test("the TCP connect waits the KNXnet/IP connect timeout, 10 s", () => {
+    expect(KnxIpTunnel.tcp("192.0.2.10")["tcpConnectTimeoutMs"]).toBe(10_000);
   });
 
   // ETS 6 and Calimero both run the 60 s CONNECTIONSTATE heartbeat over TCP. A TCP socket whose peer

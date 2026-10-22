@@ -133,6 +133,31 @@ describe("AutoIpTunnel", () => {
     expect(err!.message).toContain("ECONNREFUSED");
   });
 
+  // A device restart can take the interface down for a while; the reconnect after it must not come back
+  // over UDP because the interface was not yet answering TCP.
+  test("a reconnect keeps the transport the first connect chose, and fails rather than switching", async () => {
+    let tcpUp = true;
+    const tcps: StubTunnel[] = [];
+    const udps: StubTunnel[] = [];
+    const t = new AutoIpTunnel("h", 3671,
+      () => { const s = new StubTunnel(() => { if (!tcpUp) throw new KnxError("TUNNEL_CONNECT_FAILED", "no answer"); }); tcps.push(s); return s; },
+      () => { const s = new StubTunnel(); udps.push(s); return s; });
+    await t.connect();
+    await t.disconnect();
+    tcpUp = false;
+    const err = await t.connect().then(() => null, (e: unknown) => e as KnxError);
+    expect(err!.code).toBe("TUNNEL_CONNECT_FAILED");
+    expect(udps).toHaveLength(0);
+    tcpUp = true;
+    await t.connect();
+    expect(tcps.at(-1)!.connected).toBe(true);
+
+    const u = new AutoIpTunnel("h", 3671, () => new StubTunnel(() => { throw new KnxError("TUNNEL_CONNECT_FAILED", "refused"); }), () => { const s = new StubTunnel(); udps.push(s); return s; });
+    await u.connect();
+    await u.connect();
+    expect(udps.map((s) => s.connected)).toEqual([true, true]);
+  });
+
   test("disconnect before a successful connect is a no-op", async () => {
     const t = new AutoIpTunnel("h", 3671, () => new StubTunnel(), () => new StubTunnel());
     await t.disconnect(); // resolves without an inner tunnel to tear down

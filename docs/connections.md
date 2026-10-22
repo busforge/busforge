@@ -49,7 +49,7 @@ connection carries an `ipTransport` field:
 
 | Value | Behaviour |
 |---|---|
-| `auto` (default) | Try TCP first; fall back to UDP **only** when the TCP connect is refused or unreachable. |
+| `auto` (default) | Try TCP first; fall back to UDP **only** when the TCP connect is refused, unreachable or not answered within 10 s. |
 | `tcp` | Force TCP tunnelling. |
 | `udp` | Force classic UDP tunnelling. |
 
@@ -62,6 +62,14 @@ Any other error (a rejected channel, a protocol failure, a timeout after the soc
 propagates unchanged, so a real bus fault is never masked as "the gateway must only speak UDP".
 The wrapper forwards the receive callbacks to the tunnel it opened whenever they are set, also after
 the connect: a device session installs its own on a connected transport.
+
+A TCP connect that nothing answers (a wrong address, a host that is off, a firewall that drops the
+packet) is given up after 10 s, the KNXnet/IP connect timeout, as `TUNNEL_CONNECT_FAILED`; the
+kernel alone would retry it for over two minutes on Linux. With `auto` the UDP connect then waits
+its 4 s, so an interface that is not there is reported after about 14 s, with the TCP failure named
+in the message. Once `auto` has connected, it stays on the transport it found: a reconnect inside
+an operation (after a device's restart took the interface down) tries that transport alone, so an
+interface that answers TCP a few seconds late is not taken over UDP for the rest of the session.
 
 **Over TCP there is no tunnelling acknowledgement** (KNXnet/IP Tunnelling v2). The client writes each
 TUNNELLING_REQUEST once and neither waits for a TUNNELLING_ACK nor sends one for a request it

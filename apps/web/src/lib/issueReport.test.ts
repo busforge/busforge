@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { buildIssueDraft, cleanValue, ISSUE_REPOSITORY, MAX_ISSUE_URL, METADATA_FIELDS, REPORT_TEMPLATES, subjectOf, type ReportInput, type ReportSubject } from "./issueReport.ts";
 
@@ -14,6 +14,13 @@ const subject: ReportSubject = {
 };
 const version = { version: "v0.1.0-3-gabc1234", commit: "abc1234" };
 const params = (url: string) => new URL(url).searchParams;
+
+test("the issue chooser offers no blank issue and links the reporting guide of this repository", () => {
+  const config = Bun.YAML.parse(readFileSync(join(TEMPLATE_DIR, "config.yml"), "utf8")) as { blank_issues_enabled: boolean; contact_links: { url: string }[] };
+  expect(config.blank_issues_enabled).toBe(false);
+  expect(config.contact_links.map((l) => l.url)).toEqual([`${ISSUE_REPOSITORY}/blob/main/docs/reporting.md`]);
+  expect(existsSync(join(TEMPLATE_DIR, "..", "..", "docs", "reporting.md"))).toBe(true);
+});
 
 test("every field a link fills is a text field of its template, and the templates have no upload", () => {
   for (const t of Object.values(REPORT_TEMPLATES)) {

@@ -162,6 +162,15 @@ const plainAppProgramIds = (xml: string): string[] =>
     .map((a) => text(a.Id))
     .filter(Boolean);
 
+// The Name the manufacturer gives application program `id` in a stored program document, or "" where
+// the document holds no such program or the program no name.
+export function appProgramName(xml: string, id: string): string {
+  const program = kids(node(node(parsePlainDoc(xml).KNX)?.ManufacturerData)?.Manufacturer)
+    .flatMap((m) => kids(node(m.ApplicationPrograms)?.ApplicationProgram))
+    .find((a) => text(a.Id) === id);
+  return program ? text(program.Name) : "";
+}
+
 // Extract every distinct application program referenced by the given device app
 // refs, keyed by application-program id. Reads the outer zip once (unlike calling
 // readAppProgram per device), for populating the catalog at import. App programs

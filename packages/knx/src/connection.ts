@@ -69,7 +69,9 @@ function realTcpSocket(): TcpSocket {
     write: (frame) => { s.write(frame); },
     onData: (cb) => { s.on("data", cb); },
     onClose: (cb) => { s.on("close", cb); },
-    end: () => { s.end(); },
+    // end() on a socket still connecting would only queue the FIN behind a connect the kernel keeps
+    // retrying; a connect given up is torn down at once.
+    end: () => { if (s.connecting) s.destroy(); else s.end(); },
   };
 }
 
@@ -87,6 +89,9 @@ export class KnxIpTunnel implements KnxTransport {
   private tcpSock!: TcpSocket;
   private mode: "udp" | "tcp" = "udp";
   private createTcpSocket: () => TcpSocket = realTcpSocket;
+  // How long a TCP connect waits for the interface to accept it: the KNXnet/IP CONNECT_REQUEST_TIMEOUT
+  // (10 s); an instance field so a test can shorten it.
+  private tcpConnectTimeoutMs = 10_000;
   channel = 0;
   assignedIa = 0;
   // How long queryMaxApdu and queryDeviceInfo wait for their answer; an instance field so a test can shorten it.
@@ -275,9 +280,17 @@ export class KnxIpTunnel implements KnxTransport {
     this.closed = false;
     // Open the connection first. A refused or unreachable TCP connect is a coded error, not the bare
     // CONNECT timeout a silent UDP gateway would surface.
+    // A SYN nothing answers is retried by the kernel for minutes (about 75 s on macOS, over two minutes
+    // on Linux) before the connect fails, so the connect gives up on its own after the KNXnet/IP
+    // CONNECT_REQUEST_TIMEOUT. Its error is the same unreachable signal a refused connect gives.
     await new Promise<void>((resolve, reject) => {
-      this.tcpSock.connect(this.port, this.ifaceIp, resolve,
-        (e) => reject(new KnxError("TUNNEL_CONNECT_FAILED", `TCP connect to ${this.ifaceIp}:${this.port} failed: ${e.message}${connectErrorCaveat(e)}`)));
+      const timer = setTimeout(() => {
+        sock.end();
+        reject(new KnxError("TUNNEL_CONNECT_FAILED", `TCP connect to ${this.ifaceIp}:${this.port} got no answer within ${this.tcpConnectTimeoutMs / 1000} s: no host there, or a firewall drops it`));
+      }, this.tcpConnectTimeoutMs);
+      const failed = (e: Error) => { clearTimeout(timer); reject(new KnxError("TUNNEL_CONNECT_FAILED", `TCP connect to ${this.ifaceIp}:${this.port} failed: ${e.message}${connectErrorCaveat(e)}`)); };
+      try { this.tcpSock.connect(this.port, this.ifaceIp, () => { clearTimeout(timer); resolve(); }, failed); }
+      catch (e) { failed(e instanceof Error ? e : new Error(String(e))); }
     });
 
     // A byte stream: reassemble it into whole frames and feed each through the SAME dispatch the UDP
