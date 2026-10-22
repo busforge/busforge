@@ -1,12 +1,12 @@
 import type { DeviceSpec } from "../spec.ts";
 
 // The Theben RMG 8 T switch actuator (MIX 2 application, MV-07B0, System B, module slots) as a unit in
-// service: the run takes its configuration by read-back and writes one parameter flash and one GA
-// flash, each reverted (inservice.ts); a full download of the configuration found only with
-// --full-download. Refs pinned verbatim as the device configuration of this application lists them
-// (module refs with their instance), taken offline from its catalogue and the unit's configuration;
-// the run refuses a ref the unit's configuration does not list. Both steps lie in channel C2 of the
-// second DME 2 T extension.
+// service: the run takes its configuration by read-back and writes one parameter flash, one GA flash
+// and one structural flash, each reverted (inservice.ts); a full download of the configuration found
+// only with --full-download. Refs pinned verbatim as the device configuration of this application
+// lists them (module refs with their instance), taken offline from its catalogue and the unit's
+// configuration; the run refuses a ref the unit's configuration does not list. All three steps lie in
+// channel C2 of the second DME 2 T extension.
 //
 // Fingerprint: the application id, which this family reports on the application object (object 4,
 // PID 13), and the device object's version (object 0, PID 25). The unit does not report PID 9. The
@@ -64,6 +64,15 @@ export const thebenRmg8tInService: DeviceSpec = {
     // "Rückmeldung in %" of the second DME 2 T, C2 (1 byte, read + transmit), linked to the run's test
     // address while the run observes it.
     link: { comObjRefId: "M-0048_A-493B-21-B471_MD-12_M-39_MI-1_O-2-10_R-8" },
+    // The second extension module's (DME 2 T) C2 "Diagnosemeldungen aktivieren": "nein" to "ja" shows
+    // objects 205 to 209 (diagnostics) in the configuration, which takes the structural flash; the
+    // objects stay unlinked (no group address). The change sets five config bytes of the com-object
+    // table (written whole, as ETS writes it), the switch and the cyclic sending time it shows (10); the revert hides the objects and
+    // resets the switch but leaves the sending time at 10, as ETS's revert leaves it, since neither
+    // writes a parameter the configuration no longer shows (so a unit that held 10 there already
+    // changes only in the switch and the table). ETS's partial
+    // downloads of this change and its revert are captured (tools/etsdiff.test.ts).
+    structural: { paramRefId: "M-0048_A-493B-21-B471_MD-12_M-39_MI-1_P-9_R-9", value: "1" },
     fullDownload: true,
   },
   configure: [],
@@ -72,7 +81,5 @@ export const thebenRmg8tInService: DeviceSpec = {
     // the run does not set.
     { kind: "output", label: "2. DME 2 T C2 Rückmeldung in % answers on the test link", comObjRefId: "M-0048_A-493B-21-B471_MD-12_M-39_MI-1_O-2-10_R-8" },
   ],
-  unsafe: [
-    { capability: "structuralFlash", reason: "never written to this product on hardware: a product's first structural flash is not run on a unit in service" },
-  ],
+  unsafe: [],
 };

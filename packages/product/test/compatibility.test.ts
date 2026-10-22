@@ -141,7 +141,7 @@ describe("the shipped evidence bundle", () => {
     // Per Product, the full download and the structural flash as its smoke runs drove them: the bench
     // Products every operation, the structural flash only where it is offered (the GVS's firmware rule
     // refuses it); units in service the full download where their runs requested it, the structural
-    // flash where their spec has the step (the RMG 8 T's spec declares it unsafe, the OpenKNX's firmware rule refuses it); the MDT IP Interface Secure has no
+    // flash where their spec has the step (the RMG 8 T's step has no run yet, the OpenKNX's firmware rule refuses it); the MDT IP Interface Secure has no
     // group objects, so no GA flash; the MDT IP Interface/Router's product refuses the full download (tunnelling
     // entries) and the structural flash, so its runs drive neither. The MEAN WELL power supply has no smoke run: its records are API
     // runs driven by hand, in one channel, whose newest parameter flash ended in an error, and no read.

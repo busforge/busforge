@@ -2241,10 +2241,13 @@ corpusDescribe("Theben MIX 2 (M-0048_A-493B-21-B471) against ETS", () => {
   // P-199 "A_Download erfolgt" (offset 39, bit 0x80, Access="None"): every full and parameter download
   // writes it set, the unit clears it (docs/findings.md, LegacyPatchAlways).
   const DOWNLOADED = 39;
-  // A parameter that shows unlinked objects, captured switched on and off: "Diagnosemeldungen aktivieren" of the
-  // first extension module (DME 2 T, channel C1), which shows objects 95 to 99 (diagnostics).
-  const SHOWS: Record<string, { name: string; kind: string; ref: string; objects: number[] }> = {
-    hmg6t: { name: "the DME 2 T's diagnostics", kind: "diag", ref: `${A}_MD-12_M-36_MI-1_P-9_R-9`, objects: [95, 96, 97, 98, 99] },
+  // A parameter that shows unlinked objects, captured switched on and off: "Diagnosemeldungen aktivieren" of an
+  // extension module (DME 2 T), which shows five objects (diagnostics). On the HMG 6 T the first extension module's
+  // C1 (objects 95 to 99), on the RMG 8 T the second's C2 (objects 205 to 209). `at` is the application offset of the
+  // switch (P-9, bit 0x40, and the six flags beside it); the cyclic sending time it shows (P-105) lies in the next byte.
+  const SHOWS: Record<string, { name: string; kind: string; ref: string; objects: number[]; at: number }> = {
+    hmg6t: { name: "the first DME 2 T's diagnostics", kind: "diag", ref: `${A}_MD-12_M-36_MI-1_P-9_R-9`, objects: [95, 96, 97, 98, 99], at: 637 },
+    rmg8t: { name: "the second DME 2 T's diagnostics", kind: "diag", ref: `${A}_MD-12_M-39_MI-1_P-9_R-9`, objects: [205, 206, 207, 208, 209], at: 1229 },
   };
   for (const p of PRODUCTS) {
     describe(p.name, () => {
@@ -2386,7 +2389,8 @@ corpusDescribe("Theben MIX 2 (M-0048_A-493B-21-B471) against ETS", () => {
       const shows = SHOWS[p.tag];
       if (!shows) return;
       // Two more partial downloads, on the unit after a full download of the configuration of the captures
-      // above: a parameter that shows objects (unlinked) switched on, and back. ETS runs both with the
+      // above (on both units the four segments read before "on" are that download's image, the marker cleared,
+      // byte for byte): a parameter that shows objects (unlinked) switched on, and back. ETS runs both with the
       // revert's bracket and falls back from its differential form each time, so its image holds every byte
       // a parameter owns and the three tables whole.
       const shown = new Map(params).set(shows.ref, "1");
@@ -2413,9 +2417,9 @@ corpusDescribe("Theben MIX 2 (M-0048_A-493B-21-B471) against ETS", () => {
       });
 
       // ETS's image of "on" against its full download: the shown objects' config bytes (0x00 to 0x4b, an unlinked
-      // object's), and of the application the switch and the parameters it shows (offset 637: P-9 0x40 and the six
-      // flags beside it at 0; offset 638: the cyclic sending time P-105, 10, its low nibble). "Off" is the full
-      // download's image again, without offset 638: P-105 is inactive again and placed only in the branch not
+      // object's), and of the application the switch and the parameters it shows (`at`: P-9 0x40 and the six
+      // flags beside it at 0; the byte after it: the cyclic sending time P-105, 10, its low nibble). "Off" is the full
+      // download's image again, without the byte after `at`: P-105 is inactive again and placed only in the branch not
       // taken, so ETS does not write it (R14, DownloadInvisibleParameters="None"), and the unit keeps the 10 "on"
       // wrote; the unit's collects before and after both downloads differ in that memory byte alone. Busforge
       // leaves it too: a module-instance parameter is owned only while active (buildRelativeSegmentTarget).
@@ -2433,12 +2437,12 @@ corpusDescribe("Theben MIX 2 (M-0048_A-493B-21-B471) against ETS", () => {
         const changes = (img: Map<number, Map<number, number>>, lsm: number) => [...img.get(lsm)!].filter(([o, b]) => full4.get(lsm)!.get(o) !== b);
         expect(changes(on, 3)).toEqual(shows.objects.map((n) => [2 + (n - 1) * 2, 0x4b]));
         expect(shows.objects.map((n) => full4.get(3)!.get(2 + (n - 1) * 2))).toEqual(shows.objects.map(() => 0x00));
-        expect(changes(on, 4)).toEqual([[637, 0x40], [638, 0x0a]]);
-        expect([full4.get(4)!.get(637), full4.get(4)!.get(638)]).toEqual([0x00, 0x00]);
+        expect(changes(on, 4)).toEqual([[shows.at, 0x40], [shows.at + 1, 0x0a]]);
+        expect([full4.get(4)!.get(shows.at), full4.get(4)!.get(shows.at + 1)]).toEqual([0x00, 0x00]);
         expect(changes(off, 3)).toEqual([]);
         expect(changes(off, 4)).toEqual([]);
-        // "On" writes every byte the revert's image holds and offset 638; "off" the revert's bytes.
-        expect([...on.get(4)!.keys()].filter((o) => !revert.get(4)!.has(o))).toEqual([638]);
+        // "On" writes every byte the revert's image holds and the sending time; "off" the revert's bytes.
+        expect([...on.get(4)!.keys()].filter((o) => !revert.get(4)!.has(o))).toEqual([shows.at + 1]);
         expect(sorted(off.get(4)!).map(([o]) => o)).toEqual(sorted(revert.get(4)!).map(([o]) => o));
       });
 
@@ -2448,8 +2452,8 @@ corpusDescribe("Theben MIX 2 (M-0048_A-493B-21-B471) against ETS", () => {
       // restart): for "on" ETS's last logged download, the revert, whose com-object stamp the unit still shows (the
       // download between, which has no log, is not seen); for "off" the one "on" left. The unit's stamps no longer equal it, as
       // ETS's logs find, so like ETS it writes every owned byte of the application, the com-object table whole and
-      // the group tables whole. ETS's bracket, and exactly ETS's bytes with ETS's values, offset 638 left at the 10
-      // "on" wrote after "off".
+      // the group tables whole. ETS's bracket, and exactly ETS's bytes with ETS's values, the sending time (the byte
+      // after `at`) left at the 10 "on" wrote after "off".
       const structural = (values: Map<string, string>, app: Buffer, unitComObj: Buffer, at: Map<number, number>, before: string, l: string) => {
         const record = logStamps(before).closing.map((r) => ({ ...r, written: true as const }));
         const check = stampCheck(record, l);
@@ -2487,16 +2491,16 @@ corpusDescribe("Theben MIX 2 (M-0048_A-493B-21-B471) against ETS", () => {
         expect(expectShowsForm(plan, onFile, onLog, unitAt(at, held, segment(full, 3)))).toEqual(shows.objects.map((n) => [2 + (n - 1) * 2, 0x4b]));
       });
 
-      test(`structural flash of ${shows.name} off: ETS's bracket and bytes, and offset 638 left at the 10 "on" wrote, as ETS leaves it`, () => {
+      test(`structural flash of ${shows.name} off: ETS's bracket and bytes, and the sending time left at the 10 "on" wrote, as ETS leaves it`, () => {
         const at = kept(offFile);
         const app = mergeRelativeTarget(held, buildRelativeSegmentTarget(cfg, shown, 4, { moduleInstances: fixture.instances, ownIdleUnionDefaults: true })!).image;
         app[DOWNLOADED] &= 0x7f;
-        expect([app[637], app[638]]).toEqual([0x40, 0x0a]);
+        expect([app[shows.at], app[shows.at + 1]]).toEqual([0x40, 0x0a]);
         const comObj = segment(build(shown, fixture.links), 3);
         const plan = structural(params, app, comObj, at, onLog, offLog);
         expect(expectShowsForm(plan, offFile, offLog, unitAt(at, app, comObj))).toEqual(shows.objects.map((n) => [2 + (n - 1) * 2, 0x00]));
-        expect(planWrites(plan, at, 4).get(at.get(4)! + 637)).toBe(0x00);
-        expect(planWrites(plan, at, 4).has(at.get(4)! + 638)).toBe(false);
+        expect(planWrites(plan, at, 4).get(at.get(4)! + shows.at)).toBe(0x00);
+        expect(planWrites(plan, at, 4).has(at.get(4)! + shows.at + 1)).toBe(false);
       });
     });
   }
@@ -3541,7 +3545,7 @@ corpusDescribe("the stamp record: ETS's differential parameter download, and its
     ["mdt-router-ets6log-fulldownload.txt", "mdt-router-ets6log-partial-name.txt"],
     ["mdt-router-ets6log-partial-name.txt", "mdt-router-ets6log-partial-name-revert.txt"],
     ...["hmg6t", "jmg4t", "rmg8t"].flatMap((t): [string, string][] => [[`mix2-${t}-ets6log-fulldownload.txt`, `mix2-${t}-ets6log-partial-params.txt`], [`mix2-${t}-ets6log-partial-params.txt`, `mix2-${t}-ets6log-partial-revert.txt`]]),
-    ["mix2-hmg6t-ets6log-partial-diag-on.txt", "mix2-hmg6t-ets6log-partial-diag-off.txt"],
+    ...["hmg6t", "rmg8t"].map((t): [string, string] => [`mix2-${t}-ets6log-partial-diag-on.txt`, `mix2-${t}-ets6log-partial-diag-off.txt`]),
     // Group-address downloads take the same decision on the same stamps: the record is the last download that wrote the
     // parameters, which a group-address download leaves as it was.
     ...["hmg6t", "jmg4t", "rmg8t"].map((t): [string, string] => [`mix2-${t}-ets6log-fulldownload.txt`, `mix2-${t}-ets6log-partial-links.txt`]),

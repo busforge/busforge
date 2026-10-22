@@ -57,6 +57,6 @@ export const thebenMeteodata140sInService: DeviceSpec = {
     { kind: "output", label: "C1 Brightness threshold answers on the test link", comObjRefId: "M-0048_A-140C-14-EB70_O-23_R-229" },
   ],
   unsafe: [
-    { capability: "structuralFlash", reason: "never written to this product on hardware: a product's first structural flash is not run on a unit in service" },
+    { capability: "structuralFlash", reason: "never written to this product on hardware: a product's first structural flash is not run on a unit in service without an ETS capture that pins the change" },
   ],
 };

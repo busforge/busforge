@@ -64,8 +64,8 @@ export const thebenHmg6tInService: DeviceSpec = {
     link: { comObjRefId: "M-0048_A-493B-21-B471_MD-8_M-20_MI-1_O-2-3_R-4" },
     // The first extension module's (DME 2 T) C1 "Diagnosemeldungen aktivieren": "nein" to "ja" shows
     // objects 95 to 99 (diagnostics) in the configuration, which takes the structural flash; the
-    // objects stay unlinked (no group address). The change writes five config bytes of the com-object
-    // table, the switch and the cyclic sending time it shows (10); the revert hides the objects and
+    // objects stay unlinked (no group address). The change sets five config bytes of the com-object
+    // table (written whole, as ETS writes it), the switch and the cyclic sending time it shows (10); the revert hides the objects and
     // resets the switch but leaves the sending time at 10, as ETS's revert leaves it, since neither
     // writes a parameter the configuration no longer shows (so a unit that held 10 there already
     // changes only in the switch and the table). ETS's partial

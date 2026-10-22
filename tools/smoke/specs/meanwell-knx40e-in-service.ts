@@ -57,6 +57,6 @@ export const meanwellKnx40eInService: DeviceSpec = {
     { kind: "output", label: "Power supply on answers on the test link", comObjRefId: "M-0162_A-0004-11-F245_O-2_R-2", expectValue: "01" },
   ],
   unsafe: [
-    { capability: "structuralFlash", reason: "never written to this product on hardware: a product's first structural flash is not run on a unit in service" },
+    { capability: "structuralFlash", reason: "never written to this product on hardware: a product's first structural flash is not run on a unit in service without an ETS capture that pins the change" },
   ],
 };
