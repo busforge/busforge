@@ -201,6 +201,24 @@ Connection-oriented KNX management on top of the tunnel. What matters on a busy 
 - On a device data response: **send our `T_ACK` first, then** release the waiter. If the next
   request goes out before our ACK, the device ignores it.
 - Increment the 4-bit sequence per transaction.
+- A **negative `L_Data.con` of a request** says only that the interface got no layer-2
+  acknowledgement for it: the device may have received the frame all the same. A MEAN WELL power
+  supply did, acknowledged a memory read the interface had confirmed negatively and answered it; a
+  repetition under the same number then reached only its transport layer, which acknowledges a
+  repetition and passes it on no more, so it was never answered. The transport layer takes no action
+  on the confirmation of a numbered frame, positive or negative, and repeats the frame under its
+  number only once the acknowledgement timeout ran out; ETS does the same (in its captures a
+  negatively confirmed write goes out again 3 s later, not at once). So after a negative confirmation
+  Busforge waits for the device's `T_ACK` and answer as after a positive one and takes them, whichever
+  comes first, the `T_ACK` or the confirmation; an answer whose `T_ACK` was lost is taken too. After a
+  negative confirmation it repeats the request under its number only when nothing acknowledged it,
+  and a device that had taken it carries it out once. A `T_Disconnect` while nothing acknowledged the
+  frame may have come ahead of it or behind it (its `T_ACK` lost): a restart's proof reads it as a
+  close ahead of the probe, with the checks of time that apply to one (§25), and only a read is asked
+  again on a new connection (§24, §37). Any other request with such a try fails at a later close of
+  the connection as `DEVICE_CLOSED_CONNECTION`, since the device may have carried it out. A request
+  whose last try met nothing but the negative confirmation, and no try of which the device
+  acknowledged or refused, fails with it (`BUS_SEND_FAILED`).
 - A device data frame with the sequence number of the one taken last is a **repetition**: the
   device sends it again when our `T_ACK` did not reach the bus (the interface answers the
   L_Data.con negative). Acknowledge it again and drop it. Taken as the answer to the request now in

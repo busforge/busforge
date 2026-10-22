@@ -341,6 +341,10 @@ export class KnxDevice {
   // in their order), and whether the device acknowledged or refused any try of it.
   private closedBeforeDelivery = false;
   private requestTaken = false;
+  // Of the request in flight, no read: the device closed the connection while nothing acknowledged a
+  // try the interface had confirmed negatively, or after such a try, so it may have taken and carried it
+  // out, its T_ACK lost.
+  private closedUnsure = false;
   // Called while a request is in flight when the device repeats a frame of its own to us (see onCemi).
   private peerRepeated: (() => void) | null = null;
   // The answer of a read asked again under a new number (requestTries), and that read (its APDU without
@@ -590,7 +594,7 @@ export class KnxDevice {
         // write), and for the first frame of a connection, where a device that holds another connection
         // closes the new one at once (below).
         const code = (e as { code?: string }).code;
-        if (code === "DEVICE_CLOSED_CONNECTION" && this.closedBeforeDelivery && !this.requestTaken && !reconnected && !first && tries > 1 && !this.restartSentSinceConnect) {
+        if (code === "DEVICE_CLOSED_CONNECTION" && this.closedBeforeDelivery && !this.requestTaken && !this.closedUnsure && !reconnected && !first && tries > 1 && !this.restartSentSinceConnect) {
           this.peerClosed = null; this.peerRepeated = null; this.inFlight = null; this.answers = awaitedBefore; this.otherServices.clear();
           await sleep(this.timeouts.reconnectGapMs);
           await this.connect();
@@ -601,7 +605,8 @@ export class KnxDevice {
         // failed, or another tool's). It ends that one by itself within staleConnectionMs; then the
         // connection is opened again and the request asked once more. A secured session is not: its
         // Sync, not the request, is the first frame of its connection.
-        if (!first || reconnected || this.secure || this.takenSinceConnect || (e as { code?: string }).code !== "DEVICE_CLOSED_CONNECTION") throw e;
+        // Not a request the device may have carried out with its T_ACK lost (closedUnsure).
+        if (!first || reconnected || this.secure || this.takenSinceConnect || this.closedUnsure || (e as { code?: string }).code !== "DEVICE_CLOSED_CONNECTION") throw e;
         await sleep(this.timeouts.staleConnectionMs);
         await this.connect();
         try { return await this.requestTries(build, expectResponse, tries, afterWrap, deviceAckSuffices); }
@@ -638,9 +643,17 @@ export class KnxDevice {
     let between: ParsedApdu | null = null;
     this.closedBeforeDelivery = false;
     this.requestTaken = false;
+    this.closedUnsure = false;
     let delivered = false;
     const aheadBefore = this.closesAhead;
+    // The interface's negative confirmation of the last try, when nothing acknowledged that try either.
+    let unconfirmed: Error | null = null;
+    // Whether the device acknowledged or refused any try, and whether a try the interface confirmed
+    // negatively went unacknowledged (the device may have taken it, its T_ACK lost).
+    let anyTaken = false;
+    let unackedNegative = false;
     for (let i = 0; i < tries; i++) {
+      unconfirmed = null;
       this.unauthentic = 0;
       this.otherServices.clear();
       rejectedAfterAck = false;
@@ -654,9 +667,11 @@ export class KnxDevice {
       let ackTimeout = (): void => undefined;
       let respTimeout = (): void => undefined;
       let refused = false;
+      // The answer, once it came in this try: one may come without the T_ACK before it (lost on the bus).
+      let got: ParsedApdu | null = null;
       const ackP = new Promise<boolean>((res) => { this.ackResolve = (nak) => { refused = nak; this.requestTaken = true; this.closedAheadAfterTaken = false; res(true); }; ackTimeout = () => res(false); });
       const respP = expectResponse
-        ? new Promise<ParsedApdu | null>((res) => { this.respResolve = (p) => res(p); respTimeout = () => res(null); })
+        ? new Promise<ParsedApdu | null>((res) => { this.respResolve = (p) => { got = p; res(p); }; respTimeout = () => res(null); })
         : Promise.resolve<ParsedApdu | null>(null);
       let closedByDevice = false;
       this.peerClosed = () => { closedByDevice = true; ackTimeout(); respTimeout(); };
@@ -671,6 +686,7 @@ export class KnxDevice {
       }
       const tpdu = this.onWire(plainApdu);
       afterWrap?.();
+      let negative: Error | null = null;
       try {
         const sent = this.sendCemi(cemiLData(this.me, this.dst, tpdu), deviceAckSuffices);
         if (deviceAckSuffices) {
@@ -686,23 +702,45 @@ export class KnxDevice {
           unclosed.set(this.dst, { ia: this.me, until: Date.now() + this.timeouts.staleConnectionMs, by: this });
         }
         if (code === "TUNNEL_CON_TIMEOUT" || code === "TUNNEL_CLOSED") throw e;
-        // A negative L_Data.con (BUS_SEND_FAILED) or a tunnel ack timeout means the frame did not
-        // reach the device this time. On a device that intermittently misses its L2-ACK window
-        // (a busy single-core app), that is exactly what a retry is for. Retry until the budget is
-        // spent, then surface the last error.
-        if (i < tries - 1) continue;
-        throw e;
+        // A negative L_Data.con (BUS_SEND_FAILED) says only that the interface got no layer-2
+        // acknowledgement: the device may have received the frame all the same, and then acknowledges
+        // and answers it. The transport layer does nothing on the confirmation of a numbered frame,
+        // positive or negative (KNX 3/3/4 E22, A0; thelsing/OpenKNX transport_layer.cpp), and repeats
+        // it under its number only once the acknowledgement timeout ran out (A9), as ETS does (a
+        // negatively confirmed frame sent again 3 s later in its captures). So the try waits for the
+        // device as any other; repeated under the same number, the request is passed on once only.
+        // A tunnel ack timeout means the frame may never have left: the next try goes out at once. A
+        // send whose T_ACK suffices (the confirmed restart) hands the negative confirmation to its
+        // caller, which waits for the device's answer itself.
+        if (code === "BUS_SEND_FAILED" && !deviceAckSuffices) negative = e as Error;
+        else if (i < tries - 1) continue;
+        else throw e;
       }
-      if (!delivered) { delivered = true; this.closedBeforeDelivery = this.closesAhead !== aheadBefore || this.closedAheadAfterTaken; this.closeAheadAt = this.closedBeforeDelivery ? this.closedAheadAt : null; }
+      // A frame the interface confirmed negatively counts as delivered only once the device took it: a
+      // T_Disconnect while nothing acknowledged it may have come ahead of it, as one before a repetition,
+      // which the reboot proofs read as such one (subject to their checks of the time); or behind it, its
+      // T_ACK lost, so only a read is asked again on a new connection then.
+      const closedAhead = this.closesAhead !== aheadBefore || this.closedAheadAfterTaken;
+      const closedAheadAt = this.closedAheadAt;
+      const deliver = (ahead: boolean, at: number) => { delivered = true; this.closedBeforeDelivery = ahead; this.closeAheadAt = ahead ? at : null; };
+      if (!delivered && negative === null) deliver(closedAhead, closedAheadAt);
       setTimeout(ackTimeout, this.timeouts.ackMs);
       let respTimer = setTimeout(respTimeout, this.timeouts.responseMs);
       restartWindow = () => { clearTimeout(respTimer); respTimer = setTimeout(respTimeout, this.timeouts.responseMs); };
       const acked = await ackP;
+      if (acked) anyTaken = true;
+      if (!delivered && negative !== null) {
+        if (acked) deliver(closedAhead, closedAheadAt);
+        else if (closedByDevice) { deliver(true, this.closedAheadAt); this.closedUnsure = !reaskable; }
+      }
+      if (unackedNegative && !reaskable) this.closedUnsure = true;
       // A T_NAK is the device refusing the frame: it took no number.
       if (acked && !refused) held = true;
       if (!acked && !closedByDevice) {
+        unconfirmed = negative;
+        if (negative !== null) unackedNegative = true;
         clearTimeout(respTimer); restartWindow = () => undefined;
-        if (expectResponse) this.respResolve = (p) => { between ??= p; };
+        if (expectResponse) { between ??= got; this.respResolve = (p) => { between ??= p; }; }
         continue;
       }
       if (acked && !expectResponse) { clearTimeout(respTimer); this.seq = (this.seq + 1) & 0x0f; return null; }
@@ -721,8 +759,13 @@ export class KnxDevice {
       if (reasked) this.owe(r);
       return r;
     }
+    // An answer that came in the last try without the T_ACK before it.
+    if (between) { this.seq = (this.seq + 1) & 0x0f; if (reasked) this.owe(between); return between; }
     // The next request takes the next number.
     if (held) this.seq = (this.seq + 1) & 0x0f;
+    // The last try met only the interface's negative confirmation, and no try reached the device's
+    // transport layer: the interface's error, as without the wait.
+    if (unconfirmed !== null && !anyTaken) throw unconfirmed;
     if (answeredOtherwise.size > 0) {
       const seen = [...answeredOtherwise].map((a) => `0x${a.toString(16)}`).join(", ");
       throw new KnxError("ANSWER_SERVICE_MISMATCH", `the device answered only with service ${seen}, not with the answer to this request`);
