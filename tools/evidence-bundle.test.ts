@@ -8,7 +8,7 @@ corpusTest("the shipped evidence bundle and docs/compatibility.md match the kept
   const bundle = generateBundle();
   expect(readFileSync(BUNDLE_PATH, "utf8") === bundleText(bundle)).toBe(true);
   expect(readFileSync(PAGE_PATH, "utf8")).toBe(renderPage(bundle));
-});
+}, 30_000); // reads and checks every kept record and its application: 3.1-3.5 s in a full check, 9.9 s in one at load 52
 
 // The part of the check above that needs no corpus: the shipped bundle is valid, carries nothing
 // that identifies a run or an installation, and docs/compatibility.md renders it.
@@ -17,6 +17,22 @@ test("the shipped evidence bundle holds only public records, and docs/compatibil
   expect(shipped.records.length).toBeGreaterThan(0);
   for (const r of shipped.records) checkPublicRecord(r);
   expect(readFileSync(PAGE_PATH, "utf8")).toBe(renderPage(shipped));
+});
+
+test("Products that share an order number get distinct headings on the page", () => {
+  const caps = { readParams: true, readLinks: true, flashParams: true, flashLinks: true, fullDownload: true, structuralFlash: true };
+  const page = renderPage({ schema: "busforge.evidence-bundle/1", records: [], products: [
+    { productRef: "M-0002_H-1_P-ORDER.2D1", appProgramId: "M-0002_A-0001-10-0000", capabilities: caps },
+    { productRef: "M-0002_H-1-O0072_P-ORDER.2D1", appProgramId: "M-0002_A-0002-10-0000", capabilities: caps },
+    { productRef: "M-0002_H-2_P-ORDER.2D1", appProgramId: "M-0002_A-0002-10-0000", capabilities: caps },
+    { productRef: "M-0002_H-1_P-ORDER.2D2", appProgramId: "M-0002_A-0001-10-0000", capabilities: caps },
+  ] });
+  expect(page.split("\n").filter((l) => l.startsWith("## "))).toEqual([
+    "## M-0002 ORDER-1, application program M-0002_A-0001-10-0000",
+    "## M-0002 ORDER-1, application program M-0002_A-0002-10-0000, hardware M-0002_H-1-O0072",
+    "## M-0002 ORDER-1, application program M-0002_A-0002-10-0000, hardware M-0002_H-2",
+    "## M-0002 ORDER-2",
+  ]);
 });
 
 test("KNX id escapes decode to the order number", () => {

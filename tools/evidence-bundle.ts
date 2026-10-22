@@ -229,8 +229,15 @@ export function renderPage(bundle: EvidenceBundle): string {
   for (const row of rows) {
     out.push(`| ${row.productRef.split("_")[0]} ${orderOf(row.productRef)} | \`${row.appProgramId}\` | ${MATRIX_OPERATIONS.map((o) => LABEL[row.operations[o].state]).join(" | ")} |`);
   }
+  // A manufacturer reuses an order number across hardware variants and application programs, so a
+  // heading names as much more as it takes to tell its section from the others.
+  const name = (row: MatrixRow) => `${row.productRef.split("_")[0]} ${orderOf(row.productRef)}`;
+  const withApp = (row: MatrixRow) => `${name(row)}, application program ${row.appProgramId}`;
+  const count = (key: (r: MatrixRow) => string, row: MatrixRow) => rows.filter((r) => key(r) === key(row)).length;
+  const heading = (row: MatrixRow) =>
+    count(name, row) === 1 ? name(row) : count(withApp, row) === 1 ? withApp(row) : `${withApp(row)}, hardware ${row.hardwareRef}`;
   for (const row of rows) {
-    out.push("", `## ${row.productRef.split("_")[0]} ${orderOf(row.productRef)}`, "", `Product \`${row.productRef}\`, application program \`${row.appProgramId}\`.`, "");
+    out.push("", `## ${heading(row)}`, "", `Product \`${row.productRef}\`, application program \`${row.appProgramId}\`.`, "");
     out.push("| Operation | State | Transfer api / ui | Behaviour api / ui | Persistence api / ui | Reference (tool) | Firmware |", "|---|---|---|---|---|---|---|");
     for (const o of MATRIX_OPERATIONS) {
       const v = row.operations[o];
