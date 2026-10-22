@@ -1,9 +1,15 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, setDefaultTimeout } from "bun:test";
 import { KnxDevice, LSM, STATE } from "@busforge/knx";
 import { buildGroupTablesMv0705, parseAppConfig, type AppConfig, type ComObjectLink } from "@busforge/product";
 import { System7Profile } from "../src/deviceprofile.ts";
 import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 3.0 s with the
+// file alone (load 5-27) and up to 3.0 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(70_000);
 
 // A REAL application program: flashGroupTables needs one, because it checks the links against the
 // com-object table the device was last programmed with (an association onto an object the device's

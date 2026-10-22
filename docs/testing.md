@@ -101,6 +101,18 @@ The tools that need the corpus refuse without it: `tools/evidence-bundle.ts` and
 `packages/product/test/real-catalogue.gen.ts`. `tools/etsdiff.ts` takes its capture and application
 as paths and needs no corpus of its own.
 
+### Timeouts of heavy tests
+
+`bun run check` runs every workspace's tests at once, and on a machine that is busy besides a test
+can take many times its own time: one of 2.2 s took 44.9 s, one of 0.3 s ran past Bun's 5 s default.
+A test that takes 0.25 s or more with the corpus therefore gets twenty times the time measured for it,
+at least 60 s: per file with `setDefaultTimeout` and a comment that names the measurement, and a test's
+own timeout argument raised to the same rule where it has one. Measure with `bun test
+--reporter=junit` once with the file alone and once with every workspace's tests running in parallel.
+A timeout is raised to the measurement; a test is never made smaller or left out to fit one. A test
+whose assertion is about time does not lean on a wall clock the load stretches: it orders the events
+it checks (the read-back route's task, which waits for the request's answer before it ends).
+
 ## When a change needs a hardware run
 
 A device that took ETS's download is the hardware proof of ETS's bytes. Once the capture

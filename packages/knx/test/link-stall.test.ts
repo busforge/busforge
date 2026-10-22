@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, setDefaultTimeout } from "bun:test";
 import { KnxIpTunnel, type TcpSocket } from "../src/connection.ts";
 import { KnxDevice, type DeviceTimeouts } from "../src/device.ts";
 import { runLoadPlan } from "../src/loadrunner.ts";
@@ -6,6 +6,12 @@ import { LSM, STATE } from "../src/flash.ts";
 import { KnxError } from "../src/errors.ts";
 import { SVC, CEMI, APCI, knxFrame, hpai, iaToNum, cemiLData, parseApdu, apdu, tpAck, tpDisconnect } from "../src/frame.ts";
 import { parseCemiLData, type KnxTransport } from "../src/transport.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 2.3 s with the
+// file alone (load 5-27) and up to 2.3 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(60_000);
 
 // A TCP link to the KNX interface that stalls in both directions for 2, 5, 8 and 15 s, at each phase of
 // an operation: a read, a write, the load bracket, the restart. Behind the link a scripted interface
@@ -255,7 +261,7 @@ describe("a stalled link to the interface", () => {
       expect(link.stalls).toBe(1);
       expect(got.equals(link.unit.memory.subarray(0x4000, 0x4000 + 60))).toBe(true);
       await dev.disconnect(); await tun.disconnect();
-    }, 20_000);
+    }, 60_000);
 
     test(`a write survives a ${s} s stall, each chunk written once where the device took it`, async () => {
       const { link, tun, dev } = await open();
@@ -267,7 +273,7 @@ describe("a stalled link to the interface", () => {
       expect(link.unit.memory.subarray(0x4100, 0x4100 + 48).equals(data)).toBe(true);
       expect(link.unit.executed.filter((e) => e.startsWith("write")).length).toBe(4);
       await dev.disconnect(); await tun.disconnect();
-    }, 20_000);
+    }, 60_000);
 
     test(`the load bracket survives a ${s} s stall at LoadCompleted, which the device carries out once`, async () => {
       const { link, tun, dev } = await open();
@@ -281,7 +287,7 @@ describe("a stalled link to the interface", () => {
       expect(link.unit.lsm.get(4)).toBe(STATE.LOADED);
       expect(link.unit.executed.filter((e) => e.startsWith("lsm"))).toEqual([`lsm 4 event ${LSM.LOAD}`, `lsm 4 event ${LSM.LOAD_COMPLETED}`]);
       await dev.disconnect(); await tun.disconnect();
-    }, 20_000);
+    }, 60_000);
 
     test(`a restart survives a ${s} s stall, the device restarts once and the reboot is proven`, async () => {
       const { link, tun, dev } = await open();
@@ -291,7 +297,7 @@ describe("a stalled link to the interface", () => {
       expect(link.stalls).toBe(1);
       expect(link.unit.restarts).toBe(1);
       await tun.disconnect();
-    }, 20_000);
+    }, 60_000);
   }
 
   test("a device that closes the connection as it takes A_Restart, behind its confirmation in one burst after a 2 s stall, restarts once and is proven", async () => {
@@ -303,7 +309,7 @@ describe("a stalled link to the interface", () => {
     expect(link.stalls).toBe(1);
     expect(link.unit.restarts).toBe(1);
     await tun.disconnect();
-  }, 20_000);
+  }, 60_000);
 
   test("a device that closes the connection as it takes A_Restart, after a 5 s stall that made the restart's confirmation late, restarts once but is not taken as proven", async () => {
     const { link, tun, dev } = await open();
@@ -313,7 +319,7 @@ describe("a stalled link to the interface", () => {
     expect((await dev.restart(true).catch((e: KnxError) => e) as KnxError).code).toBe("RESTART_UNPROVEN");
     expect(link.unit.restarts).toBe(1);
     await tun.disconnect();
-  }, 20_000);
+  }, 60_000);
 
   for (const s of [8, 15]) {
     test(`a device that ignores A_Restart and closes the idle connection during a ${s} s stall at the probe is not taken as rebooted`, async () => {
@@ -324,7 +330,7 @@ describe("a stalled link to the interface", () => {
       expect((await dev.restart(true).catch((e: KnxError) => e) as KnxError).code).toBe("RESTART_UNPROVEN");
       expect(link.unit.restarts).toBe(0);
       await tun.disconnect();
-    }, 20_000);
+    }, 60_000);
   }
 
   for (const s of [8, 15]) {
@@ -337,7 +343,7 @@ describe("a stalled link to the interface", () => {
       expect(link.unit.restarts).toBe(1);
       expect(link.written.filter(isRestart).length).toBe(2);
       await tun.disconnect();
-    }, 20_000);
+    }, 60_000);
   }
 
   const isDescriptorRead = (t: Buffer) => numbered(t) && (service(t) & 0x3c0) === APCI.DEVICE_DESCRIPTOR_READ;
@@ -352,7 +358,7 @@ describe("a stalled link to the interface", () => {
       expect(["RESTART_UNPROVEN", "RESTART_IGNORED"]).toContain(e?.code ?? "resolved");
       expect(link.unit.restarts).toBe(0);
       await tun.disconnect();
-    }, 20_000);
+    }, 60_000);
   }
 
   test("a device that ignores a plain restart whose confirmation came 2.5 s late is not taken as rebooted through a 5 s outbound stall at the probe", async () => {
@@ -366,7 +372,7 @@ describe("a stalled link to the interface", () => {
     expect(["RESTART_UNPROVEN", "RESTART_IGNORED"]).toContain(e?.code ?? "resolved");
     expect(link.unit.restarts).toBe(0);
     await tun.disconnect();
-  }, 20_000);
+  }, 60_000);
 
   test("a restart after the device closed an idle connection goes out once, on a new connection", async () => {
     const { link, tun, dev } = await open();
@@ -376,7 +382,7 @@ describe("a stalled link to the interface", () => {
     expect(link.unit.restarts).toBe(1);
     expect(link.written.filter(isRestart).length).toBe(1);
     await tun.disconnect();
-  }, 20_000);
+  }, 60_000);
 
   test("an answer to a connection-state request written before the frame does not show the interface read the frame", async () => {
     const { link, tun } = await open();
@@ -388,7 +394,7 @@ describe("a stalled link to the interface", () => {
     await tun.sendCemi(frame);
     expect(link.stalls).toBe(1);
     await tun.disconnect();
-  }, 20_000);
+  }, 60_000);
 
   test("a read survives a 15 s stall that holds our acknowledgement of an answer, which the device repeats and then closes on", async () => {
     const { link, tun, dev } = await open();
@@ -398,7 +404,7 @@ describe("a stalled link to the interface", () => {
     expect(link.stalls).toBe(1);
     expect(got.equals(link.unit.memory.subarray(0x4000, 0x4000 + 60))).toBe(true);
     await dev.disconnect(); await tun.disconnect();
-  }, 20_000);
+  }, 60_000);
 
   test("a stall longer than the interface's three unanswered connection-state requests ends the tunnel, and the device is reported neither silent nor written", async () => {
     const { link, dev } = await open();
@@ -412,7 +418,7 @@ describe("a stalled link to the interface", () => {
     expect((e as KnxError).message).toMatch(/three connection-state requests/);
     await new Promise((r) => setTimeout(r, 45 * SEC - (Date.now() - t0)));
     expect(link.unit.executed.some((x) => x.startsWith("write"))).toBe(false);
-  }, 20_000);
+  }, 60_000);
 });
 
 // A transport whose frames from the device arrive as their own events, ahead of the send's

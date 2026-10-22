@@ -1,4 +1,4 @@
-import { expect, mock, afterAll, test } from "bun:test";
+import { expect, mock, afterAll, test, setDefaultTimeout } from "bun:test";
 import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +12,12 @@ import { runInService, planInService, type InServiceIo, type InServiceOptions } 
 import { Client, type FlashResult, type ConfigView } from "./client.ts";
 import type { DeviceSpec } from "./spec.ts";
 import { SPECS } from "./specs/index.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 58.8 s with the
+// file alone (load 5-27) and up to 58.9 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(1180_000);
 
 // Every registered device-in-service spec, run against the real server routes and the real read and
 // write paths of its family, on its unit emulated from a read-only collection taken before any write
@@ -243,7 +249,7 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
     const w = await run(wrong);
     expect(w.r.ok).toBe(true);
     expect(w.r.found?.unprovenAssumptions?.[0]).toBe(spec.inService!.assumeParams![0].paramRefId);
-  }, 240_000);
+  }, 1180_000);
 
   test("theben-dali-gateway-in-service: with --full-download the run also downloads the configuration found and leaves the unit's memory as it found it", async () => {
     const spec = IN_SERVICE.find((s) => s.id === "theben-dali-gateway-in-service")!;
@@ -255,7 +261,7 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
     expect(log).toEqual(writes(spec, full));
     const allowed = await allowedDifferences(spec, dev, parseAppConfig(catalogueXml(`${appOf(spec)}.xml.gz`)), state, pid, did);
     expect([...memory].filter(([a, b]) => ((dev.mem.get(a)! ^ b) & ~(allowed.get(a) ?? 0)) !== 0).map(([a, b]) => `0x${a.toString(16)}: ${b.toString(16)} -> ${dev.mem.get(a)?.toString(16)}`)).toEqual([]);
-  }, 240_000);
+  }, 890_000);
 
   for (const spec of IN_SERVICE.filter((s) => !NOT_EMULATED.has(s.id) && !STOPS_BEFORE_A_WRITE.has(s.id))) {
     test(`${spec.id}: the run makes the writes its plan lists, passes, and leaves the unit's memory as it found it`, async () => {
@@ -268,7 +274,7 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
       const behind = await residues(dev);
       const allowed = await allowedDifferences(spec, dev, parseAppConfig(catalogueXml(`${appOf(spec)}.xml.gz`)), state, pid, did);
       expect([...memory].filter(([a, b]) => ((dev.mem.get(a)! ^ b) & ~(allowed.get(a) ?? 0)) !== 0 && !behind.has(a)).map(([a, b]) => `0x${a.toString(16)}: ${b.toString(16)} -> ${dev.mem.get(a)?.toString(16)}`)).toEqual([]);
-    }, 120_000);
+    }, 650_000);
   }
 
   // A spec that a product gap keeps from taking its unit over: the run must stop where the gap shows,

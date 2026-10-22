@@ -1,4 +1,4 @@
-import { test, expect, describe, mock, afterAll } from "bun:test";
+import { test, expect, describe, mock, afterAll, setDefaultTimeout } from "bun:test";
 import { readFileSync, mkdtempSync, rmSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +6,12 @@ import type { Database } from "bun:sqlite";
 import { APCI, iaToNum } from "@busforge/knx";
 import type { Connection } from "../src/db/connections.ts";
 import { SimSystemB, ALLOWED_APCIS } from "../../../packages/product/test/collect-sim.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 4.5 s with the
+// file alone (load 5-27) and up to 4.5 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(100_000);
 
 // POST .../collect runs raw acquisition as a queued bus job against a simulated device: it sends read
 // services only, keeps its cleaned diagnostic package in memory on the job (never on disk), and leaves
@@ -103,7 +109,7 @@ describe("POST /collect", () => {
       expect(pkg.stop.reason).toBe("unresponsive");
       expect(pkg.records.find((r: any) => r.step === "descriptor").outcome).toBe("bytes");
     } finally { delete process.env.KNX_TRIES; }
-  }, 20_000);
+  }, 100_000);
 
   test("a cancelled job leaves no package, and nothing it read survives", async () => {
     sims = [];

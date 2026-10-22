@@ -1,4 +1,4 @@
-import { test as plainTest, expect, afterAll } from "bun:test";
+import { test as plainTest, expect, afterAll, setDefaultTimeout } from "bun:test";
 import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +6,12 @@ import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusTest as test } from "../../../tools/corpus-test.ts";
 import { createState, handleApi, type AppState } from "../src/app.ts";
 import { getDeviceComObjOverrides } from "../src/db/deviceparams.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 0.5 s with the
+// file alone (load 5-27) and up to 0.5 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(60_000);
 
 // Editing a com-object's flags and priority on the device page: the bits offered are the ones the
 // family's full download writes; an edit is stored as ETS stores it and counts as a change until a

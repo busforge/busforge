@@ -1,6 +1,12 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, setDefaultTimeout } from "bun:test";
 import { gunzipSync } from "node:zlib";
 import { packBusforge, unpackBusforge } from "../src/db/busforgeArtifact.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 0.3 s with the
+// file alone (load 5-27) and up to 0.3 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(60_000);
 
 const sample = { busforgeExport: 1, project: { name: "Demo" }, devices: [{ id: "1.1.1" }], note: "äöü ß \u{1f600}" };
 

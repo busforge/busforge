@@ -8,9 +8,11 @@ import { corpusDescribe } from "../../../tools/corpus-test.ts";
 // The structural flash (DeviceProfile.flashStructure) against a simulated device: it writes a change
 // that alters the com-object table, verifies it after the restart, and never reports verified what
 // the device does not hold.
-// Each test plans a full download and a structural flash over a real application program: up to 5.0 s
-// alone at load 5 (the Jung's 26.9 MB application, 3.0-5.0 s per test), past Bun's 5 s default.
-setDefaultTimeout(30_000);
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 5.0 s with the
+// file alone (load 5-27) and up to 5.1 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(110_000);
 
 corpusDescribe("the structural flash against real applications", () => {
   const real = catalogueXml;
@@ -107,7 +109,7 @@ corpusDescribe("the structural flash against real applications", () => {
       const res = await classify(cfg).flashStructure(asDev(dev), "MV-07B0", ctx(changed));
       expect(res.kind).toBe("flashed");
       expect(verified(res)).toBe(false);
-    }, 30_000);
+    }, 110_000);
 
     test("a dry run writes nothing and keeps no backups", async () => {
       const dev = seeded();

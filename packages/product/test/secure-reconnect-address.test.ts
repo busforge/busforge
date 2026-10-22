@@ -1,6 +1,12 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, setDefaultTimeout } from "bun:test";
 import { KnxDevice, KnxError, SecureSession, APCI, parseApdu, tpAck, tpDisconnect, secureDecode, secureEncode, SCF, toolSequenceNow, type KnxTransport } from "@busforge/knx";
 import { runFlashOp } from "../src/profiles.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 4.2 s with the
+// file alone (load 5-27) and up to 4.2 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(90_000);
 
 // A secured unit behind an interface that hands a reopened tunnel another individual address (its old
 // channel not yet free). The scripted unit keeps its last valid tool-access sequence either once for
@@ -133,7 +139,7 @@ describe("a secured flash whose interface hands the reopened tunnel another addr
       expect(unit.syncsFrom).toEqual([0x11fe, 0x11ff]);
       expect(unit.refused).toEqual([]);
       expect(increasing(unit.toolSeqs)).toBe(true);
-    }, 15_000);
+    }, 90_000);
   }
 
   test("a read-back under the new address that differs is reported unverified, never a pass", async () => {
@@ -141,7 +147,7 @@ describe("a secured flash whose interface hands the reopened tunnel another addr
     const res = await flash(unit);
     expect(res).toMatchObject({ kind: "flashed", verified: false });
     expect(unit.syncsFrom).toEqual([0x11fe, 0x11ff]);
-  }, 15_000);
+  }, 90_000);
 });
 
 describe("a secured session whose link came back under another address while the unit holds the old connection", () => {

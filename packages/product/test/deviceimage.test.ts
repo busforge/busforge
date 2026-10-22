@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, setDefaultTimeout } from "bun:test";
 import { parseAppConfig, parseApplication, buildDeviceConfig, decodeAbsoluteImage } from "../src/index.ts";
 import { encode } from "../src/image.ts";
 import { buildAbsoluteSegmentImages, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, mergeRelativeTarget, differingFF, leaveUnreadUnchanged, verifyRelativeOwned, wholeBytes, differingConstants } from "../src/deviceimage.ts";
@@ -7,6 +7,12 @@ import type { RelativeSegmentTarget } from "../src/deviceimage.ts";
 import { toAppModel, resolveModuleInstances } from "../src/index.ts";
 import { readRealFixture } from "./real-catalogue.snapshot.ts";
 import { corpusDescribe, corpusTest } from "../../../tools/corpus-test.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 1.1 s with the
+// file alone (load 5-27) and up to 1.0 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(60_000);
 
 // M-0081 is a real MV-0705 (absolute-segment) device. Its image build is hardware
 // byte-verified on 13 instances (docs/device-memory-model.md); these tests pin the
@@ -659,7 +665,7 @@ corpusTest("the relative images of the full download and the parameter flash sta
   expect([ipr(true), ipr(false)]).toEqual(["53447b1aba6bb593/681b13d79dac48c8/2349", "53447b1aba6bb593/681b13d79dac48c8/2349"]);
   expect(Buffer.from(buildRelativeSegmentTarget(ip, new Map(), 4)!.bytes.subarray(71, 101)).toString("latin1")).toBe("MDT IP Interface mit IPRouting");
   // Parses six whole catalogues and builds each image twice: 1.8 s alone at load 25 (1.7 s of it CPU), 11 s in a full check at load 30.
-}, 30_000);
+}, 60_000);
 
 // GVS AMMA byte 64: "Output 3&4 function" (2 bits at bit offset 0) shares the byte with that
 // channel's unions. With the channel disabled the unions are idle: the parameter flash owns only

@@ -14,9 +14,12 @@ import { encodeCertificate } from "@busforge/knx";
 import { classify, parseAppConfig } from "@busforge/product";
 import type { FlashResult } from "../src/deviceprofile.ts";
 import { settle } from "./task-client.ts";
-// The structural-flash routes plan over real application programs: 1.6-3.1 s each alone at load 29,
-// 6.6 s inside the full check at load 24-40, past Bun's 5 s default.
-setDefaultTimeout(30_000);
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 0.6 s with the
+// file alone (load 5-27) and up to 0.6 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s. At load 29 the structural-flash routes, which plan over real application programs, took 1.6-3.1 s
+// each alone, and 6.6 s inside a full check at load 24-40.
+setDefaultTimeout(60_000);
 
 // Route-level fake-green lock for the flash endpoints: the baseline (device_param_base /
 // device_link_base) may ONLY be adopted after a flash the profile layer POSITIVELY

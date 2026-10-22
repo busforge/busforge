@@ -1,9 +1,15 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, setDefaultTimeout } from "bun:test";
 import { KnxDevice, LSM, STATE } from "@busforge/knx";
 import { parseAppConfig, buildAbsoluteSegmentTargets, parameterMemoryBytes } from "@busforge/product";
 import { classify } from "../src/deviceprofile.ts";
 import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 4.5 s with the
+// file alone (load 5-27) and up to 4.5 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(100_000);
 
 // System 7 (MV-0705) parameter-flash ORCHESTRATION on a mock device, using the real
 // hardware-proven M-0081 application program. The segment builder
@@ -141,7 +147,7 @@ corpusDescribe("the MV-0705 parameter flash against the real M-0081 application"
       const covered = parameterMemoryBytes(cfg, targets[0].id, targets[0].size)!;
       const writtenAt = dev.writes.flatMap((w) => Array.from({ length: w.len }, (_, i) => w.addr + i));
       expect(writtenAt).toEqual(covered.flatMap((c, i) => (c ? [targets[0].address + i] : [])));
-    }, 15_000); // reconnectAfterRestart sleeps 3 s (not injectable through flashParameters)
+    }, 70_000); // reconnectAfterRestart sleeps 3 s (not injectable through flashParameters)
 
     test("verify has teeth: a device that does not persist the write reports verified:false, NOT a fake success", async () => {
       // Guards against the mock being a "perfect memory" where verify can never fail. Here the
@@ -156,7 +162,7 @@ corpusDescribe("the MV-0705 parameter flash against the real M-0081 application"
       expect(res.kind).toBe("flashed");
       if (res.kind !== "flashed") throw new Error("unreachable");
       expect(res.verified).toBe(false); // the read-back mismatch is surfaced, not swallowed
-    }, 15_000); // reconnectAfterRestart + verifySettled retries
+    }, 100_000); // reconnectAfterRestart + verifySettled retries
 
     test("dryRun of the same drift: reports diffBytes=1 and writes NOTHING", async () => {
       const dev = seeded(true);

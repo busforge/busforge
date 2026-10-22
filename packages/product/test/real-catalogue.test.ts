@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, setDefaultTimeout } from "bun:test";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -11,6 +11,12 @@ import { buildAbsoluteSegmentTargets } from "../src/deviceimage.ts";
 import {
   REAL_DIR, listRealFixtures, readRealFixture, snapshot, IMAGE_BASES, CONFIG_BASES, type AppSnapshot,
 } from "./real-catalogue.snapshot.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 8.9 s with the
+// file alone (load 5-27) and up to 6.7 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(180_000);
 
 // Regression coverage against real manufacturer catalogue data: one device per
 // manufacturer (Gira, Theben, Basalte, MDT x2, Steinel), the catalogue/ files of the private
@@ -40,7 +46,7 @@ corpusDescribe("real catalogue (per-manufacturer regression)", () => {
         expect(() => parseAppConfig(xml)).not.toThrow();
         expect(() => parseApplication(xml)).not.toThrow();
         expect(snapshot(xml)).toEqual(golden[name]);
-      }, 30_000); // sized by the largest fixture, the 26.9 MB Jung, parsed three times here: 5-7 s on a busy machine, over 10 s while the check runs every workspace at once
+      }, 150_000); // sized by the largest fixture, the 26.9 MB Jung, parsed three times here: 5-7 s on a busy machine, over 10 s while the check runs every workspace at once
 
       test("absolute-segment build + flash plan stay pinned (sections present iff the app declares absolute segments)", () => {
         // Stability lock, not a correctness proof: the golden hashes prove the default
@@ -64,14 +70,14 @@ corpusDescribe("real catalogue (per-manufacturer regression)", () => {
         // flash plan can never drift apart on which segments they cover).
         expect(Object.keys(snap.flashPlan!.perSegment).sort()).toEqual(Object.keys(snap.absolute!).sort());
         expect(snap.flashPlan!.segments).toBe(Object.keys(snap.flashPlan!.perSegment).length);
-      }, 30_000); // sized by the largest fixture, the 26.9 MB Jung, parsed twice here: about 1.4 s on a quiet machine, several times that while the check runs every workspace at once
+      }, 140_000); // sized by the largest fixture, the 26.9 MB Jung, parsed twice here: about 1.4 s on a quiet machine, several times that while the check runs every workspace at once
 
       test("every type base is a known enum value (no parser leak)", () => {
         const app = parseAppConfig(xml);
         for (const t of app.types.values()) expect(CONFIG_BASES.has(t.base)).toBe(true);
         const model = parseApplication(xml);
         for (const t of model.types.values()) expect(IMAGE_BASES.has(t.base)).toBe(true);
-      }, 30_000); // the 26.9 MB Jung parsed twice: 3.5 s alone at load 25, several times that while the check runs every workspace at once
+      }, 180_000); // the 26.9 MB Jung parsed twice: 3.5 s alone at load 25, several times that while the check runs every workspace at once
 
       test("every UI-exposed param is image-placeable (config/image projections stay in lock-step)", () => {
         // Stage-3 coverage lock (docs/ets-coverage.md). The config view (what the UI
@@ -95,7 +101,7 @@ corpusDescribe("real catalogue (per-manufacturer regression)", () => {
         expect(uiRefs.size).toBeGreaterThan(0); // every real device exposes params; never pass vacuously
         const model = toAppModel(app, { instances });
         expect(unmappedParamRefs(model, uiRefs)).toEqual([]);
-      }, 30_000); // the Jung: 1.7 s alone at load 25, several times that while the check runs every workspace at once
+      }, 90_000); // the Jung: 1.7 s alone at load 25, several times that while the check runs every workspace at once
 
       test("the parameter image codec round-trips on the real model (build -> decode is its own inverse)", () => {
         // Round-trip lock (docs/ets-coverage.md stage 3). The flash-verify path builds an
@@ -158,7 +164,7 @@ corpusDescribe("real catalogue (per-manufacturer regression)", () => {
         }
 
         expect(roundTripped).toBeGreaterThan(0); // never vacuous: every real device has placeable params
-      }, 30_000); // the Jung: 1.5 s alone at load 25, several times that while the check runs every workspace at once
+      }, 60_000); // the Jung: 1.5 s alone at load 25, several times that while the check runs every workspace at once
 
       test("every linkable object of the default configuration has a place in the view", () => {
         // The view is what links are resolved against: an object it leaves out loses its links
@@ -182,7 +188,7 @@ corpusDescribe("real catalogue (per-manufacturer regression)", () => {
         }
         if (!app.hasModules) for (const r of unconditional) expect(shownRefs.has(r)).toBe(true);
         if (name.startsWith("M-0048_A-140C")) expect(unconditional.length).toBeGreaterThanOrEqual(7); // the Meteodata's channel-level objects 0-4, 6, 15
-      }, 30_000); // the Jung: 1.7 s alone at load 25, several times that while the check runs every workspace at once
+      }, 60_000); // the Jung: 1.7 s alone at load 25, several times that while the check runs every workspace at once
 
       test("the image projection drops module-def and union entries", () => {
         const app = parseAppConfig(xml);
@@ -194,7 +200,7 @@ corpusDescribe("real catalogue (per-manufacturer regression)", () => {
           expect(src?.moduleDefId).toBeFalsy();
         }
         for (const t of model.types.values()) expect(app.types.get(t.id)?.moduleDefId).toBeFalsy();
-      }, 30_000); // the Jung parsed twice: 2.8 s alone at load 25, several times that while the check runs every workspace at once
+      }, 80_000); // the Jung parsed twice: 2.8 s alone at load 25, several times that while the check runs every workspace at once
     });
   }
 });

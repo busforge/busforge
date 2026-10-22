@@ -1,8 +1,14 @@
-import { test, expect } from "bun:test";
+import { test, expect, setDefaultTimeout } from "bun:test";
 import { LSM, STATE, type KnxDevice } from "@busforge/knx";
 import { parseAppConfig, classify, buildRelativeSegmentTarget, type ComObjectLink } from "@busforge/product";
 import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 3.0 s with the
+// file alone (load 5-27) and up to 3.0 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(70_000);
 
 // The GVS AMMA declares a write of 01 to object 4 PID 67 for every download (AppliesTo="all",
 // Verify="true"), and ETS sends it after the last LoadCompleted, right before the restart (captures in
@@ -92,7 +98,7 @@ corpusDescribe("the GVS AMMA's closing PID 67 write, through the profile", () =>
     expect(dev.log.indexOf("read 4/66")).toBeLessThan(dev.log.indexOf("mem"));
     expect(dev.log.indexOf("read 4/66")).toBeGreaterThanOrEqual(0);
     closesWithPid67(dev.log);
-  }, 30_000);
+  }, 70_000);
 
   // An owned byte the device holds differently, so the parameter flash has something to write.
   const owned = target.owned.findIndex((m) => m !== 0);
@@ -106,7 +112,7 @@ corpusDescribe("the GVS AMMA's closing PID 67 write, through the profile", () =>
     expect((res as { verified: boolean }).verified).toBe(true);
     expect(dev.log[0]).toBe("read 4/66");
     closesWithPid67(dev.log);
-  }, 30_000);
+  }, 70_000);
 
   test("the group-address flash ends with PID 67 = 01, and reads no PID 66, as ETS's partial download", async () => {
     const dev = await commissioned();
@@ -116,7 +122,7 @@ corpusDescribe("the GVS AMMA's closing PID 67 write, through the profile", () =>
     expect((res as { verified: boolean }).verified).toBe(true);
     expect(dev.log).not.toContain("read 4/66");
     closesWithPid67(dev.log);
-  }, 30_000);
+  }, 70_000);
 
   test("a closing write that cannot be executed as declared refuses every write before the bus", async () => {
     // The same declared write with a Count of two elements: no form of it is known to send.
@@ -141,7 +147,7 @@ corpusDescribe("the GVS AMMA's closing PID 67 write, through the profile", () =>
     const err = await profile.flashGroupTables(asDev(dev), cfg.mask, { ...base, links: [{ comObjNum: 2, gaRaws: [GA_3_3_6] }] }).catch((e) => e);
     expect(String(err?.message ?? err)).toContain("PID 67");
     expect(dev.log).not.toContain("restart");
-  }, 30_000);
+  }, 60_000);
 
   test("a device that does not echo 01 refuses the flash instead of reporting it programmed", async () => {
     const dev = await commissioned();
@@ -151,5 +157,5 @@ corpusDescribe("the GVS AMMA's closing PID 67 write, through the profile", () =>
     const err = await profile.flashParameters(asDev(dev), cfg.mask, base).catch((e) => e);
     expect(String(err?.message ?? err)).toContain("PID 67");
     expect(dev.log).not.toContain("restart");
-  }, 30_000);
+  }, 60_000);
 });

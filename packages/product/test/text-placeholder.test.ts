@@ -1,10 +1,16 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, setDefaultTimeout } from "bun:test";
 import { readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
 import { capturePath, catalogueXml } from "../../../tools/corpus.ts";
 import { parseAppConfig } from "../src/appconfig.ts";
 import { buildDeviceConfig, comObjectRefTexts, comObjectUniverse, type CfgItem } from "../src/config.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 1.6 s with the
+// file alone (load 5-27) and up to 1.7 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(60_000);
 
 // An ETS text may name the value of the parameter its element's TextParameterRefId points at:
 // `{{0}}` stands for that value, `{{0:text}}` for that value or, while the value is empty, for
@@ -147,5 +153,5 @@ corpusDescribe("text placeholders in real catalogues", () => {
 
   test("M-0004: channel headings show their default", () => {
     expect(unresolved(catalogueXml("M-0004_A-7072-21-99A7-O000A.xml.gz"))).toEqual([]);
-  }, 30_000);
+  }, 60_000);
 });

@@ -1,10 +1,16 @@
-import { test, expect } from "bun:test";
+import { test, expect, setDefaultTimeout } from "bun:test";
 import { LSM, STATE, type KnxDevice } from "@busforge/knx";
 import {
   parseAppConfig, classify, buildDeviceConfig, buildComObjectTable, buildRelativeSegmentTarget, buildGroupTables, programIdStamp, declaredPropChecks, type ComObjectLink,
 } from "@busforge/product";
 import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 12.5 s with the
+// file alone (load 5-27) and up to 12.3 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(250_000);
 
 // The System B partial form of the full download on a mock unit, with the Theben DALI-Gateway's application
 // (PreferPartialDownloadIfApplicationLoaded, not secured). The subject is the device path: when the form is
@@ -111,7 +117,7 @@ corpusDescribe("System B full download on a unit holding the application (mock u
     const unit = new MockUnit();
     await run(unit);
     expect(unit.extendedMemory).toBe(false);
-  }, 30_000);
+  }, 70_000);
 
   test("project unchanged: the application is not reloaded, the com-object table (control 1) and the group tables go whole, no PEI unload", async () => {
     const unit = new MockUnit();
@@ -123,13 +129,13 @@ corpusDescribe("System B full download on a unit holding the application (mock u
     ]);
     expect(unit.writes.filter(inRange(OBJ.APP, base.target.size))).toEqual([]);
     expect(unit.writes.filter(inRange(OBJ.COMOBJ, base.comObj.length)).length).toBe(base.comObj.length);
-  }, 30_000);
+  }, 70_000);
 
   test("a com-object table reporting control 0 and unchanged is not reloaded at all", async () => {
     const unit = new MockUnit({ comObjControl: 0 });
     expect((await run(unit)).verified).toBe(true);
     expect(unit.events.some((e) => e.endsWith(":3"))).toBe(false);
-  }, 30_000);
+  }, 70_000);
 
   // A parameter whose value changes the image: the first owned, verified byte's parameter, found by trying.
   const want = (p: Map<string, string>) => buildRelativeSegmentTarget(cfg, p, 4, { ownIdleUnionDefaults: true })!.bytes;
@@ -152,7 +158,7 @@ corpusDescribe("System B full download on a unit holding the application (mock u
     expect(unit.events.slice(0, 2)).toEqual(["unload:4", "unload:3"]);
     expect(unit.events).toContain("programId:4");
     expect(unit.writes.filter(inRange(OBJ.APP, base.target.size)).sort((a, b) => a - b)).toEqual(changed);
-  }, 30_000);
+  }, 70_000);
 
   test("the full form where the unit does not hold the application as the partial form needs it", async () => {
     const cases: UnitOpts[] = [
@@ -168,7 +174,7 @@ corpusDescribe("System B full download on a unit holding the application (mock u
       expect([JSON.stringify(o), unit.events[0]]).toEqual([JSON.stringify(o), "unload:5"]);
       expect(unit.events).toContain("unload:4");
     }
-  }, 120_000);
+  }, 250_000);
 
   // A verified byte the parameter change leaves alone and that is not FF in the image: the field the unit
   // does not give back.
@@ -187,23 +193,23 @@ corpusDescribe("System B full download on a unit holding the application (mock u
     expect(res.confirmedOnly).toEqual([{ address: at, length: 1 }]);
     // Every byte read back as written: nothing rests on the confirmation.
     expect((await run(new MockUnit({ confirmed: true }), params)).confirmedOnly).toBeUndefined();
-  }, 30_000);
+  }, 130_000);
 
   test("the write confirmation does not stand in for a read-back that shows nothing of the write landed", async () => {
     // The project unchanged: the field the unit does not give back is the only byte written in the segment.
     const at = hiddenField(changedParams()!);
     expect((await run(new MockUnit({ confirmed: true, hidden: new Set([at]) }))).verified).toBe(false);
-  }, 30_000);
+  }, 110_000);
 
   test("a unit written without confirmation that does not give a field back fails at the write's own read-back", async () => {
     const params = changedParams()!;
     const err = await run(new MockUnit({ hidden: new Set([hiddenField(params)]) }), params).then(() => null, (e: Error) => e);
     expect(err?.message).toMatch(/verify mismatch/);
-  }, 30_000);
+  }, 60_000);
 
   test("verify: a parameter byte the unit loses on the restart is caught", async () => {
     const flip = base.target.verify.findIndex(Boolean);
     const unit = new MockUnit({ onRestart: (mem) => mem.set(AT[OBJ.APP] + flip, base.target.bytes[flip] ^ 0xff) });
     expect((await run(unit)).verified).toBe(false);
-  }, 30_000);
+  }, 100_000);
 });

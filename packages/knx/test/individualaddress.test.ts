@@ -1,9 +1,15 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, setDefaultTimeout } from "bun:test";
 import type { KnxTransport } from "../src/transport.ts";
 import { parseCemiLData } from "../src/transport.ts";
 import { assignIndividualAddress, readProgModeDevices, writeIndividualAddress } from "../src/individualaddress.ts";
 import { apduUnnumbered, parseApdu, iaToNum, numToIa, APCI, BROADCAST } from "../src/frame.ts";
 import { KnxError } from "../src/errors.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 5.0 s with the
+// file alone (load 5-27) and up to 5.0 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(100_000);
 
 // Individual-address assignment against a simulated bus. The dangerous cases are the point of
 // this suite: a broadcast address write hits EVERY device in programming mode, so the code must
@@ -117,7 +123,7 @@ describe("assigning an individual address", () => {
     expect(virgin.progMode).toBe(false);  // and will not answer the next assignment
     expect(bus.broadcastWrites).toEqual([NEW_IA]);
     expect(bus.progModeWrites).toBe(1);
-  }, 20_000); // the "is the target free?" probe waits out a silent address (3 tries x 1.5 s)
+  }, 100_000); // the "is the target free?" probe waits out a silent address (3 tries x 1.5 s)
 
   test("REFUSES when no device is in programming mode, and writes nothing", async () => {
     const bus = new SimBus([new SimDevice("1.1.5", false)]);
@@ -172,7 +178,7 @@ describe("assigning an individual address", () => {
     const res = await assignIndividualAddress(bus, NEW_IA, fast);
     expect(res.previous).toBe(NEW_IA);
     expect(res.verified).toBe(true);
-  }, 20_000);
+  }, 60_000);
 
   test("an incumbent the pre-check missed cannot make a failed write look verified", async () => {
     // The false green this check exists for. An incumbent sits on the target address but is
@@ -193,7 +199,7 @@ describe("assigning an individual address", () => {
     expect((err as KnxError).code).toBe("IA_WRITE_UNVERIFIED");
     expect((err as KnxError).message).toContain("15.15.255"); // and it says where the device still is
     expect(stubborn.ia).toBe("15.15.255");
-  }, 20_000);
+  }, 100_000);
 
   test("a bus failure is not read as 'the address is free'", async () => {
     // A dead transport must not become a green light to write: silence on a working bus means the
@@ -212,7 +218,7 @@ describe("assigning an individual address", () => {
     expect(probed).toBe(true);                        // it got as far as the free-address check
     expect((err as Error).message).toBe("tunnel is gone"); // and surfaced the failure
     expect(bus.broadcastWrites).toEqual([]);          // rather than writing on a bus it cannot see
-  }, 20_000);
+  }, 60_000);
 
   test("a write the device did not take is reported, not passed off as success", async () => {
     // The device answers the probe but ignores the address write (it stays where it was).
@@ -224,5 +230,5 @@ describe("assigning an individual address", () => {
     expect(err).toBeInstanceOf(KnxError);
     expect((err as KnxError).code).toBe("IA_WRITE_UNVERIFIED");
     expect(stubborn.ia).toBe("15.15.255"); // and it is honest about where the device still is
-  }, 20_000); // two silent-address probes: the pre-check and the post-write verify
+  }, 100_000); // two silent-address probes: the pre-check and the post-write verify
 });

@@ -1,7 +1,13 @@
-import { test, expect, describe, afterEach } from "bun:test";
+import { test, expect, describe, afterEach, setDefaultTimeout } from "bun:test";
 import { KnxDevice, KnxError, APCI } from "@busforge/knx";
 import { collectDevice, planForMask, unreadableReason, CollectCancelled, COLLECT_LIMITS, type CollectDevice, type CollectPackage, type CollectRecord } from "../src/index.ts";
 import { SimSystemB, ALLOWED_APCIS } from "./collect-sim.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 4.5 s with the
+// file alone (load 5-27) and up to 4.5 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(100_000);
 
 function setup() {
   const sim = new SimSystemB();
@@ -166,7 +172,7 @@ describe("raw acquisition on a System B device", () => {
     const run = collectDevice(dev, { ia: "1.2.3", signal: c.signal, reopen });
     expect(await run.then(() => null, (e: unknown) => e)).toBeInstanceOf(CollectCancelled);
     expect(reopened()).toBe(0);
-  }, 20_000);
+  }, 60_000);
 
   test("a stopped job keeps its package; only a cancel drops it", async () => {
     const { sim, dev, reopen } = setup();
@@ -220,7 +226,7 @@ describe("raw acquisition on a System B device", () => {
     expect(p.records.filter((r) => r.outcome === "timeout").map((r) => r.space)).toEqual(["memory", "memory", "memory"]);
     expect(reopened()).toBe(2);
     expect(p.records.filter((r) => r.step === "authorize" && r.detail === "again, on the reopened connection")).toHaveLength(2);
-  }, 20_000);
+  }, 100_000);
 
   test("three failed requests in a row close the device off; each failure reopens the link first", async () => {
     process.env.KNX_TRIES = "1";
@@ -236,7 +242,7 @@ describe("raw acquisition on a System B device", () => {
     expect(reopened()).toBe(2);
     // What was not reached stays visible in the plan the package carries.
     expect(p.plan?.tables.length).toBe(5);
-  }, 20_000);
+  }, 100_000);
 });
 
 // A device that answers descriptor `0x0012` (BCU1), as the MDT SCN-IP000.03 IP interface does under its

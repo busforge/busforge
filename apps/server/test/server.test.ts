@@ -1,4 +1,4 @@
-import { test, expect, describe, afterAll, spyOn } from "bun:test";
+import { test, expect, describe, afterAll, spyOn, setDefaultTimeout } from "bun:test";
 import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,6 +17,12 @@ import { storeZip } from "../../../packages/project/test/ziputil.ts";
 import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusDescribe, corpusTest } from "../../../tools/corpus-test.ts";
 import { settle } from "./task-client.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 1.1 s with the
+// file alone (load 5-27) and up to 1.1 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(60_000);
 
 const realAppXml = catalogueXml;
 const realApp = (n: string) => parseAppConfig(realAppXml(n));
@@ -1039,7 +1045,7 @@ describe("device configuration", () => {
     } finally {
       connect.mockRestore();
     }
-  }, 20_000); // parses the 26.9 MB Jung application twice (config view, flash job): about 0.85 s alone, several seconds while the check runs every workspace at once
+  }, 60_000); // parses the 26.9 MB Jung application twice (config view, flash job): about 0.85 s alone, several seconds while the check runs every workspace at once
 
   // The write guard refuses with a write code of its own (not the read-side GROUP_TABLE_UNREADABLE): the
   // family's where it gives one (System 1, MV-0012), GA_FLASH_UNSUPPORTED for a family recognised but not

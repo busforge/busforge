@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, setDefaultTimeout } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -10,6 +10,12 @@ import { parseAppConfig } from "../packages/product/src/index.ts";
 import { catalogueXml, captureText } from "./corpus.ts";
 import { corpusTest } from "./corpus-test.ts";
 import { captureDevice } from "./etsdiff.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 0.5 s with the
+// file alone (load 5-27) and up to 0.6 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(60_000);
 
 // The reference vectors of docs/raw-acquisition.md point at lines of the bench captures (ETS, the
 // collector, single memory reads). This test keeps them honest: every vector must decode, from the

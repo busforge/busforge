@@ -1,6 +1,12 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, setDefaultTimeout } from "bun:test";
 import { KnxDevice } from "../src/device.ts";
 import { apdu, parseApdu, tpAck, APCI, type KnxTransport } from "../src/index.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 2.5 s with the
+// file alone (load 5-27) and up to 2.5 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(60_000);
 
 // A device answering A_Memory_Read with (address & 0xff) per byte, numbering its own data frames as
 // the transport layer does. `repeatBefore`: before answering the request for that address it sends
@@ -70,7 +76,7 @@ describe("a numbered frame the device repeats", () => {
     await dev.connect();
     const got = await dev.memRead(0x5390, 48, 48);
     expect(got.equals(expected(0x5390, 48))).toBe(true);
-  }, 10_000);
+  }, 60_000);
 
   test("an answer for another address is refused, not taken as this one's", async () => {
     const dev = new KnxDevice(new RepeatingDevice({ wrongAddressAt: 0x53c0 }), "1.2.3");

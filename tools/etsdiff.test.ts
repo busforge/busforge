@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, setDefaultTimeout } from "bun:test";
 import { readFileSync, rmSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +9,12 @@ import { catalogueDir, catalogueXml, captureText, capturePath, listCatalogue } f
 import { corpusDescribe } from "./corpus-test.ts";
 import { CollectedUnit, asDevice, type Collection } from "../packages/product/test/collected-unit.ts";
 import { parseCapture, parseTunnelFrame, memoryImage, etsAllocations, reportedTableReferences, compareSegments, parseGa, inferBase, captureDevice } from "./etsdiff.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 3.6 s with the
+// file alone (load 5-27) and up to 3.6 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(80_000);
 
 // One proxy log line carrying a KNXnet/IP TUNNELLING_REQUEST with an L_Data frame.
 function line(dir: "ETS->BRIDGE" | "BRIDGE->ETS", code: number, src: string, dst: string, tpdu: number[]): string {
@@ -360,7 +366,7 @@ corpusDescribe("Jung 400021SE full download against ETS", () => {
     const refs = reportedTableReferences(cap);
     const r = compareSegments(build.segments.map((seg) => ({ seg, address: refs.get(seg.lsm) ?? null, baseSource: "device" })), memoryImage(cap.writes), etsAllocations(cap), []);
     expect(r.segments.map((s) => [s.lsm, s.divergences.map((d) => d.offset)])).toEqual([[4, []], [3, []], [2, []], [1, []]]);
-  }, 30_000); // the 26.9 MB Jung application: under 1.2 s alone at load 24, 5-10 s in a full check at load 14-36
+  }, 60_000); // the 26.9 MB Jung application: under 1.2 s alone at load 24, 5-10 s in a full check at load 14-36
 });
 
 // The group addresses ETS wrote into the address table in a partial download with links, ascending: System B's table
@@ -400,7 +406,7 @@ corpusDescribe("the bench captures go to the bench devices, on the bench project
       expect([file, partialLinkGas(`${file}-ets-partial-links.log`, parseAppConfig(catalogueXml(app)), gas.length)]).toEqual([file, gas.map(parseGa)]);
     }
     expect(partialLinkGas("jung-400021se-ets-partial-structure.log", parseAppConfig(catalogueXml("M-0004_A-7072-21-99A7-O000A.xml.gz")), 1)).toEqual([parseGa("0/0/1")]);
-  }, 30_000); // the 26.9 MB Jung application: under 1.2 s alone at load 24, 5-10 s in a full check at load 14-36; it builds the bench applications too
+  }, 60_000); // the 26.9 MB Jung application: under 1.2 s alone at load 24, 5-10 s in a full check at load 14-36; it builds the bench applications too
 });
 
 // ETS 6 partial downloads after linking objects to group addresses (and, on ABB and GVS, enabling
@@ -429,7 +435,7 @@ corpusDescribe("partial downloads with links against ETS", () => {
       const compared = r.segments.reduce((n, s) => n + s.compared, 0);
       expect(compared).toBeGreaterThan(0);
       expect(r.segments.flatMap((s) => s.divergences.map((d) => `${s.id}+${d.offset}`))).toEqual([]);
-    }, 30_000); // the case parses its application: the Jung, under 1 s alone at load 24, 5.9 s in a full check at load 14-36
+    }, 60_000); // the case parses its application: the Jung, under 1 s alone at load 24, 5.9 s in a full check at load 14-36
   }
 });
 
@@ -512,7 +518,7 @@ corpusDescribe("System B parameter flash against ETS's partial download", () => 
       const ets = new Map([...memoryImage(cap.writes)].filter(([a]) => a >= base && a < base + target.size).map(([a, b]) => [a - base, b]));
       expect([...ours.keys()].sort((a, b) => a - b)).toEqual([...ets.keys()].sort((a, b) => a - b));
       expect([...ours].filter(([o, b]) => ets.get(o) !== b)).toEqual([]);
-    }, 30_000); // the case parses its application: the Jung, under 1 s alone at load 24, 10.2 s in a full check at load 14-36
+    }, 60_000); // the case parses its application: the Jung, under 1 s alone at load 24, 10.2 s in a full check at load 14-36
   }
 });
 
@@ -535,7 +541,7 @@ corpusDescribe("structural flash against ETS's partial download", () => {
     }
     expect(classify(parseAppConfig(catalogueXml("M-0085_A-0072-30-69AA.xml.gz"))).capabilities().structuralFlash).toBe(false);
     expect(classify(parseAppConfig(gunzipSync(readFileSync(capturePath("openknx-raumcontroller-5.5.1-app.xml.gz"))).toString("utf8"))).capabilities().structuralFlash).toBe(false);
-  }, 60_000); // builds the OpenKNX application and ten others: 2.7 s alone at load 24, 33.4 s in a full check at load 14-36
+  }, 80_000); // builds the OpenKNX application and ten others: 2.7 s alone at load 24, 33.4 s in a full check at load 14-36
 
   test("MDT BE-02001.02: ETS's bracket set, and Busforge writes exactly the bytes ETS changed, with ETS's values", () => {
     const xml = real("M-0083_A-00B6-32-9642.xml.gz");
@@ -582,7 +588,7 @@ corpusDescribe("structural flash against ETS's partial download", () => {
     const r = compareSegments(build.segments.map((seg) => ({ seg, address: refs.get(seg.lsm) ?? null, baseSource: "device" })), memoryImage(cap.writes), etsAllocations(cap), []);
     expect(r.segments.map((s) => [s.lsm, s.compared, s.divergences.length])).toEqual([[4, 25, 0], [3, 7, 0], [2, 6, 0], [1, 4, 0]]);
     expect(r.unattributed).toEqual([]);
-  }, 30_000); // the 26.9 MB Jung application: under 1.2 s alone at load 24, 5-10 s in a full check at load 14-36
+  }, 60_000); // the 26.9 MB Jung application: under 1.2 s alone at load 24, 5-10 s in a full check at load 14-36
 
   test("Jung 400021SE: the bracket is ETS's, every object reallocated without fill and the application completed first", () => {
     const xml = real("M-0004_A-7072-21-99A7-O000A.xml.gz");
@@ -600,7 +606,7 @@ corpusDescribe("structural flash against ETS's partial download", () => {
       "assertLoaded:3", "assertLoaded:2", "assertLoaded:1", "restart",
     ]);
     expect(plan.filter((st) => st.op === "alloc").every((st) => st.op === "alloc" && !st.fill)).toBe(true);
-  }, 30_000); // the 26.9 MB Jung application: under 1.2 s alone at load 24, 5-10 s in a full check at load 14-36
+  }, 60_000); // the 26.9 MB Jung application: under 1.2 s alone at load 24, 5-10 s in a full check at load 14-36
 });
 
 // A System B download's steps from ETS's log, named as planShape names Busforge's. Its CompareProp
@@ -794,7 +800,7 @@ corpusDescribe("etsdiff --partial evidence", () => {
     const out = join(tmpdir(), `etsdiff-misspelt-${crypto.randomUUID()}.json`);
     const [ok, err] = run(["--redact-address", `--evidence=${out}`]);
     expect([ok, err.includes("unknown option(s): --redact-address"), existsSync(out)]).toEqual([false, true, false]);
-  }, 30_000);
+  }, 60_000);
   test("MDT BE-02001.02: links only, so no parameter record", async () => {
     const t = target("mdt-be02001-ets-partial-links.log", "M-0083_A-00B6-32-9642.xml.gz", 2);
     const r = await cli([capturePath("mdt-be02001-ets-partial-links.log"), `--app=${join(realDir, "M-0083_A-00B6-32-9642.xml.gz")}`, t.ia, `--link=0:${t.gas[0]}`, `--link=6:${t.gas[1]}`]);
@@ -3469,10 +3475,10 @@ corpusDescribe("System B full download: the bytes ETS writes, and no other", () 
   const cases = [
     // Parsing and building this application (190061 elements, a 21601-byte segment) took 3.4 s alone and 8.4 s
     // in a full check running beside others, past the 5 s default.
-    { name: "OpenKNX RaumController", xml: gunzipSync(readFileSync(capturePath("openknx-raumcontroller-5.5.1-app.xml.gz"))).toString("utf8"), log: "openknx-ets-fulldownload.log", fx: JSON.parse(captureText("openknx-config.json")) as Fx, overrides: () => new Map<number, ComObjInstanceOverride>(), timeout: 30_000 },
+    { name: "OpenKNX RaumController", xml: gunzipSync(readFileSync(capturePath("openknx-raumcontroller-5.5.1-app.xml.gz"))).toString("utf8"), log: "openknx-ets-fulldownload.log", fx: JSON.parse(captureText("openknx-config.json")) as Fx, overrides: () => new Map<number, ComObjInstanceOverride>(), timeout: 70_000 },
     mix2("hmg6t"), mix2("jmg4t"), mix2("rmg8t"),
     { name: "Theben DALI-Gateway", xml: catalogueXml("M-0048_A-9071-20-F258-O00EF.xml.gz"), log: "dali-ets-fulldownload-real.log", fx: dali, overrides: () => new Map(dali.overrides) },
-    { name: "Jung 400021SE", xml: catalogueXml("M-0004_A-7072-21-99A7-O000A.xml.gz"), log: "jung-400021se-ets-fulldownload.log", fx: { ia: numToIa(deviceOf("jung-400021se-ets-fulldownload.log")), params: [], links: [] } as Fx, overrides: () => new Map<number, ComObjInstanceOverride>() , timeout: 30_000 }, // parses the 26.9 MB Jung: under 1 s alone, 5-10 s in a full check at load 14-36
+    { name: "Jung 400021SE", xml: catalogueXml("M-0004_A-7072-21-99A7-O000A.xml.gz"), log: "jung-400021se-ets-fulldownload.log", fx: { ia: numToIa(deviceOf("jung-400021se-ets-fulldownload.log")), params: [], links: [] } as Fx, overrides: () => new Map<number, ComObjInstanceOverride>() , timeout: 60_000 }, // parses the 26.9 MB Jung: under 1 s alone, 5-10 s in a full check at load 14-36
     { name: "GVS AMMA", xml: catalogueXml("M-0085_A-0072-30-69AA.xml.gz"), log: "gvs-amma-ets-fulldownload-defaults.log", fx: { ia: numToIa(deviceOf("gvs-amma-ets-fulldownload-defaults.log")), params: [], links: [] } as Fx, overrides: () => new Map<number, ComObjInstanceOverride>() },
   ];
   for (const c of cases) {
@@ -3708,7 +3714,7 @@ corpusDescribe("the stamp record: ETS's differential parameter download, and its
     const ours = ownedRuns(image, mask).flatMap((r) => [...r.bytes].map((b, i) => [0x54 + r.offset + i, b] as [number, number]));
     expect(ours).toEqual([...memoryImage(parseCapture(captureText("openknx-ets-partial-params.log"), iaToNum(fx.ia)).writes)]);
     expect(ours).toEqual([[0x2366, 0x20]]);
-  }, 30_000); // builds the OpenKNX application, as the full-download comparison above (3.4 s alone, 8.4 s in a loaded check)
+  }, 80_000); // builds the OpenKNX application, as the full-download comparison above (3.4 s alone, 8.4 s in a loaded check)
 });
 
 // The MDT IP Interface/Router's web interface password P-278 (20 bytes at offset 40) reads FF after any write. ETS's

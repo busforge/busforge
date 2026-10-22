@@ -1,8 +1,14 @@
-import { test, expect } from "bun:test";
+import { test, expect, setDefaultTimeout } from "bun:test";
 import { STATE, type KnxDevice } from "@busforge/knx";
 import { parseAppConfig, parseLoadProcedures, assessParCoverage, classify, maskInfo, planSystem7GaFlash, type AppConfig, type ComObjectLink, type KnxIpDevice } from "../src/index.ts";
 import { catalogueXml, listCatalogue } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 0.4 s with the
+// file alone (load 5-27) and up to 0.3 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(60_000);
 
 // What each real application program may be offered, written down from the steps its manufacturer
 // declares in <LoadProcedures>, not computed by the code under test:

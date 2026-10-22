@@ -1,4 +1,4 @@
-import { test, expect, mock, afterAll } from "bun:test";
+import { test, expect, mock, afterAll, setDefaultTimeout } from "bun:test";
 import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +6,12 @@ import type { Database } from "bun:sqlite";
 import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
 import { settle } from "./task-client.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 1.8 s with the
+// file alone (load 5-27) and up to 1.8 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(60_000);
 
 // Read-back route honesty guards:
 // 1) an unsupported device class is REFUSED (400) with no baseline fabricated,
@@ -135,37 +141,52 @@ corpusDescribe("POST /read-back", () => {
   });
 
   // A large application reads for minutes, past what a client holds a request open for (Bun's fetch gives
-  // up after 300 s with "The operation timed out."). Here the limit is 150 ms and the device takes 600 ms:
-  // the request answers at once with the task, and what the read covered is there by id after it ended.
+  // up after 300 s with "The operation timed out."). Here the read does not end until the test has the request's
+  // answer, so that answer cannot have waited for it: the request answers at once with the task, and what the
+  // read covered is there by id after it ended. No wall-clock limit decides it, so a loaded machine cannot either.
   test("a read slower than the client's request limit answers with its task, and its coverage is retrievable after the request ended", async () => {
     const state = freshState();
     const { projectId, deviceId } = await projectWithApp(state, realXml("M-0081_A-FE01-11-75D9.xml.gz"));
+    let release!: () => void;
+    const answered = new Promise<void>((r) => { release = r; });
+    let readEnded = false;
     readImpl = async (opts) => {
-      for (let i = 1; i <= 3; i++) { await Bun.sleep(200); opts.onProgress?.("read params", i, 3); }
+      opts.onProgress?.("read params", 1, 3);
+      await answered;
+      for (let i = 2; i <= 3; i++) { await Bun.sleep(50); opts.onProgress?.("read params", i, 3); }
+      readEnded = true;
       return { mask: "MV-0705", paramsRead: true, linksRead: true, paramBase: new Map<string, string>(), links: [{ comObjNum: 9999, gaRaws: [123] }], deviceConfig: new Map<string, string>() };
     };
     const server = Bun.serve({ port: 0, fetch: async (r) => (await handleApi(r, state)) ?? new Response("not found", { status: 404 }) });
     try {
       const base = `http://localhost:${server.port}/api/projects/${projectId}`;
-      const t0 = Date.now();
-      const res = await fetch(`${base}/devices/${deviceId}/read-back`, { method: "POST", signal: AbortSignal.timeout(150) });
+      // A route that waited for the read would never answer, the read waiting for that answer.
+      const res = await Promise.race([
+        fetch(`${base}/devices/${deviceId}/read-back`, { method: "POST" }),
+        Bun.sleep(20_000).then(() => { throw new Error("the read-back request waited for the read instead of answering with its task"); }),
+      ]);
       expect(res.status).toBe(202);
       const submitted = (await res.json()) as any;
       expect(submitted).toMatchObject({ kind: "read", writes: false, result: null });
+      expect(["queued", "running"]).toContain(submitted.state);
+      expect(readEnded).toBe(false);
       let task: any;
       const phases = new Set<string>();
-      for (let i = 0; i < 100; i++) {
-        task = await (await fetch(`${base}/tasks/${submitted.id}`, { signal: AbortSignal.timeout(150) })).json();
+      // A poll while the read still waits sees it running; the read goes on once the request has been answered.
+      task = await (await fetch(`${base}/tasks/${submitted.id}`)).json();
+      expect(["queued", "running"]).toContain(task.state);
+      release();
+      for (let i = 0; i < 400; i++) {
+        task = await (await fetch(`${base}/tasks/${submitted.id}`)).json();
         if (task.phase) phases.add(task.phase);
         if (task.state !== "queued" && task.state !== "running") break;
         await Bun.sleep(50);
       }
       expect(phases.has("read params")).toBe(true);
-      expect(Date.now() - t0).toBeGreaterThanOrEqual(600);
       expect(task).toMatchObject({ state: "done", result: { paramsRead: true, linksRead: true, linkGaps: 1, unresolvedObjects: [9999], unplacedObjects: [9999], flagsRead: false } });
       // Still there for a client that comes back later.
       expect(await (await fetch(`${base}/tasks/${submitted.id}`)).json()).toMatchObject({ state: "done", result: { linkGaps: 1 } });
-    } finally { await server.stop(true); readImpl = realRead; }
+    } finally { release(); await server.stop(true); readImpl = realRead; }
   });
 
   const rows = (state: AppState, projectId: string, deviceId: string) =>
@@ -210,7 +231,7 @@ corpusDescribe("POST /read-back", () => {
 
   // The Jung 400021SE application takes ~1.5 s to import and resolve on an idle host and was measured at
   // 6.8 s on a loaded one, past the 5 s default.
-  const JUNG_MS = 30_000;
+  const JUNG_MS = 60_000;
 
   // Jung 400021SE: a module template object has a bare number of its own (#5 names
   // MD-4_O-8-5_R-311 before any instance shift); no configuration places it at 5.

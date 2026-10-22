@@ -1,9 +1,15 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, setDefaultTimeout } from "bun:test";
 import { KnxDevice, SYNC_GAP_MS, type DeviceTimeouts } from "../src/device.ts";
 import { SecureSession } from "../src/secureSession.ts";
 import { parseApdu, APCI } from "../src/frame.ts";
 import type { KnxTransport } from "../src/transport.ts";
 import { KnxError } from "../src/errors.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 1.6 s with the
+// file alone (load 5-27) and up to 1.6 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(60_000);
 
 // Frame-level tests of the KnxDevice request machine (numbered T_Data + T_ACK +
 // retransmission) against a scripted transport. All response TPDUs are hand-built;
@@ -328,7 +334,7 @@ describe("KnxDevice request machine (frame level)", () => {
     expect(syncs[0].t - t0).toBeLessThan(200);
     expect(syncs[1].t - syncs[0].t).toBeLessThan(200); // another device: no wait
     expect(syncs[2].t - syncs[0].t).toBeGreaterThanOrEqual(SYNC_GAP_MS - 5);
-  }, 10_000);
+  }, 60_000);
 });
 
 // restart() is the step that makes a download STICK, and the only one whose success is inferred
@@ -822,7 +828,7 @@ describe("KnxDevice.restart: the reboot is proven, never assumed", () => {
         expect(cons).toContain("BUS_SEND_FAILED");
         expect(cons).toContain("ok");
       }
-    }, 10_000);
+    }, 60_000);
   });
 
   // The confirmed restart (A_Restart type 1, erase code 1, channel 0), as ETS sends it to the Theben

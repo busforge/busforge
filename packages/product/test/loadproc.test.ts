@@ -1,9 +1,15 @@
-import { test, expect } from "bun:test";
+import { test, expect, setDefaultTimeout } from "bun:test";
 import { listRealFixtures, readRealFixture } from "./real-catalogue.snapshot.ts";
 import { corpusTest } from "../../../tools/corpus-test.ts";
 import { parseLoadProcedures, flattenSteps, stepApplies, assessParStep, assessParCoverage, relParamFillByte, declaredMcbWrites, closingSteps, unrunGrpSteps, KNOWN_LD_VERBS, type LdStep, type LoadProcedures, type ClosingStep } from "../src/loadproc.ts";
 import { parseAppConfig } from "../src/appconfig.ts";
 import { maskInfo } from "../src/masks.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 13.1 s with the
+// file alone (load 5-27) and up to 5.1 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(270_000);
 
 // Generality proof: parse the load procedure of EVERY real catalogue app program and
 // assert the parser covers the full LdCtrl vocabulary present in the data, with no
@@ -18,7 +24,7 @@ corpusTest("every real catalogue load procedure parses with a recognized style",
     else expect(lp.blocks.flatMap((b) => b.steps).length).toBeGreaterThan(0);
   }
   // Decompresses and parses every corpus catalogue: 5.9 s measured on a host at load 26, under 5 s idle.
-}, 30_000);
+}, 220_000);
 
 // Which memory write service ETS takes follows this option: in the corpus captures the GVS AMMA, the
 // Theben MIX 2 and the Jung 400021SE (option set) are written with A_MemoryExtended_Write only, the
@@ -31,7 +37,7 @@ corpusTest("the extended memory services option is read from the application's O
   expect(ext("M-0048_A-9071")).toBe(false);
   expect(ext("M-0083_A-00B4")).toBe(false);
   // Five whole catalogues decompressed and parsed: 7.5 s measured on a host at load 26, under 5 s idle.
-}, 30_000);
+}, 70_000);
 
 corpusTest("no unknown LdCtrl verb appears across the whole real catalogue", () => {
   const allVerbs = new Set<string>();
@@ -50,7 +56,7 @@ corpusTest("no unknown LdCtrl verb appears across the whole real catalogue", () 
     expect(allVerbs.has(expected)).toBe(true);
   }
   // Decompresses and parses every corpus catalogue: 1.2 s measured alone, slower by the same factor as its siblings above under a full check.
-}, 30_000);
+}, 260_000);
 
 corpusTest("ProductProcedure is a single self-contained block (M-0081, the proven device)", () => {
   const lp = parseLoadProcedures(readRealFixture("M-0081_A-FE01-11-75D9.xml.gz"));
@@ -179,7 +185,7 @@ corpusTest("every real catalogue application's closing steps can be executed; on
     }
   }
   // Decompresses and parses every corpus catalogue: 0.9 s measured alone, slower by the same factor as its siblings above under a full check.
-}, 30_000);
+}, 270_000);
 
 // ---- par-download step policy ----
 // Every par-applicable step must carry an explicit disposition; anything unmodeled blocks
@@ -278,7 +284,7 @@ corpusTest("par policy over the whole real catalogue: every step is dispositione
     // is total by construction; this pins that the corpus stays fully assessed.
   }
   // Decompresses every corpus catalogue and parses it twice: 5.5 s measured in a full check, 2.4 s alone.
-}, 30_000);
+}, 200_000);
 
 corpusTest("the declared MCB entries of a System B full download, as ETS sends them", () => {
   // Theben MIX: two entries for the 2003-byte parameter segment. ETS sends the first 8 bytes of the

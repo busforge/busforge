@@ -1,6 +1,12 @@
-import { test, expect, describe, mock, afterAll } from "bun:test";
+import { test, expect, describe, mock, afterAll, setDefaultTimeout } from "bun:test";
 import { parseApdu, tpAck, type KnxTransport } from "@busforge/knx";
 import type { Connection } from "../src/db/connections.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 3.0 s with the
+// file alone (load 5-27) and up to 3.0 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(70_000);
 
 // secure-identify against a simulated device on the transport: every secured frame (A_Data_Secure,
 // the Sync included) goes unanswered, as from a device that does not hold the key; plain requests
@@ -58,10 +64,10 @@ describe("secure-identify", () => {
   test("a stored key the device does not answer, on a device that states it is off: not activated", async () => {
     device = { mask: "07b0", serial: "00fa01020304", mode: "000000" };
     expect(code(await secureIdentify(conn, "1.2.4", creds).catch((e: unknown) => e))).toBe("SECURE_MODE_OFF");
-  }, 15_000);
+  }, 70_000);
 
   test("a stored key the device does not answer, on a device that will not say: the Sync failure stands", async () => {
     device = { mask: "ffff", serial: "", mode: "fc" };
     expect(code(await secureIdentify(conn, "1.2.4", creds).catch((e: unknown) => e))).toBe("SECURE_SYNC_NO_RESPONSE");
-  }, 15_000);
+  }, 70_000);
 });

@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, setDefaultTimeout } from "bun:test";
 import { LSM, STATE, crc16Ccitt, crc16CcittFalse, type KnxDevice } from "@busforge/knx";
 import {
   parseAppConfig, classify, buildDeviceConfig, buildComObjectTable,
@@ -6,6 +6,12 @@ import {
 } from "@busforge/product";
 import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 7.5 s with the
+// file alone (load 5-27) and up to 7.5 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(160_000);
 
 // downloadFull ORCHESTRATION on a mock device, using the real hardware-proven M-0162 System B
 // application (the same fixture readstate/loadproc tests use). downloadFull is the riskiest write
@@ -258,7 +264,7 @@ corpusDescribe("full download against the real M-0162 application", () => {
       expect((await dev.memRead(A[OBJ.ASSOC], assocTable.length)).equals(assocTable)).toBe(true);
       expect((await dev.memRead(A[OBJ.COMOBJ], comObjTable.length)).equals(comObjTable)).toBe(true);
       expect((await dev.memRead(A[OBJ.LSM], target.size)).equals(target.bytes)).toBe(true);
-    }, 20_000); // the plan's settle (>=6 s) + reconnectAfterRestart (3 s) are not injectable here
+    }, 70_000); // the plan's settle (>=6 s) + reconnectAfterRestart (3 s) are not injectable here
 
     test("TEETH: an MCB CRC matching NEITHER convention forces the full read-back, which catches a lost write (verified:false)", async () => {
       // The device reports a CRC that is neither the augmented nor the CCITT-FALSE value, AND the
@@ -282,7 +288,7 @@ corpusDescribe("full download against the real M-0162 application", () => {
       // plus at least one verify read), not skipped on the strength of the CRC.
       const fullReads = dev.reads.filter((r) => r.addr === A[OBJ.LSM] && r.len === target.size);
       expect(fullReads.length).toBeGreaterThanOrEqual(2);
-    }, 20_000);
+    }, 100_000);
 
     test("dryRun with backup ON: captures the backup but writes NOTHING to the device", async () => {
       const dev = new MockDevice();
@@ -320,7 +326,7 @@ corpusDescribe("full download against the real M-0162 application", () => {
       expect(dev.events).toContain("unload");
       expect(dev.events).toContain("write");
       expect((await dev.memRead(A[OBJ.LSM], target.size)).equals(target.bytes)).toBe(true);
-    }, 20_000);
+    }, 70_000);
   });
 
   // The GA flash must rewrite the com-object table (L3), not just the group tables. ETS (and
@@ -358,7 +364,7 @@ corpusDescribe("full download against the real M-0162 application", () => {
       const expected = buildComObjectTable(view.imageComObjects, view.maxComObjectNumber, new Set([obj]));
       const back = await dev.memRead(A[OBJ.COMOBJ], expected.length);
       expect(back.equals(expected)).toBe(true);
-    }, 20_000);
+    }, 130_000);
 
     // Writing the tables is not the same as leaving the device working. On the Jung 400021SE (Insta,
     // System B) a table-only GA flash left all three tables LOADED and byte-perfect while the APPLICATION
@@ -373,7 +379,7 @@ corpusDescribe("full download against the real M-0162 application", () => {
       dev.onRestart = () => { dev.state.set(OBJ.LSM, STATE.ERROR); };
       const flash = profile.flashGroupTables(asDev(dev), cfg.mask, gaCtx([{ comObjNum: activeComObjNums[0], gaRaws: [2305] }]));
       expect(flash).rejects.toThrow(/no longer running its application/);
-    }, 20_000);
+    }, 160_000);
 
     test("a device whose application was ALREADY not LOADED gains no new refusal (only a degradation is an error)", async () => {
       const dev = new MockDevice();
@@ -381,7 +387,7 @@ corpusDescribe("full download against the real M-0162 application", () => {
       dev.state.set(OBJ.LSM, STATE.UNLOADED); // e.g. a device with no application loaded at all
       const res = await profile.flashGroupTables(asDev(dev), cfg.mask, gaCtx([{ comObjNum: activeComObjNums[0], gaRaws: [2305] }]));
       expect(res.kind).toBe("flashed"); // the tables are still written and checked; the guard stays silent
-    }, 20_000);
+    }, 130_000);
 
     test("the parameter segment (L4) is left untouched: this is a surgical link flash, not a full download", async () => {
       const dev = new MockDevice();
@@ -390,6 +396,6 @@ corpusDescribe("full download against the real M-0162 application", () => {
       await profile.flashGroupTables(asDev(dev), cfg.mask, gaCtx([{ comObjNum: activeComObjNums[0], gaRaws: [2305] }]));
       const paramSegAfter = await dev.memRead(A[OBJ.LSM], target.size);
       expect(paramSegAfter.equals(paramSegBefore)).toBe(true); // L4 (the 21601-byte image) never rewritten
-    }, 20_000);
+    }, 130_000);
   });
 });

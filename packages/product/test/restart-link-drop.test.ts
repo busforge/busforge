@@ -1,6 +1,12 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, setDefaultTimeout } from "bun:test";
 import { KnxDevice, KnxError, APCI, apdu, parseApdu, tpAck, type KnxTransport } from "@busforge/knx";
 import { runFlashOp } from "../src/profiles.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 3.2 s with the
+// file alone (load 5-27) and up to 3.2 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(70_000);
 
 // A device whose restart takes the interface's tunnels down (a power supply that cuts the bus voltage,
 // a router beside the interface): the link fails inside the restart's proof window. The flash then
@@ -56,7 +62,7 @@ describe("a restart that takes the interface's tunnel down inside its proof wind
       const res = await flash(link);
       expect(res).toMatchObject({ kind: "flashed", verified: true, restartUnproven: true });
       expect(link.reopened).toBe(1);
-    }, 15_000);
+    }, 70_000);
   }
 
   test("a USB interface lost in the proof cannot be opened again: the write is reported unverified at once", async () => {
@@ -73,5 +79,5 @@ describe("a restart that takes the interface's tunnel down inside its proof wind
     const link = new DroppingLink({ byte: 0x00, restartCon: "negative" });
     const res = await flash(link);
     expect(res).toMatchObject({ kind: "flashed", verified: false, restartUnproven: true });
-  }, 15_000);
+  }, 70_000);
 });

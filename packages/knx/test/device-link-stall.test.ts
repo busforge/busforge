@@ -1,7 +1,13 @@
-import { test, expect } from "bun:test";
+import { test, expect, setDefaultTimeout } from "bun:test";
 import { KnxDevice } from "../src/device.ts";
 import { KnxError } from "../src/errors.ts";
 import type { KnxTransport } from "../src/index.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 0.4 s with the
+// file alone (load 5-27) and up to 0.4 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(60_000);
 
 // A link to the interface that stalls or closes: the send itself fails with a tunnel code.
 class StalledLink implements KnxTransport {

@@ -1,7 +1,13 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, setDefaultTimeout } from "bun:test";
 import { parseAppConfig, parseLoadProcedures, classify, buildDeviceConfig, comObjInstanceOverride, withInstanceOverrides, editComObjOverride, type ComObjInstanceOverride } from "../src/index.ts";
 import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 18.6 s with the
+// file alone (load 5-27) and up to 5.5 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(380_000);
 
 describe("the com-object flags a project sets on a device", () => {
   test("are read from the attributes as ETS stores them", () => {
@@ -124,7 +130,7 @@ corpusDescribe("a full download writes the project's com-object flags", () => {
       expect(changed(base, plan(file, new Map([[n, { flags }]])))).toHaveLength(1);
     }
     expect(changed(base, plan(file, new Map([[n, { flags: {}, priority: obj.priority === "Low" ? "High" : "Low" }]])))).toHaveLength(1);
-  }, 60_000);
+  }, 380_000);
 
   test("the bits each family's full download can carry are the ones the editor offers", () => {
     const bits = (file: string) => classify(parseAppConfig(catalogueXml(file))).comObjOverridableBits();

@@ -1,8 +1,14 @@
-import { test, expect } from "bun:test";
+import { test, expect, setDefaultTimeout } from "bun:test";
 import type { KnxDevice } from "@busforge/knx";
 import { parseAppConfig, classify, declaresTunnelingEntries, parseLoadProcedures, type FullDownloadCtx } from "@busforge/product";
 import { catalogueXml, listCatalogue } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 4.0 s with the
+// file alone (load 5-27) and up to 1.6 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(90_000);
 
 // An IP interface's tunnelling addresses (MaxTunnelingUserEntries, the project's AdditionalAddresses)
 // live outside the parameter image and the load procedure, and no Busforge path writes them. A full
@@ -101,7 +107,7 @@ corpusDescribe("applications without tunnelling entries are unaffected", () => {
     const xml = xmlOf(f);
     const n = declared(xml);
     expect(declaresTunnelingEntries(parseAppConfig(xml))).toBe(n !== undefined && !(/^\d+$/.test(n) && Number(n) === 0));
-  }, 30_000); // a case parses its application: the 26.9 MB Jung took 8.6 s in a full check at load 14-36
+  }, 90_000); // a case parses its application: the 26.9 MB Jung took 8.6 s in a full check at load 14-36
 
   // The products whose full download is proven, plus the System B reference app the
   // orchestration tests run on: each still offers it.
@@ -113,5 +119,5 @@ corpusDescribe("applications without tunnelling entries are unaffected", () => {
     "M-0162_A-0004-11-F245.xml.gz",       // MEAN WELL power supply
   ])("%s keeps its full download", (f) => {
     expect(classify(parseAppConfig(xmlOf(f))).capabilities().fullDownload).toBe(true);
-  }, 30_000); // a case parses its application: the 26.9 MB Jung took 8.6 s in a full check at load 14-36
+  }, 60_000); // a case parses its application: the 26.9 MB Jung took 8.6 s in a full check at load 14-36
 });

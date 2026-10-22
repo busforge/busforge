@@ -1,10 +1,16 @@
-import { test, expect, describe, afterEach } from "bun:test";
+import { test, expect, describe, afterEach, setDefaultTimeout } from "bun:test";
 import net from "node:net";
 import { readFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeSplitter, parseEndpoint, rewriteSearchEndpoint, logLine, startProxy, isSyncRequest } from "./knxproxy.ts";
 import { parseCapture, memoryImage } from "./etsdiff.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 0.3 s with the
+// file alone (load 5-27) and up to 0.3 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(60_000);
 
 // A KNXnet/IP frame: header (06 10, service, total length) and body.
 const frame = (svc: number, body: number[]) => Buffer.from([0x06, 0x10, svc >> 8, svc & 0xff, (6 + body.length) >> 8, (6 + body.length) & 0xff, ...body]);

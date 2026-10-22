@@ -1,4 +1,4 @@
-import { test, expect, mock, afterAll, describe } from "bun:test";
+import { test, expect, mock, afterAll, describe, setDefaultTimeout } from "bun:test";
 import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,12 @@ import { CollectedUnit, asDevice, type Collection } from "../../../packages/prod
 import { catalogueXml, corpusPath, inServiceCollection } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
 import { readBackAs } from "./task-client.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 1.0 s with the
+// file alone (load 5-27) and up to 1.0 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(60_000);
 
 // The read-back route's two rules beyond the plain read: values it is asked to assume for parameters
 // without a memory location, taken into project and baseline only when every link then resolves, and

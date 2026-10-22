@@ -1,10 +1,16 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, setDefaultTimeout } from "bun:test";
 import { readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
 import { capturePath, catalogueXml } from "../../../tools/corpus.ts";
 import { parseAppConfig } from "../src/appconfig.ts";
 import { buildDeviceConfig, type CfgItem, type CfgParamView } from "../src/config.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 4.5 s with the
+// file alone (load 5-27) and up to 2.8 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(90_000);
 
 // A ParameterRef may carry its own Text and SuffixText, which ETS shows instead of its
 // Parameter's. Its TextParameterRefId feeds the `{{0}}` / `{{0:default}}` in that text.
@@ -151,5 +157,5 @@ corpusDescribe("ParameterRef texts in real catalogues", () => {
     // Its Parameter reads "  Delay time [1...65535]" in units of "*0.1s".
     expect(p?.name).toBe("  Minimum time [1...65535]");
     expect(p?.suffix).toBe("s");
-  }, 30_000);
+  }, 60_000);
 });

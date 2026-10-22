@@ -1,9 +1,15 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, setDefaultTimeout } from "bun:test";
 import { KnxDevice, KnxError, LSM, STATE } from "@busforge/knx";
 import { parseAppConfig, buildRelativeSegmentTarget, parseLoadProcedures } from "@busforge/product";
 import { classify } from "../src/deviceprofile.ts";
 import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 31.0 s with the
+// file alone (load 5-27) and up to 31.0 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(630_000);
 
 // System B parameter flash against a device whose bytes already match: whether it may call that
 // "unchanged" depends on the parameter load-state machine being LOADED. On an OpenKNX RaumController
@@ -95,16 +101,16 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
       expect([...dev.written]).toEqual([BASE + k]);
       expect(res.verified).toBe(true);
       expect(res.stamps?.some((st) => st.obj === 4 && st.hex === STAMP)).toBe(true);
-    }, 30_000);
+    }, 70_000);
     test("a stamp other than the record: every owned byte", async () => {
       expect((await run([{ obj: 4, element: 1, hex: other("00", "00bb") }])).dev.written.size).toBe(owned);
-    }, 30_000);
+    }, 70_000);
     test("no record: every owned byte", async () => {
       expect((await run(undefined)).dev.written.size).toBe(owned);
-    }, 30_000);
+    }, 70_000);
     test("a region whose control byte is not 0 does not count: no check, every owned byte", async () => {
       expect((await run([{ obj: 4, element: 1, hex: other("01", "00aa") }])).dev.written.size).toBe(owned);
-    }, 30_000);
+    }, 70_000);
   });
 
   // The group-address flash decides the com-object table the same way (relativeComObjWriteSet): with the unit's
@@ -136,26 +142,26 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
     });
     test("stamps equal to the record: only the com-object byte that differs", async () => {
       expect(await run(record)).toEqual(differing);
-    }, 30_000);
+    }, 70_000);
     test("the application's stamp other than the record: the com-object table whole", async () => {
       expect((await run([record[0], { obj: 4, element: 1, hex: other("00", "00bb") }])).length).toBe(linked(3).length);
-    }, 30_000);
+    }, 70_000);
     test("no record: the com-object table whole", async () => {
       expect((await run(undefined)).length).toBe(linked(3).length);
-    }, 30_000);
+    }, 70_000);
     test("a record of a parameter flash, which did not write the table: the com-object table whole", async () => {
       expect((await run([{ obj: 3, element: 1, hex: COMOBJ }, record[1]])).length).toBe(linked(3).length);
-    }, 30_000);
+    }, 70_000);
     test("a com-object region whose control byte is not 0: the com-object table whole", async () => {
       const ctl1 = `${COMOBJ.slice(0, 8)}01${COMOBJ.slice(10)}`;
       expect((await run([{ ...record[0], hex: ctl1 }, record[1]], ctl1)).length).toBe(linked(3).length);
-    }, 30_000);
+    }, 70_000);
     test("a com-object table not LOADED: the table whole", async () => {
       expect((await run(record, COMOBJ, STATE.LOADING)).length).toBe(linked(3).length);
-    }, 30_000);
+    }, 70_000);
     test("a stamp the unit does not give as 8 bytes: the table whole, not a refusal", async () => {
       expect((await run(record, "0000004a00ff")).length).toBe(linked(3).length);
-    }, 30_000);
+    }, 70_000);
   });
 
   // The structural flash takes both decisions on one check, as ETS's partial download over all four objects does: with
@@ -188,19 +194,19 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
       const { k, params: p, comObj } = await run(record);
       expect(p).toEqual([k]);
       expect(comObj).toEqual([4]);
-    }, 30_000);
+    }, 70_000);
     test("the application's stamp other than the record: every owned byte and the com-object table whole", async () => {
       const r = await run([record[0], { obj: 4, element: 1, hex: other("00", "00bb") }]);
       expect([r.params.length, r.comObj.length]).toEqual([owned, linked(3).length]);
-    }, 30_000);
+    }, 70_000);
     test("no record: every owned byte and the com-object table whole", async () => {
       const r = await run(undefined);
       expect([r.params.length, r.comObj.length]).toEqual([owned, linked(3).length]);
-    }, 30_000);
+    }, 70_000);
     test("a record of a parameter flash, which did not write the table: the parameter byte that differs, the table whole", async () => {
       const r = await run([{ obj: 3, element: 1, hex: COMOBJ }, record[1]]);
       expect([r.params, r.comObj.length]).toEqual([[r.k], linked(3).length]);
-    }, 30_000);
+    }, 70_000);
 
     // Malformed in the check before the write only; the closing reads after it take the whole elements again.
     test("a stamp the unit does not give as 8 bytes: every owned byte and the table whole, not a refusal", async () => {
@@ -214,7 +220,7 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
       if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
       const inRange = (at: number, len: number) => [...dev.written].filter((a) => a >= at && a < at + len).length;
       expect([inRange(BASE, target.size), inRange(0x300, linked(3).length)]).toEqual([owned, linked(3).length]);
-    }, 30_000);
+    }, 70_000);
 
     // The parameter bytes as the parameter flash decides them where the unit reads FF: a byte the project has not
     // changed since the last programming stays and is named; one it set to FF since then is written, though the
@@ -232,7 +238,7 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
       const res = await classify(cfg).flashStructure(asDev(dev), "07B0", { ...ctx, ia: "1.2.7", links, stampRecord: record });
       if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
       expect([res.verified, res.leftFF, dev.written.has(BASE + k), dev.mem.get(BASE + k)]).toEqual([true, [{ address: BASE + k, length: 1 }], false, 0xff]);
-    }, 30_000);
+    }, 70_000);
     test("a byte the project set to FF since the last programming is written where the unit reads FF", async () => {
       const dev = seededTables();
       const reads = dev.memRead.bind(dev);
@@ -240,7 +246,7 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
       const res = await classify(cfg).flashStructure(asDev(dev), "07B0", { ...ctx, ia: "1.2.7", links, params: toFF, stampRecord: record });
       if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
       expect([dev.written.has(BASE + FF_AT), dev.mem.get(BASE + FF_AT)]).toEqual([true, 0xff]);
-    }, 30_000);
+    }, 70_000);
   });
 
   // P-8 at 255 sets its byte (98) to FF; the baseline, the application's defaults, holds 0 there. A unit that holds
@@ -258,7 +264,7 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
     const res = await classify(cfg).flashParameters(asDev(dev), "07B0", { ...ctx, params: toFF, stampRecord: [{ obj: 4, element: 1, hex: STAMP }] });
     if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
     expect([dev.written.has(BASE + FF_AT), dev.mem.get(BASE + FF_AT)]).toEqual([true, 0xff]);
-  }, 30_000);
+  }, 70_000);
 
   // Which objects an operation's record marks as written (ImageStamp.written) decides the next group-address
   // flash: the com-object table goes differentially only after a record whose download wrote it. A download
@@ -278,7 +284,7 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
       const res = await classify(cfg).downloadFull(asDev(loadedUnit()), "07B0", { ...ctx, ia: "1.2.7", links });
       if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
       expect(writtenObjs(res.stamps)).toEqual([1, 2, 3, 4]);
-    }, 30_000);
+    }, 70_000);
     test("parameter flash: the application only", async () => {
       const dev = loadedUnit();
       const k = target.owned.findIndex((m) => m === 0xff);
@@ -286,17 +292,17 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
       const res = await classify(cfg).flashParameters(asDev(dev), "07B0", ctx);
       if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
       expect(writtenObjs(res.stamps)).toEqual([4]);
-    }, 30_000);
+    }, 70_000);
     test("group-address flash: no record", async () => {
       const res = await classify(cfg).flashGroupTables(asDev(loadedUnit()), "07B0", { ...ctx, ia: "1.2.7", links });
       if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
       expect(writtenObjs(res.stamps)).toBeUndefined();
-    }, 30_000);
+    }, 70_000);
     test("structural flash: all four objects", async () => {
       const res = await classify(cfg).flashStructure(asDev(loadedUnit()), "07B0", { ...ctx, ia: "1.2.7", links });
       if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
       expect(writtenObjs(res.stamps)).toEqual([1, 2, 3, 4]);
-    }, 30_000);
+    }, 70_000);
   });
 
   // A negatively confirmed A_Restart the device did not decide (KnxDevice.acceptUnprovenRestart) is taken as
@@ -334,19 +340,19 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
         const res = await op(dev);
         expect(res).toMatchObject({ kind: "flashed", verified: true, restartUnproven: true });
         expect(dev.armed).toEqual([true, false]);
-      }, 30_000);
+      }, 70_000);
       test(`${name}: a proven restart carries no warning`, async () => {
         const res = await op(unitFor());
         expect(res).toMatchObject({ kind: "flashed", verified: true });
         expect((res as { restartUnproven?: unknown }).restartUnproven).toBeUndefined();
-      }, 30_000);
+      }, 70_000);
       test(`${name}: a device that ignored the restart stays RESTART_IGNORED, and the acceptance is closed`, async () => {
         const dev = unitFor();
         dev.restartEnds = "ignored";
         const failure = await op(dev).then(() => null, (e: unknown) => e);
         expect((failure as { code?: string } | null)?.code).toBe("RESTART_IGNORED");
         expect(dev.armed).toEqual([true, false]);
-      }, 30_000);
+      }, 60_000);
     }
     test("a read-back after the unproven restart that differs is not verified", async () => {
       const dev = changedUnit();
@@ -356,7 +362,7 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
       dev.onRestart = () => { dev.mem.set(BASE + k, unlike(target.bytes[k])); };
       const res = await classify(cfg).flashParameters(asDev(dev), "07B0", ctx);
       expect(res).toMatchObject({ kind: "flashed", verified: false, restartUnproven: true });
-    }, 30_000);
+    }, 100_000);
     test("a device that does not come back after the unproven restart is a failure", async () => {
       const dev = changedUnit();
       dev.restartEnds = "unproven";
@@ -365,7 +371,7 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
       dev.deviceDescriptor = async () => { if (restarted) throw new KnxError("DEVICE_NOT_ANSWERING", "mock: gone"); return "MV-07B0"; };
       const failure = await classify(cfg).flashParameters(asDev(dev), "07B0", ctx).then(() => null, (e: unknown) => e);
       expect((failure as { code?: string } | null)?.code).toBe("DEVICE_NOT_ANSWERING");
-    }, 60_000);
+    }, 630_000);
   });
 
   describe("System B parameter flash on a device whose bytes already match", () => {
@@ -392,7 +398,7 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
       expect(res.kind).toBe("flashed");
       if (res.kind !== "flashed") throw new Error("unreachable");
       expect(res.verified).toBe(true);
-    }, 30_000);
+    }, 170_000);
 
     // A field the project changed since the device was last programmed: its baseline holds another value of
     // P-8, so the byte it takes differs from the baseline's and goes out even where the device reads FF.
@@ -426,7 +432,7 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
       if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
       expect(res.verified).toBe(true);
       expect(res.confirmedOnly).toEqual([{ address: BASE + k, length: 1 }]);
-    }, 30_000);
+    }, 170_000);
 
     // The same field before a write: the dry run counts the byte the device reads as FF and names it, as
     // nothing but a write tells a byte it does not give back from one that holds FF.
@@ -464,7 +470,7 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
         if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
         expect([res.verified, res.leftFF, dev.written.has(BASE + k), dev.written.has(BASE), dev.mem.get(BASE + k)]).toEqual([true, [{ address: BASE + k, length: 1 }], false, true, 0xff]);
       }
-    }, 30_000);
+    }, 130_000);
     // Not where the stamps tell another tool has written the unit since the record: the baseline still
     // decides (the rule holds without a record, and a record the unit no longer matches tells no more).
     test("a stamp other than the record leaves the byte as well", async () => {
@@ -475,7 +481,7 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
       const res = await classify(cfg).flashParameters(asDev(dev), "07B0", { ...ctx, stampRecord: [{ obj: 4, element: 1, hex: other("00", "00bb") }] });
       if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
       expect([res.verified, res.leftFF, dev.written.has(BASE + k), dev.mem.get(BASE + k)]).toEqual([true, [{ address: BASE + k, length: 1 }], false, 0xff]);
-    }, 30_000);
+    }, 70_000);
     // An application left not LOADED takes every owned byte, the byte read as FF with the project's value.
     test("an application not LOADED takes the byte read as FF as well", async () => {
       const k = kChanged;
@@ -485,7 +491,7 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
       const res = await classify(cfg).flashParameters(asDev(dev), "07B0", ctx);
       if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
       expect([res.verified, "leftFF" in res, dev.mem.get(BASE + k)]).toEqual([true, false, target.bytes[k]]);
-    }, 30_000);
+    }, 70_000);
     // A segment the allocation moves is written whole: there the byte goes out with the project's value
     // (the unit's own is not readable to carry over), it is verified as written, and the result does not
     // name it as left alone.
@@ -503,7 +509,7 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
       if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
       expect([res.verified, "leftFF" in res, dev.mem.get(MOVED + k), dev.mem.get(MOVED)]).toEqual([true, false, target.bytes[k], target.bytes[0]]);
       expect(dev.written.has(BASE + k)).toBe(false);
-    }, 30_000);
+    }, 70_000);
 
     test("LSM 4 Loading: the bracket runs and leaves it LOADED", async () => {
       const dev = seeded();
@@ -515,6 +521,6 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
       expect(dev.writes).toBeGreaterThan(0);
       expect(dev.state.get(4)).toBe(STATE.LOADED);
       for (let i = 0; i < target.size; i++) expect(dev.mem.get(BASE + i)).toBe(target.bytes[i]);
-    }, 20_000);
+    }, 70_000);
   });
 });

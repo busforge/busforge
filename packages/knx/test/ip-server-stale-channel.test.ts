@@ -1,7 +1,13 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, setDefaultTimeout } from "bun:test";
 import { KnxIpServer, type ServerTcpSocket, type ServerTcpListener, type ServerSocket } from "../src/ipserver.ts";
 import { SVC, knxFrame, hpaiTcp } from "../src/frame.ts";
 import type { KnxTransport } from "../src/transport.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 2.7 s with the
+// file alone (load 5-27) and up to 2.7 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(60_000);
 
 // Regression for the bench "tunnelling ack timeout": a TCP channel that is closed while a frame
 // still sits in its per-channel send queue keeps retransmitting for ACK_TRIES × ACK_TIMEOUT_MS
@@ -70,5 +76,5 @@ describe("KnxIpServer: a stale channel's dying queue must not take a successor w
     b.written.length = 0;
     b.dataCb!(tunnelReq(1, 0));
     expect(b.sentService(SVC.TUNNEL_ACK)).toBe(true);
-  }, 10_000);
+  }, 60_000);
 });

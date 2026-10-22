@@ -1,10 +1,16 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, setDefaultTimeout } from "bun:test";
 import { Database } from "bun:sqlite";
 import { copyFileSync, existsSync, mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createState } from "../src/app.ts";
 import { closeDb } from "../src/db/schema.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 6.8 s with the
+// file alone (load 5-27) and up to 6.8 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(140_000);
 
 // Real processes and real signals: the point is that a signal cannot end a write, which an
 // in-process test of the queue alone cannot show.
@@ -62,7 +68,7 @@ describe("shutdown on a signal", () => {
     expect(state.queue.get(running)).toMatchObject({ state: "done", baselineCommitted: true, outcome: { kind: "flashed", verified: true } });
     expect(state.queue.get(queued)).toMatchObject({ state: "cancelled", errorCode: "TASK_NOT_STARTED" });
     state.db.close();
-  }, 15_000);
+  }, 60_000);
 
   test("SIGKILL mid-write leaves the write reported as interrupted on the next start", async () => {
     const { proc, dataDir, running, queued } = await start(60_000);
@@ -72,7 +78,7 @@ describe("shutdown on a signal", () => {
     expect(state.queue.get(running)).toMatchObject({ state: "interrupted", errorCode: "TASK_WRITE_INTERRUPTED", baselineCommitted: false });
     expect(state.queue.get(queued)).toMatchObject({ state: "cancelled", errorCode: "TASK_NOT_STARTED" });
     state.db.close();
-  }, 15_000);
+  }, 60_000);
 
   test("SIGTERM with no write running exits at once", async () => {
     const { proc, dataDir, startedAt } = await start(0);
@@ -81,7 +87,7 @@ describe("shutdown on a signal", () => {
     expect(Date.now() - startedAt).toBeLessThan(1000);
     expect(await new Response(proc.stderr).text()).toContain("received SIGTERM, exiting");
     expectCheckpointed(dataDir, {});
-  }, 15_000);
+  }, 60_000);
 
   test("a failed shutdown step still checkpoints the database before exiting non-zero", async () => {
     const { proc, dataDir, running, queued } = await start(JOB_MS, { FAIL_BUS_CLOSE: "1" });
@@ -89,7 +95,7 @@ describe("shutdown on a signal", () => {
     expect(await proc.exited).toBe(1);
     expect(await new Response(proc.stderr).text()).toContain("shutdown cleanup failed");
     expectCheckpointed(dataDir, { [running]: "done", [queued]: "cancelled" });
-  }, 15_000);
+  }, 60_000);
 
   test("a checkpoint another connection blocks is reported and exits non-zero", async () => {
     const { proc } = await start(JOB_MS, { HOLD_READER: "1" });
@@ -97,7 +103,7 @@ describe("shutdown on a signal", () => {
     expect(await proc.exited).toBe(1);
     const log = await new Response(proc.stderr).text();
     expect(log).toContain("closing the database failed the database checkpoint did not complete (");
-  }, 15_000);
+  }, 140_000);
 
   test("a reader that lets go within the busy timeout does not fail the checkpoint", async () => {
     // The reader lives in this process: the checkpoint's busy wait blocks the server's own thread.
@@ -113,14 +119,14 @@ describe("shutdown on a signal", () => {
     expect(await proc.exited).toBe(0);
     expect(Date.now() - signalledAt).toBeGreaterThanOrEqual(900); // the checkpoint waited for the reader
     expectCheckpointed(dataDir, {});
-  }, 15_000);
+  }, 60_000);
 
   test("a reader whose snapshot holds every write keeps the log from being emptied, and says only that", async () => {
     const { proc } = await start(0, { HOLD_READER: "1" });
     proc.kill("SIGTERM");
     expect(await proc.exited).toBe(1);
     expect(await new Response(proc.stderr).text()).toContain("closing the database failed the database checkpoint copied every log frame but could not empty the log");
-  }, 15_000);
+  }, 110_000);
 });
 
 describe("closeDb", () => {

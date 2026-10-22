@@ -1,8 +1,14 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, setDefaultTimeout } from "bun:test";
 import { STATE, type KnxDevice } from "@busforge/knx";
 import { parseAppConfig, classify, parseLoadProcedures, buildDeviceConfig, buildAbsoluteSegmentTargets, absoluteStructuralImages, buildGroupTablesMv0705, System7Profile, absoluteFullStepRefusal, fullDownloadImageDigest, planSystem7GaFlash, type AppConfig, type ComObjectLink, type LoadProcedures } from "../src/index.ts";
 import { catalogueXml, listCatalogue } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 9.0 s with the
+// file alone (load 5-27) and up to 9.0 s with every workspace's tests in parallel (load 5-8). A full check on a busy
+// machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
+// time, at least 60 s.
+setDefaultTimeout(190_000);
 
 // The Gira Tastsensor 3 Komfort (M-0008) as the ETS captures show it answering, emulated byte for
 // byte: load-state machines on PID 5, a segment declaration on PID 5 moving the machine's table
@@ -83,7 +89,7 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
     // the association table, first links first: (1,0) (2,2), then 14/7/200 = index 3 on both: (3,0) (3,2)
     expect((await dev.memRead(0x4009, 9)).toString("hex")).toBe("040100020203000302");
     expect(dev.tableRef.get(2)).toBe(0x4009);
-  }, 20_000);
+  }, 70_000);
 
   test("full download: a table reference the device does not hold at the re-declared address after the restart is not verified", async () => {
     const dev = new GiraDevice(cfg);
@@ -91,7 +97,7 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
     const r = await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links: twoObjects });
     expect(r).toMatchObject({ kind: "flashed", verified: false });
     expect((await dev.memRead(0x4009, 9)).toString("hex")).toBe("040100020203000302");
-  }, 20_000);
+  }, 100_000);
 
   test("a device without this application is refused, untouched", async () => {
     const dev = new GiraDevice(cfg);
@@ -147,7 +153,7 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
       "load:3", "write", "loadCompleted:3", ...STAMPS, "restart",
     ]);
     expect(dev.tableRef.get(2)).toBe(0x400b);
-  }, 20_000);
+  }, 130_000);
 
   // ETS's image of its group-address download (gira-m0008-ets6log-partial-links.txt) leaves out the
   // address table's own individual address and the com-object segment's bytes behind its counted
@@ -167,7 +173,7 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
     expect(r).toMatchObject({ kind: "flashed", verified: true });
     expect(written.filter((a) => marked.includes(a))).toEqual([]);
     expect(marked.map((a) => dev.mem.get(a))).toEqual(marked.map(() => 0xa5));
-  }, 20_000);
+  }, 130_000);
 
   test("group-address flash: a unit that differs only in the address table's own address is unchanged", async () => {
     const dev = new GiraDevice(cfg);
@@ -177,7 +183,7 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
     const r = await classify(cfg).flashGroupTables(asDev(dev), cfg.mask, { ...base, links: twoObjects, baseParams: new Map() });
     expect(r).toMatchObject({ kind: "unchanged" });
     expect(dev.ops).toEqual([]);
-  }, 20_000);
+  }, 70_000);
 
   // Equal table bytes are not enough: the device reads its association table from where object 2's
   // reference points, so a table that stands elsewhere is counted as a change and written.
@@ -195,7 +201,7 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
     const r = await classify(cfg).flashGroupTables(asDev(dev), cfg.mask, { ...base, links: twoObjects, baseParams: new Map() });
     expect(r).toMatchObject({ kind: "flashed", verified: true });
     expect([dev.tableRef.get(1), dev.tableRef.get(2)]).toEqual([0x4000, at]);
-  }, 20_000);
+  }, 130_000);
 
   // ETS keeps the association of a linked object with communication off and clears its linked bit
   // (captures/mdt-be02001-ets-partial-flag-comm-{off,on}.log).
@@ -211,7 +217,7 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
     const off = new Map([[0, { flags: { comm: false } }]]);
     expect(await classify(cfg).flashGroupTables(asDev(dev), cfg.mask, { ...base, links: twoObjects, baseParams: new Map(), comObjectOverrides: off, comObjectFlagChanges: new Set([0]) })).toMatchObject({ kind: "flashed", verified: true });
     expect(dev.mem.get(l3.address + 3 + 2)).toBe(held & ~0x04);
-  }, 20_000);
+  }, 70_000);
 
   // The captures show a project's communication flag off over an application's on; what ETS writes for a
   // linked object whose application itself sets communication off is not captured.
@@ -231,7 +237,7 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
     // not linked: nothing to decide, the full download runs
     const free = new GiraDevice(offCfg);
     expect(await classify(offCfg).downloadFull(asDev(free), offCfg.mask, { ...base, links: twoObjects.filter((l) => l.comObjNum !== 0) })).toMatchObject({ verified: true });
-  }, 30_000);
+  }, 70_000);
 
   test("group-address flash: an object whose flags the project changed gets them as the project gives them; the rest stays as the unit holds it", async () => {
     const l3 = cfg.absoluteSegments.find((s) => s.id === cfg.groupTables.comObjectSegment)!;
@@ -266,7 +272,7 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
     upd.mem.set(l3.address + 3 + 2, updHeld);
     expect(await classify(cfg).flashGroupTables(asDev(upd), cfg.mask, { ...base, links: twoObjects, baseParams: new Map(), comObjectOverrides: new Map([[0, { flags: { update: !app0.flags.update } }]]), comObjectFlagChanges: new Set([0]) })).toMatchObject({ kind: "flashed", verified: true });
     expect(config(upd, 0)).toBe((updHeld & ~0x80) | (app0.flags.update ? 0 : 0x80) | 0x04);
-  }, 20_000);
+  }, 190_000);
 
   test("parameter flash: one bracket on the application, the stamps, the restart", async () => {
     const dev = new GiraDevice(cfg);
@@ -276,7 +282,7 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
     expect(r).toMatchObject({ kind: "flashed", verified: true });
     expect(dev.ops.slice(0, dev.ops.indexOf("restart") + 1)).toEqual(["load:3", "write", "loadCompleted:3", ...STAMPS, "restart"]);
     expect(dev.mem.get(0x435c + 3)).toBe(40);
-  }, 20_000);
+  }, 70_000);
 
   // P-3738 "Downloaderkennung" (Access="None", the same value in every configuration): a unit that holds
   // another value there and nothing else differing is unchanged, nothing written, the parameter named.
@@ -291,7 +297,7 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
     const r = await classify(cfg).flashParameters(asDev(dev), cfg.mask, { ...base, dryRun: true, baseParams: new Map() });
     expect(r).toMatchObject({ kind: "unchanged", constantsDiffer: [{ paramRefId: c.paramRefId, label: "Downloaderkennung" }] });
     expect(dev.ops.filter((o) => o === "write")).toEqual([]);
-  }, 20_000);
+  }, 70_000);
 });
 
 // The rules every System 7 application's declared full download follows (docs/load-procedures.md, "The
@@ -316,7 +322,7 @@ corpusDescribe("the System 7 rules hold for every catalogue application", () => 
       expect([f, own]).toEqual([f, []]);
     }
     expect(planned).toBeGreaterThanOrEqual(6); // ABB, TheLuxa, Meteodata, Auro FE01, both MDT
-  }, 30_000); // parses every catalogue application, the 26.9 MB Jung among them: about 3 s on a busy machine, over 8 s while the check runs every workspace at once
+  }, 70_000); // parses every catalogue application, the 26.9 MB Jung among them: about 3 s on a busy machine, over 8 s while the check runs every workspace at once
   test("every declared LdCtrlTaskCtrl1 is encoded from its Address and Count", () => {
     const seen: string[] = [];
     for (const f of listCatalogue()) {
@@ -331,7 +337,7 @@ corpusDescribe("the System 7 rules hold for every catalogue application", () => 
       expect(plan.filter((st) => st.op === "taskCtrl1")).toEqual([{ op: "taskCtrl1", lsm: Number(tc.attrs.LsmIdx), address: Number(tc.attrs.Address), count: Number(tc.attrs.Count) }]);
     }
     expect(seen.sort()).toEqual(["M-0008_A-10D7-11-2783-O000A", "M-0048_A-107E-12-5B58", "M-0048_A-140C-14-EB70", "M-0081_A-FE01-11-75D9", "M-0081_A-FF31-31-D6FF", "M-008E_A-7079-10-9C41"]);
-  }, 30_000); // reads every catalogue application's load procedure, the 26.9 MB Jung among them: about 1 s on a quiet machine, several times that while the check runs every workspace at once
+  }, 60_000); // reads every catalogue application's load procedure, the 26.9 MB Jung among them: about 1 s on a quiet machine, several times that while the check runs every workspace at once
   test("the associations: each object's first link, then the others by object and group index", () => {
     const multi: ComObjectLink[] = [{ comObjNum: 2, gaRaws: [0x0903, 0x0901] }, { comObjNum: 0, gaRaws: [0x0905, 0x0902, 0x0904] }, { comObjNum: 1, gaRaws: [0x0900] }];
     // group indices: 0x0900=1 0x0901=2 0x0902=3 0x0903=4 0x0904=5 0x0905=6
@@ -461,14 +467,14 @@ corpusDescribe("the declared-order M-0081_A-FE01-11-75D9 downloads, run against 
     ]);
     expect((await dev.memRead(0x4000, 7)).toString("hex")).toBe("03120311072a01");
     expect((await dev.memRead(0x402f, 5)).toString("hex")).toBe("0201000200");
-  }, 20_000);
+  }, 70_000);
 
   test("a unit whose address table is not loaded takes the same download: ETS reads no load state before the declared procedure", async () => {
     const dev = auro();
     dev.state.set(1, STATE.UNLOADED);
     expect(await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links })).toMatchObject({ kind: "flashed", verified: true });
     expect(dev.ops[0]).toBe("unload:1");
-  }, 20_000);
+  }, 70_000);
 
   test("the dry run reports the digest of the image the offline plan builds", async () => {
     const dev = auro();
@@ -494,7 +500,7 @@ corpusDescribe("the declared-order M-0081_A-FE01-11-75D9 downloads, run against 
     ]);
     expect((await dev.memRead(0x4000, 9)).toString("hex")).toBe("04120311072a0177c8");
     expect((await dev.memRead(0x402f, 7)).toString("hex")).toBe("03010002000300");
-  }, 20_000);
+  }, 130_000);
 
   // The own individual address in the address table is the device's: it is neither written nor counted.
   test("group-address flash: a unit that differs only in the address table's own address is unchanged", async () => {
@@ -505,7 +511,7 @@ corpusDescribe("the declared-order M-0081_A-FE01-11-75D9 downloads, run against 
     const r = await classify(cfg).flashGroupTables(asDev(dev), cfg.mask, { ...base, links, baseParams: new Map() });
     expect(r).toMatchObject({ kind: "unchanged" });
     expect(dev.ops).toEqual([]);
-  }, 20_000);
+  }, 70_000);
 
   test("group-address flash: the change counted is the bytes of the planned runs that differ from the device", async () => {
     const dev = auro();
@@ -520,7 +526,7 @@ corpusDescribe("the declared-order M-0081_A-FE01-11-75D9 downloads, run against 
     const differing = want.filter(([a, b]) => (dev.mem.get(a) ?? 0) !== b).length;
     expect(differing).toBeGreaterThanOrEqual(2);
     expect(r).toMatchObject({ kind: "dryRun", diffBytes: differing });
-  }, 20_000);
+  }, 70_000);
 
   test("group-address flash: a table reference the device does not hold at the declared address after the restart is not verified", async () => {
     const dev = auro();
@@ -531,7 +537,7 @@ corpusDescribe("the declared-order M-0081_A-FE01-11-75D9 downloads, run against 
     const r = await classify(cfg).flashGroupTables(asDev(dev), cfg.mask, { ...base, links: more, baseParams: new Map() });
     expect(r).toMatchObject({ kind: "flashed", verified: false });
     expect((await dev.memRead(0x402f, 7)).toString("hex")).toBe("03010002000300");
-  }, 20_000);
+  }, 160_000);
 
   test("parameter flash: one bracket on the application, the changed byte, the restart", async () => {
     const dev = auro();
@@ -541,7 +547,7 @@ corpusDescribe("the declared-order M-0081_A-FE01-11-75D9 downloads, run against 
     expect(r).toMatchObject({ kind: "flashed", verified: true });
     expect(dev.ops.slice(0, dev.ops.indexOf("restart") + 1)).toEqual(["load:3", "write", "loadCompleted:3", "restart"]);
     expect(dev.mem.get(0x4207)).toBe(0);
-  }, 20_000);
+  }, 70_000);
 
   // An LdCtrlTaskCtrl1 that one byte of Count and two of Address cannot carry, or one with attributes no
   // capture shows encoded, is refused, by the offer and by the planner.
@@ -615,14 +621,14 @@ corpusDescribe("the declared-order M-0048_A-107E-12-5B58 (TheLuxa P300) full dow
       "taskSegment:3@17894", "taskCtrl1:3=45d3010000000000", "loadCompleted:3", "restart",
     ]);
     expect([dev.tableRef.get(1), dev.tableRef.get(2)]).toEqual([0x4000, 0x4009]);
-  }, 20_000);
+  }, 70_000);
 
   test("full download: a table reference the device does not hold at the re-declared address after the restart is not verified", async () => {
     const dev = theLuxa();
     dev.restart = async () => { dev.ops.push("restart"); dev.tableRef.set(2, 0x41ff); };
     const r = await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links });
     expect(r).toMatchObject({ kind: "flashed", verified: false });
-  }, 20_000);
+  }, 100_000);
 
   const plan = (app: AppConfig, p: LoadProcedures = proc) => () => classify(app).planFullDownload(app.mask, { ia: IA, params: new Map(), links, proc: p });
   test("the application as declared plans", () => {
