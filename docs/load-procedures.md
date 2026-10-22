@@ -1177,7 +1177,11 @@ restart
   and every load-state machine the flash concerns LOADED again (on System B the application too).
 - **Where it differs from ETS.** Of the parameter segments ETS writes every byte a parameter covers on a
   property-mapped mask; the structural flash writes fewer (only what differs from the device), never
-  other ones. On a memory-mapped mask both read the unit first and write what differs.
+  other ones. On a memory-mapped mask both read the unit first and write what differs. On System B the
+  structural flash writes of the com-object table only the bytes that differ from the unit, where ETS
+  wrote the table whole in its captured partial downloads of a structural change (the MIX 2's, which
+  fell back from the differential form); the bytes it wrote beyond those equal the unit's, so the unit
+  ends the same.
 - **The window a failure leaves.** On System B the bracket unloads the application and the security
   object before the first write. A flash cut off inside it leaves the device without a running
   application, and a secured device without its group keys, until the flash is repeated or a full

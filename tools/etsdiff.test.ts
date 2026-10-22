@@ -2241,6 +2241,11 @@ corpusDescribe("Theben MIX 2 (M-0048_A-493B-21-B471) against ETS", () => {
   // P-199 "A_Download erfolgt" (offset 39, bit 0x80, Access="None"): every full and parameter download
   // writes it set, the unit clears it (docs/findings.md, LegacyPatchAlways).
   const DOWNLOADED = 39;
+  // A parameter that shows unlinked objects, captured switched on and off: "Diagnosemeldungen aktivieren" of the
+  // first extension module (DME 2 T, channel C1), which shows objects 95 to 99 (diagnostics).
+  const SHOWS: Record<string, { name: string; kind: string; ref: string; objects: number[] }> = {
+    hmg6t: { name: "the DME 2 T's diagnostics", kind: "diag", ref: `${A}_MD-12_M-36_MI-1_P-9_R-9`, objects: [95, 96, 97, 98, 99] },
+  };
   for (const p of PRODUCTS) {
     describe(p.name, () => {
       const fixture = JSON.parse(captureText(`mix2-${p.tag}-config.json`)) as { ia: string; params: [string, string][]; instances: Parameters<typeof buildDeviceConfig>[3]; links: { comObjNum: number; gaRaws: number[] }[]; overrides: { comObjRefId: string; attrs: Record<string, string> }[] };
@@ -2372,6 +2377,120 @@ corpusDescribe("Theben MIX 2 (M-0048_A-493B-21-B471) against ETS", () => {
         expect([...ets.get(3)!].filter(([o, b]) => unitComObj[o] !== b && !com.has(o))).toEqual([]);
         const whole = (lsm: number) => plan.flatMap((st) => (st.op === "writeSegment" && st.lsm === lsm ? [asMap(st.bytes)] : []));
         for (const lsm of [2, 1]) expect([lsm, whole(lsm).map(sorted)]).toEqual([lsm, [sorted(ets.get(lsm)!)]]);
+      });
+
+      const shows = SHOWS[p.tag];
+      if (!shows) return;
+      // Two more partial downloads, on the unit after a full download of the configuration of the captures
+      // above: a parameter that shows objects (unlinked) switched on, and back. ETS runs both with the
+      // revert's bracket and falls back from its differential form each time, so its image holds every byte
+      // a parameter owns and the three tables whole.
+      const shown = new Map(params).set(shows.ref, "1");
+      const onFile = file(`partial-${shows.kind}-on`), offFile = file(`partial-${shows.kind}-off`);
+      const onLog = `mix2-${p.tag}-ets6log-partial-${shows.kind}-on.txt`, offLog = `mix2-${p.tag}-ets6log-partial-${shows.kind}-off.txt`;
+      // Where the unit keeps each segment, as it reported it to ETS.
+      const kept = (capture: string) => reportedTableReferences(parseCapture(captureText(capture), ia));
+      // The unit's memory by address: the parameter segment and the com-object table given, the group tables of `full`.
+      const unitAt = (at: Map<number, number>, app: Buffer, comObj: Buffer) => {
+        const m = new Map<number, number>();
+        for (const [lsm, seg] of [[4, app], [3, comObj], [2, segment(full, 2)], [1, segment(full, 1)]] as const) seg.forEach((b, i) => m.set(at.get(lsm)! + i, b));
+        return m;
+      };
+      const offsetsToAddresses = (img: Map<number, Map<number, number>>, at: Map<number, number>) => new Map([...img].flatMap(([lsm, m]) => [...m].map(([o, b]) => [at.get(lsm)! + o, b] as [number, number])));
+
+      test(`${shows.name} on and off: objects ${shows.objects[0]} to ${shows.objects.at(-1)} added and removed, so the change takes the structural flash`, () => {
+        // The project holds the catalogue default, "nein".
+        expect(params.has(shows.ref)).toBe(false);
+        expect(buildDeviceConfig(cfg, params, undefined, fixture.instances).imageValues.get(shows.ref)).toBe("0");
+        expect(comObjectTableChanges(cfg, params, shown, fixture.instances).map((c) => [c.number, c.fields])).toEqual(shows.objects.map((n) => [n, ["added"]]));
+        expect(comObjectTableChanges(cfg, shown, params, fixture.instances).map((c) => [c.number, c.fields])).toEqual(shows.objects.map((n) => [n, ["removed"]]));
+        expect(fixture.links.filter((l) => shows.objects.includes(l.comObjNum))).toEqual([]);
+        expect(classify(cfg).capabilities().structuralFlash).toBe(true);
+      });
+
+      // ETS's image of "on" against its full download: the shown objects' config bytes (0x00 to 0x4b, an unlinked
+      // object's), and of the application the switch and the parameters it shows (offset 637: P-9 0x40 and the six
+      // flags beside it at 0; offset 638: the cyclic sending time P-105, 10, its low nibble). "Off" is the full
+      // download's image again, without offset 638: P-105 is inactive again and placed only in the branch not
+      // taken, so ETS does not write it (R14, DownloadInvisibleParameters="None"), and the unit keeps the 10 "on"
+      // wrote; the unit's collects before and after both downloads differ in that memory byte alone. Busforge
+      // leaves it too: a module-instance parameter is owned only while active (buildRelativeSegmentTarget).
+      test(`ETS's logs of ${shows.name} on and off: the revert's bracket, the image of the wire, what each changes`, () => {
+        const full4 = log("fulldownload");
+        for (const [capture, l] of [[onFile, onLog], [offFile, offLog]] as const) {
+          expect(captureText(l)).toContain("Differential Image Stamp does not match, falling back to partial download");
+          expect(etsLog(l).removed).toBe(0);
+          expect(systemBCaptureBracket(capture, ia)).toEqual(systemBCaptureBracket(file("partial-revert"), ia));
+          expect(sorted(offsetsToAddresses(relImage(l), kept(capture)))).toEqual(sorted(memoryImage(parseCapture(captureText(capture), ia).writes)));
+          for (const lsm of [2, 1]) expect([lsm, sorted(relImage(l).get(lsm)!)]).toEqual([lsm, sorted(full4.get(lsm)!)]);
+          expect(sorted(relImage(l).get(3)!)).toHaveLength(segment(full, 3).length);
+        }
+        const on = relImage(onLog), off = relImage(offLog), revert = log("partial-revert");
+        const changes = (img: Map<number, Map<number, number>>, lsm: number) => [...img.get(lsm)!].filter(([o, b]) => full4.get(lsm)!.get(o) !== b);
+        expect(changes(on, 3)).toEqual(shows.objects.map((n) => [2 + (n - 1) * 2, 0x4b]));
+        expect(shows.objects.map((n) => full4.get(3)!.get(2 + (n - 1) * 2))).toEqual(shows.objects.map(() => 0x00));
+        expect(changes(on, 4)).toEqual([[637, 0x40], [638, 0x0a]]);
+        expect([full4.get(4)!.get(637), full4.get(4)!.get(638)]).toEqual([0x00, 0x00]);
+        expect(changes(off, 3)).toEqual([]);
+        expect(changes(off, 4)).toEqual([]);
+        // "On" writes every byte the revert's image holds and offset 638; "off" the revert's bytes.
+        expect([...on.get(4)!.keys()].filter((o) => !revert.get(4)!.has(o))).toEqual([638]);
+        expect(sorted(off.get(4)!).map(([o]) => o)).toEqual(sorted(revert.get(4)!).map(([o]) => o));
+      });
+
+      // Busforge's structural flash of "on" from the unit after the full download (the full download's image, the
+      // marker cleared; the unit's application read before "on" is this, byte for byte), and of "off" from the unit
+      // "on" left. ETS's bracket; of the application exactly ETS's bytes with ETS's values (ETS fell back, so every
+      // owned byte, as Busforge's structural flash writes it); the group tables whole, as ETS. Of the com-object
+      // table Busforge writes the bytes that differ from the unit, ETS the table whole: every byte ETS writes
+      // besides holds what the unit holds. So on the unit the two leave the same memory, offset 638 at 10 after
+      // "off" included.
+      const structural = (values: Map<string, string>, app: Buffer, unitComObj: Buffer, at: Map<number, number>) => {
+        const target = buildRelativeSegmentTarget(cfg, values, 4, { moduleInstances: fixture.instances, ownIdleUnionDefaults: true })!;
+        const { image } = mergeRelativeTarget(app, target);
+        const b = build(values, fixture.links);
+        const comObj = segment(b, 3);
+        return withClosing(withConfirmedRestart(planRelativeStructuralFlash(4, {
+          params: { image, owned: target.owned, keptAt: at.get(4)! },
+          comObj: { image: comObj, owned: differingBytes(comObj, unitComObj), keptAt: at.get(3)! },
+          addr: segment(b, 1), assoc: segment(b, 2),
+        }, Buffer.from("0048493b21", "hex"), true, declaredMcbWrites(proc, target.size, "par")), proc.secureEnabled), proc, "par");
+      };
+      const planWrites = (plan: LoadPlan, at: Map<number, number>, lsm: number) => new Map(plan.flatMap((st) =>
+        st.op === "writeSegmentOwned" && st.lsm === lsm ? ownedRuns(st.image, st.owned).flatMap((r) => [...r.bytes].map((b, i) => [st.keptAt + r.offset + i, b] as [number, number]))
+          : st.op === "writeSegment" && st.lsm === lsm ? [...st.bytes].map((b, i) => [at.get(lsm)! + (st.offset ?? 0) + i, b] as [number, number]) : []));
+      const expectShowsForm = (plan: LoadPlan, capture: string, l: string, unit: Map<number, number>) => {
+        const at = kept(capture);
+        expect(systemBPlanBracket(plan)).toEqual(systemBCaptureBracket(capture, ia));
+        // Busforge besides reads the load states of the three tables there, as after its full download.
+        expect(closingExtras(plan)).toEqual(["assertLoaded", "assertLoaded", "assertLoaded"]);
+        const ets = memoryImage(parseCapture(captureText(capture), ia).writes);
+        const etsOf = (lsm: number) => sorted(offsetsToAddresses(new Map([[lsm, relImage(l).get(lsm)!]]), at));
+        for (const lsm of [4, 2, 1]) expect([lsm, sorted(planWrites(plan, at, lsm))]).toEqual([lsm, etsOf(lsm)]);
+        const com = planWrites(plan, at, 3);
+        expect([...com].filter(([a, b]) => ets.get(a) !== b)).toEqual([]);
+        expect(etsOf(3).filter(([a, b]) => !com.has(a) && unit.get(a) !== b)).toEqual([]);
+        const after = (bytes: Map<number, number>) => sorted(new Map([...unit, ...bytes]));
+        expect(after(new Map([4, 3, 2, 1].flatMap((lsm) => [...planWrites(plan, at, lsm)])))).toEqual(after(ets));
+        return sorted(com).map(([a, b]) => [a - at.get(3)!, b]);
+      };
+
+      test(`structural flash of ${shows.name} on: ETS's bracket, ETS's bytes of the application and the group tables, the com-object bytes that change`, () => {
+        const at = kept(onFile);
+        const plan = structural(shown, held, segment(full, 3), at);
+        expect(expectShowsForm(plan, onFile, onLog, unitAt(at, held, segment(full, 3)))).toEqual(shows.objects.map((n) => [2 + (n - 1) * 2, 0x4b]));
+      });
+
+      test(`structural flash of ${shows.name} off: ETS's bracket and bytes, and offset 638 left at the 10 "on" wrote, as ETS leaves it`, () => {
+        const at = kept(offFile);
+        const app = mergeRelativeTarget(held, buildRelativeSegmentTarget(cfg, shown, 4, { moduleInstances: fixture.instances, ownIdleUnionDefaults: true })!).image;
+        app[DOWNLOADED] &= 0x7f;
+        expect([app[637], app[638]]).toEqual([0x40, 0x0a]);
+        const comObj = segment(build(shown, fixture.links), 3);
+        const plan = structural(params, app, comObj, at);
+        expect(expectShowsForm(plan, offFile, offLog, unitAt(at, app, comObj))).toEqual(shows.objects.map((n) => [2 + (n - 1) * 2, 0x00]));
+        expect(planWrites(plan, at, 4).get(at.get(4)! + 637)).toBe(0x00);
+        expect(planWrites(plan, at, 4).has(at.get(4)! + 638)).toBe(false);
       });
     });
   }
@@ -3413,6 +3532,7 @@ corpusDescribe("the stamp record: ETS's differential parameter download, and its
     ["mdt-router-ets6log-fulldownload.txt", "mdt-router-ets6log-partial-name.txt"],
     ["mdt-router-ets6log-partial-name.txt", "mdt-router-ets6log-partial-name-revert.txt"],
     ...["hmg6t", "jmg4t", "rmg8t"].flatMap((t): [string, string][] => [[`mix2-${t}-ets6log-fulldownload.txt`, `mix2-${t}-ets6log-partial-params.txt`], [`mix2-${t}-ets6log-partial-params.txt`, `mix2-${t}-ets6log-partial-revert.txt`]]),
+    ["mix2-hmg6t-ets6log-partial-diag-on.txt", "mix2-hmg6t-ets6log-partial-diag-off.txt"],
     // Group-address downloads take the same decision on the same stamps: the record is the last download that wrote the
     // parameters, which a group-address download leaves as it was.
     ...["hmg6t", "jmg4t", "rmg8t"].map((t): [string, string] => [`mix2-${t}-ets6log-fulldownload.txt`, `mix2-${t}-ets6log-partial-links.txt`]),
