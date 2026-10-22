@@ -2662,9 +2662,10 @@ corpusDescribe("Theben DALI-Gateway KNX plus (M-0048_A-9071-20-F258-O00EF) again
 // not secured), private corpus captures/meanwell-*, each with ETS's own log, in this order: a partial
 // download after linking the unlinked object 2 ("Power supply on") to a test group address; one after P-29
 // "Maximum Tracking Period" (offset 66, 16 bit) went from 1800 s to 1810 s; one that reverted both; a full download
-// ("Application program"). The configuration is the project's (captures/meanwell-project.json); what the unit held
-// before the first is its collect (captures/meanwell-unit-collect-vor.json), after the last
-// captures/meanwell-unit-collect-nach-ets-full.json. The unit kept its four segments at the same addresses throughout
+// ("Application program"); two more partial downloads after it, P-97 "Maximale Temperatur" switched on and back off
+// (meanwell-ets-partial-maxtemp-*). The configuration is the project's (captures/meanwell-project.json); what the unit held
+// before the first is its collect (captures/meanwell-unit-collect-vor.json), after the full download
+// captures/meanwell-unit-collect-nach-ets-full.json, which is also what it held before "on" and after "off". The unit kept its four segments at the same addresses throughout
 // (ETS's PID 7 reads).
 corpusDescribe("MEAN WELL KNX-40E-1280D (M-0162_A-0004-11-F245) against ETS", () => {
   const xml = catalogueXml("M-0162_A-0004-11-F245.xml.gz");
@@ -2678,7 +2679,7 @@ corpusDescribe("MEAN WELL KNX-40E-1280D (M-0162_A-0004-11-F245) against ETS", ()
   const AT: Record<number, number> = { 1: 0x1002, 2: 0x1404, 3: 0x1c06, 4: 0x1c50 };
   const file = (kind: string) => `meanwell-ets-${kind}.log`;
   const log = (kind: string) => `meanwell-ets6log-${kind}.txt`;
-  const KINDS = ["links", "params", "revert", "fulldownload"];
+  const KINDS = ["links", "params", "revert", "fulldownload", "partial-maxtemp-on", "partial-maxtemp-off"];
   type CollectRecord = { step: string; space: string; target: { object?: number; pid?: number; start?: number; address?: number }; bytes?: string };
   const collect = (f: string) => (JSON.parse(captureText(f)) as { records: CollectRecord[] }).records;
   const unitSegment = (f: string, lsm: number) => Buffer.from(collect(f).find((r) => r.space === "memory" && r.target.address === AT[lsm])!.bytes!, "hex");
@@ -2873,6 +2874,102 @@ corpusDescribe("MEAN WELL KNX-40E-1280D (M-0162_A-0004-11-F245) against ETS", ()
     expect(sorted(planBytes(plan))).toEqual(sorted(wire("revert")));
   });
 
+  // Two more partial downloads, on the unit after the full download above (since then programmed by Busforge's
+  // parameter and group-address flashes too, each reverted): P-97 "Maximale Temperatur" switched on and back off. It
+  // shows object 18 (unlinked) and the parameter P-4 "maximale Temperatur senden" at its default. The unit's collect
+  // after the full download (captures/meanwell-unit-collect-nach-ets-full.json) is, record by record, the one taken
+  // right before "on", and the one after "off" too.
+  const MAX_TEMP = { ref: "M-0162_A-0004-11-F245_P-97_R-97", offset: 71, object: 18, sends: { ref: "M-0162_A-0004-11-F245_P-4_R-4", offset: 72 } };
+  const shown = new Map(params).set(MAX_TEMP.ref, "1");
+  const SHOWN_AT = 2 + (MAX_TEMP.object - 1) * 2;
+  const before77 = "meanwell-unit-collect-nach-ets-full.json";
+
+  test("Maximale Temperatur on and off: object 18 added and removed, so the change takes the structural flash", () => {
+    // The project holds the catalogue default, "Dekativiert".
+    expect(params.has(MAX_TEMP.ref)).toBe(false);
+    const off = buildDeviceConfig(cfg, params).imageValues, on = buildDeviceConfig(cfg, shown).imageValues;
+    expect(off.get(MAX_TEMP.ref)).toBe("0");
+    expect([...on].filter(([k, v]) => off.get(k) !== v)).toEqual([[MAX_TEMP.ref, "1"], [MAX_TEMP.sends.ref, "0"]]);
+    expect(off.has(MAX_TEMP.sends.ref)).toBe(false);
+    expect(comObjectTableChanges(cfg, params, shown).map((c) => [c.number, c.fields])).toEqual([[MAX_TEMP.object, ["added"]]]);
+    expect(comObjectTableChanges(cfg, shown, params).map((c) => [c.number, c.fields])).toEqual([[MAX_TEMP.object, ["removed"]]]);
+    expect(fx.links.some((l) => l.comObjNum === MAX_TEMP.object)).toBe(false);
+    expect(classify(cfg).capabilities().structuralFlash).toBe(true);
+  });
+
+  // Both go differential ("removed 234 identical bytes": 162 owned bytes of the application, as in the revert, and 72 of
+  // the com-object table): of the application the switch alone (P-4 newly shown at 0, which the unit holds), of the
+  // com-object table object 18's two bytes, config and type (0x4b 0x08 shown, 0x00 0x00 hidden), the group tables whole
+  // as the full download writes them. Both in the revert's bracket, and both end with the restart the unit does not
+  // acknowledge on layer 2 (captures/meanwell-ets-restart.log): the interface confirms A_Restart negatively, the unit sends
+  // no T_Disconnect, ETS disconnects itself.
+  test("ETS's logs of Maximale Temperatur on and off: the revert's bracket, the image of the wire, what each changes", () => {
+    const full4 = relImage(log("fulldownload"));
+    for (const kind of ["partial-maxtemp-on", "partial-maxtemp-off"]) {
+      expect([kind, etsLog(log(kind)).removed]).toEqual([kind, 234]);
+      expect(captureText(log(kind))).not.toContain("Differential Image Stamp does not match");
+      expect(etsBracket(kind)).toEqual(etsBracket("revert"));
+      expect(sorted(new Map([...relImage(log(kind))].flatMap(([lsm, m]) => [...m].map(([o, b]) => [AT[lsm] + o, b] as [number, number]))))).toEqual(sorted(wire(kind)));
+      for (const lsm of [2, 1]) expect([kind, lsm, sorted(relImage(log(kind)).get(lsm)!)]).toEqual([kind, lsm, sorted(full4.get(lsm)!)]);
+      const restart = captureText(file(kind)).split("\n").filter((l) => / RESTART \|/.test(l));
+      expect(restart.map((l) => (l.includes("ETS->BRIDGE") ? "sent" : l.match(/(CON-OK|CON-NEG) RESTART/)?.[1]))).toEqual(["sent", "CON-NEG"]);
+      // The unit's T_Disconnect (TPDU 0x81) never comes; ETS sends its own.
+      const disconnects = captureText(file(kind)).split("\n").flatMap((l) => {
+        const m = l.match(/\| ([0-9a-fA-F]+)\s*$/);
+        const fr = m ? parseTunnelFrame(m[1]) : null;
+        return fr && !fr.group && fr.tpdu.length === 1 && fr.tpdu[0] === 0x81 && /TUNNELLING_REQ (req|ind)/.test(l) ? [fr.src === ia ? "unit" : "ETS"] : [];
+      });
+      expect([kind, disconnects]).toEqual([kind, ["ETS"]]);
+    }
+    const on = relImage(log("partial-maxtemp-on")), off = relImage(log("partial-maxtemp-off"));
+    expect([sorted(on.get(3)!), sorted(on.get(4)!)]).toEqual([[[SHOWN_AT, 0x4b], [SHOWN_AT + 1, 0x08]], [[MAX_TEMP.offset, 0x01]]]);
+    expect([sorted(off.get(3)!), sorted(off.get(4)!)]).toEqual([[[SHOWN_AT, 0x00], [SHOWN_AT + 1, 0x00]], [[MAX_TEMP.offset, 0x00]]]);
+    expect([full4.get(3)!.get(SHOWN_AT), full4.get(3)!.get(SHOWN_AT + 1), full4.get(4)!.get(MAX_TEMP.offset), full4.get(4)!.get(MAX_TEMP.sends.offset)]).toEqual([0x00, 0x00, 0x00, 0x00]);
+  });
+
+  // Busforge's structural flash of "on" from the unit before it (its collect: the full download's image in all four
+  // segments), and of "off" from the unit "on" left. Its record is the one the download before leaves (read after its
+  // last LoadCompleted): for "on" ETS's full download, whose stamps the unit still shows (Busforge's flashes between left
+  // them as they found them, as the collect shows); for "off" the one "on" left. The unit's stamps equal it, as ETS's logs
+  // find, so like ETS it writes of the application and the com-object table what differs from the unit, the group
+  // tables whole: ETS's bracket, and exactly ETS's bytes with ETS's values.
+  const structural77 = (values: Map<string, string>, app: Buffer, unitComObj: Buffer, record: ImageStamp[], kind: string) => {
+    const written = record.map((r) => ({ ...r, written: true as const }));
+    const check = stampCheck(written, log(kind));
+    expect(check.equal).toBe(true);
+    const target = buildRelativeSegmentTarget(cfg, values, 4, { ownIdleUnionDefaults: true })!;
+    const { image } = mergeRelativeTarget(app, target);
+    const mcb = declaredMcbWrites(proc, target.size, "par");
+    const b = build(values, fx.links);
+    const comObj = segment(b, 3);
+    const plan = withClosing(withConfirmedRestart(planRelativeStructuralFlash(4, {
+      params: { image, owned: relativeParWriteSet(image, app, target.owned, mcb, check), keptAt: AT[4] },
+      comObj: { image: comObj, owned: relativeComObjWriteSet(comObj, unitComObj, written, check), keptAt: AT[3] },
+      addr: segment(b, 1), assoc: segment(b, 2),
+    }, PROGRAM_ID, true, mcb), proc.secureEnabled), proc, "par");
+    expect(systemBPlanBracket(plan)).toEqual(etsBracket(kind));
+    expect(sorted(planBytes(plan))).toEqual(sorted(wire(kind)));
+    return { plan, image, comObj };
+  };
+
+  test("structural flash of Maximale Temperatur on: ETS's bracket and exactly ETS's bytes, from the unit's state before", () => {
+    for (const lsm of [4, 3, 2, 1]) expect([lsm, unitSegment(before77, lsm).equals(segment(full, lsm))]).toEqual([lsm, true]);
+    const record = logStamps(log("fulldownload")).closing;
+    expect(record).toEqual(unitStamps(before77));
+    const { plan } = structural77(shown, unitSegment(before77, 4), unitSegment(before77, 3), record, "partial-maxtemp-on");
+    expect(sorted(planBytes(plan)).filter(([a]) => a >= AT[3])).toEqual([[AT[3] + SHOWN_AT, 0x4b], [AT[3] + SHOWN_AT + 1, 0x08], [AT[4] + MAX_TEMP.offset, 0x01]]);
+  });
+
+  test("structural flash of Maximale Temperatur off: ETS's bracket and exactly ETS's bytes, from the unit \"on\" left", () => {
+    const on = structural77(shown, unitSegment(before77, 4), unitSegment(before77, 3), logStamps(log("fulldownload")).closing, "partial-maxtemp-on");
+    const { plan } = structural77(params, on.image, on.comObj, logStamps(log("partial-maxtemp-on")).closing, "partial-maxtemp-off");
+    expect(sorted(planBytes(plan)).filter(([a]) => a >= AT[3])).toEqual([[AT[3] + SHOWN_AT, 0x00], [AT[3] + SHOWN_AT + 1, 0x00], [AT[4] + MAX_TEMP.offset, 0x00]]);
+    // The unit is back at the full download's image, as its collect after "off" shows.
+    const after = new Map([...asMap(on.image)].map(([o, b]) => [AT[4] + o, b] as [number, number]));
+    for (const [a, b] of planBytes(plan)) if (a >= AT[4]) after.set(a, b);
+    expect(Buffer.from(sorted(after).map(([, b]) => b)).equals(segment(full, 4))).toBe(true);
+  });
+
   // ETS's group-address download wrote seven entries; its revert and its full download write the six the configuration
   // holds and leave the seventh behind the active length, which the unit's collect after the full download shows (the
   // tables' PID 23). Busforge's group-address flash and full download write the same lengths.
@@ -2893,7 +2990,7 @@ corpusDescribe("MEAN WELL KNX-40E-1280D (M-0162_A-0004-11-F245) against ETS", ()
     const objects = (assoc: Buffer) => Array.from({ length: assoc.readUInt16BE(0) }, (_, k) => assoc.readUInt16BE(2 + k * 4 + 2));
     expect(objects(segment(full, 2))).toEqual([11, 13, 15, 16, 19, 20]);
     expect(objects(segment(linked, 2))).toEqual([2, 11, 13, 15, 16, 19, 20]);
-    for (const kind of ["links", "revert", "fulldownload"]) {
+    for (const kind of ["links", "revert", "fulldownload", "partial-maxtemp-on", "partial-maxtemp-off"]) {
       const at = wire(kind);
       const assoc = Buffer.from(Array.from({ length: 2 + 4 * at.get(AT[2] + 1)! }, (_, i) => at.get(AT[2] + i)!));
       expect([kind, objects(assoc).filter((o) => o >= 3 && o <= 6)]).toEqual([kind, []]);
@@ -3550,6 +3647,10 @@ corpusDescribe("the stamp record: ETS's differential parameter download, and its
     // parameters, which a group-address download leaves as it was.
     ...["hmg6t", "jmg4t", "rmg8t"].map((t): [string, string] => [`mix2-${t}-ets6log-fulldownload.txt`, `mix2-${t}-ets6log-partial-links.txt`]),
     ["meanwell-ets6log-params.txt", "meanwell-ets6log-revert.txt"],
+    // The unit's stamps before "on" are those its full download left (its collect after that download and the one
+    // before "on" are the same, record by record).
+    ["meanwell-ets6log-fulldownload.txt", "meanwell-ets6log-partial-maxtemp-on.txt"],
+    ["meanwell-ets6log-partial-maxtemp-on.txt", "meanwell-ets6log-partial-maxtemp-off.txt"],
   ];
   for (const [before, file] of cases) {
     test(`${file}: the decision ETS's log names, from the record of ${before}`, () => {

@@ -1,10 +1,10 @@
 import type { DeviceSpec } from "../spec.ts";
 
 // The MEAN WELL KNX-40E-1280D power supply (application 0004, MV-07B0, System B) as a unit in
-// service: the run takes its configuration by read-back and writes one parameter flash and one GA
-// flash, each reverted (inservice.ts); a full download of the configuration found only with
-// --full-download. Refs pinned verbatim from the application's catalogue; the run refuses a ref the
-// unit's configuration does not list.
+// service: the run takes its configuration by read-back and writes one parameter flash, one GA flash
+// and one structural flash, each reverted (inservice.ts); a full download of the configuration found
+// only with --full-download. Refs pinned verbatim from the application's catalogue; the run refuses a
+// ref the unit's configuration does not list.
 //
 // The unit is the power supply of the line the run talks to. A download ends with A_Restart, which
 // restarts its application, not its power stage: ETS's and Busforge's downloads of every kind kept the
@@ -12,7 +12,8 @@ import type { DeviceSpec } from "../spec.ts";
 // KNXnet/IP interface stayed up across each of them (ipInterface); the run's own tunnel through it
 // across a restart of the unit has not been shown. What cuts the bus is a telegram to object 6
 // ("Bus reset"); objects 3 to 5 trigger sends or clear counters. No step links any of them: the link
-// step uses object 2, and the full download writes the configuration found.
+// step uses object 2, the structural step shows object 18 unlinked, and the full download writes the
+// configuration found.
 //
 // The unit restarts before its layer-2 acknowledgement of A_Restart, so an interface confirms that
 // frame negatively, and the unit gives no T_Disconnect: each flash ends verified with restartUnproven
@@ -49,6 +50,14 @@ export const meanwellKnx40eInService: DeviceSpec = {
     // "Power supply on" (1 bit, read + transmit), unlinked in the installation; linked to the run's test
     // address while the run reads it. The unit also sends it at every start.
     link: { comObjRefId: "M-0162_A-0004-11-F245_O-2_R-2" },
+    // "Maximale Temperatur" "Dekativiert" to "aktiviert" shows object 18 (the maximum temperature) in
+    // the configuration, which takes the structural flash; the object stays unlinked (no group
+    // address). The change sets object 18's two bytes of the com-object table (its config and type;
+    // the table goes whole where the unit's record is not of a download that wrote it, as after a
+    // parameter flash, else those two bytes) and the switch; the parameter it shows, "maximale Temperatur senden", stays at its default, which
+    // the unit holds. The revert hides the object and resets the switch. ETS's partial downloads of
+    // this change and its revert are captured (tools/etsdiff.test.ts).
+    structural: { paramRefId: "M-0162_A-0004-11-F245_P-97_R-97", value: "1" },
     fullDownload: true,
   },
   configure: [],
@@ -56,7 +65,5 @@ export const meanwellKnx40eInService: DeviceSpec = {
     // The unit answers a GroupValueRead of "Power supply on" with 1 while it supplies the line.
     { kind: "output", label: "Power supply on answers on the test link", comObjRefId: "M-0162_A-0004-11-F245_O-2_R-2", expectValue: "01" },
   ],
-  unsafe: [
-    { capability: "structuralFlash", reason: "never written to this product on hardware: a product's first structural flash is not run on a unit in service without an ETS capture that pins the change" },
-  ],
+  unsafe: [],
 };
