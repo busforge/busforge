@@ -5809,7 +5809,7 @@
     "persistence": {
      "state": "pass",
      "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
-     "detail": "silent 5238 ms after A_Restart, answering again after 5826 ms; load objects 1, 2, 3 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
+     "detail": "silent 3766 ms after A_Restart, first in the restart's own connection, answering again after 3871 ms; load objects 1, 2, 3 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
@@ -5877,7 +5877,7 @@
     "persistence": {
      "state": "pass",
      "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
-     "detail": "silent 3778 ms after A_Restart, first in the restart's own connection, answering again after 3891 ms; load objects 1, 2, 3 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
+     "detail": "silent 3796 ms after A_Restart, first in the restart's own connection, answering again after 3934 ms; load objects 1, 2, 3 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
@@ -6397,6 +6397,138 @@
      "state": "pass",
      "method": "parameter memory read and decoded completely; not compared with a built image",
      "detail": "parameter image read back and decoded, equal to the configuration found"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0008",
+    "productRef": "M-0008_H-8.20.2F.2F.20zxy3.20xx-1_P-5133.2000",
+    "appProgramId": "M-0008_A-10D7-11-2783-O000A",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "5",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "gira-m0008-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "5133 00 structuralFlash api transfer",
+   "scope": {
+    "operation": "structuralFlash",
+    "channel": "api",
+    "configuration": "the device's own configuration, taken over by read-back, then the structuralFlash driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "a change that alters the com-object table, and its revert, each written as one structural flash the server reported verified, zero drift on read-back",
+     "detail": "P-3848_R-3848 0→1 (35 B, verified) →0 (35 B, verified), zero drift on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0008",
+    "productRef": "M-0008_H-8.20.2F.2F.20zxy3.20xx-1_P-5133.2000",
+    "appProgramId": "M-0008_A-10D7-11-2783-O000A",
+    "mask": "MV-0705",
+    "firmware": {
+     "state": "observed",
+     "value": "5",
+     "source": "device object PID_FIRMWARE_REVISION (object 0, PID 9)"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "gira-m0008-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "5133 00 structuralFlash ui transfer",
+   "scope": {
+    "operation": "structuralFlash",
+    "channel": "ui",
+    "configuration": "the device's own configuration, taken over by read-back, then the structuralFlash driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "a change that alters the com-object table, and its revert, each written as one structural flash the server reported verified, zero drift on read-back",
+     "detail": "P-3848_R-3848 0→1 (verified) →0 (verified), zero drift on read-back"
     },
     "reference": {
      "state": "not-assessed"

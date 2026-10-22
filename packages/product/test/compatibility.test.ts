@@ -141,7 +141,7 @@ describe("the shipped evidence bundle", () => {
     // Per Product, the full download and the structural flash as its smoke runs drove them: the bench
     // Products every operation, the structural flash only where it is offered (the GVS's firmware rule
     // refuses it); units in service the full download where their runs requested it, the structural
-    // flash where their spec has the step (the Gira's, the HMG 6 T's and the RMG 8 T's
+    // flash where their spec has the step (the HMG 6 T's and the RMG 8 T's
     // declare it unsafe, the OpenKNX's firmware rule refuses it); the MDT IP Interface Secure has no
     // group objects, so no GA flash; the MDT IP Interface/Router's product refuses the full download (tunnelling
     // entries) and the structural flash, so its runs drive neither. The MEAN WELL power supply has no smoke run: its records are API
@@ -154,7 +154,7 @@ describe("the shipped evidence bundle", () => {
       "M-0085_H-AM22AA-16_P-AMMA.2D04.2F06.2ES": { fullDownload: "tested", structuralFlash: "eligible" },
       "M-0048_H-9070929-1-O00EF_P-9070929": { fullDownload: "tested", structuralFlash: "tested" },
       "M-0081_H-GeneratedNumber.2D22017-0_P-180.2D02": { fullDownload: "tested", structuralFlash: "tested" },
-      "M-0008_H-8.20.2F.2F.20zxy3.20xx-1_P-5133.2000": { fullDownload: "tested", structuralFlash: "eligible" },
+      "M-0008_H-8.20.2F.2F.20zxy3.20xx-1_P-5133.2000": { fullDownload: "tested", structuralFlash: "tested" },
       "M-0048_H-1019610-1_P-1019610": { fullDownload: "tested", structuralFlash: "tested" },
       "M-0083_H-180-0_P-BE.2D06001.2E02": { fullDownload: "tested", structuralFlash: "tested" },
       "M-0048_H-4930240-2_P-4930240": { fullDownload: "tested", structuralFlash: "eligible" },

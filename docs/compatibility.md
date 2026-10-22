@@ -18,7 +18,7 @@ columns are listed per operation below.
 |---|---|---|---|---|---|---|---|
 | M-0002 GH Q631 0070 R0111 | `M-0002_A-A001-13-63C2` | tested | tested | tested | tested | tested | tested |
 | M-0004 400021SE | `M-0004_A-7072-21-99A7-O000A` | tested | tested | tested | tested | tested | tested |
-| M-0008 5133 00 | `M-0008_A-10D7-11-2783-O000A` | tested | tested | tested | tested | tested | eligible, untested |
+| M-0008 5133 00 | `M-0008_A-10D7-11-2783-O000A` | tested | tested | tested | tested | tested | tested |
 | M-0048 1019610 | `M-0048_A-107E-12-5B58` | tested | tested | tested | tested | tested | tested |
 | M-0048 4930200 | `M-0048_A-493B-21-B471` | tested | tested | tested | tested | tested | eligible, untested |
 | M-0048 4930240 | `M-0048_A-493B-21-B471` | tested | tested | tested | tested | tested | eligible, untested |
@@ -70,7 +70,7 @@ Product `M-0008_H-8.20.2F.2F.20zxy3.20xx-1_P-5133.2000`, application program `M-
 | Parameter flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 5 |
 | Group-address flash | tested | pass / pass | not-assessed / not-assessed | pass / pass | none | 5 |
 | Full download | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 5 |
-| Structural flash | eligible, untested | none / none | none / none | none / none | none | none |
+| Structural flash | tested | pass / pass | not-assessed / not-assessed | not-assessed / not-assessed | none | 5 |
 
 ## M-0048 1019610
 
