@@ -18,3 +18,16 @@ test("the unit's regions are laid out from all its elements, a control-1 region 
   expect(relativeParWriteSet(image, current, owned, [], { equal: false, read })).toEqual(owned);
   expect(relativeParWriteSet(image, current, owned, [], null)).toEqual(owned);
 });
+
+// A byte the unit reads as FF says nothing about what it holds (a write-only field, a password). Where the project
+// set it to FF since the last programming, the read cannot show the change; ETS, comparing with its record's image,
+// writes it, and so does the differential, deciding such a byte against the image of the programmed baseline.
+test("a byte read as FF that the project changed to FF since the baseline is written; one unchanged is not", () => {
+  const owned = new Array<number>(4).fill(0xff);
+  const current = Buffer.from([0xff, 0xff, 0x00, 0x00]);
+  const image = Buffer.from([0xff, 0xff, 0x00, 0x05]);
+  const base = Buffer.from([0x41, 0xff, 0x00, 0x00]); // byte 0: was "A", now FF; byte 1: FF before and after
+  const read = [el(4, 1, 4, 0, 0xbb)];
+  expect(relativeParWriteSet(image, current, owned, [], { equal: true, read }, base)).toEqual([0xff, 0, 0, 0xff]);
+  expect(relativeParWriteSet(image, current, owned, [], { equal: true, read })).toEqual([0, 0, 0, 0xff]);
+});

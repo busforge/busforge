@@ -158,6 +158,108 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
     }, 30_000);
   });
 
+  // The structural flash takes both decisions on one check, as ETS's partial download over all four objects does: with
+  // the unit's stamps equal to the record, the owned parameter bytes that differ (relativeParWriteSet) and, where the
+  // record's download wrote the com-object table, its bytes that differ (relativeComObjWriteSet); otherwise every owned
+  // byte and the table whole ("Differential Image Stamp does not match", Theben MIX 2). The group tables go whole either way.
+  describe("System B structural flash and the stamp record", () => {
+    const links = [{ comObjNum: 2, gaRaws: [0x77c8] }];
+    const tables = (l: typeof links) => {
+      const b = classify(cfg).planFullDownload(cfg.mask, { ia: "1.2.7", params, links: l, proc: parseLoadProcedures(xml) });
+      return (lsm: number) => b.segments.find((s) => s.lsm === lsm)!.image;
+    };
+    const unlinked = tables([]), linked = tables(links);
+    const COMOBJ = `${unlinked(3).length.toString(16).padStart(8, "0")}00ff00cc`;
+    const run = async (record: { obj: number; element: number; hex: string; written?: true }[] | undefined) => {
+      const dev = seeded();
+      dev.stamps.set(3, COMOBJ);
+      for (const lsm of [1, 2, 3]) unlinked(lsm).forEach((b, i) => dev.mem.set(0x100 * lsm + i, b));
+      const k = target.owned.findIndex((m) => m === 0xff);
+      dev.mem.set(BASE + k, unlike(target.bytes[k]));
+      const res = await classify(cfg).flashStructure(asDev(dev), "07B0", { ...ctx, ia: "1.2.7", links, stampRecord: record });
+      if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
+      expect(res.verified).toBe(true);
+      const inRange = (at: number, len: number) => [...dev.written].filter((a) => a >= at && a < at + len).map((a) => a - at);
+      return { k, params: inRange(BASE, target.size), comObj: inRange(0x300, linked(3).length) };
+    };
+    const record = [{ obj: 3, element: 1, hex: COMOBJ, written: true as const }, { obj: 4, element: 1, hex: STAMP, written: true as const }];
+    const owned = target.owned.filter((m) => m !== 0).length;
+    test("stamps equal to a record whose download wrote the table: the parameter byte and the com-object byte that differ", async () => {
+      const { k, params: p, comObj } = await run(record);
+      expect(p).toEqual([k]);
+      expect(comObj).toEqual([4]);
+    }, 30_000);
+    test("the application's stamp other than the record: every owned byte and the com-object table whole", async () => {
+      const r = await run([record[0], { obj: 4, element: 1, hex: other("00", "00bb") }]);
+      expect([r.params.length, r.comObj.length]).toEqual([owned, linked(3).length]);
+    }, 30_000);
+    test("no record: every owned byte and the com-object table whole", async () => {
+      const r = await run(undefined);
+      expect([r.params.length, r.comObj.length]).toEqual([owned, linked(3).length]);
+    }, 30_000);
+    test("a record of a parameter flash, which did not write the table: the parameter byte that differs, the table whole", async () => {
+      const r = await run([{ obj: 3, element: 1, hex: COMOBJ }, record[1]]);
+      expect([r.params, r.comObj.length]).toEqual([[r.k], linked(3).length]);
+    }, 30_000);
+
+    // Malformed in the check before the write only; the closing reads after it take the whole elements again.
+    test("a stamp the unit does not give as 8 bytes: every owned byte and the table whole, not a refusal", async () => {
+      const dev = seeded();
+      dev.stamps.set(3, COMOBJ);
+      dev.stamps.set(4, "0000004a00ff");
+      const writes = dev.memWrite.bind(dev);
+      dev.memWrite = async (addr: number, data: Buffer) => { dev.stamps.delete(4); return writes(addr, data); };
+      for (const lsm of [1, 2, 3]) unlinked(lsm).forEach((b, i) => dev.mem.set(0x100 * lsm + i, b));
+      const res = await classify(cfg).flashStructure(asDev(dev), "07B0", { ...ctx, ia: "1.2.7", links, stampRecord: record });
+      if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
+      const inRange = (at: number, len: number) => [...dev.written].filter((a) => a >= at && a < at + len).length;
+      expect([inRange(BASE, target.size), inRange(0x300, linked(3).length)]).toEqual([owned, linked(3).length]);
+    }, 30_000);
+
+    // The parameter bytes as the parameter flash decides them where the unit reads FF: a byte the project has not
+    // changed since the last programming stays and is named; one it set to FF since then is written, though the
+    // read cannot show the difference.
+    const seededTables = () => {
+      const dev = seeded();
+      dev.stamps.set(3, COMOBJ);
+      for (const lsm of [1, 2, 3]) unlinked(lsm).forEach((b, i) => dev.mem.set(0x100 * lsm + i, b));
+      return dev;
+    };
+    test("a byte read as FF the project has not changed since the last programming is left alone, and named", async () => {
+      const dev = seededTables();
+      const k = target.owned.findIndex((m, i) => i > 0 && m === 0xff && target.verify[i] === 0xff && target.constant[i] === 0 && target.bytes[i] !== 0xff);
+      dev.mem.set(BASE + k, 0xff);
+      const res = await classify(cfg).flashStructure(asDev(dev), "07B0", { ...ctx, ia: "1.2.7", links, stampRecord: record });
+      if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
+      expect([res.verified, res.leftFF, dev.written.has(BASE + k), dev.mem.get(BASE + k)]).toEqual([true, [{ address: BASE + k, length: 1 }], false, 0xff]);
+    }, 30_000);
+    test("a byte the project set to FF since the last programming is written where the unit reads FF", async () => {
+      const dev = seededTables();
+      const reads = dev.memRead.bind(dev);
+      dev.memRead = async (addr: number, len: number) => { const b = await reads(addr, len); if (addr <= BASE + FF_AT && BASE + FF_AT < addr + len) b[BASE + FF_AT - addr] = 0xff; return b; };
+      const res = await classify(cfg).flashStructure(asDev(dev), "07B0", { ...ctx, ia: "1.2.7", links, params: toFF, stampRecord: record });
+      if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
+      expect([dev.written.has(BASE + FF_AT), dev.mem.get(BASE + FF_AT)]).toEqual([true, 0xff]);
+    }, 30_000);
+  });
+
+  // P-8 at 255 sets its byte (98) to FF; the baseline, the application's defaults, holds 0 there. A unit that holds
+  // the 0 but reads the byte as FF shows no difference, yet the project changed it.
+  const FF_AT = 98;
+  const toFF = new Map([["M-0162_A-0004-11-F245_P-8_R-8", "255"]]);
+  // With another byte changed beside it, so the flash writes (a change to FF alone shows no difference to the read).
+  test("the parameter flash writes a byte the project set to FF where the unit reads FF, with the stamps equal to the record", async () => {
+    const t = buildRelativeSegmentTarget(cfg, toFF, 4, { ownIdleUnionDefaults: true })!;
+    expect([t.bytes[FF_AT], t.owned[FF_AT], target.bytes[FF_AT]]).toEqual([0xff, 0xff, 0x00]);
+    const dev = seeded();
+    dev.mem.set(BASE, unlike(target.bytes[0]));
+    const reads = dev.memRead.bind(dev);
+    dev.memRead = async (addr: number, len: number) => { const b = await reads(addr, len); if (addr <= BASE + FF_AT && BASE + FF_AT < addr + len) b[BASE + FF_AT - addr] = 0xff; return b; };
+    const res = await classify(cfg).flashParameters(asDev(dev), "07B0", { ...ctx, params: toFF, stampRecord: [{ obj: 4, element: 1, hex: STAMP }] });
+    if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
+    expect([dev.written.has(BASE + FF_AT), dev.mem.get(BASE + FF_AT)]).toEqual([true, 0xff]);
+  }, 30_000);
+
   // Which objects an operation's record marks as written (ImageStamp.written) decides the next group-address
   // flash: the com-object table goes differentially only after a record whose download wrote it. A download
   // that writes every segment (the full download and the structural flash) marks

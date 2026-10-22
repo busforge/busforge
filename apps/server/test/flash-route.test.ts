@@ -5,7 +5,7 @@ import { corpusDescribe, corpusTest } from "../../../tools/corpus-test.ts";
 import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setDeviceParam, setDeviceLink, getDeviceChangedKeys, getDeviceParamBase, replaceParamBase, getImageStamps } from "../src/db/deviceparams.ts";
+import { setDeviceParam, setDeviceLink, getDeviceChangedKeys, getDeviceParamBase, replaceParamBase, getImageStamps, setImageStamps } from "../src/db/deviceparams.ts";
 import { deviceParamRefs } from "../src/deviceservice.ts";
 import { putDeviceSecurity } from "../src/db/deviceSecurity.ts";
 import { putGroupKeys } from "../src/db/groupKeys.ts";
@@ -365,6 +365,20 @@ corpusDescribe("POST /flash + /flash-ga: an L3-changing edit runs the structural
     expect(Array.isArray(seen?.links)).toBe(true);
     expect(getDeviceParamBase(state.db, projectId, deviceId).get(TABLE_CHANGING_JUNG)).toBe("8");
     expect(getDeviceChangedKeys(state.db, projectId, deviceId).params.has(TABLE_CHANGING_JUNG)).toBe(false);
+  });
+
+  test("the structural flash gets the device's stamp record, and a verified one keeps its own", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await projectWithApp(state, jung);
+    const stamp = (crc: string) => [{ obj: 4, element: 1, hex: `00001e1500ff${crc}`, written: true as const }];
+    setImageStamps(state.db, projectId, deviceId, stamp("aaaa"));
+    setDeviceParam(state.db, projectId, deviceId, TABLE_CHANGING_JUNG, "8");
+    let seen: unknown;
+    structureImpl = async (o) => { seen = o.stampRecord; return { ...flashed(true), structural: true, stamps: stamp("bbbb") } as FlashResult; };
+    try { await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`)); }
+    finally { structureImpl = realStructure; }
+    expect(seen).toEqual(stamp("aaaa"));
+    expect(getImageStamps(state.db, projectId, deviceId)).toEqual(stamp("bbbb"));
   });
 
   test("an unverified structural flash adopts nothing", async () => {

@@ -240,6 +240,7 @@ function structuralFlash(
         projectId, deviceId, ia: dev.ia, appXml,
         connection: conn, dataDir: state.dataDir, ...tables.ctx,
         params, baseParams, links: resolved.links, moduleInstances: modules, comObjectOverrides, comObjectOverrideBase,
+        stampRecord: getImageStamps(db, projectId, deviceId),
         dryRun: dry, onProgress: progress, ...gate,
       });
     }, commit, (result) => {

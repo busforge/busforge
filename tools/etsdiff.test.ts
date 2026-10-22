@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { iaToNum, numToIa, gaToNum, LSM, planSecurityObjectLoad, GROUP_KEY_ENTRY, ownedRuns, planSystemBGaFlash, fillAllocatedRuns, differingRuns, type LoadPlan } from "../packages/knx/src/index.ts";
-import { parseAppConfig, classify, parseLoadProcedures, relParamFillByte, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, differingFF, leaveUnreadUnchanged, buildDeviceConfig, buildComObjectTable, buildGroupTables, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosing, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, withInstanceOverrides, differingBytes, fullDownloadImageCoverage, planSystem1Download, MV0012_DEFAULT_LOAD, absoluteBuildInstances, checkedStamps, buildSecurityObject, writtenGroupKeys, relativeParWriteSet, relativeComObjWriteSet, constantParams, differingConstants, comObjectTableChanges, type KnxIpDevice, type ModuleInstance, type ComObjInstanceOverride, type ImageStamp } from "../packages/product/src/index.ts";
+import { parseAppConfig, classify, parseLoadProcedures, relParamFillByte, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, differingFF, leaveUnreadUnchanged, buildDeviceConfig, buildComObjectTable, buildGroupTables, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosing, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, withInstanceOverrides, fullDownloadImageCoverage, planSystem1Download, MV0012_DEFAULT_LOAD, absoluteBuildInstances, checkedStamps, buildSecurityObject, writtenGroupKeys, relativeParWriteSet, relativeComObjWriteSet, constantParams, differingConstants, comObjectTableChanges, type KnxIpDevice, type ModuleInstance, type ComObjInstanceOverride, type ImageStamp } from "../packages/product/src/index.ts";
 import { catalogueDir, catalogueXml, captureText, capturePath, listCatalogue } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { CollectedUnit, asDevice, type Collection } from "../packages/product/test/collected-unit.ts";
@@ -2353,28 +2353,32 @@ corpusDescribe("Theben MIX 2 (M-0048_A-493B-21-B471) against ETS", () => {
       });
 
       // The same revert as Busforge's structural flash, from the unit ETS's parameter and group-address
-      // downloads left: ETS's bracket, and its bytes. The parameter bytes and the com-object table bytes
-      // that differ from the unit, the group tables whole.
-      test("structural flash of the revert: ETS's bracket, and every byte of ETS's revert with its value", () => {
+      // downloads left: ETS's bracket, and its bytes. Its record is that of its parameter flash (the application
+      // written), which the group-address download in between left as it was while changing the com-object table's
+      // stamp: ETS's log falls back on it, and both write every owned parameter byte, the com-object table whole and
+      // the group tables whole.
+      test("structural flash of the revert: ETS's bracket, and exactly the bytes of ETS's revert", () => {
         const unitParams = parFlash(changed, held).image;
         unitParams[DOWNLOADED] &= 0x7f;
         const unitComObj = segment(build(params, withLink), 3);
         const target = buildRelativeSegmentTarget(cfg, params, 4, { moduleInstances: fixture.instances, ownIdleUnionDefaults: true })!;
         const { image } = mergeRelativeTarget(unitParams, target);
         const comObj = segment(full, 3);
+        const mcb = declaredMcbWrites(proc, target.size, "par");
+        const record = logStamps(`mix2-${p.tag}-ets6log-partial-params.txt`).closing.map((r) => (r.obj === 4 ? { ...r, written: true as const } : r));
+        const check = stampCheck(record, `mix2-${p.tag}-ets6log-partial-revert.txt`);
+        expect(check.equal).toBe(false);
+        expect(captureText(`mix2-${p.tag}-ets6log-partial-revert.txt`)).toContain("Differential Image Stamp does not match");
         const plan = withClosing(withConfirmedRestart(planRelativeStructuralFlash(4, {
-          params: { image, owned: target.owned, keptAt: 0x3bfe },
-          comObj: { image: comObj, owned: differingBytes(comObj, unitComObj), keptAt: 0x3000 },
+          params: { image, owned: relativeParWriteSet(image, unitParams, target.owned, mcb, check), keptAt: 0x3bfe },
+          comObj: { image: comObj, owned: relativeComObjWriteSet(comObj, unitComObj, record, check), keptAt: 0x3000 },
           addr: segment(full, 1), assoc: segment(full, 2),
-        }, Buffer.from("0048493b21", "hex"), true, declaredMcbWrites(proc, target.size, "par")), proc.secureEnabled), proc, "par");
+        }, Buffer.from("0048493b21", "hex"), true, mcb), proc.secureEnabled), proc, "par");
         expect(systemBPlanBracket(plan)).toEqual(systemBCaptureBracket(file("partial-revert"), ia));
         const ets = log("partial-revert");
         const written = (lsm: number) => new Map(plan.flatMap((st) => (st.op === "writeSegmentOwned" && st.lsm === lsm
           ? ownedRuns(st.image, st.owned).flatMap((r) => [...r.bytes].map((b, i) => [r.offset + i, b] as [number, number])) : [])));
-        expect(sorted(written(4))).toEqual(sorted(ets.get(4)!));
-        const com = written(3);
-        expect([...com].filter(([o, b]) => ets.get(3)!.get(o) !== b)).toEqual([]);
-        expect([...ets.get(3)!].filter(([o, b]) => unitComObj[o] !== b && !com.has(o))).toEqual([]);
+        for (const lsm of [4, 3]) expect([lsm, sorted(written(lsm))]).toEqual([lsm, sorted(ets.get(lsm)!)]);
         const whole = (lsm: number) => plan.flatMap((st) => (st.op === "writeSegment" && st.lsm === lsm ? [asMap(st.bytes)] : []));
         for (const lsm of [2, 1]) expect([lsm, whole(lsm).map(sorted)]).toEqual([lsm, [sorted(ets.get(lsm)!)]]);
       });
@@ -2440,21 +2444,26 @@ corpusDescribe("Theben MIX 2 (M-0048_A-493B-21-B471) against ETS", () => {
 
       // Busforge's structural flash of "on" from the unit after the full download (the full download's image, the
       // marker cleared; the unit's application read before "on" is this, byte for byte), and of "off" from the unit
-      // "on" left. ETS's bracket; of the application exactly ETS's bytes with ETS's values (ETS fell back, so every
-      // owned byte, as Busforge's structural flash writes it); the group tables whole, as ETS. Of the com-object
-      // table Busforge writes the bytes that differ from the unit, ETS the table whole: every byte ETS writes
-      // besides holds what the unit holds. So on the unit the two leave the same memory, offset 638 at 10 after
-      // "off" included.
-      const structural = (values: Map<string, string>, app: Buffer, unitComObj: Buffer, at: Map<number, number>) => {
+      // "on" left. Its record is the one the download before leaves (read after its last LoadCompleted, before the
+      // restart): for "on" ETS's last logged download, the revert, whose com-object stamp the unit still shows (the
+      // download between, which has no log, is not seen); for "off" the one "on" left. The unit's stamps no longer equal it, as
+      // ETS's logs find, so like ETS it writes every owned byte of the application, the com-object table whole and
+      // the group tables whole. ETS's bracket, and exactly ETS's bytes with ETS's values, offset 638 left at the 10
+      // "on" wrote after "off".
+      const structural = (values: Map<string, string>, app: Buffer, unitComObj: Buffer, at: Map<number, number>, before: string, l: string) => {
+        const record = logStamps(before).closing.map((r) => ({ ...r, written: true as const }));
+        const check = stampCheck(record, l);
+        expect(check.equal).toBe(false);
         const target = buildRelativeSegmentTarget(cfg, values, 4, { moduleInstances: fixture.instances, ownIdleUnionDefaults: true })!;
         const { image } = mergeRelativeTarget(app, target);
+        const mcb = declaredMcbWrites(proc, target.size, "par");
         const b = build(values, fixture.links);
         const comObj = segment(b, 3);
         return withClosing(withConfirmedRestart(planRelativeStructuralFlash(4, {
-          params: { image, owned: target.owned, keptAt: at.get(4)! },
-          comObj: { image: comObj, owned: differingBytes(comObj, unitComObj), keptAt: at.get(3)! },
+          params: { image, owned: relativeParWriteSet(image, app, target.owned, mcb, check), keptAt: at.get(4)! },
+          comObj: { image: comObj, owned: relativeComObjWriteSet(comObj, unitComObj, record, check), keptAt: at.get(3)! },
           addr: segment(b, 1), assoc: segment(b, 2),
-        }, Buffer.from("0048493b21", "hex"), true, declaredMcbWrites(proc, target.size, "par")), proc.secureEnabled), proc, "par");
+        }, Buffer.from("0048493b21", "hex"), true, mcb), proc.secureEnabled), proc, "par");
       };
       const planWrites = (plan: LoadPlan, at: Map<number, number>, lsm: number) => new Map(plan.flatMap((st) =>
         st.op === "writeSegmentOwned" && st.lsm === lsm ? ownedRuns(st.image, st.owned).flatMap((r) => [...r.bytes].map((b, i) => [st.keptAt + r.offset + i, b] as [number, number]))
@@ -2466,18 +2475,15 @@ corpusDescribe("Theben MIX 2 (M-0048_A-493B-21-B471) against ETS", () => {
         expect(closingExtras(plan)).toEqual(["assertLoaded", "assertLoaded", "assertLoaded"]);
         const ets = memoryImage(parseCapture(captureText(capture), ia).writes);
         const etsOf = (lsm: number) => sorted(offsetsToAddresses(new Map([[lsm, relImage(l).get(lsm)!]]), at));
-        for (const lsm of [4, 2, 1]) expect([lsm, sorted(planWrites(plan, at, lsm))]).toEqual([lsm, etsOf(lsm)]);
-        const com = planWrites(plan, at, 3);
-        expect([...com].filter(([a, b]) => ets.get(a) !== b)).toEqual([]);
-        expect(etsOf(3).filter(([a, b]) => !com.has(a) && unit.get(a) !== b)).toEqual([]);
-        const after = (bytes: Map<number, number>) => sorted(new Map([...unit, ...bytes]));
-        expect(after(new Map([4, 3, 2, 1].flatMap((lsm) => [...planWrites(plan, at, lsm)])))).toEqual(after(ets));
-        return sorted(com).map(([a, b]) => [a - at.get(3)!, b]);
+        for (const lsm of [4, 3, 2, 1]) expect([lsm, sorted(planWrites(plan, at, lsm))]).toEqual([lsm, etsOf(lsm)]);
+        expect(sorted(new Map([4, 3, 2, 1].flatMap((lsm) => [...planWrites(plan, at, lsm)])))).toEqual(sorted(ets));
+        // Of the com-object table the bytes that change on the unit.
+        return sorted(planWrites(plan, at, 3)).filter(([a, b]) => unit.get(a) !== b).map(([a, b]) => [a - at.get(3)!, b]);
       };
 
-      test(`structural flash of ${shows.name} on: ETS's bracket, ETS's bytes of the application and the group tables, the com-object bytes that change`, () => {
+      test(`structural flash of ${shows.name} on: ETS's bracket and exactly ETS's bytes, the com-object table whole`, () => {
         const at = kept(onFile);
-        const plan = structural(shown, held, segment(full, 3), at);
+        const plan = structural(shown, held, segment(full, 3), at, `mix2-${p.tag}-ets6log-partial-revert.txt`, onLog);
         expect(expectShowsForm(plan, onFile, onLog, unitAt(at, held, segment(full, 3)))).toEqual(shows.objects.map((n) => [2 + (n - 1) * 2, 0x4b]));
       });
 
@@ -2487,7 +2493,7 @@ corpusDescribe("Theben MIX 2 (M-0048_A-493B-21-B471) against ETS", () => {
         app[DOWNLOADED] &= 0x7f;
         expect([app[637], app[638]]).toEqual([0x40, 0x0a]);
         const comObj = segment(build(shown, fixture.links), 3);
-        const plan = structural(params, app, comObj, at);
+        const plan = structural(params, app, comObj, at, onLog, offLog);
         expect(expectShowsForm(plan, offFile, offLog, unitAt(at, app, comObj))).toEqual(shows.objects.map((n) => [2 + (n - 1) * 2, 0x00]));
         expect(planWrites(plan, at, 4).get(at.get(4)! + 637)).toBe(0x00);
         expect(planWrites(plan, at, 4).has(at.get(4)! + 638)).toBe(false);
@@ -2620,25 +2626,29 @@ corpusDescribe("Theben DALI-Gateway KNX plus (M-0048_A-9071-20-F258-O00EF) again
     for (const lsm of [3, 2, 1]) expect([lsm, sorted(asMap(segment(full, lsm)))]).toEqual([lsm, sorted(ets.get(lsm)!)]);
   });
 
-  test("structural flash of the revert: ETS's bracket, and every byte of ETS's revert with its value", () => {
+  // Its record is that of its parameter flash (the application written), which the unit's stamps equal: ETS's revert
+  // is differential, and both write the one parameter byte back and the com-object table whole (the record's download
+  // did not write it, and its region's CRC control is 1).
+  test("structural flash of the revert: ETS's bracket, and exactly the bytes of ETS's revert", () => {
     const unitParams = parFlash(changed, held).image;
     const unitComObj = segment(build(params, withLink), 3);
     const target = buildRelativeSegmentTarget(cfg, params, 4, { moduleInstances: fx.instances, ownIdleUnionDefaults: true })!;
     const { image } = mergeRelativeTarget(unitParams, target);
     const comObj = segment(full, 3);
+    const mcb = declaredMcbWrites(proc, target.size, "par");
+    const record = logStamps("dali-ets6log-partial-params.txt").closing.map((r) => (r.obj === 4 ? { ...r, written: true as const } : r));
+    const check = stampCheck(record, "dali-ets6log-partial-revert.txt");
+    expect(check.equal).toBe(true);
     const plan = withClosing(withConfirmedRestart(planRelativeStructuralFlash(4, {
-      params: { image, owned: target.owned, keptAt: APP_AT },
-      comObj: { image: comObj, owned: differingBytes(comObj, unitComObj), keptAt: 0x4000 },
+      params: { image, owned: relativeParWriteSet(image, unitParams, target.owned, mcb, check), keptAt: APP_AT },
+      comObj: { image: comObj, owned: relativeComObjWriteSet(comObj, unitComObj, record, check), keptAt: 0x4000 },
       addr: segment(full, 1), assoc: segment(full, 2),
-    }, PROGRAM_ID, true, declaredMcbWrites(proc, target.size, "par")), proc.secureEnabled), proc, "par");
+    }, PROGRAM_ID, true, mcb), proc.secureEnabled), proc, "par");
     expect(systemBPlanBracket(plan)).toEqual(etsBracket("dali-ets-partial-revert.log"));
     const ets = relImage("dali-ets6log-partial-revert.txt");
     const written = (lsm: number) => new Map(plan.flatMap((st) => (st.op === "writeSegmentOwned" && st.lsm === lsm
       ? ownedRuns(st.image, st.owned).flatMap((r) => [...r.bytes].map((b, i) => [r.offset + i, b] as [number, number])) : [])));
-    expect([...written(4)].filter(([o, b]) => unitParams[o] !== b)).toEqual(sorted(ets.get(4)!));
-    const com = written(3);
-    expect([...com].filter(([o, b]) => ets.get(3)!.get(o) !== b)).toEqual([]);
-    expect([...ets.get(3)!].filter(([o, b]) => unitComObj[o] !== b && !com.has(o))).toEqual([]);
+    for (const lsm of [4, 3]) expect([lsm, sorted(written(lsm))]).toEqual([lsm, sorted(ets.get(lsm)!)]);
     const whole = (lsm: number) => plan.flatMap((st) => (st.op === "writeSegment" && st.lsm === lsm ? [asMap(st.bytes)] : []));
     for (const lsm of [2, 1]) expect([lsm, whole(lsm).map(sorted)]).toEqual([lsm, [sorted(ets.get(lsm)!)]]);
   });
@@ -2839,25 +2849,24 @@ corpusDescribe("MEAN WELL KNX-40E-1280D (M-0162_A-0004-11-F245) against ETS", ()
   });
 
   // The same revert as Busforge's structural flash, from the unit ETS's parameter and group-address downloads left: ETS's
-  // bracket, and its bytes. The parameter bytes and the com-object table bytes that differ from the unit, the group tables whole.
-  test("structural flash of the revert: ETS's bracket, and every byte of ETS's revert with its value", () => {
+  // bracket, and its bytes. Its record is that of its parameter flash, which the unit's stamps equal: the one parameter
+  // byte back, the com-object table whole (the record's download did not write it), the group tables whole, as ETS writes them.
+  test("structural flash of the revert: ETS's bracket, and exactly the bytes of ETS's revert", () => {
     const target = buildRelativeSegmentTarget(cfg, params, 4, { ownIdleUnionDefaults: true })!;
     const { image } = mergeRelativeTarget(afterParams, target);
     const comObj = segment(full, 3);
     const unitLinkedComObj = segment(linked, 3);
+    const mcb = declaredMcbWrites(proc, target.size, "par");
+    const record = logStamps(log("params")).closing.map((r) => (r.obj === 4 ? { ...r, written: true as const } : r));
+    const check = stampCheck(record, log("revert"));
+    expect(check.equal).toBe(true);
     const plan = withClosing(withConfirmedRestart(planRelativeStructuralFlash(4, {
-      params: { image, owned: target.owned, keptAt: AT[4] },
-      comObj: { image: comObj, owned: differingBytes(comObj, unitLinkedComObj), keptAt: AT[3] },
+      params: { image, owned: relativeParWriteSet(image, afterParams, target.owned, mcb, check), keptAt: AT[4] },
+      comObj: { image: comObj, owned: relativeComObjWriteSet(comObj, unitLinkedComObj, record, check), keptAt: AT[3] },
       addr: segment(full, 1), assoc: segment(full, 2),
-    }, PROGRAM_ID, true, declaredMcbWrites(proc, target.size, "par")), proc.secureEnabled), proc, "par");
+    }, PROGRAM_ID, true, mcb), proc.secureEnabled), proc, "par");
     expect(systemBPlanBracket(plan)).toEqual(etsBracket("revert"));
-    const ours = planBytes(plan);
-    const etsWire = wire("revert");
-    const unit = new Map([...asMap(afterParams)].map(([o, b]) => [AT[4] + o, b] as [number, number]));
-    for (const [o, b] of asMap(unitLinkedComObj)) unit.set(AT[3] + o, b);
-    expect([...ours].filter(([a, b]) => etsWire.has(a) && etsWire.get(a) !== b)).toEqual([]);
-    expect([...ours].filter(([a, b]) => !etsWire.has(a) && unit.get(a) !== b)).toEqual([]);
-    expect([...etsWire].filter(([a, b]) => unit.has(a) && unit.get(a) !== b && !ours.has(a))).toEqual([]);
+    expect(sorted(planBytes(plan))).toEqual(sorted(wire("revert")));
   });
 
   // ETS's group-address download wrote seven entries; its revert and its full download write the six the configuration

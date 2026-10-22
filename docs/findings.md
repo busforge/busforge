@@ -975,9 +975,11 @@ writes the bytes where its whole image changes, not only those of active paramet
 a conversion of the decrypted capture that leaves out the security object's writes) and 222 on the MDT,
 none divergent (`tools/etsdiff.ts --partial`, `tools/etsdiff.test.ts`). The structural flash is built
 on these brackets (see [load-procedures.md](load-procedures.md#structural-flash)). Where it differs
-from ETS: on System B it writes every byte its parameter model owns, as the parameter flash does; on
-System 7 of the parameter segments only the bytes that differ from the device, and it brackets the
-group tables as ETS does, unload and segment declaration included. Against the MDT capture the writes are exact: Busforge's are the bytes
+from ETS: on System 7 it writes of the parameter segments only the bytes that differ from the device, and it brackets the
+group tables as ETS does, unload and segment declaration included. On System B it decides as ETS does,
+on the unit's stamps against its record of the last download (every owned byte and the com-object table
+whole where they differ; where they equal it the parameter bytes that differ, and the table as the
+group-address flash decides it, see [load-procedures.md](load-procedures.md#structural-flash)). Against the MDT capture the writes are exact: Busforge's are the bytes
 ETS changed, with ETS's values, given the configuration ETS had downloaded before as the baseline.
 
 ## 29. ETS imports only the certificates from a keyring

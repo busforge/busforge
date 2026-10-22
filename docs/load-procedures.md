@@ -482,7 +482,12 @@ identical bytes"); the Theben MIX 2's found its application's stamp changed and 
 ("does not match"); in the MEAN WELL's revert, stamps equal to the parameter download's record, ETS wrote
 the application's one changed byte and the com-object table whole. The group tables go whole either way.
 A group-address download leaves the record as it was, so the MEAN WELL's parameter download after it
-found the com-object table's stamp changed and fell back to every owned byte. A differential that selects
+found the com-object table's stamp changed and fell back to every owned byte. The structural flash takes
+both decisions on one check, as ETS's partial download over all four objects does: the parameter bytes as
+the parameter flash, the com-object table as the group-address flash (the Theben MIX 2's revert and its
+HMG 6 T's change of the com-object set: does not match, every owned byte and the table whole; the
+DALI-Gateway's and the MEAN WELL's reverts: stamps equal, the changed parameter byte and the table
+whole). A differential that selects
 no byte of the table (a link moved to another address only) writes the table whole: no capture shows
 ETS's group-address download onto an unchanged com-object table. The record
 over a restart of the server, and the stamp reads on a device, have run on no device. The System 1
@@ -1134,8 +1139,10 @@ both families, tested against its captures in `tools/etsdiff.test.ts` (the Jung 
 BE-02001.02, whose captures reshape the com-object table; the Auro presence detector `M-0081_A-FE01`,
 the Gira Tastsensor 3 Komfort, the Theben TheLuxa P300, the Theben Meteodata 140 S, the Theben MIX 2,
 the Theben DALI-Gateway KNX plus and the MDT BE-06001.02, whose captures revert a parameter change and a
-link change in one download; on the property-mapped System 7 units the bytes written equal ETS's revert
-exactly, on the Meteodata every byte has ETS's value and every byte ETS changed is written). The
+link change in one download, and the MEAN WELL power supply's; on the property-mapped System 7 units
+and on the Theben MIX 2, the DALI-Gateway and the MEAN WELL the bytes written equal ETS's revert exactly,
+on the Meteodata every byte has ETS's value and every byte ETS changed is written; on the Theben HMG 6 T
+also a parameter that shows unlinked objects, switched on and off, its bytes equal to ETS's). The
 thelsing/OpenKNX and GVS stacks stay off (`structuralFirmwareOff`, keyed on the firmware's
 manufacturer), because the bracket rests on firmware behaviour they are shown not to share (keeping a
 segment's bytes across a reallocation at the same address, the order of the writes on thelsing/OpenKNX,
@@ -1149,8 +1156,8 @@ System B (one bracket)                      System 7 (one bracket per LSM)
 unload 4, 3, 2, 1, security object          unload 1, 2
 load+alloc 4 (no fill), MCB of 4            load 1, declare, address table, task, completed 1
 load+alloc 3, 1, 2 (no fill)                load 2, declare, association table, task, completed 2
-write 4: owned bytes                        load 3 (no unload, no declaration)
-write 3: bytes that differ                    com-object table to its counted entries
+write 4: owned bytes or those that differ   load 3 (no unload, no declaration)
+write 3: whole or bytes that differ           com-object table to its counted entries
 write 2, 1: whole                             parameter bytes that differ, completed 3
 security object load                        closing steps (PID 27 reads)
 stamp program id                            restart
@@ -1166,9 +1173,15 @@ restart
   it; only bits a parameter of either configuration owns are ever taken, and a deactivated parameter
   only if it is not `Access="None"`, so a text, a value the codec cannot encode or a byte the device
   stamps is never reset.
-- **What is written.** On System B the parameter bytes follow the parameter flash (every byte holding
-  an owned bit), the com-object table only where it differs, while the reallocation leaves both
-  where they were (`writeSegmentOwned`; a moved segment is written whole). On System 7 the tables as
+- **What is written.** On System B one check of the unit's stamps against the device's record decides
+  both, as in ETS's partial download: where they equal it, the owned parameter bytes that differ and,
+  where the record's download wrote the com-object table, the bytes of the table that differ, region by
+  region ([R16](#the-rules-by-level)); otherwise every byte holding an owned bit and the table whole. A
+  byte the unit reads as `FF` is decided against the programmed baseline as in the parameter flash: left
+  alone where the project has not changed it (`leaveUnreadUnchanged`, named in `leftFF`), written where it
+  has, also in the differential. The reallocation leaves both where they were (`writeSegmentOwned`; a
+  moved segment is written whole, a byte left alone with the project's value, and verified as written,
+  so a unit that does not give it back ends unverified, as in the parameter flash). On System 7 the tables as
   the group-address flash writes them (to their built length, without the own address), the
   com-object table to its counted entries, of the parameter segments only the bytes that differ from
   the device.
@@ -1177,11 +1190,7 @@ restart
   and every load-state machine the flash concerns LOADED again (on System B the application too).
 - **Where it differs from ETS.** Of the parameter segments ETS writes every byte a parameter covers on a
   property-mapped mask; the structural flash writes fewer (only what differs from the device), never
-  other ones. On a memory-mapped mask both read the unit first and write what differs. On System B the
-  structural flash writes of the com-object table only the bytes that differ from the unit, where ETS
-  wrote the table whole in its captured partial downloads of a structural change (the MIX 2's, which
-  fell back from the differential form); the bytes it wrote beyond those equal the unit's, so the unit
-  ends the same.
+  other ones. On a memory-mapped mask both read the unit first and write what differs.
 - **The window a failure leaves.** On System B the bracket unloads the application and the security
   object before the first write. A flash cut off inside it leaves the device without a running
   application, and a secured device without its group keys, until the flash is repeated or a full

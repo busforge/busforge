@@ -237,5 +237,11 @@ where they are required; raw acquisition is not a way around access control. Wha
 - **Two identical USB interfaces told apart on hardware** (unit-tested only).
 - **The flash preview names the bytes read as `FF` that the parameter flash leaves alone** (`leftFF`):
   the result carries them, the preview shows no difference there and says nothing of them.
+- **A change that sets only bytes the unit reads as `FF` to `FF` is reported unchanged.** System B's
+  parameter flash, and its structural flash where nothing else differs, compare with the read, which
+  shows no difference there; nothing is written. With any other change beside it the byte is written (the
+  differential decides such a byte against the programmed baseline), but the preview's and the result's
+  count of changed bytes and their list of bytes read as `FF` leave it out. Needs: count those bytes
+  against the baseline's image, as the write set does.
 - **DCA-replacement plugins, phase 2:** writing a device-specific configuration back.
 - Remaining parity gaps in the configuration view are tracked in [ets-coverage.md](ets-coverage.md).

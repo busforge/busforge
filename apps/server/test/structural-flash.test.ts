@@ -8,8 +8,8 @@ import { corpusDescribe } from "../../../tools/corpus-test.ts";
 // The structural flash (DeviceProfile.flashStructure) against a simulated device: it writes a change
 // that alters the com-object table, verifies it after the restart, and never reports verified what
 // the device does not hold.
-// Each test plans a full download and a structural flash over a real application program: about
-// 0.7 s on a laptop, past Bun's 5 s default on a CI runner busy with the other workspaces' tests.
+// Each test plans a full download and a structural flash over a real application program: up to 5.0 s
+// alone at load 5 (the Jung's 26.9 MB application, 3.0-5.0 s per test), past Bun's 5 s default.
 setDefaultTimeout(30_000);
 
 corpusDescribe("the structural flash against real applications", () => {
@@ -78,17 +78,27 @@ corpusDescribe("the structural flash against real applications", () => {
     };
     const ctx = (params: Map<string, string>, dryRun = false) => ({ deviceId: "d", ia: "1.2.4", appXml: xml, params, baseParams: base, links: [], moduleInstances: [], dryRun, persistBackups: () => "backup" });
 
-    test("a change that removes objects is written in one bracket and verified", async () => {
+    // The com-object table as ETS's partial download writes it: without a record (or one the unit's stamps no longer
+    // equal) whole, as in the Theben MIX 2's captures; with the stamps equal to a record whose download wrote it, only
+    // where it differs, as in the Jung's own (jung-400021se-ets6log-q2-param-link.txt: one byte of the table).
+    const want = classify(cfg).planFullDownload(cfg.mask, { ia: "1.2.4", params: changed, links: [], proc: parseLoadProcedures(xml) }).segments.find((s) => s.lsm === 3)!.image;
+    const structural = async (record?: { obj: number; element: number; hex: string; written: true }[]) => {
       const dev = seeded();
-      const res = await classify(cfg).flashStructure(asDev(dev), "MV-07B0", ctx(changed));
+      for (const r of record ?? []) dev.props.set(`${r.obj}/27`, Buffer.from(r.hex, "hex"));
+      const res = await classify(cfg).flashStructure(asDev(dev), "MV-07B0", { ...ctx(changed), stampRecord: record });
       expect(res).toMatchObject({ kind: "flashed", verified: true, structural: true });
-      const want = classify(cfg).planFullDownload(cfg.mask, { ia: "1.2.4", params: changed, links: [], proc: parseLoadProcedures(xml) }).segments.find((s) => s.lsm === 3)!.image;
       expect((await dev.memRead(0x3000, want.length)).equals(want)).toBe(true);
-      // The com-object table went only where it differs, not whole.
-      const l3 = dev.writes.filter((w) => w.addr >= 0x3000 && w.addr < 0x3000 + want.length).reduce((n, w) => n + w.len, 0);
+      expect([...dev.state.values()]).toEqual([STATE.LOADED, STATE.LOADED, STATE.LOADED, STATE.LOADED]);
+      return dev.writes.filter((w) => w.addr >= 0x3000 && w.addr < 0x3000 + want.length).reduce((n, w) => n + w.len, 0);
+    };
+    test("a change that removes objects is written in one bracket and verified, the com-object table whole without a record", async () => {
+      expect(await structural()).toBe(want.length);
+    });
+    test("with the unit's stamps equal to a record whose download wrote the table, the table only where it differs", async () => {
+      const stamp = (size: number) => `${size.toString(16).padStart(8, "0")}00ff00aa`;
+      const l3 = await structural([{ obj: 3, element: 1, hex: stamp(want.length), written: true }, { obj: 4, element: 1, hex: stamp(0x2000), written: true }]);
       expect(l3).toBeGreaterThan(0);
       expect(l3).toBeLessThan(want.length);
-      expect([...dev.state.values()]).toEqual([STATE.LOADED, STATE.LOADED, STATE.LOADED, STATE.LOADED]);
     });
 
     test("a device that does not keep the table across the reallocation is not reported verified", async () => {

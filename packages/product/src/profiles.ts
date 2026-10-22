@@ -503,10 +503,16 @@ async function currentStamps(dev: KnxDevice, record: ImageStamp[] | undefined): 
 }
 // The owned bytes a System B parameter flash writes: with the unit's stamps equal to the record, those
 // that differ from the unit (`current`), region by region (differentialMask; `regions` as the application
-// declares them, else as the unit's stamps report them); otherwise every owned byte.
-export function relativeParWriteSet(image: Buffer, current: Buffer, owned: ReadonlyArray<number>, mcb: McbWrite[], check: { equal: boolean; read: ImageStamp[] } | null): ReadonlyArray<number> {
+// declares them, else as the unit's stamps report them); otherwise every owned byte. A byte the unit reads as
+// FF says nothing of what it holds, so where the image differs there from the programmed baseline's (`base`,
+// same size) it counts as changed, as it does for ETS, which compares with its record's image.
+export function relativeParWriteSet(image: Buffer, current: Buffer, owned: ReadonlyArray<number>, mcb: McbWrite[], check: { equal: boolean; read: ImageStamp[] } | null, base?: Buffer | null): ReadonlyArray<number> {
   if (!check?.equal) return owned;
-  return differentialMask(changedOwned(image, current, owned), owned, declaredMcbRegions(mcb) ?? unitMcbRegions(check.read, LSM));
+  const changed = changedOwned(image, current, owned);
+  if (base && base.length === image.length) {
+    for (let i = 0; i < image.length; i++) if (owned[i] && current[i] === 0xff && ((image[i] ^ base[i]) & owned[i]) !== 0) changed[i] = 0xff;
+  }
+  return differentialMask(changed, owned, declaredMcbRegions(mcb) ?? unitMcbRegions(check.read, LSM));
 }
 // The com-object table bytes a System B group-address flash writes into the table the unit keeps: where the record's
 // download wrote the table (`record`, ImageStamp.written) and the unit's stamps equal the record, those that differ from
@@ -872,6 +878,9 @@ export interface StructureFlashCtx extends WriteGate {
   comObjectOverrides?: ReadonlyMap<number, ComObjInstanceOverride>;
   // As GaFlashCtx.comObjectOverrideBase.
   comObjectOverrideBase?: ReadonlyMap<number, ComObjInstanceOverride>;
+  // As ParamFlashCtx.stampRecord: with the unit's stamps equal to it, the parameter bytes go differentially
+  // (relativeParWriteSet), and the com-object table too where the record's download wrote it (relativeComObjWriteSet).
+  stampRecord?: ImageStamp[];
   dryRun: boolean;
   security?: SecureTablesCtx;
   onProgress?: ProgressFn;
@@ -1551,7 +1560,7 @@ export class SystemBProfile extends DeviceProfile {
     // read stands for ETS's record of it.
     // An application not LOADED (an interrupted write) takes every owned byte, as ETS's differential is
     // shown only onto a loaded one.
-    const written = loaded ? relativeParWriteSet(image, current, target.owned, mcb, await currentStamps(dev, ctx.stampRecord)) : target.owned;
+    const written = loaded ? relativeParWriteSet(image, current, target.owned, mcb, await currentStamps(dev, ctx.stampRecord), baseProjected?.bytes) : target.owned;
     const parStamps = stampCollector([LSM]);
     const backupFile = `${ctx.deviceId}-LSM${LSM}-${Date.now()}.bin`;
     return runFlashOp(dev, mask, ctx, {
@@ -1712,11 +1721,12 @@ export class SystemBProfile extends DeviceProfile {
 
   // A parameter change that alters the com-object table, written the way ETS writes it as a partial
   // download (planRelativeStructuralFlash): the application segment, the com-object table authored for
-  // the new parameters and links, and both group tables, in one bracket. The parameter bytes follow
-  // the parameter flash (owned bytes merged into the device's segment), the com-object table goes
-  // only where it differs from the device's, the group tables whole, and a Data Secure device's
-  // security object is reloaded with them. Unlike the full download nothing is pre-filled, so what
-  // the device holds outside the owned bytes stays.
+  // the new parameters and links, and both group tables, in one bracket. The parameter bytes and the
+  // com-object table are chosen on one check of the unit's stamps against the record, as ETS's partial
+  // download over all four objects chooses them: differentially where the stamps equal the record (the
+  // table only where the record's download wrote it), otherwise every owned byte and the table whole.
+  // The group tables go whole, and a Data Secure device's security object is reloaded with them. Unlike
+  // the full download nothing is pre-filled, so what the device holds outside the written bytes stays.
   override async flashStructure(dev: KnxDevice, mask: string, ctx: StructureFlashCtx): Promise<FlashResult> {
     const cfg = this.requireCfg("structural flash");
     if (!this.capabilities().structuralFlash) throw new UnsupportedOperation("structural flash", this.family, this.mask);
@@ -1729,8 +1739,20 @@ export class SystemBProfile extends DeviceProfile {
       throw new ProductError("CHANNEL_MODULES_UNSUPPORTED",
         `parameter programming cannot place ${unmapped.length} stored value(s) for this device (e.g. ${unmapped[0]}); they would be dropped and that region reset to defaults. Refusing to flash to protect the device configuration.`);
     }
-    const target = buildRelativeSegmentTarget(cfg, ctx.params, LSM, { moduleInstances: instances, ownIdleUnionDefaults: true });
-    if (!target || target.size === 0) throw new ProductError("EMPTY_IMAGE", "built an empty parameter image; refusing to flash");
+    const projected = buildRelativeSegmentTarget(cfg, ctx.params, LSM, { moduleInstances: instances, ownIdleUnionDefaults: true });
+    if (!projected || projected.size === 0) throw new ProductError("EMPTY_IMAGE", "built an empty parameter image; refusing to flash");
+    // As in the parameter flash: the image of the programmed baseline decides the bytes the unit reads as FF. The
+    // change alters the structure, so the baseline is built on its own module instances (the stored ones, else those
+    // its parameters resolve, as baselineComObjects takes them); a byte it does not own as the project does is never
+    // left alone.
+    const baseInstances = cfg.hasModules ? (ctx.moduleInstances?.length ? ctx.moduleInstances : resolveModuleInstances(cfg, ctx.baseParams)) : [];
+    const baseProjected = (() => {
+      try { return buildRelativeSegmentTarget(cfg, ctx.baseParams, LSM, { moduleInstances: baseInstances, ownIdleUnionDefaults: true }); }
+      catch (e) {
+        if (!(e instanceof ProductError)) throw e;
+        throw new ProductError(e.code, `the programmed baseline (the parameters the device was last programmed with), which decides the bytes the device reads as FF: ${e.message}`);
+      }
+    })();
     const view = buildDeviceConfig(cfg, ctx.params, undefined, instances);
     const active = new Set(view.imageComObjects.keys());
     const orphans = ctx.links.filter((l) => !active.has(l.comObjNum));
@@ -1742,24 +1764,36 @@ export class SystemBProfile extends DeviceProfile {
     const { addr, assoc } = buildGroupTables(ctx.links);
     refuseTablesOverCapacity(cfg, addr, assoc);
     const security = ctx.security ? buildSecurityObject(ctx.links, comObj.readUInt16BE(0), ctx.security.groupKeys, secureSenders(ctx.security, ctx.ia)) : undefined;
-    const mcb = declaredMcbWrites(proc, target.size, "par");
+    const mcb = declaredMcbWrites(proc, projected.size, "par");
     const flagBaseline = builtBefore(() => baselineComObjects(cfg, ctx));
 
     await runDeclaredChecks(dev, coverage);
     const assocForm = await requireLongAssoc(dev, "structural flash");
     const paramsAt = await loadedTableAddr(dev, LSM, "parameter segment");
-    const current = await dev.memRead(paramsAt, target.size, undefined, (d, t) => ctx.onProgress?.("backup", d, t), ctx.signal);
+    const current = await dev.memRead(paramsAt, projected.size, undefined, (d, t) => ctx.onProgress?.("backup", d, t), ctx.signal);
+    const loaded = await allLoaded(dev, [LSM, OBJ.COMOBJ_TABLE, OBJ.ASSOC_TABLE, OBJ.ADDR_TABLE]);
+    // The bytes read as FF the project has not changed since the last programming stay as they are, as the
+    // parameter flash leaves them (leaveUnreadUnchanged); a unit not loaded throughout takes every owned byte.
+    const { target, left: leftFF } = loaded ? leaveUnreadUnchanged(current, projected, baseProjected, paramsAt) : { target: projected, left: [] };
     const { image, diffBytes: paramDiff } = mergeRelativeTarget(current, target);
+    // A segment the allocation moves is written whole, the bytes left alone with the project's value.
+    const movedImage = leftFF.length ? mergeRelativeTarget(current, projected).image : image;
+    let moved = false;
     const constantsDiffer = paramDiff === 0 ? differingConstants(cfg, target.constants, current, image) : [];
     const cur = await readGroupTables(dev, assocForm);
     const comObjAt = await loadedTableAddr(dev, OBJ.COMOBJ_TABLE, "com-object table");
     const curSecurity = security ? await readSecurityObject(dev, security) : undefined;
     const prefix = `${ctx.deviceId}-structure-${Date.now()}`;
-    const loaded = await allLoaded(dev, [LSM, OBJ.COMOBJ_TABLE, OBJ.ASSOC_TABLE, OBJ.ADDR_TABLE]);
     if (loaded) refuseSystemBUnknownFlags(flagBaseline, ctx, cur, comObj);
+    // A unit not loaded throughout (an interrupted write) takes every owned byte and the table whole. A stamp the unit
+    // does not give as 8 bytes counts as unequal, as in the group-address flash.
+    const check = loaded ? await currentStamps(dev, ctx.stampRecord).catch((e: unknown) => {
+      if (e instanceof ProductError && e.code === "STAMP_UNREADABLE") return null;
+      throw e;
+    }) : null;
     const plan = planRelativeStructuralFlash(LSM, {
-      params: { image, owned: target.owned, keptAt: paramsAt },
-      comObj: { image: comObj, owned: differingBytes(comObj, cur.comObj), keptAt: comObjAt },
+      params: { image: movedImage, owned: relativeParWriteSet(image, current, target.owned, mcb, check, baseProjected?.bytes), keptAt: paramsAt },
+      comObj: { image: comObj, owned: relativeComObjWriteSet(comObj, cur.comObj, ctx.stampRecord, check), keptAt: comObjAt },
       addr, assoc,
     }, appId(model.manufacturer, model.appNumber, model.version), !persistsOnLoadCompleted(cfg), mcb, security);
     const closed = withClosing(withConfirmedRestart(plan, proc.secureEnabled), proc, "par");
@@ -1771,6 +1805,8 @@ export class SystemBProfile extends DeviceProfile {
         + (security && curSecurity ? byteDiff(security.groupKeys, curSecurity.groupKeys) + byteDiff(security.goFlags, curSecurity.goFlags)
           + (senderAddresses(security.senders) === senderAddresses(curSecurity.senders) ? 0 : Math.max(security.senders.length, curSecurity.senders.length, 1)) : 0),
       readsFF: differingFF(current, image, target, paramsAt),
+      // Read again for the flashed result: a moved segment wrote them.
+      get leftFF() { return moved ? undefined : leftFF; },
       constantsDiffer,
       ...(loaded ? {} : { loadIncomplete: "rewrite" as const }),
       backup: `${prefix}-params.bin`,
@@ -1787,9 +1823,11 @@ export class SystemBProfile extends DeviceProfile {
       // LOADED again after the restart.
       verify: async (confirmedOnly) => {
         ctx.onProgress?.("verify");
-        const paramMask = target.owned.map((m, i) => (~m | target.verify[i]) & 0xff);
         const verifyAt = await dev.tableAddr(LSM);
-        const match = confirmedOnlyMatch(dev, verifyAt, image, paramMask, verifyAt === paramsAt ? current : null);
+        moved = verifyAt !== paramsAt;
+        const [want, held] = moved ? [movedImage, projected] : [image, target];
+        const paramMask = held.owned.map((m, i) => (~m | held.verify[i]) & 0xff);
+        const match = confirmedOnlyMatch(dev, verifyAt, want, paramMask, moved ? null : current);
         const { value, ok } = await verifySettled(
           async () => ({
             app: await lsmState(dev, OBJ.APP_PROGRAM),
