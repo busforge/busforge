@@ -209,7 +209,7 @@ export function inServiceProblems(spec: DeviceSpec): string[] {
   for (const e of s.assumeParams ?? []) if (!e.name || !e.paramRefId || !e.value) out.push(`assumeParams: an entry needs a name, a paramRefId and a value (${e.name || e.paramRefId || "unnamed"})`);
   for (const ref of assumed) {
     if (expected.includes(ref)) out.push(`${ref} is both assumed and expected; an assumed value is the one the run takes over`);
-    if (ref === s.param?.paramRefId || ref === s.structural?.paramRefId) out.push(`${ref} is assumed and a step's parameter; a step writes a parameter with a memory location`);
+    if (ref === s.param?.paramRefId || ref === s.structural?.paramRefId) out.push(`${ref} is assumed and a step's parameter; a step writes the parameter, so its value is the run's, not assumed`);
   }
   if (!s.param && !s.link && !s.structural && !s.fullDownload) out.push("no step: the run would write nothing and prove nothing");
   if (spec.precondition) out.push("a precondition (a human step before the run) has no place on a device in service");

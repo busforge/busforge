@@ -1345,6 +1345,94 @@ corpusDescribe("Gira Tastsensor 3 Komfort (M-0008) against ETS", () => {
     const { plan } = system7StructuralFlash({ cfg, proc, ia, device, params: baseline.params, baseParams: new Map(baseline.params).set(ref, "40"), links: baseline.links, overrides: object64Read });
     expectRevertForm(plan, "gira-m0008-ets-partial-revert.log", ia, device);
   });
+
+  // Two partial downloads: "Sperrfunktion?" (P-3848, no memory location) switched from "Nein" (0, the
+  // catalogue default and the project's) to "Ja" (1), which shows object 54 ("Tasten sperren", unlinked)
+  // and the lock function's parameters at their defaults, and back. ETS runs both as the revert's bracket
+  // set. Its image changes two bytes: object 54's config byte in the com-object table, and AS-4439
+  // offset 0, the lock function's union. ETS's partial downloads send part of the image: "on" the tables'
+  // headers, the whole com-object table, AS-4439 and the marker, "off" the same but of the com-object
+  // table only object 54's byte; Busforge keeps no stamps and writes the whole 822 bytes.
+  const SPERRE_ON = "gira-m0008-ets-partial-sperre-on.log", SPERRE_OFF = "gira-m0008-ets-partial-sperre-off.log";
+  const SPERRE = "M-0008_A-10D7-11-2783-O000A_P-3848_R-3848";
+  const sperreOn = new Map(baseline.params).set(SPERRE, "1");
+  const object54 = comObjSeg.address + 3 + 54 * 4 + 2;
+  // The unit's PID 27 stamps in an ETS log: those read before the download, those read after it.
+  const stampsOf = (file: string) => {
+    const lines = captureText(file).split(/\r?\n/), at = lines.findIndex((l) => l.includes(" - Execute image:"));
+    expect(at).toBeGreaterThan(-1);
+    const read = (ls: string[]) => ls.flatMap((l) => {
+      const m = l.match(/Received PropertyValue_Response_ind .* ObjectIndex=(\d+) PID=27 NumberOfElements=1 StartIndex=(\d+) Data=([0-9A-F]+)/);
+      return m ? [`${m[1]}#${m[2]}=${m[3]}`] : [];
+    });
+    return { before: read(lines.slice(0, at)), after: read(lines.slice(at)) };
+  };
+
+  test("Sperrfunktion on and off: object 54 added and removed, so the change takes the structural flash", () => {
+    // No memory location, so the configuration read from the revert does not hold it: the default, "Nein".
+    expect(baseline.params.has(SPERRE)).toBe(false);
+    expect(comObjectTableChanges(cfg, baseline.params, sperreOn).map((c) => [c.number, c.fields])).toEqual([[54, ["added"]]]);
+    expect(comObjectTableChanges(cfg, sperreOn, baseline.params).map((c) => [c.number, c.fields])).toEqual([[54, ["removed"]]]);
+    expect(classify(cfg).capabilities().structuralFlash).toBe(true);
+  });
+
+  test("ETS's logs of the Sperrfunktion on and off: the revert's bracket set, the image of the wire, two bytes apart, the unit as the revert left it", () => {
+    const on = etsLog("gira-m0008-ets6log-partial-sperre-on.txt"), off = etsLog("gira-m0008-ets6log-partial-sperre-off.txt");
+    const revertLog = etsLog("gira-m0008-ets6log-partial-revert.txt");
+    for (const [l, capture] of [[on, SPERRE_ON], [off, SPERRE_OFF]] as const) {
+      expect(l.steps.map((s) => `${s.verb}${s.attrs.LsmIdx ?? s.attrs.Address ?? ""}`)).toEqual(revertLog.steps.map((s) => `${s.verb}${s.attrs.LsmIdx ?? s.attrs.Address ?? ""}`));
+      expect(captureSteps(capture, ia)).toEqual(captureSteps("gira-m0008-ets-partial-revert.log", ia));
+      expect([...l.image]).toEqual(sorted(memoryImage(parseCapture(captureText(capture), ia).writes)));
+      // The whole image before the differential cut is the revert's 822 bytes.
+      expect(l.image.size + l.removed).toBe(revertLog.image.size);
+    }
+    // "On": the tables, the whole com-object table, AS-4439 offset 0 and the download marker; "off": the
+    // tables, object 54's config byte, AS-4439 offset 0 and the marker.
+    expect(span(on.image)).toEqual(["4000-4000", "4003-4023", "41e5-4353", "4439-4439", "454e-4550"]);
+    expect(span(off.image)).toEqual(["4000-4000", "4003-4023", `${object54.toString(16)}-${object54.toString(16)}`, "4439-4439", "454e-4550"]);
+    // Against the revert's image, "on" differs in object 54's config byte (0xdb, the template's 0xdf without
+    // the communication flag, as for every object the configuration does not show, to 0x13, its own
+    // unlinked) and the lock function's union (0x00 to 0x03); "off" in no byte.
+    expect([...on.image].filter(([a, b]) => revertLog.image.get(a) !== b)).toEqual([[object54, 0x13], [0x4439, 0x03]]);
+    expect([object54, 0x4439].map((a) => revertLog.image.get(a))).toEqual([0xdb, 0x00]);
+    expect(comObjSeg.data[object54 - comObjSeg.address]).toBe(0xdf);
+    expect([...off.image].filter(([a, b]) => revertLog.image.get(a) !== b)).toEqual([]);
+    // The unit's stamps before "on" are those it showed after ETS's revert, so it held the revert's image;
+    // "on" changes the com-object table's (3#1) and AS-4439's (3#5), "off" restores them.
+    const r = stampsOf("gira-m0008-ets6log-partial-revert.txt"), sOn = stampsOf("gira-m0008-ets6log-partial-sperre-on.txt"), sOff = stampsOf("gira-m0008-ets6log-partial-sperre-off.txt");
+    expect(sOn.before).toEqual(r.after.filter((x) => x.startsWith("3#")));
+    expect(sOn.after).toHaveLength(r.after.length);
+    expect(sOn.after.filter((x, i) => x !== r.after[i]).map((x) => x.split("=")[0])).toEqual(["3#1", "3#5"]);
+    expect(sOff.before).toEqual(sOn.after.filter((x) => x.startsWith("3#")));
+    expect(sOff.after).toEqual(r.after);
+  });
+
+  // The unit before "on": the revert's whole image (ETS wrote it without a differential cut), as its stamps show.
+  const beforeSperre = () => unitMemory(cfg, ia, revert);
+  // Busforge's structural flash against an ETS partial download that cut what the unit held: ETS's steps
+  // (verify mode aside), the whole image (ETS's before its cut), every byte of ETS's image with ETS's value,
+  // and every other byte the unit's own, so on the unit exactly ETS's changes.
+  const expectSperreForm = (plan: LoadPlan, capture: string, log: string, device: Map<number, number>) => {
+    expect(planSteps(plan)).toEqual(withoutVerifyMode(captureSteps(capture, ia)));
+    const ours = bytesOf(plan), ets = memoryImage(parseCapture(captureText(capture), ia).writes), l = etsLog(log);
+    expect(span(ours)).toEqual(GIRA_IMAGE);
+    expect(ours.size).toBe(l.image.size + l.removed);
+    expect([...ets].filter(([a, b]) => ours.get(a) !== b)).toEqual([]);
+    expect([...ours].filter(([a, b]) => !ets.has(a) && device.get(a) !== b)).toEqual([]);
+    return sorted(ours).filter(([a, b]) => device.get(a) !== b);
+  };
+
+  test("structural flash of the Sperrfunktion on: ETS's steps, ETS's whole image, every byte ETS writes with ETS's value", () => {
+    const device = beforeSperre();
+    const { plan } = system7StructuralFlash({ cfg, proc, ia, device, params: sperreOn, baseParams: baseline.params, links: baseline.links, overrides: object64Read });
+    expect(expectSperreForm(plan, SPERRE_ON, "gira-m0008-ets6log-partial-sperre-on.txt", device)).toEqual([[object54, 0x13], [0x4439, 0x03]]);
+  });
+
+  test("structural flash of the Sperrfunktion off: ETS's steps, ETS's whole image, every byte ETS writes with ETS's value", () => {
+    const device = unitMemory(cfg, ia, revert, memoryImage(parseCapture(captureText(SPERRE_ON), ia).writes));
+    const { plan } = system7StructuralFlash({ cfg, proc, ia, device, params: baseline.params, baseParams: sperreOn, links: baseline.links, overrides: object64Read });
+    expect(expectSperreForm(plan, SPERRE_OFF, "gira-m0008-ets6log-partial-sperre-off.txt", device)).toEqual([[object54, 0xdb], [0x4439, 0x00]]);
+  });
 });
 
 // ETS 6 downloads of the Auro presence detector (M-0081_A-FE01-11-75D9, MV-0705, LdCtrlTaskCtrl1),

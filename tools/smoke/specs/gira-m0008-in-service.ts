@@ -1,9 +1,9 @@
 import type { DeviceSpec } from "../spec.ts";
 
 // The Gira Tastsensor 3 Komfort (application 10D7, MV-0705, System 7 property-mapped, dynamic tables)
-// as a unit in service: the run takes its configuration by read-back and writes one parameter flash
-// and one GA flash, each reverted (inservice.ts); a full download of the configuration found only
-// with --full-download. Refs pinned verbatim as the device configuration of this application lists
+// as a unit in service: the run takes its configuration by read-back and writes one parameter flash,
+// one GA flash and one structural flash, each reverted (inservice.ts); a full download of the
+// configuration found only with --full-download. Refs pinned verbatim as the device configuration of this application lists
 // them, taken offline from its catalogue; the run refuses a ref the unit's configuration does not
 // list.
 //
@@ -49,11 +49,16 @@ export const giraM0008InService: DeviceSpec = {
     // it sets it, so nothing on the unit answers a read, and a telegram on it needs someone to press
     // the rocker: the link is shown to the byte only.
     link: { comObjRefId: "M-0008_A-10D7-11-2783-O000A_O-4_R-3038" },
+    // "Sperrfunktion?": "Nein" to "Ja" shows object 54 (Tasten sperren) in the configuration, which takes
+    // the structural flash; the object stays unlinked (no group address). In ETS's captured partial
+    // downloads of this change and its revert (tools/etsdiff.test.ts) two bytes change on the unit:
+    // object 54's config byte and the lock function's parameter byte. The parameter has no memory
+    // location, so the run takes the project's value, "Nein"; the dry runs that compare the unit's
+    // bytes (those two included) back it.
+    structural: { paramRefId: "M-0008_A-10D7-11-2783-O000A_P-3848_R-3848", value: "1" },
     fullDownload: true,
   },
   configure: [],
   behaviours: [],
-  unsafe: [
-    { capability: "structuralFlash", reason: "never written to this product on hardware: a product's first structural flash is not run on a unit in service" },
-  ],
+  unsafe: [],
 };

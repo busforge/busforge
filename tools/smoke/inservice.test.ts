@@ -857,7 +857,7 @@ describe("a device in service: parameters without a memory location", () => {
     expect(inServiceProblems({ ...spec, inService: { ...base, assumeParams: [a, a] } })).toEqual([`assumeParams names ${MEMLESS} more than once`]);
     expect(inServiceProblems({ ...spec, inService: { ...base, assumeParams: [{ ...a, value: "" }] } })).toEqual(["assumeParams: an entry needs a name, a paramRefId and a value (f)"]);
     expect(inServiceProblems({ ...spec, inService: { ...base, assumeParams: [a], expectParams: [a] } })).toEqual([`${MEMLESS} is both assumed and expected; an assumed value is the one the run takes over`]);
-    expect(inServiceProblems({ ...spec, inService: { ...base, assumeParams: [{ ...a, paramRefId: PARAM }] } })).toEqual([`${PARAM} is assumed and a step's parameter; a step writes a parameter with a memory location`]);
+    expect(inServiceProblems({ ...spec, inService: { ...base, assumeParams: [{ ...a, paramRefId: PARAM }] } })).toEqual([`${PARAM} is assumed and a step's parameter; a step writes the parameter, so its value is the run's, not assumed`]);
   });
 });
 
