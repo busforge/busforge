@@ -149,7 +149,7 @@ The bundle holds only the records that decide a matrix cell, each as a public co
 - It supersedes nothing: a superseded record never decides a cell, so it is not shipped.
 - `source.artifact` and `sha256` stay only for a reference pass, which needs them: the ETS capture
   is named by its path in the private corpus and identified by its hash.
-- No text in it names a date, an individual address or a host path.
+- No text in it names a date, an individual address, an IP address, a commit hash or a host path.
 - No text in it names a group address an installation could use, in the forms the records write one:
   three-level (`1/2/3`), or raw values in a link (`#2->0x1b06`, several joined by `+`) or after "group
   address", "GA" or "project". Only bench addresses are allowed: a smoke run of a bench spec may name the

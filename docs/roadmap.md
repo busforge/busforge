@@ -9,12 +9,9 @@ depends on is hardware-proven.
 - **Hardware runs of the operations the rules changed.** The plans follow the catalogue, family and
   KNX-wide rules ([load-procedures.md](load-procedures.md#the-rules-by-level)); where that changed a
   plan, the new one is capture-tested only ([status.md](status.md#devices-driven-on-real-hardware)):
-  the ABB US/U 4.2 and MDT BE-02001.02 full download and group-address flash, the MDT's structural
-  flash, every download of the Jung 400021SE and the GVS AMMA, the
-  System B partial form of the full download on the Jung 400021SE, the Theben DALI-Gateway's full
+  the System B partial form of the full download on the Jung 400021SE, the Theben DALI-Gateway's full
   download onto a unit without the application, the structural flash newly offered on the
-  Meteodata 140 S and ABB US/U 4.2. Each needs its
-  run on the device.
+  Meteodata 140 S. Each needs its run on the device.
 - **The interface's maximum APDU from the Busforge bridge.** Over TCP the bridge does not answer the
   `SEARCH_REQUEST_EXTENDED` Busforge asks the interface's maximum APDU with; ETS asks the interface
   object's PID 56 with a cEMI `M_PropRead` (`DEVICE_CONFIGURATION_REQUEST`) and gets the USB limit (40).

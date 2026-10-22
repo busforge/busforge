@@ -57,12 +57,17 @@ const orderOf = (productRef: string) => unescapeKnxId(productRef.split("_P-")[1]
 
 const cellKey = (r: EvidenceRecord) => [r.subject.productRef, r.subject.appProgramId, r.scope.operation, r.scope.channel].join("|");
 
-// Text a shipped record may not carry: a date, an individual address, a host path. Run times,
-// revisions and source files are refused field by field below. A firmware value is a version, not
-// checked as text (1.1.4 is no individual address). Group addresses: see groupAddresses.
+// Text a shipped record may not carry: a date, an individual address, an IP address, a commit hash, a
+// host path. Run times, revisions and source files are refused field by field below; the text checks
+// catch them where a detail names one. A commit hash is a word of 7 to 40 hex digits with a letter and a
+// digit in it, not part of a hyphenated name (a parameter's number, all digits, and a spec id such as
+// mdt-be02001 are none). A firmware value is a version, not checked as
+// text (1.1.4 is no individual address). Group addresses: see groupAddresses.
 const PRIVATE_TEXT: [RegExp, string][] = [
   [/\b20\d\d-[01]\d-[0-3]\d/, "a date"],
   [/(?:^|[^\w.])\d{1,2}\.\d{1,2}\.\d{1,3}(?![\w.])/, "an individual address"],
+  [/(?<![\w.])\d{1,3}(?:\.\d{1,3}){3}(?![\w.])/, "an IP address"],
+  [/(?<![\w-])(?=[0-9a-f]*[a-f])(?=[0-9a-f]*\d)[0-9a-f]{7,40}(?![\w-])/, "a commit hash"],
   [/\/(?:Users|home)\/|^[A-Za-z]:\\/, "a host path"],
 ];
 

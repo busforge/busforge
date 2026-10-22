@@ -102,12 +102,15 @@ describe("the shipped records", () => {
     expect(() => publicRecords([older, newer], [PRODUCT])).toThrow("ORDER-1 fullDownload api transfer is a conflict");
   });
 
-  test("a shipped record naming an installation's address, a date or a host path is refused", () => {
+  test("a shipped record naming an installation's address, a date, an IP address, a commit hash or a host path is refused", () => {
     const at = (configuration: string) => record("run-1", "2000-01-01T00:00:00.000Z", { transfer: pass }, { scope: { operation: "fullDownload", channel: "api", configuration, configurationFingerprint: null } });
     expect(() => publicRecords([at("device 1.1.7")], [PRODUCT])).toThrow("an individual address");
     expect(() => publicRecords([at("run of 2000-01-01")], [PRODUCT])).toThrow("a date");
     expect(() => publicRecords([at("report in /home/someone/x.json")], [PRODUCT])).toThrow("a host path");
+    expect(() => publicRecords([at("interface 192.0.2.10:3671")], [PRODUCT])).toThrow("an IP address");
+    expect(() => publicRecords([at("server 9319899c")], [PRODUCT])).toThrow("a commit hash");
     expect(publicRecords([at("spec baseline (2 configure steps)")], [PRODUCT])).toHaveLength(1);
+    expect(publicRecords([at("mdt-be02001: UP-3001019_R-300101901 1→2, answered 0x04b0")], [PRODUCT])).toHaveLength(1);
   });
 
   // A group address an installation uses must not ship in any form the records write one in. Only a run
