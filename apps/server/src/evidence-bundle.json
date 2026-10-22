@@ -2181,7 +2181,7 @@
     "persistence": {
      "state": "pass",
      "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
-     "detail": "silent 5095 ms after A_Restart, answering again after 6042 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
+     "detail": "silent 6490 ms after A_Restart, first in the restart's own connection, answering again after 6982 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
@@ -2377,7 +2377,7 @@
     "persistence": {
      "state": "pass",
      "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
-     "detail": "silent 5103 ms after A_Restart, answering again after 6034 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
+     "detail": "silent 6383 ms after A_Restart, first in the restart's own connection, answering again after 6864 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
@@ -2705,7 +2705,7 @@
     "persistence": {
      "state": "pass",
      "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
-     "detail": "silent 5095 ms after A_Restart, answering again after 6042 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
+     "detail": "silent 6490 ms after A_Restart, first in the restart's own connection, answering again after 6982 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
@@ -2901,7 +2901,7 @@
     "persistence": {
      "state": "pass",
      "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
-     "detail": "silent 5103 ms after A_Restart, answering again after 6034 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
+     "detail": "silent 6383 ms after A_Restart, first in the restart's own connection, answering again after 6864 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
@@ -3427,7 +3427,7 @@
     "persistence": {
      "state": "pass",
      "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
-     "detail": "silent 3948 ms after A_Restart, first in the restart's own connection, answering again after 4081 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
+     "detail": "silent 3929 ms after A_Restart, first in the restart's own connection, answering again after 4053 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
@@ -3557,7 +3557,7 @@
     "persistence": {
      "state": "pass",
      "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
-     "detail": "silent 3822 ms after A_Restart, first in the restart's own connection, answering again after 3951 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
+     "detail": "silent 3754 ms after A_Restart, first in the restart's own connection, answering again after 3871 ms; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
@@ -4061,6 +4061,134 @@
      "state": "pass",
      "method": "parameter memory read and decoded completely; not compared with a built image",
      "detail": "parameter image read back and decoded, equal to the configuration found"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0048",
+    "productRef": "M-0048_H-4930200-2_P-4930200",
+    "appProgramId": "M-0048_A-493B-21-B471",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "unknown"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "theben-rmg8t-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "4930200 structuralFlash api transfer",
+   "scope": {
+    "operation": "structuralFlash",
+    "channel": "api",
+    "configuration": "the device's own configuration, taken over by read-back, then the structuralFlash driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "a change that alters the com-object table, and its revert, each written as one structural flash the server reported verified, zero drift on read-back",
+     "detail": "P-9_R-9 0→1 (6 B, verified) →0 (6 B, verified), zero drift on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0048",
+    "productRef": "M-0048_H-4930200-2_P-4930200",
+    "appProgramId": "M-0048_A-493B-21-B471",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "unknown"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "theben-rmg8t-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "4930200 structuralFlash ui transfer",
+   "scope": {
+    "operation": "structuralFlash",
+    "channel": "ui",
+    "configuration": "the device's own configuration, taken over by read-back, then the structuralFlash driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "a change that alters the com-object table, and its revert, each written as one structural flash the server reported verified, zero drift on read-back",
+     "detail": "P-9_R-9 0→1 (verified) →0 (verified), zero drift on read-back"
     },
     "reference": {
      "state": "not-assessed"
@@ -11527,7 +11655,6 @@
   },
   {
    "schema": "busforge.evidence/1",
-   "id": "KNX-40E-1280D flashLinks api transfer+behaviour",
    "recordedAt": null,
    "subject": {
     "manufacturer": "M-0162",
@@ -11541,49 +11668,118 @@
    "medium": "TP",
    "transport": {
     "kind": "ip-tcp",
-    "via": "busforge-bridge"
+    "via": "direct"
    },
    "build": {
     "server": null,
-    "runner": null,
-    "spec": null
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "meanwell-knx40e-in-service",
+     "revision": null
+    }
    },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "KNX-40E-1280D flashLinks api behaviour",
    "scope": {
     "operation": "flashLinks",
     "channel": "api",
-    "configuration": "the installation's configuration of the unit (10 parameter values, 6 linked objects), taken over from the project, then object 2 (power supply on) linked to a test address and unlinked",
+    "configuration": "behaviour output: Power supply on answers on the test link",
     "configurationFingerprint": null
-   },
-   "origin": {
-    "configuredBy": "ets",
-    "reference": "self-written",
-    "priorBusforgeWrites": "some"
    },
    "results": {
     "transfer": {
-     "state": "pass",
-     "method": "the link flash and its revert reported verified by the server (read-back)",
-     "detail": "linked (47 B, verified), unlinked (47 B, verified)"
+     "state": "not-assessed"
     },
     "reference": {
      "state": "not-assessed"
     },
     "behaviour": {
      "state": "pass",
-     "method": "independent witness connection: a passive detector on its own tunnel through another interface",
-     "detail": "after the link the unit answered a read of the test address with 1 and sent it among its start-up telegrams; after the unlink the same read went unanswered"
+     "method": "independent witness connection observed output",
+     "detail": "the test address answered 0x01"
     },
     "persistence": {
-     "state": "not-assessed",
-     "detail": "the unit's start-up telegrams came about 2.2 s after the negatively confirmed A_Restart, on the flash's connection and on a second connection through another interface, and after them the unit sent the test address and answered a read of it; the contract takes no start-up telegrams as a restart proof"
+     "state": "not-assessed"
     }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0162",
+    "productRef": "M-0162_H-KNX.2D40E.2D1280D-1_P-KNX.2D40E.2D1280D",
+    "appProgramId": "M-0162_A-0004-11-F245",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "unknown"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "meanwell-knx40e-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
    },
    "supersedes": [],
    "supersedeReason": null,
    "source": {
-    "kind": "manual",
+    "kind": "smoke-report",
     "artifact": null,
     "sha256": null
+   },
+   "id": "KNX-40E-1280D flashLinks api transfer",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "api",
+    "configuration": "the device's own configuration, taken over by read-back, then the flashLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the link flash reported verified by the server and the link read back; a second address behind it and, where the product's downloads write it, the object's read flag turned over, written in one GA flash and taken back in another, each read back",
+     "detail": "linked object 2 to the test address (47 B, verified, restart not confirmed by the device), read back; unlinked (47 B, verified, restart not confirmed by the device), zero drift on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed",
+     "detail": "the device left a probe unanswered and answered again, but never went silent on two probes in a row within 60000 ms of A_Restart (A_Restart confirmed negatively): the reboot cannot be seen; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
+    }
    }
   },
   {
@@ -11650,7 +11846,6 @@
   },
   {
    "schema": "busforge.evidence/1",
-   "id": "KNX-40E-1280D flashParams api transfer",
    "recordedAt": null,
    "subject": {
     "manufacturer": "M-0162",
@@ -11664,28 +11859,107 @@
    "medium": "TP",
    "transport": {
     "kind": "ip-tcp",
-    "via": "busforge-bridge"
+    "via": "direct"
    },
    "build": {
     "server": null,
-    "runner": null,
-    "spec": null
-   },
-   "scope": {
-    "operation": "flashParams",
-    "channel": "api",
-    "configuration": "the installation's configuration of the unit (10 parameter values, 6 linked objects), taken over from the project, then P-29 (maximum tracking period) 1800 to 1810 and back",
-    "configurationFingerprint": null
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "meanwell-knx40e-in-service",
+     "revision": null
+    }
    },
    "origin": {
-    "configuredBy": "ets",
+    "configuredBy": "unknown",
     "reference": "self-written",
-    "priorBusforgeWrites": "some"
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "KNX-40E-1280D flashLinks ui behaviour",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "ui",
+    "configuration": "behaviour output: Power supply on answers on the test link",
+    "configurationFingerprint": null
    },
    "results": {
     "transfer": {
-     "state": "fail",
-     "detail": "RESTART_UNPROVEN both ways: the interface confirmed the closing A_Restart negatively and the unit gave no T_Disconnect within 4 s, so this build stopped before its read-back. Every frame before the restart was confirmed on layer 2, and a separate read of the unit with the collect tool after both equals its read before them"
+     "state": "not-assessed"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "pass",
+     "method": "independent witness connection observed output",
+     "detail": "the test address answered 0x01"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0162",
+    "productRef": "M-0162_H-KNX.2D40E.2D1280D-1_P-KNX.2D40E.2D1280D",
+    "appProgramId": "M-0162_A-0004-11-F245",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "unknown"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "meanwell-knx40e-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "KNX-40E-1280D flashLinks ui transfer",
+   "scope": {
+    "operation": "flashLinks",
+    "channel": "ui",
+    "configuration": "the device's own configuration, taken over by read-back, then the flashLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "the link flash reported verified by the server and the link read back; a second address behind it and, where the product's downloads write it, the object's read flag turned over, written in one GA flash and taken back in another, each read back",
+     "detail": "linked object 2 to the test address (verified), read back; unlinked (verified), zero drift on read-back"
     },
     "reference": {
      "state": "not-assessed"
@@ -11695,15 +11969,72 @@
     },
     "persistence": {
      "state": "not-assessed",
-     "detail": "the unit's start-up telegrams came about 2.2 s after the negatively confirmed A_Restart, on the flash's connection and on a second connection through another interface, each time; neither run read anything after it"
+     "detail": "the device left a probe unanswered and answered again, but never went silent on two probes in a row within 60000 ms of A_Restart (A_Restart confirmed negatively): the reboot cannot be seen; load objects 1, 2, 3, 4 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0162",
+    "productRef": "M-0162_H-KNX.2D40E.2D1280D-1_P-KNX.2D40E.2D1280D",
+    "appProgramId": "M-0162_A-0004-11-F245",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "unknown"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "meanwell-knx40e-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
    },
    "supersedes": [],
    "supersedeReason": null,
    "source": {
-    "kind": "manual",
+    "kind": "smoke-report",
     "artifact": null,
     "sha256": null
+   },
+   "id": "KNX-40E-1280D flashParams api transfer",
+   "scope": {
+    "operation": "flashParams",
+    "channel": "api",
+    "configuration": "the device's own configuration, taken over by read-back, then the flashParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "each change and its revert reported verified by the server, zero drift on read-back",
+     "detail": "P-29_R-29 1800→1810 (1 B, verified, restart not confirmed by the device) →1800 (1 B, verified, restart not confirmed by the device), zero drift on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
    }
   },
   {
@@ -11766,6 +12097,70 @@
     "kind": "etsdiff",
     "artifact": "captures/meanwell-ets-revert.log",
     "sha256": "4223e3742e97c532b513f420183e45cfdd6691b5121a4e0de9f0437c10e01d4d"
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0162",
+    "productRef": "M-0162_H-KNX.2D40E.2D1280D-1_P-KNX.2D40E.2D1280D",
+    "appProgramId": "M-0162_A-0004-11-F245",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "unknown"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "meanwell-knx40e-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "KNX-40E-1280D flashParams ui transfer",
+   "scope": {
+    "operation": "flashParams",
+    "channel": "ui",
+    "configuration": "the device's own configuration, taken over by read-back, then the flashParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "each change and its revert reported verified by the server, zero drift on read-back",
+     "detail": "P-29_R-29 1800→1810 (verified, restart not confirmed by the device) →1800 (verified, restart not confirmed by the device), zero drift on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
    }
   },
   {
@@ -11887,6 +12282,390 @@
     "kind": "etsdiff",
     "artifact": "captures/meanwell-ets-fulldownload.log",
     "sha256": "a255581619a67e45bc4e2030318c172d772e816acb9628ee933114fb7d33bfa0"
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0162",
+    "productRef": "M-0162_H-KNX.2D40E.2D1280D-1_P-KNX.2D40E.2D1280D",
+    "appProgramId": "M-0162_A-0004-11-F245",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "unknown"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "meanwell-knx40e-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "KNX-40E-1280D readLinks api transfer",
+   "scope": {
+    "operation": "readLinks",
+    "channel": "api",
+    "configuration": "the device's own configuration, taken over by read-back, then the readLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "group tables read and decoded, every association resolved; where the product reads the com-object table, every object's flags taken from it, a difference from the project named, not judged; not compared with a built image",
+     "detail": "group tables read back and decoded, no gaps, equal to the configuration found"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0162",
+    "productRef": "M-0162_H-KNX.2D40E.2D1280D-1_P-KNX.2D40E.2D1280D",
+    "appProgramId": "M-0162_A-0004-11-F245",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "unknown"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "meanwell-knx40e-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "KNX-40E-1280D readLinks ui transfer",
+   "scope": {
+    "operation": "readLinks",
+    "channel": "ui",
+    "configuration": "the device's own configuration, taken over by read-back, then the readLinks driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "group tables read and decoded, every association resolved; where the product reads the com-object table, every object's flags taken from it, a difference from the project named, not judged; not compared with a built image",
+     "detail": "group tables read back and decoded, no gaps, equal to the configuration found"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0162",
+    "productRef": "M-0162_H-KNX.2D40E.2D1280D-1_P-KNX.2D40E.2D1280D",
+    "appProgramId": "M-0162_A-0004-11-F245",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "unknown"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "meanwell-knx40e-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "KNX-40E-1280D readParams api transfer",
+   "scope": {
+    "operation": "readParams",
+    "channel": "api",
+    "configuration": "the device's own configuration, taken over by read-back, then the readParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "parameter memory read and decoded completely; not compared with a built image",
+     "detail": "parameter image read back and decoded, equal to the configuration found"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0162",
+    "productRef": "M-0162_H-KNX.2D40E.2D1280D-1_P-KNX.2D40E.2D1280D",
+    "appProgramId": "M-0162_A-0004-11-F245",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "unknown"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "meanwell-knx40e-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "KNX-40E-1280D readParams ui transfer",
+   "scope": {
+    "operation": "readParams",
+    "channel": "ui",
+    "configuration": "the device's own configuration, taken over by read-back, then the readParams driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "parameter memory read and decoded completely; not compared with a built image",
+     "detail": "parameter image read back and decoded, equal to the configuration found"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0162",
+    "productRef": "M-0162_H-KNX.2D40E.2D1280D-1_P-KNX.2D40E.2D1280D",
+    "appProgramId": "M-0162_A-0004-11-F245",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "unknown"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "meanwell-knx40e-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "KNX-40E-1280D structuralFlash api transfer",
+   "scope": {
+    "operation": "structuralFlash",
+    "channel": "api",
+    "configuration": "the device's own configuration, taken over by read-back, then the structuralFlash driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "a change that alters the com-object table, and its revert, each written as one structural flash the server reported verified, zero drift on read-back",
+     "detail": "P-97_R-97 0→1 (3 B, verified, restart not confirmed by the device) →0 (3 B, verified, restart not confirmed by the device), zero drift on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
+   }
+  },
+  {
+   "schema": "busforge.evidence/1",
+   "recordedAt": null,
+   "subject": {
+    "manufacturer": "M-0162",
+    "productRef": "M-0162_H-KNX.2D40E.2D1280D-1_P-KNX.2D40E.2D1280D",
+    "appProgramId": "M-0162_A-0004-11-F245",
+    "mask": "MV-07B0",
+    "firmware": {
+     "state": "unknown"
+    }
+   },
+   "medium": "TP",
+   "transport": {
+    "kind": "ip-tcp",
+    "via": "direct"
+   },
+   "build": {
+    "server": null,
+    "runner": {
+     "name": "tools/smoke",
+     "revision": null
+    },
+    "spec": {
+     "name": "meanwell-knx40e-in-service",
+     "revision": null
+    }
+   },
+   "origin": {
+    "configuredBy": "unknown",
+    "reference": "self-written",
+    "priorBusforgeWrites": "unknown"
+   },
+   "supersedes": [],
+   "supersedeReason": null,
+   "source": {
+    "kind": "smoke-report",
+    "artifact": null,
+    "sha256": null
+   },
+   "id": "KNX-40E-1280D structuralFlash ui transfer",
+   "scope": {
+    "operation": "structuralFlash",
+    "channel": "ui",
+    "configuration": "the device's own configuration, taken over by read-back, then the structuralFlash driver's own change",
+    "configurationFingerprint": null
+   },
+   "results": {
+    "transfer": {
+     "state": "pass",
+     "method": "a change that alters the com-object table, and its revert, each written as one structural flash the server reported verified, zero drift on read-back",
+     "detail": "P-97_R-97 0→1 (verified, restart not confirmed by the device) →0 (verified, restart not confirmed by the device), zero drift on read-back"
+    },
+    "reference": {
+     "state": "not-assessed"
+    },
+    "behaviour": {
+     "state": "not-assessed"
+    },
+    "persistence": {
+     "state": "not-assessed"
+    }
    }
   },
   {
