@@ -12,6 +12,15 @@ depends on is hardware-proven.
   the System B partial form of the full download on the Jung 400021SE, the Theben DALI-Gateway's full
   download onto a unit without the application, the structural flash newly offered on the
   Meteodata 140 S. Each needs its run on the device.
+- **Hidden bytes in the System 7 full download.** The parameter and structural flash write a hidden
+  parameter's bytes at the segment's `<Data>` only where the project is known to hold its parameters
+  without memory, and refuse otherwise ([device-memory-model.md](device-memory-model.md#owned-bytes-and-left-alone-bytes)).
+  The full download writes its whole image without that check, so on a project taken over by read-back
+  that left such a parameter at its default it writes `<Data>` over a setting the unit runs with. Open
+  decision: the same check there, or the full download kept for projects that hold those values.
+- **The bytes of a hidden-byte refusal in the UI.** `PARAM_HIDDEN_BYTES_UNKNOWN` names the bytes and the
+  remedy in the server's message; the localized text shows the remedy only, and not which parameters
+  without memory are still to be assumed.
 - **The interface's maximum APDU from the Busforge bridge.** Over TCP the bridge does not answer the
   `SEARCH_REQUEST_EXTENDED` Busforge asks the interface's maximum APDU with; ETS asks the interface
   object's PID 56 with a cEMI `M_PropRead` (`DEVICE_CONFIGURATION_REQUEST`) and gets the USB limit (40).

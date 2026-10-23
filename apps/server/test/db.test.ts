@@ -8,7 +8,7 @@ import { openDb, SCHEMA_VERSION } from "../src/db/schema.ts";
 import { insertProject, listProjects, getProject, deleteProject, setProjectConnection, getProjectConnection } from "../src/db/projects.ts";
 import { listConnections, getConnection, createConnection, updateConnection, deleteConnection, type ConnectionInput } from "../src/db/connections.ts";
 import { insertTelegram, recentTelegrams, pruneTelegrams } from "../src/db/telegrams.ts";
-import { getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceParams, getDeviceParamBase, setDeviceParam, getProjectChanges, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps, getDeviceComObjOverrides, replaceDeviceProduct, getDeviceComObjOverrideBase, setDeviceComObjOverride, revertDeviceComObjFlags, resetComObjOverrideBase, getDeviceParamAssumed, markParamAssumed, clearParamAssumed, clearNeverProgrammed } from "../src/db/deviceparams.ts";
+import { getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceParams, getDeviceParamBase, setDeviceParam, getProjectChanges, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps, getDeviceComObjOverrides, replaceDeviceProduct, getDeviceComObjOverrideBase, setDeviceComObjOverride, revertDeviceComObjFlags, resetComObjOverrideBase, getDeviceParamAssumed, markParamAssumed, clearParamAssumed, clearNeverProgrammed, getDeviceForFlash, getMemorylessAssumed, addMemorylessAssumed } from "../src/db/deviceparams.ts";
 import { serializeConfig, createSnapshot, listSnapshots, restoreSnapshot, deleteSnapshot } from "../src/db/snapshots.ts";
 import { putAppProgram, getAppProgram, putCatalogProduct, listCatalogProducts, getCatalogProduct, backfillCatalogFromDevices, gcAppPrograms } from "../src/db/catalog.ts";
 import { createProject, addDevice } from "../src/db/projects.ts";
@@ -150,6 +150,32 @@ describe("projects", () => {
     expect(() => validateExport({ ...data, deviceComObjOverrides: [{ deviceId: "d", seq: 0, comObjRefId: "r", attrs: { ReadFlag: 1 } }] })).toThrow(expect.objectContaining({ code: "BUSFORGE_INVALID" }));
     replaceDeviceProduct(db, "p1", dev.deviceId, { productRef: "M-1_H-1_HP-1", appRef: "M-1_A-1-1-0", manufacturer: 1 } as Parameters<typeof replaceDeviceProduct>[3], new Map());
     expect(getDeviceComObjOverrides(db, "p1", dev.deviceId)).toEqual([]);
+  });
+
+  // Whether a device's configuration came from ETS, and which parameters without memory a read-back assumed:
+  // what the flash takes as the project knowing the values that decide what a configuration hides.
+  test("a device from an ETS import holds its configuration from ETS, a placed one not; both marks survive a .busforge round-trip, a product replacement ends them", () => {
+    const db = fresh();
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    const dev = getProject(db, "p1")!.devices[0];
+    expect(getDeviceForFlash(db, "p1", dev.id)!.configFromEts).toBe(true);
+    db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer) VALUES ('p1','placed','1.1.99','Placed','M-9_P-1','M-9_H-1_HP-1',9)").run();
+    expect(getDeviceForFlash(db, "p1", "placed")!.configFromEts).toBe(false);
+    addMemorylessAssumed(db, "p1", "placed", [{ refId: "M-9_A-1_P-1_R-1", value: "1" }, { refId: "M-9_A-1_P-1_R-1", value: "2" }, { refId: "M-9_A-1_P-2_R-2", value: null }]);
+    const MK = Buffer.alloc(32, 7);
+    const data = exportProject(db, "p1", 5, MK)!;
+    expect(data.devices.find((d) => d.id === dev.id)!.configFromEts).toBe(true);
+    expect(data.devices.find((d) => d.id === "placed")!.configFromEts).toBeUndefined();
+    expect(data.deviceMemorylessAssumed).toEqual([{ deviceId: "placed", paramRefId: "M-9_A-1_P-1_R-1", value: "2" }, { deviceId: "placed", paramRefId: "M-9_A-1_P-2_R-2", value: null }]);
+    expect(() => validateExport({ ...data, deviceMemorylessAssumed: [{ deviceId: "ghost", paramRefId: "r", value: null }] })).toThrow(expect.objectContaining({ code: "BUSFORGE_INVALID" }));
+    expect(() => validateExport({ ...data, deviceMemorylessAssumed: [{ deviceId: "placed", paramRefId: "r", value: 3 }] })).toThrow(expect.objectContaining({ code: "BUSFORGE_INVALID" }));
+    expect(() => validateExport({ ...data, devices: data.devices.map((d) => ({ ...d, configFromEts: "yes" })) })).toThrow(expect.objectContaining({ code: "BUSFORGE_INVALID" }));
+    importProjectExport(db, data, "p2", 6, MK);
+    expect([getDeviceForFlash(db, "p2", dev.id)!.configFromEts, getDeviceForFlash(db, "p2", "placed")!.configFromEts]).toEqual([true, false]);
+    expect([...getMemorylessAssumed(db, "p2", "placed")]).toEqual([["M-9_A-1_P-1_R-1", "2"], ["M-9_A-1_P-2_R-2", null]]);
+    replaceDeviceProduct(db, "p1", dev.id, { productRef: "M-1_H-1_HP-1", appRef: "M-1_A-1-1-0", manufacturer: 1 } as Parameters<typeof replaceDeviceProduct>[3], new Map());
+    replaceDeviceProduct(db, "p1", "placed", { productRef: "M-1_H-1_HP-1", appRef: "M-1_A-1-1-0", manufacturer: 1 } as Parameters<typeof replaceDeviceProduct>[3], new Map());
+    expect([getDeviceForFlash(db, "p1", dev.id)!.configFromEts, getMemorylessAssumed(db, "p1", "placed").size]).toEqual([false, 0]);
   });
 
   test("an edited com-object flag counts as a change until it is written; revert and the baseline follow it", () => {

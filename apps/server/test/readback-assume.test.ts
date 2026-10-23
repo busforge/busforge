@@ -346,6 +346,32 @@ corpusDescribe("a read-back of the Gira Tastsensor 3 Komfort, assuming the value
     expect(neverProgrammed(state, pid, did)).toBe(true);
   });
 
+  // Whether a flash may overwrite a hidden byte like ETS (memorylessKnown): a device placed from the catalogue counts
+  // as knowing the values of its parameters without memory once a read-back assumed every one its configuration
+  // shows that can be assumed, each still at the assumed value; a device whose configuration came from ETS always.
+  test("a placed device knows its parameters without memory once every assumable shown one is assumed and kept; one from ETS always", async () => {
+    const { memorylessKnown } = await import("../src/routes/deviceops.ts");
+    const { addMemorylessAssumed } = await import("../src/db/deviceparams.ts");
+    const { assumableMemorylessRefs, buildDeviceConfig } = await import("@busforge/product");
+    const { state, pid, did, path } = await placed(xml);
+    const app = parseAppConfig(xml);
+    const r = await onUnit(() => readBack(state, path, [...ROCKERS, ...LEDS]));
+    expect(r.state).toBe("done");
+    const params = () => new Map((stored(state, pid, did).live as { r: string; v: string }[]).map((x) => [x.r, x.v]));
+    const known = () => memorylessKnown(state.db, pid, did, false, app, params(), []);
+    // The read assumed four; the configuration shows more that can be assumed.
+    const shown = assumableMemorylessRefs(buildDeviceConfig(app, params(), undefined, []));
+    expect(shown.length).toBeGreaterThan(4);
+    expect(known()).toBe(false);
+    expect(memorylessKnown(state.db, pid, did, true, app, params(), [])).toBe(true);
+    addMemorylessAssumed(state.db, pid, did, shown.map((ref) => ({ refId: ref, value: params().get(ref) ?? null })));
+    expect(known()).toBe(true);
+    // A project value other than the one assumed is not known again.
+    const [first] = ROCKERS;
+    state.db.prepare("UPDATE device_parameters SET value = ? WHERE project_id = ? AND device_id = ? AND param_ref_id = ?").run("1", pid, did, first.paramRefId);
+    expect(known()).toBe(false);
+  });
+
   test("with them, project and baseline take them, and once the project takes the device's values every link resolves and the device no longer counts as never programmed", async () => {
     const { state, pid, did, path } = await placed(xml);
     const r = await onUnit(() => readBack(state, path, [...ROCKERS, ...LEDS]));
@@ -357,6 +383,9 @@ corpusDescribe("a read-back of the Gira Tastsensor 3 Komfort, assuming the value
       expect(s.live).toContainEqual({ r: a.paramRefId, v: a.value });
       expect(s.base).toContainEqual({ r: a.paramRefId, v: a.value });
     }
+    // Every assumed parameter is kept as assumed by a read-back, proven or not (device_memoryless_assumed).
+    const assumedRows = state.db.query("SELECT param_ref_id AS r, value AS v FROM device_memoryless_assumed WHERE project_id = ? AND device_id = ? ORDER BY param_ref_id").all(pid, did) as { r: string; v: string | null }[];
+    expect(assumedRows).toEqual([...ROCKERS, ...LEDS].sort((a, b) => a.paramRefId.localeCompare(b.paramRefId)).map((a) => ({ r: a.paramRefId, v: a.value })));
     expect(neverProgrammed(state, pid, did)).toBe(true);
     expect((await handleApi(req(`${path}/revert`, { method: "POST" }), state))!.status).toBe(200);
     const again = await onUnit(() => readBack(state, path));

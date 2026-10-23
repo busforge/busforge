@@ -376,9 +376,14 @@ exactly those bytes). A property-mapped mask gets it written whole; on a memory-
 from the first to the last differing byte, as above (Meteodata: its parameter, structural and revert
 downloads read the whole image; switching a threshold channel on writes `0x49F1-0x49FB`, three equal
 bytes inside, and `0x49FC` from the next block; ABB US/U 4.2: the run `0x6F00+5` read whole).
-Busforge plans the same image and its read-compare writes the same spans; a byte inside a span that no
-parameter owns goes out with the unit's own value, where ETS writes its image's (the same value in
-every capture). Where the application closes with image stamps (Gira M-0008) ETS
+Busforge plans the same image, every covered byte with the image's value (a hidden parameter's bytes at
+the segment's `<Data>`, whatever the unit holds: the MDT BE-02001.02's idle input A union at offsets
+48-49 as `00 00` in its downloads, the Meteodata's switched-off channel written back to `<Data>`), and
+its read-compare writes the same spans. A segment without `<Data>` (Steinel M-008E) and an active
+parameter the image does not encode (a colour on System 7) keep the unit's bits: no capture shows ETS's
+image there. A hidden byte the unit holds otherwise than `<Data>` is written so only where the project
+is known to hold the values of its parameters without memory (from ETS, or all assumed by a
+read-back), and refused otherwise ([device-memory-model.md](device-memory-model.md#owned-bytes-and-left-alone-bytes)). Where the application closes with image stamps (Gira M-0008) ETS
 writes only what differs from its record of its last download while the stamps still equal it, the
 same every-covered-byte image otherwise; Busforge keeps no record and writes that image. A
 `TypeColor` parameter covers three bytes in the RGB and the HSV space (MDT BE-06001.02's image).
@@ -1203,9 +1208,12 @@ restart
 - **What is verified.** After the restart: the parameter segment as the parameter flash checks it
   (on System 7 the restored template bytes too), the three tables and the security object whole,
   and every load-state machine the flash concerns LOADED again (on System B the application too).
-- **Where it differs from ETS.** Of the parameter segments ETS writes every byte a parameter covers on a
-  property-mapped mask; the structural flash writes fewer (only what differs from the device), never
-  other ones. On a memory-mapped mask both read the unit first and write what differs.
+- **Where it differs from ETS.** Of the parameter segments both write every byte a parameter covers
+  once anything changed (on a memory-mapped mask read first, the blocks that differ); where no active
+  parameter lies, Busforge writes the image's `<Data>` as ETS does where the project is known to hold
+  its parameters without memory, refuses where a hidden byte differs and it is not, and keeps the unit's
+  bits on a segment without `<Data>` and under an active parameter it does not encode (a colour), where
+  no capture shows ETS's bytes.
 - **The window a failure leaves.** On System B the bracket unloads the application and the security
   object before the first write. A flash cut off inside it leaves the device without a running
   application, and a secured device without its group keys, until the flash is repeated or a full

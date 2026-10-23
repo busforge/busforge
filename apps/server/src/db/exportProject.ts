@@ -32,7 +32,8 @@ export interface ProjectExport {
   // or that were edited after its download; absent otherwise.
   // securityBase: the fingerprint of the security object last verified on a Data Secure device; absent
   // when not known.
-  devices: { id: string; ia: string; name: string; productRef: string; appRef: string; manufacturer: number; comment: string; linkBaseGaps?: number; neverProgrammed?: boolean; etsNotDownloaded?: EtsPart[]; securityBase?: string }[];
+  // configFromEts: the device's parameter values came from an ETS project; absent otherwise.
+  devices: { id: string; ia: string; name: string; productRef: string; appRef: string; manufacturer: number; comment: string; linkBaseGaps?: number; neverProgrammed?: boolean; etsNotDownloaded?: EtsPart[]; securityBase?: string; configFromEts?: boolean }[];
   groupRanges: { id: number; parentId: number | null; name: string; rangeStart: number; rangeEnd: number }[];
   // Building structure (0.xml <Locations>). Optional so artifacts exported before
   // it was carried still import (they re-import with no location grouping).
@@ -52,6 +53,9 @@ export interface ProjectExport {
   // Baseline values a read-back took as assumed, not proven (device_param_assumed; value null: the
   // parameter's default). Required, like the baselines they qualify.
   deviceParamAssumed: { deviceId: string; paramRefId: string; value: string | null }[];
+  // The parameters without memory a read-back assumed on a device, proven or not, with the value assumed (null:
+  // the parameter's default) (device_memoryless_assumed). Optional: absent, none is known as assumed.
+  deviceMemorylessAssumed?: { deviceId: string; paramRefId: string; value: string | null }[];
   // A KNXnet/IP device's settings from the project (device_knxip, @busforge/project DeviceKnxIp). Optional so
   // artifacts from before they were kept still import; such a device's download that writes them is refused.
   deviceKnxIp?: DeviceKnxIp[];
@@ -99,9 +103,9 @@ export function exportProject(db: Database, projectId: string, now: number, mast
   const project = readProjectProperties(db, projectId);
   if (!project) return null;
 
-  const devices = (db.query("SELECT instance_id AS id, ia, name, product_ref AS productRef, app_ref AS appRef, manufacturer, comment, link_base_gaps AS linkBaseGaps, never_programmed AS np, ets_not_downloaded AS ets, security_base AS sb FROM devices WHERE project_id = ? ORDER BY instance_id")
-    .all(projectId) as (ProjectExport["devices"][number] & { np: number; ets: string | null; sb: string | null })[])
-    .map(({ np, ets, sb, ...d }) => ({ ...d, ...(np ? { neverProgrammed: true } : {}), ...(np && ets ? { etsNotDownloaded: ets.split(",") as EtsPart[] } : {}), ...(sb ? { securityBase: sb } : {}) }));
+  const devices = (db.query("SELECT instance_id AS id, ia, name, product_ref AS productRef, app_ref AS appRef, manufacturer, comment, link_base_gaps AS linkBaseGaps, never_programmed AS np, ets_not_downloaded AS ets, security_base AS sb, config_from_ets AS cfe FROM devices WHERE project_id = ? ORDER BY instance_id")
+    .all(projectId) as (ProjectExport["devices"][number] & { np: number; ets: string | null; sb: string | null; cfe: number })[])
+    .map(({ np, ets, sb, cfe, ...d }) => ({ ...d, ...(np ? { neverProgrammed: true } : {}), ...(np && ets ? { etsNotDownloaded: ets.split(",") as EtsPart[] } : {}), ...(sb ? { securityBase: sb } : {}), ...(cfe ? { configFromEts: true } : {}) }));
   const groupRanges = db.query("SELECT id, parent_id AS parentId, name, range_start AS rangeStart, range_end AS rangeEnd FROM group_ranges WHERE project_id = ? ORDER BY id")
     .all(projectId) as ProjectExport["groupRanges"];
   const groupAddresses = db.query("SELECT range_id AS rangeId, raw, address, name, dpt, security FROM group_addresses WHERE project_id = ? ORDER BY raw")
@@ -161,6 +165,8 @@ export function exportProject(db: Database, projectId: string, now: number, mast
     deviceComObjOverrideBase: overrideRows(db, "device_comobj_override_base", projectId),
     deviceParamAssumed: db.query("SELECT device_id AS deviceId, param_ref_id AS paramRefId, value FROM device_param_assumed WHERE project_id = ? ORDER BY device_id, param_ref_id")
       .all(projectId) as ProjectExport["deviceParamAssumed"],
+    deviceMemorylessAssumed: db.query("SELECT device_id AS deviceId, param_ref_id AS paramRefId, value FROM device_memoryless_assumed WHERE project_id = ? ORDER BY device_id, param_ref_id")
+      .all(projectId) as NonNullable<ProjectExport["deviceMemorylessAssumed"]>,
     deviceKnxIp: (db.query("SELECT device_id AS deviceId FROM device_knxip WHERE project_id = ? ORDER BY device_id").all(projectId) as { deviceId: string }[])
       .map(({ deviceId }) => ({ deviceId, ...getDeviceKnxIp(db, projectId, deviceId)! })),
     catalog,

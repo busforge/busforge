@@ -1,10 +1,10 @@
-import { parseAppConfig, resolveModuleInstances, buildDeviceConfig, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, CollectCancelled, comObjectTableChanges, fullDownloadRefusedForTunnelingEntries, type CollectApp, type AppConfig, type DeviceReadbackInfo, type MatrixOperation, type ModuleInstance, type WriteGate, type KnxIpDevice } from "@busforge/product";
+import { parseAppConfig, resolveModuleInstances, buildDeviceConfig, assumableMemorylessRefs, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, CollectCancelled, comObjectTableChanges, fullDownloadRefusedForTunnelingEntries, type CollectApp, type AppConfig, type DeviceReadbackInfo, type MatrixOperation, type ModuleInstance, type WriteGate, type KnxIpDevice } from "@busforge/product";
 import { getProjectConnection, getGaMeta } from "../db/projects.ts";
 import type { Database } from "bun:sqlite";
 import type { Connection } from "../db/connections.ts";
 import { isConnectionReady } from "../transport.ts";
 import { createSnapshot, listSnapshots } from "../db/snapshots.ts";
-import { getDeviceLinks, getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps, keepLinkBaseOnly, clearNeverProgrammed, getDeviceKnxIp, getImageStamps, setImageStamps, setDeviceParam, deleteDeviceParam, getDeviceComObjOverrides, getDeviceComObjOverrideBase, resetComObjOverrideBase, markParamAssumed, clearParamAssumed } from "../db/deviceparams.ts";
+import { getDeviceLinks, getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps, keepLinkBaseOnly, clearNeverProgrammed, getDeviceKnxIp, getImageStamps, setImageStamps, setDeviceParam, deleteDeviceParam, getDeviceComObjOverrides, getDeviceComObjOverrideBase, resetComObjOverrideBase, markParamAssumed, clearParamAssumed, getMemorylessAssumed, addMemorylessAssumed } from "../db/deviceparams.ts";
 import { acknowledgeUntested } from "../db/untestedAcks.ts";
 import { getDeviceSecurity, putDeviceSecurity, setDeviceSequence, setToolKeySource } from "../db/deviceSecurity.ts";
 import { getDeviceCertificate, putDeviceCertificate } from "../db/deviceCertificates.ts";
@@ -210,6 +210,17 @@ function comObjectTableGuard(
   return err("COM_OBJECT_TABLE_STALE", "this change alters the device's communication objects, which needs its com-object table rewritten; busforge cannot do that for this device family yet", 400);
 }
 
+// Whether the project is known to hold the values of the device's parameters without memory that decide what
+// `params` hides (ParamFlashCtx.memorylessKnown): its configuration came from ETS, or a read-back assumed every
+// one the configuration shows that it can assume, each still at the value it assumed.
+export function memorylessKnown(db: Database, projectId: string, deviceId: string, configFromEts: boolean, app: AppConfig | null, params: Map<string, string>, modules: ModuleInstance[]): boolean {
+  if (configFromEts) return true;
+  if (!app) return false;
+  const assumed = getMemorylessAssumed(db, projectId, deviceId);
+  const instances = modules.length ? modules : (app.hasModules ? resolveModuleInstances(app, params) : []);
+  return assumableMemorylessRefs(buildDeviceConfig(app, params, undefined, instances)).every((r) => assumed.has(r) && assumed.get(r) === (params.get(r) ?? null));
+}
+
 // The structural flash both flash routes run for a change that alters the com-object table. It writes
 // the group tables whole, so it takes the group-address flash's link-baseline guard, and a verified
 // result adopts the parameter and the link baseline, as the full download does.
@@ -241,6 +252,7 @@ function structuralFlash(
         connection: conn, dataDir: state.dataDir, ...tables.ctx,
         params, baseParams, links: resolved.links, moduleInstances: modules, comObjectOverrides, comObjectOverrideBase,
         stampRecord: getImageStamps(db, projectId, deviceId),
+        memorylessKnown: memorylessKnown(db, projectId, deviceId, dev.configFromEts, loadApp(state, projectId, deviceId), params, modules),
         dryRun: dry, onProgress: progress, ...gate,
       });
     }, commit, (result) => {
@@ -398,6 +410,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
           // Each assumed value takes this read's verdict: an unproven one is marked on the value the
           // baseline now holds, a proven one loses an earlier mark.
           for (const a of assumed) { if (unproven.includes(a.refId)) markParamAssumed(db, id, deviceId, a.refId, a.isDefault ? null : a.value); else clearParamAssumed(db, id, deviceId, a.refId); }
+          addMemorylessAssumed(db, id, deviceId, assumed.map((a) => ({ refId: a.refId, value: a.isDefault ? null : a.value })));
           if (lb) { replaceLinkBase(db, id, deviceId, lb.base); setLinkBaseGaps(db, id, deviceId, lb.gaps); }
           if (read.comObjOverrideBase) resetComObjOverrideBase(db, id, deviceId, read.comObjOverrideBase);
           if (programmed) clearNeverProgrammed(db, id, deviceId);
@@ -786,6 +799,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
           ...knxIpOf(db, id, deviceId, dev.ia),
           // Read when the job runs, so a download queued before it has left its record.
           stampRecord: getImageStamps(db, id, deviceId),
+          memorylessKnown: memorylessKnown(db, id, deviceId, dev.configFromEts, flApp, flashParams, flashModules),
           dryRun: dryParams, onProgress: progress, ...gate,
         });
       }, commit, (result) => {

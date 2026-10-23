@@ -130,6 +130,13 @@ What each row does not show:
     the whole parameter image ETS reads (every byte a parameter covers) before it writes the blocks
     that differ, as ETS's captures show; the runs on the units read only the blocks of the changed
     bytes. The bytes written are the same.
+  - **Every System 7 device with `<Data>` segments**: a parameter or structural flash writes the bytes
+    of hidden parameters with the segment's `<Data>`, as ETS's images hold them, where the runs on the
+    units wrote the unit's own value there. A unit holding something else there (`00 0a` in the MDT
+    BE-02001.02's idle input A union) is written back to `<Data>` where the project is known to hold
+    the values of its parameters without memory (from ETS, or all assumed by a read-back), and the
+    flash is refused otherwise (capture comparison); no such write or refusal has run on a device. A
+    segment without `<Data>` and an active colour keep the unit's bits.
   - **Theben DALI gateway**: the full download onto a unit that does not hold the application (the
     declared form, allocation Mode 1) equals ETS's capture of it and has not run.
   - **Theben Meteodata 140 S, Steinel M-008E**: an active text parameter (the Meteodata's EIS 5

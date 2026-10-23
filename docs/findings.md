@@ -545,8 +545,10 @@ its old address; if the allocation moves it, the whole image is written. Its fin
 checks every byte of the segment against the image or against the read before the flash. The
 memory-mapped System 7 group-address flash reads the tables at their new length and writes only
 the differing bytes; the property-mapped one writes whole tables, the individual address included
-(ETS skips those two bytes; they hold the same value). The parameter flash on System 7 writes only
-owned bytes that differ. `tools/etsdiff.test.ts` holds the System B parameter bytes against the
+(ETS skips those two bytes; they hold the same value). The parameter flash on System 7, once a
+parameter changed, writes every byte a parameter covers, as ETS's image holds it (on a memory-mapped
+mask read first, the blocks that differ), a hidden parameter's at `<Data>` only where the project is
+known to hold its parameters without memory ([device-memory-model.md](device-memory-model.md#owned-bytes-and-left-alone-bytes)). `tools/etsdiff.test.ts` holds the System B parameter bytes against the
 captures, address and value. Writing only the owned bytes brings the GVS parameter flash to about
 77 s, against 96-116 s when every byte of the segment is written. The byte-level ETS comparison of the partial
 downloads lives in tests only; no reference evidence record is emitted for it yet. Which devices

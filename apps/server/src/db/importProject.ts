@@ -71,6 +71,16 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
     if (assumedKeys.has(key)) throw new ApiError("BUSFORGE_INVALID", "duplicate deviceParamAssumed entry");
     assumedKeys.add(key);
   }
+  if (d.deviceMemorylessAssumed !== undefined) {
+    if (!Array.isArray(d.deviceMemorylessAssumed)) throw new ApiError("BUSFORGE_INVALID", "malformed deviceMemorylessAssumed");
+    const keys = new Set<string>();
+    for (const a of d.deviceMemorylessAssumed as Record<string, unknown>[]) {
+      if (typeof a?.deviceId !== "string" || !exportedIds.has(a.deviceId) || typeof a.paramRefId !== "string" || (a.value !== null && typeof a.value !== "string")) throw new ApiError("BUSFORGE_INVALID", "malformed deviceMemorylessAssumed entry");
+      const key = `${a.deviceId}\u0000${a.paramRefId}`;
+      if (keys.has(key)) throw new ApiError("BUSFORGE_INVALID", "duplicate deviceMemorylessAssumed entry");
+      keys.add(key);
+    }
+  }
   // Validate each device's identity/reference fields so a crafted artifact fails as a clean
   // 400 rather than crashing later: busforgeGaps calls appProgramId(appRef).split(...) and
   // importProjectExport binds these into insDev, both of which throw a generic 500 on a
@@ -81,6 +91,7 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
       throw new ApiError("BUSFORGE_INVALID", "malformed device entry");
     }
     if (dev.neverProgrammed !== undefined && typeof dev.neverProgrammed !== "boolean") throw new ApiError("BUSFORGE_INVALID", "malformed device entry");
+    if (dev.configFromEts !== undefined && dev.configFromEts !== true) throw new ApiError("BUSFORGE_INVALID", "malformed device entry");
     // The parts ETS has still to download explain a never-programmed device and nothing else: known parts,
     // each once, at least one.
     if (dev.etsNotDownloaded !== undefined) {
@@ -220,11 +231,11 @@ export function importProjectExport(db: Database, data: ProjectExport, id: strin
     const source = data.source ?? artifact;
     if (source) setProjectSource(db, id, source);
 
-    const insDev = db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment, link_base_gaps, never_programmed, ets_not_downloaded, security_base) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    const insDev = db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment, link_base_gaps, never_programmed, ets_not_downloaded, security_base, config_from_ets) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
     // An artifact from before the gap count carries a link baseline whose gaps were never
     // counted: unknown (-1) until the device is read again, as the schema migration does.
     const withLinkBase = new Set(data.deviceLinkBase.map((l) => l.deviceId));
-    for (const d of data.devices) insDev.run(id, d.id, d.ia, d.name, d.productRef, d.appRef, d.manufacturer, d.comment, d.linkBaseGaps ?? (withLinkBase.has(d.id) ? -1 : 0), d.neverProgrammed ? 1 : 0, d.etsNotDownloaded?.join(",") ?? null, d.securityBase ?? null);
+    for (const d of data.devices) insDev.run(id, d.id, d.ia, d.name, d.productRef, d.appRef, d.manufacturer, d.comment, d.linkBaseGaps ?? (withLinkBase.has(d.id) ? -1 : 0), d.neverProgrammed ? 1 : 0, d.etsNotDownloaded?.join(",") ?? null, d.securityBase ?? null, d.configFromEts ? 1 : 0);
 
     const insRange = db.prepare("INSERT INTO group_ranges (project_id, parent_id, name, range_start, range_end) VALUES (?, ?, ?, ?, ?)");
     const idMap = new Map<number, number>(); // exported range id -> new row id
@@ -256,6 +267,8 @@ export function importProjectExport(db: Database, data: ProjectExport, id: strin
     for (const o of data.deviceComObjOverrideBase) insOverrideBase.run(id, o.deviceId, o.seq, o.comObjRefId, JSON.stringify(o.attrs));
     const insAssumed = db.prepare("INSERT INTO device_param_assumed (project_id, device_id, param_ref_id, value) VALUES (?, ?, ?, ?)");
     for (const a of data.deviceParamAssumed) insAssumed.run(id, a.deviceId, a.paramRefId, a.value);
+    const insMemoryless = db.prepare("INSERT INTO device_memoryless_assumed (project_id, device_id, param_ref_id, value) VALUES (?, ?, ?, ?)");
+    for (const a of data.deviceMemorylessAssumed ?? []) insMemoryless.run(id, a.deviceId, a.paramRefId, a.value);
     const insKnxIp = db.prepare("INSERT INTO device_knxip (project_id, device_id, settings) VALUES (?, ?, ?)");
     for (const { deviceId, ...settings } of data.deviceKnxIp ?? []) insKnxIp.run(id, deviceId, JSON.stringify(settings));
 

@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { parseAppConfig, parseLoadProcedures, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, planRelativeParFlash, type LoadProcedures } from "../src/index.ts";
+import { parseAppConfig, parseLoadProcedures, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, planRelativeParFlash, resolveModuleInstances, toAppModel, type LoadProcedures } from "../src/index.ts";
 import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
 
@@ -155,3 +155,47 @@ test("planRelativeParFlash writes the declared MCB entries right after the alloc
   expect(() => planRelativeParFlash(4, image, owned, 0x4000, id, true, [{ ...mcb[0], obj: 3 }])).toThrow("object 3");
 });
 
+
+// A System 7 parameter flash writes every byte a parameter covers, the bits no active parameter lies on at the
+// segment's <Data> as ETS's image holds them (tools/etsdiff.test.ts: MDT BE-02001.02, Meteodata 140 S). A segment
+// without <Data> has no such image any capture shows: there those bits keep what the unit holds.
+corpusDescribe("a System 7 parameter flash over a segment without <Data> (Steinel M-008E)", () => {
+  const xml = catalogueXml("M-008E_A-7079-10-9C41.xml.gz");
+  const app = parseAppConfig(xml);
+  const proc = parseLoadProcedures(xml);
+  const targets = buildAbsoluteSegmentTargets(app, new Map()).filter((t) => t.size > 0);
+
+  test("a hidden parameter's byte keeps the unit's value when another parameter changes", () => {
+    const seg = targets.find((t) => app.absoluteSegments.find((s) => s.id === t.id)!.data.length === 0 && t.owned.some(Boolean))!;
+    const cov = parameterMemoryBytes(app, seg.id, seg.size, { colorWidth: true })!;
+    const hidden = cov.findIndex((c, i) => c && seg.owned[i] === 0);
+    const changed = seg.owned.findIndex((o) => o === 0xff);
+    expect([hidden >= 0, changed >= 0, seg.dataBits!.every((b) => b === 0)]).toEqual([true, true, true]);
+    const unit = Buffer.from(seg.bytes);
+    unit[hidden] = 0x5a;
+    unit[changed] ^= 0xff;
+    const current = new Map(targets.map((t) => [t.id, t.id === seg.id ? unit : Buffer.from(t.bytes)]));
+    const { plan, changedBytes } = planAbsoluteParFlash(app, new Map(), proc, current);
+    expect(changedBytes).toBe(1);
+    const written = new Map((plan.filter((s) => s.op === "writeMem") as { address: number; bytes: Buffer }[]).flatMap((w) => [...w.bytes].map((b, i) => [w.address + i, b] as [number, number])));
+    expect([written.get(seg.address + hidden), written.get(seg.address + changed)]).toEqual([0x5a, seg.bytes[changed]]);
+  });
+});
+
+// A parameter a <ParameterCalculation> sets is ETS's to compute, so its bits are not the image's <Data> to write when
+// the configuration hides it: in a module instance too, whose ref carries the instance in the ModuleDef ref's id.
+corpusDescribe("a hidden ParameterCalculation target in a module instance (MDT BE-06001.02)", () => {
+  test("its bits are not written as <Data>", () => {
+    const app = parseAppConfig(catalogueXml("M-0083_A-00B4-32-3919.xml.gz"));
+    expect([...app.calculationRefs].some((r) => r.endsWith("_MD-2_P-105_R-543"))).toBe(true);
+    const instances = resolveModuleInstances(app, new Map());
+    const model = toAppModel(app, { includeUnions: true, instances });
+    const targets = buildAbsoluteSegmentTargets(app, new Map(), { moduleInstances: instances });
+    const placed = [...model.refs.values()].filter((r) => /_MD-2_M-\d+_MI-\d+_P-105_R-543$/.test(r.id)).map((r) => model.params.get(r.paramId)!);
+    expect(placed.length).toBeGreaterThan(0);
+    for (const p of placed) {
+      const t = targets.find((x) => x.id === p.codeSegment)!;
+      expect([p.offset, t.dataBits![p.offset!] & (0x80 >> p.bitOffset)]).toEqual([p.offset, 0]);
+    }
+  });
+});

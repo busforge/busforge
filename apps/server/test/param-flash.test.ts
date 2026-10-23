@@ -77,14 +77,16 @@ corpusDescribe("the MV-0705 parameter flash against the real M-0081 application"
 
   // Recording backup hook: the profile hands the device's CURRENT bytes over BEFORE any
   // write (runFlashOp's structural ordering); the log lets tests assert exactly that.
-  const ctxFor = (dryRun: boolean) => {
+  // memorylessKnown: as for a device whose configuration came from ETS, so the sentinels in hidden bytes are
+  // written like ETS (ParamFlashCtx.memorylessKnown); the test after the first shows the refusal without it.
+  const ctxFor = (dryRun: boolean, memorylessKnown = true) => {
     const backups: { file: string; bytes: Buffer }[] = [];
     const events: string[] = [];
     return {
       ctx: {
         // baseParams == params: the device was programmed with this very configuration, so the
         // com-object staleness gate is a no-op here and these tests exercise flash mechanics.
-        deviceId: "d", appXml: xml, params, baseParams: params, moduleInstances: [], dryRun,
+        deviceId: "d", appXml: xml, params, baseParams: params, moduleInstances: [], memorylessKnown, dryRun,
         persistBackups: (files: { file: string; bytes: Buffer }[]) => { backups.push(...files); events.push("backup-persisted"); return "backup"; },
       },
       backups, events,
@@ -131,11 +133,16 @@ corpusDescribe("the MV-0705 parameter flash against the real M-0081 application"
           if (t.owned[i]) expect(dev.mem.get(t.address + i)).toBe(t.bytes[i]);
         }
       }
-      // The surgical guarantee: a parameter flash must NEVER touch unowned bytes
-      // (manufacturer defaults / erased gaps / inactive branches). Every sentinel survives.
+      // An unowned byte outside every parameter's memory is never touched: its sentinel survives. One a
+      // parameter covers is written as ETS's image holds it (auro-m0081-ets6log-partial-params.txt from l. 180
+      // lists every covered byte): the bits no active parameter lies on at the segment's <Data>, the bits of an
+      // active parameter Busforge does not encode as the device held them.
+      const cov = parameterMemoryBytes(cfg, targets[0].id, targets[0].size, { colorWidth: true })!;
       for (const t of targets) {
         for (let i = 0; i < t.size; i++) {
-          if (!t.owned[i]) expect(dev.mem.get(t.address + i)).toBe(SENTINEL);
+          if (t.owned[i]) continue;
+          const keepAll = t !== targets[0] || !cov[i];
+          expect(dev.mem.get(t.address + i)).toBe(keepAll ? SENTINEL : (SENTINEL & ~t.dataBits![i]) | (t.bytes[i] & t.dataBits![i]));
         }
       }
       // The load bracket ran and completed: at least one LSM saw events, and every LSM
@@ -143,11 +150,19 @@ corpusDescribe("the MV-0705 parameter flash against the real M-0081 application"
       expect(dev.state.size).toBeGreaterThan(0);
       for (const [, s] of dev.state) expect(s).toBe(STATE.LOADED);
       // Written: every byte a parameter's memory covers, as ETS's parameter download of this application
-      // writes them (parWriteSet); the bytes no active parameter owns carry what the device held.
+      // writes them (parWriteSet).
       const covered = parameterMemoryBytes(cfg, targets[0].id, targets[0].size)!;
       const writtenAt = dev.writes.flatMap((w) => Array.from({ length: w.len }, (_, i) => w.addr + i));
       expect(writtenAt).toEqual(covered.flatMap((c, i) => (c ? [targets[0].address + i] : [])));
     }, 70_000); // reconnectAfterRestart sleeps 3 s (not injectable through flashParameters)
+
+    test("a project not known to hold its parameters without memory: hidden bytes the device holds otherwise than <Data> refuse the flash, nothing written", async () => {
+      const dev = seeded(true);
+      const { ctx } = ctxFor(false, false);
+      const e = await classify(cfg).flashParameters(asDev(dev), "0705", ctx).catch((x: unknown) => x);
+      expect(e).toMatchObject({ code: "PARAM_HIDDEN_BYTES_UNKNOWN" });
+      expect(dev.writes).toEqual([]);
+    });
 
     test("verify has teeth: a device that does not persist the write reports verified:false, NOT a fake success", async () => {
       // Guards against the mock being a "perfect memory" where verify can never fail. Here the

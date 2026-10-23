@@ -32,7 +32,7 @@ export interface SegmentFlashPlan {
   address: number;
   size: number;
   runs: FlashRun[]; // contiguous byte runs to write via memWrite, sorted by address
-  image: Buffer; // the segment as it is to end: the target's owned bits over the device's (`current`) bytes
+  image: Buffer; // the segment as it is to end: the target's owned bits over the device's (`current`) bytes; a parameter flash that writes the bytes parameters cover takes the target there
   ownedBytes: number; // bytes under flash authority (derived from active parameters)
   writtenBytes: number; // bytes actually scheduled to write (== ownedBytes if no `current`)
   skippedUnowned: number; // bytes we deliberately never touch (defaults / gaps / inactive)
@@ -307,7 +307,8 @@ export function differingBytes(want: Buffer, have: Buffer): number[] {
 
 // One region a System 7 structural flash compares and may write: the image the new configuration
 // gives it, which bits of it are ours to write (`owned`), and which a read-back may assert (`verify`).
-export interface AbsStructuralImage { id: string; address: number; image: Buffer; owned: ReadonlyArray<number>; verify: ReadonlyArray<number> }
+// `dataBits`: of a parameter segment, the bits the image holds at <Data> where no active parameter lies (DeviceSegmentTarget).
+export interface AbsStructuralImage { id: string; address: number; image: Buffer; owned: ReadonlyArray<number>; verify: ReadonlyArray<number>; dataBits?: ReadonlyArray<number> }
 export interface AbsStructuralSegment { id: string; address: number; lsm: number; image: Buffer; verify: ReadonlyArray<number> }
 export interface AbsStructuralFlashPlan { plan: LoadPlan; changedBytes: number; lsms: number[]; concerned: number[]; segments: AbsStructuralSegment[]; tableRefs?: { lsm: number; address: number }[] }
 
@@ -362,6 +363,7 @@ export function absoluteStructuralImages(
       id: t.id, address: t.address, image: t.bytes,
       owned: t.owned.map((m, i) => m | dropped(i)),
       verify: t.verify.map((v, i) => v | dropped(i)),
+      dataBits: t.dataBits,
     });
   }
   return images;
@@ -399,6 +401,19 @@ export function absoluteStructuralBuild(app: AppConfig, images: AbsStructuralIma
   };
 }
 
+// Where the configuration hides a parameter, ETS's image holds the segment's <Data> (parWriteSet), and ETS's
+// project always holds the values of the parameters without memory that decide what is hidden; no read-back
+// shows them. A project that is not known to hold them (`hiddenBytes` "refuse") may hide a parameter the unit
+// runs with: a hidden byte the unit holds otherwise than <Data> is then refused instead of overwritten.
+// "write": the device's configuration came from ETS, or every parameter without memory it shows was assumed.
+export type HiddenBytes = "write" | "refuse";
+function refuseHiddenBytes(segId: string, address: number, have: Buffer, image: ArrayLike<number>, owned: ArrayLike<number>, dataBits: ArrayLike<number> | undefined, cov: boolean[]): void {
+  const at = Array.from(cov, (c, i) => (c && ((have[i] ^ image[i]) & (dataBits?.[i] ?? 0) & ~owned[i] & 0xff) !== 0 ? address + i : -1)).filter((a) => a >= 0);
+  if (!at.length) return;
+  const list = at.slice(0, 8).map((a) => `0x${a.toString(16)}`).join(", ") + (at.length > 8 ? ` and ${at.length - 8} more` : "");
+  throw new ProductError("PARAM_HIDDEN_BYTES_UNKNOWN", `segment ${segId}: the unit holds other values than the segment's <Data> at ${list}, bytes of parameters this configuration hides; ETS writes <Data> there, but the project is not known to hold the values of its parameters without memory (not taken from ETS, not all assumed by a read-back), so whether they are hidden on the unit is not known; refusing to overwrite them`);
+}
+
 export function planAbsoluteStructuralFlash(
   app: AppConfig,
   images: AbsStructuralImage[],
@@ -409,6 +424,7 @@ export function planAbsoluteStructuralFlash(
   // What the caller built from the application before reading the device (absoluteStructuralBuild); what
   // is absent is built here.
   built: Partial<AbsStructuralBuild> = {},
+  hiddenBytes: HiddenBytes = "refuse",
 ): AbsStructuralFlashPlan {
   const { addrImg, assocImg, comImg } = structuralTableImages(app, images);
   const tables = built.tables ?? planSystem7TableBrackets(app, procedure, { addr: addrImg.image, assoc: assocImg.image });
@@ -426,8 +442,8 @@ export function planAbsoluteStructuralFlash(
   let changedBytes = 0;
   const tableIds = new Set([addrImg.id, assocImg.id, comImg.id]);
   // The parameter bytes, as the parameter flash writes them (parWriteSet): once any differs from the
-  // device, every byte a parameter covers in every parameter segment, a covered byte no parameter owns
-  // with the device's value and checked back as such.
+  // device, every byte a parameter covers in every parameter segment, with the image's value (a hidden
+  // parameter's bytes at the segment's <Data>), and checked back as such.
   const params = images.filter((x) => !tableIds.has(x.id)).map((w) => {
     const have = current.get(w.address);
     if (!have || have.length !== w.image.length) {
@@ -437,15 +453,18 @@ export function planAbsoluteStructuralFlash(
     return { w, image, differing: w.owned.map((own, i) => own !== 0 && have[i] !== image[i]) };
   });
   const anyDiffers = params.some((x) => x.differing.some(Boolean));
-  for (const { w, image, differing } of params) {
-    let write = differing, verify = w.verify;
+  for (const { w, differing, ...p } of params) {
+    let image = p.image, write = differing, verify = w.verify;
     if (anyDiffers) {
       const cov = coverage?.has(w.id) ? coverage.get(w.id)! : parameterMemoryBytes(app, w.id, w.image.length, { moduleInstances, colorWidth: true });
       if (!cov) throw new ProductError("PARAM_SEGMENT_UNKNOWN", `a parameter in segment ${w.id} has a type of no known width, so the bytes ETS's download writes there cannot be told; refusing to guess`);
       const outside = differing.flatMap((d, i) => (d && !cov[i] ? [i] : []));
       if (outside.length) throw new ProductError("PARAM_SEGMENT_UNKNOWN", `segment ${w.id}: ${outside.length} changed byte(s) (first at offset ${outside[0]}) lie outside every parameter's memory; refusing a write set that would leave them out`);
       write = cov;
-      verify = w.verify.map((v, i) => (cov[i] && !w.owned[i] ? 0xff : v));
+      const have = current.get(w.address)!;
+      if (hiddenBytes === "refuse") refuseHiddenBytes(w.id, w.address, have, w.image, w.owned, w.dataBits, cov);
+      image = Buffer.from(image.map((b, i) => (cov[i] ? mergeOwnedBits(have[i], w.image[i], w.owned[i] | (w.dataBits?.[i] ?? 0)) : b)));
+      verify = w.verify.map((v, i) => (!cov[i] ? v : w.owned[i] ? v | (w.dataBits?.[i] ?? 0) : 0xff));
     }
     const runs = runsFromMask(image, w.address, write);
     if (!runs.length) continue;
@@ -479,9 +498,11 @@ export function planAbsoluteStructuralFlash(
 // each run of it in 12-byte blocks from the run's start and writes per block the span from the first to
 // the last byte that differs (Theben Meteodata 140 S, meteodata-140s-ets-partial-{params,revert,c14-on,
 // c14-off}.log; c14-on writes 0x49F1-0x49FB with three equal bytes in it), which the runner's read-compare
-// does with the same steps (differingRuns). A covered byte no parameter owns carries the device's value,
-// so inside such a span it goes out as the unit held it before the bracket, where ETS writes its image's
-// value (equal in every captured case). Where the application closes with image stamps
+// does with the same steps (differingRuns). A covered byte carries the image's value, also where no active
+// parameter owns it: ETS's image holds a hidden parameter's bytes at the segment's <Data>, whatever the
+// unit holds there (MDT BE-02001.02: input A's idle union at offsets 48-49 as 00 00 in its partial and full
+// downloads; Theben Meteodata 140 S: switching channel C14 off writes the channel's <Data> back over the
+// values the unit held, meteodata-140s-ets6log-partial-c14-off.txt). Where the application closes with image stamps
 // (LdCtrlLoadImageProp PID 27, the Gira M-0008), ETS writes only what differs from its record of its last
 // download while the stamps still equal that record, and the same every-covered-byte image where they do
 // not; Busforge keeps no record, so it writes that image.
@@ -500,14 +521,14 @@ export function planAbsoluteParFlash(
   values: Map<string, string>,
   procedure: LoadProcedures,
   current: Map<string, Buffer>, // AbsoluteSegment Id -> live device bytes
-  opts: { lang?: string; moduleInstances?: ModuleInstance[]; requireReboot?: boolean; built?: AbsParFlashBuild } = {},
+  opts: { lang?: string; moduleInstances?: ModuleInstance[]; requireReboot?: boolean; built?: AbsParFlashBuild; hiddenBytes?: HiddenBytes } = {},
 ): AbsParFlashPlan {
   const built = opts.built ?? buildAbsoluteParFlash(app, values, opts);
   const fp = planAbsoluteSegmentFlash(app, values, { ...opts, current, targets: built.targets });
   // What ETS writes of a parameter download (parWriteSet): once anything changed, every byte a parameter's
   // memory covers, in every parameter segment; on a memory-mapped mask the runner's read-compare writes of
   // it the blocks that differ, as ETS does.
-  // `covered` is what the caller verifies besides the owned bytes: the device's own values it rewrote.
+  // `covered` is what the caller verifies besides the owned bytes: the covered bytes as written.
   const differing = fp.segments.reduce((n, sg) => n + sg.writtenBytes, 0);
   const covered: AbsParFlashPlan["covered"] = [];
   if (differing > 0 && built.coverage) {
@@ -516,6 +537,9 @@ export function planAbsoluteParFlash(
       if (!cov) throw new ProductError("PARAM_SEGMENT_UNKNOWN", `a parameter in segment ${sg.id} has a type of no known width, so the bytes ETS's parameter download writes there cannot be told; refusing to guess`);
       const outside = sg.runs.flatMap((r) => [...r.bytes.keys()].map((k) => r.address - sg.address + k)).filter((i) => !cov[i]);
       if (outside.length) throw new ProductError("PARAM_SEGMENT_UNKNOWN", `segment ${sg.id}: ${outside.length} changed byte(s) (first at offset ${outside[0]}) lie outside every parameter's memory; refusing a write set that would leave them out`);
+      const t = built.targets.find((x) => x.id === sg.id)!, have = current.get(sg.id)!;
+      if ((opts.hiddenBytes ?? "refuse") === "refuse") refuseHiddenBytes(sg.id, sg.address, have, t.bytes, t.owned, t.dataBits, cov);
+      sg.image = Buffer.from(sg.image.map((b, i) => (cov[i] ? mergeOwnedBits(have[i], t.bytes[i], t.owned[i] | (t.dataBits?.[i] ?? 0)) : b)));
       sg.runs = runsFromMask(sg.image, sg.address, cov);
       covered.push({ id: sg.id, address: sg.address, image: sg.image, covered: cov });
     }

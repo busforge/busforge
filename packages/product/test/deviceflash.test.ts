@@ -255,3 +255,38 @@ corpusTest("an absolute parameter flash writes only the owned bits of a shared b
     expect(written & m).toBe(t.bytes[i] & m);
   }
 });
+
+// Which bits of a System 7 segment a parameter flash takes from the image where no parameter owns them (dataBits): the
+// bits no active parameter lies on, where the segment has <Data> (ETS's image holds them there: MDT BE-02001.02's
+// idle union at offsets 48-49, tools/etsdiff.test.ts). An active parameter the image does not encode (an RGB colour,
+// on these segments) keeps the unit's bits, and a segment without <Data> keeps every unowned bit.
+test("the image's <Data> stands for hidden bits only: not for an active colour, not without <Data>", () => {
+  const P = "M-0007_A-0001-01-0001";
+  const colourXml = (data: string) => `<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0007"><ApplicationPrograms>
+<ApplicationProgram Id="${P}" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-0705" DefaultLanguage="en-US" Name="Colour And Hidden">
+<Static>
+<ParameterTypes>
+<ParameterType Id="${P}_PT-C"><TypeColor Space="RGB"/></ParameterType>
+<ParameterType Id="${P}_PT-8"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="255"/></ParameterType>
+</ParameterTypes>
+<Parameters>
+<Parameter Id="${P}_P-1" ParameterType="${P}_PT-C" Text="Colour" Value="#010203"><Memory CodeSegment="${P}_AS-1" Offset="0" BitOffset="0"/></Parameter>
+<Parameter Id="${P}_P-2" ParameterType="${P}_PT-8" Text="Hidden" Value="7"><Memory CodeSegment="${P}_AS-1" Offset="3" BitOffset="0"/></Parameter>
+<Parameter Id="${P}_P-3" ParameterType="${P}_PT-8" Text="Switch" Value="0"><Memory CodeSegment="${P}_AS-1" Offset="4" BitOffset="0"/></Parameter>
+</Parameters>
+<ParameterRefs>
+<ParameterRef Id="${P}_P-1_R" RefId="${P}_P-1"/><ParameterRef Id="${P}_P-2_R" RefId="${P}_P-2"/><ParameterRef Id="${P}_P-3_R" RefId="${P}_P-3"/>
+</ParameterRefs>
+<Code><AbsoluteSegment Id="${P}_AS-1" Address="100" Size="5" MemoryType="EEPROM">${data}</AbsoluteSegment></Code>
+</Static>
+<Dynamic><ParameterBlock Id="${P}_PB-1" Name="Main" Text="Main">
+<ParameterRefRef RefId="${P}_P-1_R"/><ParameterRefRef RefId="${P}_P-3_R"/>
+<choose ParamRefId="${P}_P-3_R"><when test="1"><ParameterRefRef RefId="${P}_P-2_R"/></when></choose>
+</ParameterBlock></Dynamic>
+</ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+  const [withData] = buildAbsoluteSegmentTargets(parseAppConfig(colourXml(`<Data>${Buffer.from([0x11, 0x22, 0x33, 0x44, 0x55]).toString("base64")}</Data>`)), new Map());
+  expect([withData.owned, withData.dataBits]).toEqual([[0, 0, 0, 0, 0xff], [0, 0, 0, 0xff, 0]]);
+  const [without] = buildAbsoluteSegmentTargets(parseAppConfig(colourXml("")), new Map());
+  expect(without.dataBits).toEqual([0, 0, 0, 0, 0]);
+});

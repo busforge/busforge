@@ -796,6 +796,11 @@ export interface ParamFlashCtx extends WriteGate {
   // The stamps of the device's last download that wrote its parameters (ImageStamp), the record ETS
   // keeps; absent where there is none.
   stampRecord?: ImageStamp[];
+  // Whether the project is known to hold the values of the parameters without memory that decide what the
+  // configuration hides (its configuration came from ETS, or a read-back assumed every one it shows). On
+  // System 7 a hidden byte the unit holds otherwise than <Data> is written like ETS only then, refused
+  // otherwise (HiddenBytes). Absent: not known.
+  memorylessKnown?: boolean;
 }
 // Commissioning a device from nothing needs everything at once: the parameters AND the links,
 // because the com-object table it writes has to agree with the association table it writes.
@@ -891,6 +896,8 @@ export interface StructureFlashCtx extends WriteGate {
   // As ParamFlashCtx.stampRecord: with the unit's stamps equal to it, the parameter bytes go differentially
   // (relativeParWriteSet), and the com-object table too where the record's download wrote it (relativeComObjWriteSet).
   stampRecord?: ImageStamp[];
+  // As ParamFlashCtx.memorylessKnown.
+  memorylessKnown?: boolean;
   dryRun: boolean;
   security?: SecureTablesCtx;
   onProgress?: ProgressFn;
@@ -2011,7 +2018,7 @@ export class System7Profile extends DeviceProfile {
       current.set(t.id, onDev);
     }
 
-    const { plan, changedBytes, unplaceable, covered, constantsDiffer } = planAbsoluteParFlash(cfg, ctx.params, proc, current, { moduleInstances, requireReboot: !persistsOnLoadCompleted(cfg), built });
+    const { plan, changedBytes, unplaceable, covered, constantsDiffer } = planAbsoluteParFlash(cfg, ctx.params, proc, current, { moduleInstances, requireReboot: !persistsOnLoadCompleted(cfg), built, hiddenBytes: ctx.memorylessKnown ? "write" : "refuse" });
     const writeBytes = plan.reduce((n, st) => n + (st.op === "writeMem" ? st.bytes.length : 0), 0);
     // No-silent-drop: a changed segment with no LSM in the load procedure cannot be programmed.
     if (unplaceable.length) {
@@ -2048,10 +2055,11 @@ export class System7Profile extends DeviceProfile {
           // are written but excluded: the device re-stamps them on download (e.g. M-008E AS-4B00[0:2]),
           // so checking them would fail every successful flash. Same authority boundary as unowned bytes.
           const match = confirmedOnlyMatch(dev, t.address, t.bytes, t.verify, current.get(t.id) ?? null);
-          // The bytes a parameter covers and none owns were written back with the device's own values
-          // (parWriteSet): they must read back as written, as owned bytes must.
+          // The bytes a parameter covers were written as the plan holds them (parWriteSet: the image's <Data>
+          // where no active parameter lies, also beside an owned bit, else the device's own bits): those bits
+          // must read back as written, as owned bytes must.
           const cov = covered.find((c) => c.id === t.id);
-          const keptAsWritten = (back: Buffer) => !cov || cov.covered.every((c, i) => !c || t.owned[i] !== 0 || back[i] === cov.image[i]);
+          const keptAsWritten = (back: Buffer) => !cov || cov.covered.every((c, i) => !c || ((back[i] ^ cov.image[i]) & (t.owned[i] !== 0 ? (t.dataBits?.[i] ?? 0) : 0xff)) === 0);
           const { value, ok } = await verifySettled(
             () => dev.memRead(t.address, t.size, undefined, (d, n) => ctx.onProgress?.("verify", d, n)),
             (back) => match(back) !== null && keptAsWritten(back),
@@ -2211,7 +2219,7 @@ export class System7Profile extends DeviceProfile {
       read += r.image.length;
     }
     // The closing restart is held to what the parameter flash proves on these devices.
-    const { plan, changedBytes, concerned, segments, tableRefs } = planAbsoluteStructuralFlash(cfg, images, proc, current, !persistsOnLoadCompleted(cfg), instances, structuralBuild());
+    const { plan, changedBytes, concerned, segments, tableRefs } = planAbsoluteStructuralFlash(cfg, images, proc, current, !persistsOnLoadCompleted(cfg), instances, structuralBuild(), ctx.memorylessKnown ? "write" : "refuse");
     const loaded = await allLoaded(dev, concerned, memMapped);
     const l3Seg = system7ComObjSegment(cfg);
     const l3Image = l3Seg ? images.find((r) => r.address === l3Seg.address) : undefined;

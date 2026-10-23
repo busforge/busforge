@@ -74,7 +74,7 @@ and writes no programmed baseline.
 | Table | Holds |
 |---|---|
 | `projects` | name, import time, group-address level count (2 or 3), the referenced connection |
-| `devices` | device instances: individual address, name, product and application refs, manufacturer, the `0.xml` instance id, comment |
+| `devices` | device instances: individual address, name, product and application refs, manufacturer, the `0.xml` instance id, comment, whether the configuration came from an ETS project (`config_from_ets`) |
 | `group_ranges` | main and middle group ranges, a self-referencing tree |
 | `group_addresses` | group addresses: raw value, name, DPT, owning range |
 | `spaces` / `space_devices` | the building structure from `<Locations>` and device membership |
@@ -84,6 +84,7 @@ and writes no programmed baseline.
 | `device_comobj_overrides` | the com-object flags and priority the project sets per device, the attributes as ETS stores them |
 | `device_param_base` / `device_link_base` / `device_comobj_override_base` | the **programmed baseline**: what the device was last known to hold |
 | `device_param_assumed` | baseline parameter values a read-back took as **assumed, not proven**, with the value each mark is about |
+| `device_memoryless_assumed` | the parameters without memory a read-back assumed on a device, **proven or not**; with `config_from_ets`, what lets a System 7 flash overwrite a hidden byte ([device-memory-model.md](device-memory-model.md#owned-bytes-and-left-alone-bytes)) |
 | `snapshots` | configuration restore points, one JSON payload per row |
 | `app_programs` | the global catalog of decrypted application-program XML |
 | `catalog_products` | browsable product metadata, with the `pinned` flag |

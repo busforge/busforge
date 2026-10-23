@@ -38,6 +38,9 @@ export const mdtBe06001InService: DeviceSpec = {
       { name: "Setting Logic, Logic 1", paramRefId: "M-0083_A-00B4-32-3919_MD-3_M-49_MI-1_P-1_R-3", value: "0" },
       { name: "Setting Logic, Logic 2", paramRefId: "M-0083_A-00B4-32-3919_MD-3_M-50_MI-1_P-1_R-3", value: "0" },
       { name: "Setting Logic, Logic 3", paramRefId: "M-0083_A-00B4-32-3919_MD-3_M-51_MI-1_P-1_R-3", value: "2" },
+      // The value its ETS project holds; it shows the setting at offset 334 of the parameter segment, which
+      // the unit holds as 01 and which otherwise counts as hidden.
+      { name: "Internal input, Logic 3", paramRefId: "M-0083_A-00B4-32-3919_MD-3_M-51_MI-1_P-46_R-64", value: "4" },
       { name: "Input A value for contact closed", paramRefId: "M-0083_A-00B4-32-3919_MD-2_M-2_MI-1_P-31_R-43", value: "1" },
       { name: "Input A value for contact opened", paramRefId: "M-0083_A-00B4-32-3919_MD-2_M-2_MI-1_P-32_R-50", value: "0" },
       { name: "Input B value for contact closed", paramRefId: "M-0083_A-00B4-32-3919_MD-2_M-3_MI-1_P-31_R-43", value: "1" },

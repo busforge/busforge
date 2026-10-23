@@ -324,7 +324,9 @@ corpusDescribe("System 7: every build runs before the session opens", () => {
     unit = u; lag = 0; slow = true;
     try { return { result: await run(), unit: u }; } finally { slow = false; unit = null; }
   };
-  const s7Scope = { ...scope, appXml: s7Xml, params, baseParams: params, dryRun: true };
+  // memorylessKnown: the zero memory differs from <Data> in hidden bytes; as an ETS project's, the plan writes
+  // them instead of refusing (ParamFlashCtx.memorylessKnown), so these tests reach the write they are about.
+  const s7Scope = { ...scope, appXml: s7Xml, params, baseParams: params, memorylessKnown: true, dryRun: true };
 
   test("a read-back", async () => {
     const { result, unit: u } = await on(() => ops.readDeviceState({ ...s7Scope, liveParams: params }));

@@ -147,7 +147,7 @@ mark every byte they actually wrote as **owned**.
 | Kind | Where it comes from | Flash authority |
 | --- | --- | --- |
 | **Owned** | encoded from an active, resolved parameter | may be written |
-| **Left alone** | manufacturer default, an erased `0xFF` gap, an inactive-branch parameter, an ETS-computed table | never written |
+| **Left alone** | manufacturer default, an erased `0xFF` gap, an inactive-branch parameter, an ETS-computed table | never written by ownership; on System 7 a parameter download writes every byte a parameter covers from the image (below) |
 
 Ownership is gated on the encoder actually writing: a type the image does not represent
 (a colour outside the RGB space, other) or a malformed value writes nothing and claims no bytes; a
@@ -158,6 +158,31 @@ excludes bytes owned only by `Access="None"` device-internal markers (download-r
 stamps and counters the device rewrites for itself on every download). Those bytes are still
 written, because they are part of the correct image, but asserting them would report every
 successful flash as failed.
+
+On System 7 a parameter or structural flash that changes anything writes, as ETS's parameter download
+does, every byte a parameter's memory covers, and the bits no active parameter lies on with the
+image's value, not the unit's: a hidden parameter's bytes at the segment's `<Data>`. ETS's images show
+it: the MDT BE-02001.02's partial and full downloads hold input A's idle union (offsets 48-49 of its
+parameter segment) as the `<Data>` `00 00`, so a unit found holding `00 0a` there is written back; the
+Theben Meteodata 140 S's download that switches a threshold channel off writes the channel's `<Data>`
+back over the values the unit held, and its parameter download's image holds `<Data>` there too
+([load-procedures.md](load-procedures.md#the-rules-by-level), `parWriteSet`). A change that leaves
+every active parameter as the unit holds it writes nothing, a leftover in a hidden byte included.
+Where no capture shows ETS's image, the unit's bits stay: in a segment without `<Data>` (the Steinel
+sensor, [below](#segments-without-a-data-default)) and under an active parameter the image does not
+encode (a colour on System 7). On System B the bytes Busforge owns (inactive plain parameters at their
+default, idle top-level unions at their default, the rules below) are the bytes ETS's captured partial
+downloads write.
+
+What a configuration hides depends on parameters without a memory location too, and no read-back
+shows their values. ETS's project always holds them; a Busforge project holds them where the device's
+configuration came from an ETS project (a `.knxproj` import), or where a read-back assumed every one
+the configuration shows that it can assume (an editable enumeration or whole number) and the project
+still holds each at the assumed value. Only then does a System 7 flash write a hidden byte the unit
+holds otherwise than `<Data>` as ETS does. Otherwise it refuses (`PARAM_HIDDEN_BYTES_UNKNOWN`) and
+names the bytes: a project taken over by read-back that left such a parameter at its default would
+count as hidden what the unit runs with (on the MDT BE-06001.02, a logic's "Internal input" decides
+whether a setting of that logic is shown).
 
 ![How a setting becomes a byte, and what we leave alone](mv0705-visibility-model.svg)
 
@@ -172,8 +197,9 @@ consult those bytes.
 
 **Honest caveat.** "Irrelevant" is an inference about firmware behaviour from the visibility
 model, not something instrumented at the silicon level. It is the same bet ETS makes: ETS
-writes its precomputed default there, Busforge leaves the device's existing value, and both
-assume the firmware respects its own visibility gating. The read-back corpus supports the
+writes its precomputed image there, Busforge writes the same on System 7 (above) and leaves the
+device's existing value where no ETS download writes one, and both assume the firmware respects
+its own visibility gating. The read-back corpus supports the
 bet (toggling a feature on a real device changes exactly the active bytes), it does not
 prove it.
 
@@ -330,7 +356,8 @@ This is safe by construction: every device that ships a full-size `<Data>` never
 path. It leaves one **irreducible residual**: a handful of parameters that sit in an inactive
 branch yet hold a non-zero default on the device. Reconstructing those exactly would mean
 reproducing ETS's full default-image computation, the very thing `<Data>` normally ships
-precomputed. Because the flash writes only owned bytes, those bytes are never written, so
+precomputed. Because the flash writes there only owned bytes and keeps the unit's bits in every other
+byte it covers, those bytes are never changed, so
 the gap costs nothing: "we cannot reconstruct them" stays "we leave them alone" instead of
 becoming "we flash them wrong".
 

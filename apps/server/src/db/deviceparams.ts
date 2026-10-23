@@ -204,13 +204,13 @@ export function setDeviceLink(db: Database, projectId: string, deviceId: string,
 // device's only config, all of it unprogrammed drift until the first flash.
 export function replaceDeviceProduct(db: Database, projectId: string, deviceId: string, product: CatalogProduct, links: Map<string, number[]>): void {
   db.transaction(() => {
-    const updated = db.prepare("UPDATE devices SET product_ref = ?, app_ref = ?, manufacturer = ?, link_base_gaps = 0, never_programmed = 1, ets_not_downloaded = NULL, security_base = NULL, image_stamps = NULL WHERE project_id = ? AND instance_id = ?")
+    const updated = db.prepare("UPDATE devices SET product_ref = ?, app_ref = ?, manufacturer = ?, link_base_gaps = 0, never_programmed = 1, ets_not_downloaded = NULL, security_base = NULL, image_stamps = NULL, config_from_ets = 0 WHERE project_id = ? AND instance_id = ?")
       .run(product.productRef, product.appRef, product.manufacturer, projectId, deviceId).changes;
     // The route checked existence before parsing the body; if the device vanished in
     // that gap, a 0-row UPDATE would silently commit orphan device_links rows below
     // (device_links has no FK on the device row). Throwing rolls the transaction back.
     if (updated === 0) throw new ApiError("DEVICE_NOT_FOUND", "device not found", 404);
-    for (const t of ["device_parameters", "device_param_base", "device_link_base", "device_modules", "device_security", "device_links", "device_comobj_overrides", "device_comobj_override_base", "device_knxip", "device_param_assumed"]) {
+    for (const t of ["device_parameters", "device_param_base", "device_link_base", "device_modules", "device_security", "device_links", "device_comobj_overrides", "device_comobj_override_base", "device_knxip", "device_param_assumed", "device_memoryless_assumed"]) {
       db.prepare(`DELETE FROM ${t} WHERE project_id = ? AND device_id = ?`).run(projectId, deviceId);
     }
     // DCA baggage is keyed by a `${deviceId}_`-prefixed name, not a device_id column.
@@ -224,12 +224,13 @@ export function replaceDeviceProduct(db: Database, projectId: string, deviceId: 
   })();
 }
 
-export function getDeviceForFlash(db: Database, projectId: string, deviceId: string): { ia: string; appRef: string; name: string; programmingToken: string; neverProgrammed: boolean } | null {
-  const r = db.query("SELECT ia, app_ref AS appRef, name, programming_token AS programmingToken, never_programmed AS np FROM devices WHERE project_id = ? AND instance_id = ?")
-    .get(projectId, deviceId) as { ia: string; appRef: string; name: string; programmingToken: string; np: number } | null;
+// `configFromEts`: the device's parameter values came from an ETS project (devices.config_from_ets).
+export function getDeviceForFlash(db: Database, projectId: string, deviceId: string): { ia: string; appRef: string; name: string; programmingToken: string; neverProgrammed: boolean; configFromEts: boolean } | null {
+  const r = db.query("SELECT ia, app_ref AS appRef, name, programming_token AS programmingToken, never_programmed AS np, config_from_ets AS ets FROM devices WHERE project_id = ? AND instance_id = ?")
+    .get(projectId, deviceId) as { ia: string; appRef: string; name: string; programmingToken: string; np: number; ets: number } | null;
   if (!r) return null;
-  const { np, ...d } = r;
-  return { ...d, neverProgrammed: np === 1 };
+  const { np, ets, ...d } = r;
+  return { ...d, neverProgrammed: np === 1, configFromEts: ets === 1 };
 }
 
 // Only a verified full download shows the device holds this project's whole configuration (its
@@ -435,6 +436,16 @@ export function getDeviceParamAssumed(db: Database, projectId: string, deviceId:
 }
 export function markParamAssumed(db: Database, projectId: string, deviceId: string, refId: string, value: string | null): void {
   db.prepare("INSERT OR REPLACE INTO device_param_assumed (project_id, device_id, param_ref_id, value) VALUES (?, ?, ?, ?)").run(projectId, deviceId, refId, value);
+}
+// The parameters without memory a read-back assumed on the device, proven or not, with the value each read
+// assumed (null: the parameter's default) (device_memoryless_assumed). A later assumption replaces it.
+export function getMemorylessAssumed(db: Database, projectId: string, deviceId: string): Map<string, string | null> {
+  const rows = db.query("SELECT param_ref_id AS refId, value FROM device_memoryless_assumed WHERE project_id = ? AND device_id = ?").all(projectId, deviceId) as { refId: string; value: string | null }[];
+  return new Map(rows.map((r) => [r.refId, r.value]));
+}
+export function addMemorylessAssumed(db: Database, projectId: string, deviceId: string, assumed: { refId: string; value: string | null }[]): void {
+  const ins = db.prepare("INSERT OR REPLACE INTO device_memoryless_assumed (project_id, device_id, param_ref_id, value) VALUES (?, ?, ?, ?)");
+  for (const a of assumed) ins.run(projectId, deviceId, a.refId, a.value);
 }
 // A later read that assumed the parameter again and showed its value.
 export function clearParamAssumed(db: Database, projectId: string, deviceId: string, refId: string): void {

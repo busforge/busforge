@@ -912,6 +912,15 @@ export interface ComObjUniverseEntry {
 // for the TextParameterRefId (a device's DeviceConfigBuild.paramValue), else by that parameter's
 // default (ref value over param value), which is what an override-free device holds. Undefined for
 // a dangling ref.
+// The parameters without memory a configuration shows that a read-back can be asked to assume (CfgParamView
+// memoryless, editable, an enumeration or a whole number: what the read-back route takes), by ParameterRef id:
+// the settings no read-back recovers that decide, with the rest, what the configuration hides. A read-only
+// row, a text or a float decides nothing a choose tests.
+export function assumableMemorylessRefs(build: DeviceConfigBuild): string[] {
+  return [...new Set(build.blocks.flatMap((b) => b.items.flatMap((i) => (i.kind === "param" && i.param.memoryless && !i.param.readOnly
+    && ((i.param.control === "enum" && !!i.param.options?.length) || (i.param.control === "number" && !i.param.float)) ? [i.param.refId] : []))))];
+}
+
 export function comObjectRefTexts(app: AppConfig, fullRefId: string, lang?: string, valueOf?: (refId: string) => string | undefined): { name: string; functionText: string } | undefined {
   const ref = app.comObjectRefs.get(fullRefId);
   const obj = ref ? app.comObjects.get(ref.refId) : undefined;

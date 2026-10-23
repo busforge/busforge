@@ -360,7 +360,9 @@ async function readStateIn(inSession: InSession, cfg: AppConfig, opts: ReadState
         const values = read.paramBase;
         const moduleInstances = instancesFor(values);
         const progress = (_p: string, d?: number, t?: number) => opts.onProgress?.("check", d, t);
-        const common = { deviceId: opts.deviceId, appXml: opts.appXml, params: values, baseParams: values, moduleInstances, dryRun: true, persistBackups: () => "", signal: opts.signal, onProgress: progress };
+        // memorylessKnown: the dry run asks only whether a flash would write; a hidden byte it would refuse to
+        // overwrite (ParamFlashCtx.memorylessKnown) comes with an owned byte that differs, so the answer is yes.
+        const common = { deviceId: opts.deviceId, appXml: opts.appXml, params: values, baseParams: values, moduleInstances, memorylessKnown: true, dryRun: true, persistBackups: () => "", signal: opts.signal, onProgress: progress };
         const notCancelled = () => { if (opts.signal?.aborted) throw new ApiError("READ_ABORTED", "read aborted"); };
         notCancelled();
         const par = await inSession((dev, mask) => profile.flashParameters(dev, mask, common));

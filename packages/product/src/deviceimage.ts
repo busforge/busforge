@@ -149,7 +149,7 @@ export interface DeviceSegmentImage { id: string; address: number; size: number;
 // <Data>), and a write that places
 // such a parameter writes its value there (a structural flash, which writes the image's bits back
 // once it hides the parameter again).
-export interface DeviceSegmentTarget extends DeviceSegmentImage { owned: number[]; verify: number[]; constant: number[]; constants: ConstantPlacement[]; hidden: number[] }
+export interface DeviceSegmentTarget extends DeviceSegmentImage { owned: number[]; verify: number[]; constant: number[]; constants: ConstantPlacement[]; hidden: number[]; dataBits?: number[] }
 
 // A constant parameter placed in a segment: its ParameterRef and the bits it holds there.
 export interface ConstantPlacement { paramRefId: string; paramId: string; offset: number; bitOffset: number; sizeInBit: number }
@@ -242,6 +242,7 @@ export function buildAbsoluteSegmentTargets(
     const placements: ConstantPlacement[] = [];
     const constants = constantsAlone(app, [...model.params.values()].filter((p) => p.codeSegment === segId), model.types, seg.size);
     const hidden = new Array<number>(seg.size).fill(0), placed = new Array<number>(seg.size).fill(0);
+    const activeBits = new Array<number>(seg.size).fill(0);
     for (const ref of model.refs.values()) {
       const param = model.params.get(ref.paramId);
       if (!param || param.codeSegment !== segId || param.offset === undefined) continue;
@@ -249,6 +250,11 @@ export function buildAbsoluteSegmentTargets(
       const type = model.types.get(param.typeId);
       const sized = !!type && Number.isFinite(type.sizeInBit) && type.sizeInBit > 0;
       if (sized) markOwned(v === undefined ? hidden : placed, [], param.offset, param.bitOffset, type!.sizeInBit, seg.size, false);
+      const bits = type && type.base !== "Color" && sized ? type.sizeInBit : colorBits(app, param.typeId) ?? 8;
+      // An active parameter's bits, and those of one a <ParameterCalculation> sets (ETS computes it, Busforge
+      // does not), are not the image's <Data> to write.
+      // A module instance's ref is the ModuleDef's, as <ParameterCalculation> names it, with the instance in its id.
+      if (v !== undefined || app.calculationRefs.has(ref.id) || app.calculationRefs.has(ref.id.replace(/_M-\d+_MI-\d+/, ""))) markOwned(activeBits, [], param.offset, param.bitOffset, bits, seg.size, false);
       if (v === undefined) continue; // not visible / not active: keep the <Data> default
       if (!type || !sized) continue;
       // A colour on these segments: no ETS capture of a product with absolute segments shows one, so the
@@ -299,7 +305,11 @@ export function buildAbsoluteSegmentTargets(
         placements.push({ paramRefId: ref.id, paramId: param.id, offset: param.offset, bitOffset: param.bitOffset ?? 0, sizeInBit: type.sizeInBit });
       }
     }
-    out.push({ id: segId, address: seg.address, size: seg.size, bytes: img, owned, verify, constant, constants: placements, hidden: hidden.map((h, i) => h & ~placed[i] & 0xff) });
+    // The bits ETS's image holds at the segment's <Data> where no active parameter lies: a hidden
+    // parameter's, and those no parameter uses. Without <Data> (or past it) none: no capture shows what
+    // ETS's partial download writes there, so a write keeps the unit's bits.
+    const dataBits = activeBits.map((a, i) => (i < seg.data.length ? ~a & 0xff : 0));
+    out.push({ id: segId, address: seg.address, size: seg.size, bytes: img, owned, verify, constant, constants: placements, hidden: hidden.map((h, i) => h & ~placed[i] & 0xff), dataBits });
   }
   return out.sort((a, b) => a.address - b.address);
 }
@@ -597,7 +607,7 @@ export function wholeBytes(verify: ReadonlyArray<number>, markers: ReadonlyArray
 // segment whether active or not (union members and module-instance parameters included). Null when a
 // parameter there has a type of no known width, so the bytes it covers cannot be told.
 // `colorWidth`: count a TypeColor parameter in the RGB or the HSV space as three bytes, for the set of bytes
-// a parameter download writes with the device's own values (the absolute image path encodes no colour).
+// a parameter download writes, where a colour keeps the device's own bits (the absolute image path encodes none).
 export function parameterMemoryBytes(app: AppConfig, segId: string, size: number, opts: { moduleInstances?: ModuleInstance[]; colorWidth?: boolean } = {}): boolean[] | null {
   const model = toAppModel(app, { includeUnions: true, instances: opts.moduleInstances ?? [] });
   const covered = new Array<boolean>(size).fill(false);

@@ -571,6 +571,17 @@ corpusDescribe("structural flash against ETS's partial download", () => {
     expect(lsms).toEqual([1, 2, 3]);
     // ETS's sequence: both tables unloaded and declared again, the application loaded without either.
     expect(planSteps(plan)).toEqual(withoutVerifyMode(captureSteps("mdt-be02001-ets-partial-structure.log", ia)));
+    // Input A's idle union (offsets 48-49 of AS-4468, no active member) is in ETS's image at the segment's
+    // <Data>, 00 00, whatever the unit holds: a unit holding 00 0a there gets 00 00 where the project is known
+    // to hold the values of its parameters without memory (as ETS's own project does), and the flash is refused,
+    // naming those bytes, where it is not.
+    current.get(0x4468)![48] = 0x00; current.get(0x4468)![49] = 0x0a;
+    expect(() => planAbsoluteStructuralFlash(cfg, images, parseLoadProcedures(xml), current, true, instances)).toThrow(/<Data> at 0x4499, bytes of parameters this configuration hides/);
+    const residue = planAbsoluteStructuralFlash(cfg, images, parseLoadProcedures(xml), current, true, instances, {}, "write");
+    const residueBytes = new Map<number, number>();
+    for (const st of residue.plan) if (st.op === "writeMem") st.bytes.forEach((b, i) => residueBytes.set(st.address + i, b));
+    expect([residueBytes.get(0x4498), residueBytes.get(0x4499), ets.get(0x4498), ets.get(0x4499)]).toEqual([0x00, 0x00, 0x00, 0x00]);
+    expect([...residueBytes].sort(([a], [b]) => a - b)).toEqual([...ours].sort(([a], [b]) => a - b));
   });
 
   test("Jung 400021SE: every byte ETS wrote matches Busforge's image", () => {
@@ -2120,6 +2131,24 @@ corpusDescribe("Theben Meteodata 140 S (M-0048_A-140C-14-EB70) against ETS", () 
     const unit = new Map([paramSeg, otherParams].flatMap((sg) => [...(sg === paramSeg ? onUnit : held4c)].map((b, i) => [sg.address + i, b] as [number, number])));
     expect(sorted(readCompared(plan, heldBeforeWrite(PARTIAL, ia, unit)))).toEqual([[0x4800, 0xaa], [0x4804, 0x01]]);
     expect([...wire(PARTIAL)]).toEqual([[0x4800, 0xaa], [0x4804, 0x01]]);
+  });
+
+  // A unit that holds other values in the bytes of a hidden channel (threshold channel C14, off: values a
+  // configuration with it on left there) gets the segment's <Data> back with the next parameter flash where the project
+  // is known to hold the values of its parameters without memory: ETS's image of its parameter download holds <Data>
+  // there, and ETS writes what the unit holds otherwise. Where it is not known, the flash is refused.
+  test("parameter flash onto a unit holding leftovers in a hidden channel: ETS's image there, the leftovers written back to <Data>", () => {
+    const after = new Map(baseline.params).set(tempRef(), "1");
+    const left = Buffer.from(onUnit);
+    Buffer.from("302c3000312c300000ba65", "hex").copy(left, 0x1f1);
+    const held = new Map([[paramSeg.id, left], [otherParams.id, held4c]]);
+    expect(() => planAbsoluteParFlash(cfg, after, proc, held)).toThrow(expect.objectContaining({ code: "PARAM_HIDDEN_BYTES_UNKNOWN" }));
+    const { plan } = planAbsoluteParFlash(cfg, after, proc, held, { hiddenBytes: "write" });
+    const etsImage = new Map([...etsLog("meteodata-140s-ets6log-partial-params.txt").image].filter(([a]) => a >= 0x4800));
+    expect(sorted(bytesOf(plan))).toEqual(sorted(etsImage));
+    const unit = new Map([paramSeg, otherParams].flatMap((sg) => [...(sg === paramSeg ? left : held4c)].map((b, i) => [sg.address + i, b] as [number, number])));
+    const written = readCompared(plan, unit);
+    expect(sorted(written).filter(([a]) => a >= 0x49f0 && a < 0x4a00)).toEqual(Array.from({ length: 11 }, (_, i) => [0x49f1 + i, etsImage.get(0x49f1 + i)!]));
   });
 
   test("parameter flash with nothing changed: the cleared download marker alone is no change, nothing is written", () => {

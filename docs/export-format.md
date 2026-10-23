@@ -93,6 +93,7 @@ node decrypt-busforge.mjs project.busforge "my-password" | jq .project.name
 | live parameter values and links | |
 | the **programmed baselines** for both, so drift survives the move | |
 | the marks on baseline values a read-back assumed, not proven | |
+| per device, whether its configuration came from an ETS project (`configFromEts`), and the parameters without memory a read-back assumed, proven or not (`deviceMemorylessAssumed`) | |
 | device module instances | |
 | the referenced catalog application programs | |
 | the images those programs' `TypePicture` parameters show (`catalogPictures`) | |
@@ -102,7 +103,10 @@ node decrypt-busforge.mjs project.busforge "my-password" | jq .project.name
 | KNX Data Secure tool keys | |
 
 Several fields are optional in the schema (building structure, catalogue pictures, restore points, bus log, tool keys,
-source), and an artifact without them imports. The marks on assumed baseline values
+source, `configFromEts`, `deviceMemorylessAssumed`), and an artifact without them imports: without the last
+two, a device counts as holding the values of its parameters without memory only where its configuration
+shows none a read-back could assume (a System 7 flash otherwise refuses to overwrite a hidden byte the unit
+holds otherwise than `<Data>`). The marks on assumed baseline values
 (`deviceParamAssumed`) are required, as the baselines are: an artifact without them is refused, and
 so is one with a mark on a parameter that is not a parameter without a memory or property location
 of its device's carried application (`BUSFORGE_ASSUMED_NOT_MEMORYLESS`). A re-imported project

@@ -519,6 +519,25 @@ const MIGRATIONS: string[] = [
   `
   ALTER TABLE devices ADD COLUMN ets_not_downloaded TEXT;
   `,
+  // Whether the device's parameter values came from an ETS project, so that its project holds ETS's values of
+  // the parameters without memory, which decide what its configuration hides and no read-back shows. Set by
+  // the .knxproj import, cleared by a product replacement, 0 for a device placed from the catalogue.
+  `
+  ALTER TABLE devices ADD COLUMN config_from_ets INTEGER NOT NULL DEFAULT 0;
+  `,
+  // The parameters without memory a read-back assumed on a device, proven or not (device_param_assumed keeps
+  // only the unproven), with the value assumed (NULL: the parameter's default): what, besides a configuration
+  // from ETS, makes the project known to hold the values that decide what its configuration hides (the
+  // flash's memorylessKnown), while the project still holds that value. Cleared by a product replacement.
+  `
+  CREATE TABLE device_memoryless_assumed (
+    project_id   TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    device_id    TEXT NOT NULL,
+    param_ref_id TEXT NOT NULL,
+    value        TEXT,
+    PRIMARY KEY (project_id, device_id, param_ref_id)
+  );
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration
