@@ -97,8 +97,8 @@ bundle from them ([evidence-contract.md](evidence-contract.md#the-shipped-record
 run, copy its report and `<report>.evidence.json` to `evidence/runs/<date>/` in the corpus and run it
 with `--write`.
 
-The tools that need the corpus refuse without it: `tools/evidence-bundle.ts` and
-`packages/product/test/real-catalogue.gen.ts`. `tools/etsdiff.ts` takes its capture and application
+The tools that need the corpus refuse without it: `tools/evidence-bundle.ts`,
+`tools/demo-project.ts` and `packages/product/test/real-catalogue.gen.ts`. `tools/etsdiff.ts` takes its capture and application
 as paths and needs no corpus of its own.
 
 ### Timeouts of heavy tests
@@ -112,6 +112,34 @@ own timeout argument raised to the same rule where it has one. Measure with `bun
 A timeout is raised to the measurement; a test is never made smaller or left out to fit one. A test
 whose assertion is about time does not lean on a wall clock the load stretches: it orders the events
 it checks (the read-back route's task, which waits for the request's answer before it ends).
+
+### The demo project
+
+Screenshots and rehearsals show one project, built the same way in every fresh
+instance: `tools/demo-project.ts` creates it through the API of a running server.
+
+```bash
+export BUSFORGE_CORPUS=/absolute/path/to/busforge-corpus
+bun run tools/demo-project.ts http://localhost:3000
+```
+
+The project, *Musterhaus Sonnenweg*, is an invented single-family house: a building with three
+floors and nine rooms (one of them a distribution board), 41 group addresses in five main groups
+(central functions, lighting, blinds, heating, presence), and 17 devices of ten manufacturers,
+products from the device table in [status.md](status.md#devices-driven-on-real-hardware): switching, blind and
+heating actuators, a DALI gateway, push-button and universal interfaces, presence detectors, a
+weather station, a power supply and an IP interface. Each device has an invented name and individual
+address and sits in a room; where a channel is closed by default, the parameter that opens it is
+set; its objects are linked, some of them to several addresses. Nothing is written to a bus;
+every device is placed, never programmed, and the project ends with one snapshot.
+
+The tool imports the product databases `demo/*.knxprod` from the corpus first: manufacturer data
+only (hardware, application programs and their images), which is third-party catalogue data and so
+not in the repository. It refuses an instance that already holds a project of that name, a product
+the databases lack, and any parameter, link, address or room that does not read back as written. A
+run that stops after creating the project names it as half-built; delete it before the next run
+(the imported products stay in the catalogue, which is harmless).
+`tools/demo-project.test.ts` builds it into a fresh in-process server.
 
 ## When a change needs a hardware run
 

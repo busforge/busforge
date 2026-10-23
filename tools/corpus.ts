@@ -22,6 +22,10 @@ export const IN_SERVICE_COLLECTIONS = [
 ] as const;
 export const inServiceCollection = (specId: string) => `collections/in-service/${specId}.json`;
 
+// The product databases of the demo project (tools/demo-project.ts): manufacturer data only
+// (hardware, application programs, their images), nothing of a project.
+export const DEMO_PRODUCT_FILES = ["demo/bench-products.knxprod", "demo/house-products.knxprod"] as const;
+
 // Every file the tests and tools read, relative to the corpus root. A corpus may hold more; it
 // may not hold less.
 export const CORPUS_FILES: readonly string[] = [
@@ -198,6 +202,7 @@ export const CORPUS_FILES: readonly string[] = [
   "dca-theben-dali-e64/backup-store.dat",
   "dca-theben-dali-e64/backup-store.expected.json",
   ...IN_SERVICE_COLLECTIONS.map(inServiceCollection),
+  ...DEMO_PRODUCT_FILES,
 ];
 
 // Bun loads the .env files of the directory a process starts in: `bun run check` those of the
