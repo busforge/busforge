@@ -24,6 +24,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
+import { isFiltering, withoutFilters } from "../lib/deviceFilters.ts";
 import { errMsg } from "../lib/apiError.ts";
 
 const manuf = (n: number) => `M-${n.toString(16).toUpperCase().padStart(4, "0")}`;
@@ -152,6 +153,7 @@ export function DevicesView() {
   const onlyChanged = search.changed ?? false;
   const setQ = (val: string) => { void navigate({ search: (p) => ({ ...p, q: val || undefined }), replace: true }); };
   const toggleChanged = () => { void navigate({ search: (p) => ({ ...p, changed: p.changed ? undefined : true }), replace: true }); };
+  const resetFilters = () => { void navigate({ search: withoutFilters, replace: true }); };
   const setBuilding = (id: string) => { void navigate({ search: (p) => ({ ...p, b: id || undefined }), replace: true }); };
 
   const all = project?.devices ?? [];
@@ -173,7 +175,7 @@ export function DevicesView() {
 
   const changedCount = all.filter((d) => isChanged(d) && passes(d)).length;
   const anyChanged = all.some(isChanged);
-  const filtering = q.trim() !== "" || onlyChanged;
+  const filtering = isFiltering(search);
   const spaceEdit = useSpaceEdit(projectId);
   const targets = useMemo(() => spaceTargets(locations), [locations]);
   const deviceSpace = useMemo(() => deviceSpaceMap(locations), [locations]);
@@ -206,6 +208,12 @@ export function DevicesView() {
     ? floors.reduce((n, f) => n + countDevices(f), 0) + buildingDevices.length + unassigned.length
     : flat.length;
   const hasContent = floors.length > 0 || buildingDevices.length > 0 || unassigned.length > 0;
+  // The devices the shown place holds unfiltered (the selected building and the unassigned ones), so
+  // "N of M" only counts what a filter hides, never what another building holds.
+  const scopeTotal = useMemo(() => {
+    if (!buildings.length || !selectedBuilding) return all.length;
+    return assignedIds([selectedBuilding]).size + all.filter((d) => !assignedIds(locations).has(d.id)).length;
+  }, [buildings.length, selectedBuilding, all, locations]);
 
   // Carry the current filter (incl. selected building) into the device URL so its
   // back button and match highlighting can reuse it.
@@ -273,8 +281,8 @@ export function DevicesView() {
 
   // One device as a full-width row (readable name), mirroring the group-address rows.
   const deviceRow = (d: Device) => (
-    <div key={d.id} className="group/row flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-sm hover:bg-secondary/50" data-testid={`device-${d.ia}`}>
-      <Link {...row(d)} className="flex min-w-0 flex-1 items-center"><DeviceLabel name={d.name} ia={d.ia} className="min-w-0" /></Link>
+    <div key={d.id} className="group/row flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-md px-2 py-1.5 text-sm hover:bg-secondary/50" data-testid={`device-${d.ia}`}>
+      <Link {...row(d)} className="flex min-w-48 flex-1 items-center"><DeviceLabel name={d.name} ia={d.ia} className="min-w-0" /></Link>
       <div className="flex shrink-0 items-center gap-2">
         {d.secure && (
           <Badge tone="warning" size="sm" title={t("devices.secure")} data-testid={`device-secure-${d.ia}`}>
@@ -302,7 +310,7 @@ export function DevicesView() {
         <div className="flex flex-1 items-center gap-3">
           <div className="relative max-w-xs flex-1">
             <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input ref={searchRef} placeholder={t("devices.searchPlaceholder")} value={q} onChange={(e) => setQ(e.target.value)} className="px-9" data-testid="device-search" />
+            <Input ref={searchRef} placeholder={t("devices.searchPlaceholder")} value={q} onChange={(e) => setQ(e.target.value)} className={cn("px-9", q.trim() && "border-primary/50")} data-testid="device-search" />
             {q && (
               <IconButton
                 size="icon-xs" tooltip={false} label={t("devices.clearSearch")} onClick={() => setQ("")} data-testid="device-search-clear"
@@ -321,19 +329,27 @@ export function DevicesView() {
             </Button>
           )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           {anyChanged && (
             <Chip
               active={onlyChanged}
               disabled={!onlyChanged && changedCount === 0}
               onClick={toggleChanged} data-testid="filter-changed"
               className="h-9 font-mono"
-              title={t("devices.toProgramTitle")}
+              title={t(onlyChanged ? "devices.toProgramActiveTitle" : "devices.toProgramTitle")}
             >
               <Zap /> {t("devices.toProgram", { count: changedCount })}
+              {onlyChanged && <X aria-hidden />}
             </Chip>
           )}
-          <span className="font-mono text-xs text-muted-foreground">{t("devices.count", { shown: shownCount, total: all.length })}</span>
+          <span className={cn("font-mono text-xs whitespace-nowrap", filtering ? "text-primary" : "text-muted-foreground")} data-testid="device-count">
+            {t(filtering ? "devices.countFiltered" : "devices.count", { shown: shownCount, total: scopeTotal })}
+          </span>
+          {filtering && (
+            <Button variant="ghost" size="sm" onClick={resetFilters} data-testid="reset-filters">
+              <X /> {t("devices.resetFilters")}
+            </Button>
+          )}
           <Button onClick={() => setAddOpen(true)} data-testid="add-device">
             <Plus className="size-4" /> {t("devices.addDevice")}
           </Button>

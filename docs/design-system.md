@@ -152,6 +152,19 @@ A static `Badge` has none of these, so a mark that does nothing never looks clic
 
 Tones carry meaning, never decoration. `primary` (amber) marks the user's own pending work ("never programmed", "2 changes"). `ok` and `danger` are reserved for what was proven or failed on hardware. `warning` marks an unproven state (untested, assumed value), `info` a derived one (tested on a related product). Plain labels (manufacturer number, counts) are `neutral` or `outline`. Marks that sit side by side use the same size: device rows use `sm`, page headers `md`.
 
+A state mark that has a remedy is a `BadgeButton` where the page offers that remedy: in the device page header "never programmed" and "N changes" open the flash (which offers the full download a never-programmed device needs, where Busforge can run one; Commission only where nothing can be flashed), a changed or unknown security object the group-address flash, the compatibility badge its detail. Its tooltip says what the state means and what a click opens. The same mark in a list row stays a plain `Badge`, because the row itself leads to the page.
+
+### Filters
+
+A list filter always shows that it is on, and how to undo it:
+
+- The control itself shows its state: a filled search field keeps an amber border and a clear button, a `Chip` filter is `active` and carries a ×.
+- The count turns amber and reads "N of M shown"; unfiltered it is the quiet "N / M".
+- "Reset filters" appears while any filter is on and clears them all. A choice of place (the building shown) is not a filter and stays.
+- Filter state lives in the URL, so reload, back and a shared link keep it.
+
+A filter sits next to the list it narrows, not in the page header: on the device page the parameter filter is the first row above the parameters, with its match count.
+
 ### Dialogs are never a trap
 
 Every dialog can be left by its close button (top right), `Esc`, its cancel button, and a click on the backdrop. Two narrower cases, chosen per dialog:

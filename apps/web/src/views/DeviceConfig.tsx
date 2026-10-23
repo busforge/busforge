@@ -8,7 +8,7 @@ import type { AssumedValue, CfgBlock, CfgComObjView, CfgItem, CfgParamView, Devi
 import { qk, useProject, useDeviceConfig, useDeviceEdit } from "../queries.ts";
 import { isSecondsUnit, formatDuration, parseDuration, isValidIPv4, normalizeFloat } from "@/lib/paramFormat.ts";
 import { CompatibilityBadge } from "@/components/CompatibilityBadge.tsx";
-import { ChangePill, changeTotal } from "@/components/ChangePill.tsx";
+import { ChangePill, type ChangeTarget, type ChangeTargets, changeTotal } from "@/components/ChangePill.tsx";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { IconButton } from "@/components/ui/icon-button";
@@ -21,6 +21,7 @@ import {
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { FlashDialog, type FlashTarget } from "./FlashDialog.tsx";
+import { changeRemedies, type ChangeRemedy } from "../lib/changeTargets.ts";
 import { ReplaceDeviceDialog } from "./ReplaceDeviceDialog.tsx";
 import { CommissionDialog } from "./CommissionDialog.tsx";
 import { SecureActivateDialog } from "./SecureActivateDialog.tsx";
@@ -127,7 +128,7 @@ export function DeviceConfig() {
   const search = useSearch({ from: "/projects/$projectId/devices/$deviceId" });
   const navigate = useNavigate({ from: "/projects/$projectId/devices/$deviceId" });
   const qRaw = search.q ?? "";
-  const q = qRaw.toLowerCase();
+  const q = qRaw.trim().toLowerCase();
   const setQ = (val: string) => { void navigate({ search: (p) => ({ ...p, q: val || undefined }), replace: true }); };
   const qc = useQueryClient();
   const { data: project } = useProject(projectId);
@@ -175,6 +176,17 @@ export function DeviceConfig() {
     ...(hasParams && (caps ? caps.flashParams : true) ? ["params" as const] : []),
     ...(hasComObjects && (caps ? caps.flashLinks : true) ? ["ga" as const] : []),
   ];
+  // The header's state marks open what clears them (lib/changeTargets.ts).
+  const remedies = changeRemedies(flashTargetsAvail, !!caps?.fullDownload);
+  const target = (r: ChangeRemedy | undefined, action: string): ChangeTarget | undefined =>
+    !r ? undefined
+      : r.open === "commission" ? { action: t("changes.openCommission"), onClick: () => setCommissionOpen(true) }
+      : { action, onClick: () => setFlashTargets(r.targets) };
+  const changeTargets: ChangeTargets = {
+    never: target(remedies.never, t("changes.openFlashNever")),
+    changes: target(remedies.changes, t("changes.openFlash")),
+    security: target(remedies.security, t("changes.openFlashGa")),
+  };
 
   // The writes the application itself keeps Busforge from running (its declared load procedure), with
   // the reason the server refuses them with, instead of a button that is merely missing or greyed out.
@@ -326,6 +338,10 @@ export function DeviceConfig() {
     }
     return out;
   }, [groups, q]);
+  const matchCount = useMemo(
+    () => filteredGroups.reduce((n, g) => n + [g.head, ...g.children].reduce((m, b) => m + b.items.filter((i) => i.kind === "param" || i.kind === "comObject").length, 0), 0),
+    [filteredGroups],
+  );
 
   // Cmd/Ctrl+F focuses the config search instead of the browser find.
   const searchRef = useRef<HTMLInputElement>(null);
@@ -562,37 +578,18 @@ export function DeviceConfig() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 items-center gap-2">
-          <Button asChild variant="ghost" size="icon" aria-label={t("device.back")} className="shrink-0 text-muted-foreground">
-            <Link to="/projects/$projectId/devices" params={{ projectId }} search={{ q: search.q, changed: search.changed }}><ChevronLeft className="size-5" /></Link>
-          </Button>
-          <div className="flex min-w-0 items-center gap-2 font-semibold leading-tight">
-            <DeviceLabel name={device?.name} ia={device?.ia ?? ""} />
-            <ChangePill changes={device?.changes} size="md" />
-            <CompatibilityBadge view={view} manufacturer={device?.manufacturer} />
-          </div>
+      {/* Two rows: who the device is and what state it is in, then what can be done with it. Every
+          mark in the first row has one height. */}
+      <header className="space-y-2" data-testid="device-header">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <IconButton asChild variant="ghost" size="icon-sm" label={t("device.back")} className="-ml-1 text-muted-foreground">
+            <Link to="/projects/$projectId/devices" params={{ projectId }} search={{ q: search.q, changed: search.changed, b: search.b }}><ChevronLeft className="size-5" /></Link>
+          </IconButton>
+          <DeviceLabel name={device?.name} ia={device?.ia ?? ""} className="h-6 min-w-0 font-semibold" />
+          <ChangePill changes={device?.changes} size="md" targets={changeTargets} />
+          <CompatibilityBadge view={view} manufacturer={device?.manufacturer} />
         </div>
-        {view && view.blocks.length > 0 && (
-          <div className="relative w-full sm:max-w-xs sm:flex-1">
-            <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input ref={searchRef} placeholder={t("device.searchPlaceholder")} value={qRaw} onChange={(e) => setQ(e.target.value)} className="px-9" data-testid="config-search" />
-            {qRaw && (
-              <IconButton
-                size="icon-xs" tooltip={false} label={t("device.clearSearch")} onClick={() => setQ("")} data-testid="config-search-clear"
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
-              >
-                <X className="size-4" />
-              </IconButton>
-            )}
-          </div>
-        )}
-        <div className="flex items-center justify-end gap-2 sm:shrink-0">
-          {saving && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
-          {actionBtn("device.revert", <RotateCcw className="size-4" />, () => setRevertOpen(true), { ghost: true, disabled: !hasChanges || saving, testId: "revert-device" })}
-          {actionBtn("device.readFromDevice", readBack.isPending ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />, doReadBack, { disabled: readBack.isPending || saving || (!!view?.readbackSupport && !view.readbackSupport.params && !view.readbackSupport.links), testId: "read-back" })}
-          {/* Read-only, so offered for every device, also one Busforge cannot program or has no application for. */}
-          {actionBtn("diagnostic.open", <Stethoscope className="size-4" />, () => setDiagnosticOpen(true), { disabled: !device, testId: "diagnostic-open" })}
+        <div className="flex flex-wrap items-center gap-2" data-testid="device-actions">
           {flashTargetsAvail.length > 0 && (
             <div className="flex">
               <Button
@@ -608,7 +605,7 @@ export function DeviceConfig() {
                       <ChevronDown className="size-4" />
                     </Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
+                  <DropdownMenuContent align="start">
                     <DropdownMenuItem onClick={() => setFlashTargets(["params"])} data-testid="flash-only-params">{t("device.flashOnlyParams")}</DropdownMenuItem>
                     <DropdownMenuItem onClick={() => setFlashTargets(["ga"])} data-testid="flash-only-ga">{t("device.flashOnlyGAs")}</DropdownMenuItem>
                   </DropdownMenuContent>
@@ -616,6 +613,10 @@ export function DeviceConfig() {
               )}
             </div>
           )}
+          {actionBtn("device.revert", <RotateCcw className="size-4" />, () => setRevertOpen(true), { ghost: true, disabled: !hasChanges || saving, testId: "revert-device" })}
+          {actionBtn("device.readFromDevice", readBack.isPending ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />, doReadBack, { disabled: readBack.isPending || saving || (!!view?.readbackSupport && !view.readbackSupport.params && !view.readbackSupport.links), testId: "read-back" })}
+          {/* Read-only, so offered for every device, also one Busforge cannot program or has no application for. */}
+          {actionBtn("diagnostic.open", <Stethoscope className="size-4" />, () => setDiagnosticOpen(true), { disabled: !device, testId: "diagnostic-open" })}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="icon" aria-label={t("device.moreActions")} title={t("device.moreActions")} data-testid="device-menu">
@@ -644,8 +645,9 @@ export function DeviceConfig() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          {saving && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
         </div>
-      </div>
+      </header>
 
       {device && flashTargets && (
         <FlashDialog
@@ -817,6 +819,25 @@ export function DeviceConfig() {
 
       {view && view.blocks.length > 0 && (
         <div className="space-y-4">
+          {/* The filter belongs to the list it narrows, not to the device: above it, with what it
+              matches and a way back to everything. */}
+          <div className="flex flex-wrap items-center gap-3" data-testid="config-filter">
+            <div className="relative w-full sm:max-w-xs">
+              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input ref={searchRef} placeholder={t("device.searchPlaceholder")} value={qRaw} onChange={(e) => setQ(e.target.value)} className={cn("px-9", q && "border-primary/50")} data-testid="config-search" />
+              {qRaw && (
+                <IconButton
+                  size="icon-xs" tooltip={false} label={t("device.clearSearch")} onClick={() => setQ("")} data-testid="config-search-clear"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
+                >
+                  <X className="size-4" />
+                </IconButton>
+              )}
+            </div>
+            {q && (
+              <span className="font-mono text-xs text-primary" data-testid="config-filter-count">{t("device.searchCount", { count: matchCount })}</span>
+            )}
+          </div>
           {filteredGroups.length === 0 ? (
             <Card><CardContent className="py-4 text-sm text-muted-foreground">{t("device.searchEmpty")}</CardContent></Card>
           ) : (

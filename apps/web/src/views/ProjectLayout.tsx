@@ -26,8 +26,8 @@ export function ProjectLayout() {
   return (
     <div className="mx-auto flex min-h-full max-w-6xl flex-col gap-0">
       <div className="sticky top-0 z-20 bg-background/90 backdrop-blur">
-        <header className="flex items-center justify-between gap-3 px-4 py-3 sm:px-6">
-          <div className="flex min-w-0 items-center gap-2">
+        <header className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
+          <div className="flex min-w-48 flex-1 items-center gap-2">
             <Link
               to="/"
               aria-label={t("nav.allProjects")}
