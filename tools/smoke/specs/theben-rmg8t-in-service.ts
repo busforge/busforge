@@ -33,6 +33,9 @@ export const thebenRmg8tInService: DeviceSpec = {
   },
   provision: "in-service",
   inService: {
+    // The download marker P-199, bit 0x80 (docs/load-procedures.md R17): every parameter download sets it, the
+    // unit clears it.
+    runtimeMemory: [{ address: 0x3c25, mask: 0x80, why: "download marker P-199, set by each download and cleared by the unit" }],
     fingerprint: [
       { name: "application id", object: 4, pid: 13, expect: "0048493b21" },
       { name: "version", object: 0, pid: 25, expect: "0800" },

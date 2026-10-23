@@ -105,6 +105,10 @@ export interface InServiceSpec {
   // which sends none while it restarts: the run needs the operator's weather guard (--weather-guard,
   // guard.ts) and reads it before the channel and before every write and restart.
   weatherGuard?: true;
+  // Memory bits the unit changes on its own after a write (a download marker it clears once it has seen
+  // the download), which the restore's byte-for-byte comparison of the unit's memory with the backup
+  // read before the first write lets differ, naming each with `why` where it does.
+  runtimeMemory?: { address: number; mask: number; why: string }[];
   // Parameter values the device's own configuration must hold once the project has taken it over,
   // checked before the first write: what tells products apart that share application and firmware
   // (a module type), or a setting the run relies on staying as it is (an output's download

@@ -27,6 +27,9 @@ export const thebenMeteodata140sInService: DeviceSpec = {
   },
   provision: "in-service",
   inService: {
+    // The download marker P-2228 (docs/load-procedures.md R17): every parameter download writes AA, the unit
+    // reads it back 00.
+    runtimeMemory: [{ address: 0x4800, mask: 0xff, why: "download marker P-2228, written AA by each download and cleared by the unit" }],
     // The structural step shows threshold channel C14, whose parameters the unit holds at the segment's
     // <Data> while it is off; ETS writes the values its project holds for them (tools/etsdiff.test.ts),
     // which only the installation's project file carries.

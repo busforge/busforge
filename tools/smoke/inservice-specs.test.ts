@@ -3,14 +3,14 @@ import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { KnxDevice } from "../../packages/knx/src/index.ts";
-import { buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, classify, classifyByMask, parseAppConfig, type AppConfig, type DeviceReadbackInfo } from "../../packages/product/src/index.ts";
+import { buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, classify, classifyByMask, parseAppConfig, type AppConfig, type DeviceReadbackInfo, type DiagnosticPackage } from "../../packages/product/src/index.ts";
 import { getDeviceModules, getDeviceParams } from "../../apps/server/src/db/deviceparams.ts";
 import { CollectedUnit, asDevice, type Collection } from "../../packages/product/test/collected-unit.ts";
 import { captureText, catalogueXml, corpusPath, inServiceCollection, IN_SERVICE_COLLECTIONS } from "../corpus.ts";
 import { iaToNum } from "../../packages/knx/src/index.ts";
 import { memoryImage, parseCapture } from "../etsdiff.ts";
 import { corpusDescribe } from "../corpus-test.ts";
-import { runInService, planInService, type InServiceIo, type InServiceOptions } from "./inservice.ts";
+import { runInService, planInService, memorySnapshot, type InServiceIo, type InServiceOptions } from "./inservice.ts";
 import { Client, type FlashResult, type ConfigView } from "./client.ts";
 import type { DeviceSpec } from "./spec.ts";
 import { SPECS } from "./specs/index.ts";
@@ -121,7 +121,7 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
   const CALM_GUARD = "wind:31/7/240:9,rain:31/7/241,wind alarm:31/7/242";
   const CALM = new Map([["31/7/240", "00c8"], ["31/7/241", "00"], ["31/7/242", "00"]]);
 
-  function io(state: AppState, pid: string, did: string, dev: CollectedUnit, cfg: AppConfig, log: string[], answer: string): InServiceIo {
+  function io(state: AppState, pid: string, did: string, dev: CollectedUnit, collection: { records: DiagnosticPackage["records"] }, cfg: AppConfig, log: string[], answer: string): InServiceIo {
     const d = `/api/projects/${pid}/devices/${encodeURIComponent(did)}`;
     // `writes`: the operation is a write the run's log lists.
     const settle = async <T>(path: string, writes: boolean, body?: unknown): Promise<T> => {
@@ -154,6 +154,10 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
         downloadDry: () => settle<FlashResult>(`${d}/download?dry=1`, false),
         flashReal: () => wait(`${d}/flash`),
         flashGaReal: () => wait(`${d}/flash-ga`),
+        // The unit's collection with each memory record's bytes as the emulated unit holds them now, taken as
+        // a collection of the server: the same records, gaps and refusals, read again over the same ranges
+        // (a System B table the real collector would locate anew by its pointer and memory control block).
+        memory: async () => memorySnapshot({ ...collection, error: null, records: collection.records.map((r) => (r.outcome === "bytes" && r.space.startsWith("memory") && typeof r.target.address === "number" && r.bytes ? { ...r, bytes: Buffer.from(Array.from({ length: r.bytes.length / 2 }, (_, i) => dev.mem.get((r.target.address as number) + i)!)).toString("hex") } : r)) } as unknown as DiagnosticPackage),
       },
       chan: {
         name: "api",
@@ -216,7 +220,8 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
     const values = spec.inService?.hiddenValuesFromProject ? installationValues(spec) : undefined;
     if (values) edit.values?.(values);
     const { state, pid, did } = await placed(spec, xml, values);
-    const dev = new CollectedUnit(JSON.parse(readFileSync(corpusPath(inServiceCollection(spec.id)), "utf8")) as Collection);
+    const collection = JSON.parse(readFileSync(corpusPath(inServiceCollection(spec.id)), "utf8")) as Collection & { records: DiagnosticPackage["records"] };
+    const dev = new CollectedUnit(collection);
     edit.memory?.(dev.mem);
     const memory = new Map(dev.mem);
     const log: string[] = [];
@@ -224,7 +229,7 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
     const after: { structural: boolean; memory: Map<number, number> }[] = [];
     unit = dev;
     try {
-      const ioOf = io(state, pid, did, dev, parseAppConfig(xml), log, spec.behaviours.flatMap((b) => (b.kind === "output" && b.expectValue ? [b.expectValue] : []))[0] ?? "00");
+      const ioOf = io(state, pid, did, dev, collection, parseAppConfig(xml), log, spec.behaviours.flatMap((b) => (b.kind === "output" && b.expectValue ? [b.expectValue] : []))[0] ?? "00");
       const chan = ioOf.chan;
       ioOf.chan = { ...chan, flashParams: async () => { const o = await chan.flashParams(); after.push({ structural: o.structural, memory: new Map(dev.mem) }); return o; } };
       return { r: await runInService(spec, ioOf, opts), log, dev, memory, state, pid, did, after };
@@ -295,6 +300,29 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
     expect([...memory].filter(([a, b]) => ((dev.mem.get(a)! ^ b) & ~(allowed.get(a) ?? 0)) !== 0).map(([a, b]) => `0x${a.toString(16)}: ${b.toString(16)} -> ${dev.mem.get(a)?.toString(16)}`)).toEqual([]);
   }, 890_000);
 
+  // Without Logic 3's internal input (memoryless, 4 in the installation's ETS project) the configuration taken
+  // over hides the logic's setting at 0x4616, which the unit holds as 01; the full download writes the
+  // segment's <Data> 00 there, and every read-back and dry run after it compares the project with itself.
+  // Only the unit's memory against the backup read before the first write shows it.
+  test("mdt-be06001-in-service: a full download that changes a byte the configuration taken over hides fails the restore, naming the byte", async () => {
+    const base = IN_SERVICE.find((s) => s.id === "mdt-be06001-in-service")!;
+    const s = base.inService!;
+    const spec: DeviceSpec = {
+      ...base,
+      inService: { ...s, assumeParams: s.assumeParams!.filter((a) => !a.paramRefId.endsWith("_MD-3_M-51_MI-1_P-46_R-64")), param: undefined, link: undefined, structural: undefined },
+      behaviours: [],
+      unsafe: ["flashParams", "flashLinks", "structuralFlash"].map((capability) => ({ capability, reason: "this test runs the full download alone" })),
+    };
+    const full: InServiceOptions = { ...OPTS, fullDownload: true };
+    const { r, log, dev, memory } = await run(spec, full);
+    expect(log).toEqual(writes(spec, full));
+    expect([memory.get(0x4616), dev.mem.get(0x4616)]).toEqual([0x01, 0x00]);
+    expect(r.capabilities.find((c) => c.capability === "fullDownload")?.state).toBe("pass");
+    expect(r.restore?.state).toBe("fail");
+    expect(r.restore?.detail).toContain("0x4616: 01 before the run, 00 after it");
+    expect(r.ok).toBe(false);
+  }, 1180_000);
+
   // The Meteodata's structural step switches threshold channel C14 on and off again, while the unit holds the
   // channel's parameters at the segment's <Data>. ETS's partial downloads of the same change from the
   // installation's project write the project's values of the channel (tools/etsdiff.test.ts); its writes,
@@ -351,15 +379,27 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
 
   for (const spec of IN_SERVICE.filter((s) => !NOT_EMULATED.has(s.id) && !STOPS_BEFORE_A_WRITE.has(s.id))) {
     test(`${spec.id}: the run makes the writes its plan lists, passes, and leaves the unit's memory as it found it`, async () => {
-      const { r, log, dev, memory, state, pid, did } = await run(spec);
+      const opts = RESTORED_BY_FULL_DOWNLOAD.has(spec.id) ? { ...OPTS, fullDownload: true } : OPTS;
+      const { r, log, dev, memory, state, pid, did } = await run(spec, opts);
       // One comparison, so a failing run shows every part that failed.
       expect({ stopped: r.stopped, failed: r.capabilities.filter((c) => c.state === "fail"), behaviours: r.behaviours.filter((b) => b.state !== "pass"), persistence: r.persistence?.state, restore: r.restore?.state })
         .toEqual({ stopped: undefined, failed: [], behaviours: [], persistence: r.persistence ? "pass" : undefined, restore: "pass" });
       expect(r.ok).toBe(true);
-      expect(log).toEqual(writes(spec, OPTS));
+      expect(log).toEqual(writes(spec, opts));
       const behind = await residues(dev);
       const allowed = await allowedDifferences(spec, dev, parseAppConfig(catalogueXml(`${appOf(spec)}.xml.gz`)), state, pid, did);
       expect([...memory].filter(([a, b]) => ((dev.mem.get(a)! ^ b) & ~(allowed.get(a) ?? 0)) !== 0 && !behind.has(a)).map(([a, b]) => `0x${a.toString(16)}: ${b.toString(16)} -> ${dev.mem.get(a)?.toString(16)}`)).toEqual([]);
+    }, 650_000);
+  }
+
+  // Without the full download a MIX 2 unit keeps, at the parameter its structural step showed and the revert
+  // hides again, the value the step wrote (docs/load-procedures.md R14), and the restore names that byte.
+  for (const [id, left] of RESTORED_BY_FULL_DOWNLOAD) {
+    test(`${id}: without the full download the restore fails on the byte the structural step leaves, named`, async () => {
+      const { r } = await run(IN_SERVICE.find((x) => x.id === id)!);
+      expect(r.stopped).toBeUndefined();
+      expect(r.restore?.state).toBe("fail");
+      expect(r.restore?.detail).toContain(`the unit's memory differs from the backup read before the first write in 1 byte(s): ${left}`);
     }, 650_000);
   }
 
@@ -378,6 +418,15 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
 });
 
 const STOPS_BEFORE_A_WRITE = new Map<string, { stop: string; reason: string }>();
+
+// The specs whose run leaves the unit's memory as found only with its full download: a MIX 2 unit's
+// structural step shows a parameter the revert hides again, which keeps the step's value (docs/load-procedures.md
+// R14) until the full download writes the segment's fill there. Each with the byte the run leaves without it.
+const RESTORED_BY_FULL_DOWNLOAD = new Map<string, string>([
+  ["theben-hmg6t-in-service", "0x3E7C: 00 before the run, 0a after it"],
+  ["theben-jmg4t-in-service", "0x3CD3: 00 before the run, cb after it"],
+  ["theben-rmg8t-in-service", "0x40CC: 00 before the run, 0a after it"],
+]);
 
 // The values the installation's ETS project holds for a spec's unit (hiddenValuesFromProject), as the
 // private corpus captures them from that project's export: its ParameterInstanceRef values.

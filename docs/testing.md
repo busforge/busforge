@@ -337,7 +337,8 @@ adopt           read-back (assuming the values in assumeParams); the project tak
                 memory with each); the configuration found is recorded; the parameters in
                 expectParams must hold their expected values, those in assumeParams the assumed ones;
                 with hiddenValuesFromProject the configuration found must be the project's, and the
-                second read-back must find the <Data> at every parameter it hides
+                second read-back must find the <Data> at every parameter it hides; last, the server's
+                collection reads the unit's memory as the backup, which must be complete
 capabilities    every write capability the product claims has a step in the spec or an `unsafe`
                 reason; readParams and readLinks are claimed; every step's target is checked
 params          parameter flash there, parameter flash back, read-back without drift
@@ -348,7 +349,8 @@ structural      structural flash there, structural flash back, read-back without
                 hiddenValuesFromProject a read-back finds the <Data> at every parameter the configuration hides
                 (after the full download too)
 fullDownload    only with --full-download: the configuration found, downloaded, read-back without drift
-final           the same dry runs find nothing to write
+final           the same dry runs find nothing to write, and the unit's memory, collected again,
+                equals the backup byte for byte
 ```
 
 A phase runs only when the spec has its step. Every write is preceded by a dry run that must offer a
@@ -378,6 +380,31 @@ value there, and what it held before is not known (the restore says so). For the
 parameter is set (while a change that alters the com-object table is pending, the server's GA flash is
 the structural flash itself), and the structural flash then writes them from links that still equal the
 configuration found. After each step the read-back must equal the configuration found.
+
+The dry runs compare the unit with the project, and the run's own writes set the project. A byte a
+write changes and the project then holds as well (a parameter the configuration taken over hides, where
+a memoryless value the read-back could not see is missing) passes every dry run and read-back after it.
+So the restore also compares the unit's memory itself: at the end of the adoption the runner has the
+server collect the unit (`POST .../collect`, read-only, [raw-acquisition.md](raw-acquisition.md)): on
+System 7 every application segment inside the mask's memory segments, which holds the group tables and the
+com-object table too, on System B the tables of the load-state machines, on System 1 the EEPROM. That is
+the backup; a collection that stopped, failed or left planned memory unread stops the run before its first
+write. Named as not compared, in the log and the restore: a table whose load state is Unloaded (it holds
+nothing), an application segment outside the mask's memory segments, which the master data lets no memory
+read reach (RAM, such as `0x0700` on MV-0705), and a record whose bytes the package takes out (a serial
+number). Interface object properties (load states, memory control blocks, stamps) are not compared. A unit
+whose tables a collection cannot locate or size (the OpenKNX RaumController reports no memory control
+block) has no complete backup, so its run stops before the first write. After the run,
+and after an undo, the runner collects again and compares byte for byte; a byte read only once, or a later
+collection that is incomplete, fails the restore. Allowed to differ, and named where they do: after a link
+step, the two entries behind each count-prefixed group table's counted end, which the link's tables covered
+and the unlink leaves, as ETS's group-address downloads leave them (two, since an association table behind
+the address table moves by the added address and grows by the added association); and the bits the spec
+lists in `inService.runtimeMemory`. Every other difference fails the restore with its address and both
+values, a unit that changes its own memory in service (a learnt scene, a counter) included, until the spec
+names those bits. A stop after every write of the run was set back still compares the memory. A MIX 2 unit's structural step leaves the value it wrote at a parameter the revert hides again
+(R14 in [load-procedures.md](load-procedures.md)), so its run restores the memory only with
+`--full-download`, which writes the segment's fill there; without it the restore fails on that byte.
 
 When the run stops with a change still out, it sets the whole project back to the configuration
 found and writes the difference with the same kind of flash over the API, then reads back; it never
@@ -440,6 +467,7 @@ export const exampleInService: DeviceSpec = {
 | `inService.param` | A parameter the unit shows, writable, in the parameter image, whose change leaves the com-object table alone (a delay, a threshold, a number; not a channel function or anything that shows or hides objects). `value` must differ from what the unit holds. The run reads the unit's own value and writes it back |
 | `inService.link` | An object the unit holds **unlinked**, or with `addToLinked: true` one it holds **linked**: its own addresses stay and the test address is added behind them, then removed again. The object's read flag (the application's, with the project's own laid over it) must be on when a behaviour is an `output`; the run refuses the object otherwise. With `addToLinked` the test address must lie above every address the object holds: an object sends on the address its association table lists first, and the run adds the test address behind the object's own, but only one ETS capture shows an object whose first address is not its lowest ([findings.md](findings.md) §36), so on other products a lower test address could take the sending place. An object answers a read of any of its addresses on its first association, the address it sends on ([findings.md](findings.md#36-ets-lists-the-sending-address-first-and-the-device-sends-on-it)), so with `addToLinked` the `output` witness reads the test address and takes the answer on the object's own first address: a GroupValueResponse from the unit there, after its read went out. It listens half a second before reading; a GroupValueRead of the test address or of any of the object's own addresses by another client that it sees in that time or while it waits, or a response on the first one before its read, would put an answer there that is not the witness's, and the run fails as a harness failure without a behaviour record. Once the test address is removed, the witness reads it again: an answer on the object's first address then fails the behaviour, and only then is a pass recorded. That contrast rules out a unit that answers on its first address whatever is read, and a client reading the object more often than the witness's window; a read the witness cannot see (from another tunnel of the interface) that falls into its first read's window it does not rule out. The addition goes through the channel under test, as the GA flash does: on the `ui` channel the device page's address editor adds the test address behind the object's own and the run waits until the editor lists it there. In both channels the run first creates the object's own addresses in the project, since the project takes a link only to an address it holds. The test group address is not in the spec (it belongs to the installation): the operator gives it with `--test-ga=<main/middle/sub>`. It must be unused **in the whole installation**: the linked object may send on it (on every restart, for one), and any device listening there would act on it. The run refuses an address an object of the unit uses, or one on which anything answers a read or sends within 5 s, but it cannot see a device that only listens; checking that is the operator's job. The run refuses an object whose links do not match the step (linked without `addToLinked`, unlinked with it) and never replaces a link |
 | `inService.structural` | Only where the product claims `structuralFlash`: a parameter whose change alters the com-object table, and the value to set. The dry run must offer a structural flash |
+| `inService.runtimeMemory` | Memory bits the unit changes on its own after a write, each `{ address, mask, why }`: the restore's comparison of the unit's memory with the backup lets these bits differ and names each where it does. Today the download markers of R17 ([load-procedures.md](load-procedures.md)) that the unit clears once it has seen a download: Theben TheLuxa P300 and Meteodata 140 S `0x4800`, Theben MIX 2 `0x3C25` bit `0x80` |
 | `inService.weatherGuard` | `true` for a weather station whose alarms protect the installation (an awning's wind lock) and which sends no measured value and no alarm while a write runs and while it restarts. The run needs the operator's weather guard, `--weather-guard=wind:<ga>:<threshold m/s>,<name>:<ga>,...` (the installation's addresses and the station's wind alarm threshold, at most 60 m/s, never in the spec), and reads it through the witness before the channel, before every write (each ends with the unit's restart) and before the persistence restart, the undo's writes included. Only the unit's own GroupValueResponse counts. It stops the run when an address is not answered by the unit, the wind (a 2-byte float, DPT 9) is at or above 70 % of the threshold, or any other address (1 bit: rain, an alarm, a lock) reads anything but 0; the stop's reason, which goes into the record, names each address by the operator's name, never the address. The reads are a snapshot before each write: nothing is read during a write, which for a full download takes minutes. The undo reads it once before each of its writes; a stop there leaves the change on the unit and the restore failed, named, for the operator to write back once the weather allows |
 | `inService.fullDownload` | `true` offers a full download of the configuration found. It runs only with `--full-download` on the command line; without it the capability is reported `unproven` |
 | `behaviours` | `output` (a GroupValueRead on the test address is answered, optionally with `expectValue`; with `addToLinked` on the object's own first address, with the control read after the removal, see `inService.link`) or `heartbeat` (the object sends on the test address within `windowMs`; not with `addToLinked`, since the object sends on its own first address), on the linked object, without `ga` or `enable`. Empty leaves the link proven to the byte only, which the records state |

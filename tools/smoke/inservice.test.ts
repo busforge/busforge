@@ -1,8 +1,8 @@
 import { test, expect, describe } from "bun:test";
 import { gaToNum } from "../../packages/knx/src/index.ts";
-import type { CfgItem, DeviceCapabilities, DeviceConfigView } from "../../packages/product/src/index.ts";
+import { planForMask, type CfgItem, type DeviceCapabilities, type DeviceConfigView, type DiagnosticPackage } from "../../packages/product/src/index.ts";
 import type { FlashResult } from "./client.ts";
-import { runInService, planInService, inServiceProblems, inServiceFileKey, inServicePhases, whatResolves, type InServiceIo, type InServiceOptions } from "./inservice.ts";
+import { runInService, planInService, inServiceProblems, inServiceFileKey, inServicePhases, whatResolves, memorySnapshot, memoryRestored, type InServiceIo, type InServiceOptions } from "./inservice.ts";
 import { runEvidence, type RunConditions } from "./evidence.ts";
 import { openknxRaumControllerInService as spec } from "./specs/openknx-raumcontroller-in-service.ts";
 import { SPECS } from "./specs/index.ts";
@@ -65,6 +65,11 @@ interface Script {
   // (FlashResult.leftFF), the project's value there being the one the first wrote, as the server does once
   // the write has set its baseline. `leftAlways`: every write leaves them, the first included.
   writeOnly?: { at: number; length: number; givenBack?: boolean; moreDiffers?: boolean; leftAfterFirst?: boolean; leftAlways?: boolean };
+  // The unit's memory as the server's collection reads it (a group address table at 0x4000, one entry):
+  // `changedBy` a write of this kind leaves `at` changed, which no dry run sees (a byte the project then holds);
+  // `residue`: the link's GA flash leaves the entry behind the table's count; `unread`: the collection before
+  // the first write, or after one, misses memory.
+  memory?: { changedBy?: "flashParams" | "fullDownload"; at?: number; residue?: boolean; unread?: "before" | "after" };
 }
 
 function scripted(sc: Script = {}) {
@@ -107,6 +112,8 @@ function scripted(sc: Script = {}) {
   const ffDry = (r: FlashResult): FlashResult => (!ffRange ? r
     : sc.writeOnly!.leftAfterFirst && paramWrites > 0 ? { ...r, leftFF: ffRange }
     : { ...r, kind: "dryRun", diffBytes: (r.kind === "dryRun" ? r.diffBytes! : 0) + ffRange[0].length + (sc.writeOnly!.moreDiffers ? 1 : 0), readsFF: ffRange });
+  const mem = new Map([[0x4000, 0x01], [0x4001, 0x10], [0x4002, 0x0a], [0x4003, 0x7f], [0x4004, 0xfc], [0x4616, 0x01]]);
+  const memWrite = (by: "flashParams" | "fullDownload") => { if (sc.memory?.changedBy === by) mem.set(sc.memory.at ?? 0x4616, 0x00); };
   const view = (): DeviceConfigView => {
     const items: CfgItem[] = [
       ...Object.keys(project.params).map((refId): CfgItem => ({ kind: "param", param: { refId, name: refId, control: "number", value: project.params[refId], min: 0, max: 16000, changed: project.params[refId] !== base.params[refId] } })),
@@ -142,10 +149,16 @@ function scripted(sc: Script = {}) {
       flashDry: async () => ffDry(sc.system1 ? sys1Dry() : sc.adoptDryNotUnchanged || paramsDiffer() ? result("dryRun", structural() ? { structural: true } : {}) : result("unchanged")),
       // As the server's flash-ga route: a pending parameter change that alters the com-object table
       // makes it the structural flash.
+      memory: async () => {
+        const written = writesOf(calls).length > 0;
+        calls.push("collect");
+        const unread = (sc.memory?.unread === "before" && !written) || (sc.memory?.unread === "after" && written) ? ["application segment M-0083_A-00B4-32-3919_AS-4400 at 0x4400+1000: timeout"] : [];
+        return { bytes: new Map(mem), tables: [{ name: "group address table", start: 0x4000, end: 0x4003, entryBytes: 2 }], unread, notCompared: [] };
+      },
       flashGaDry: async () => { if (sc.system1) throw Object.assign(new Error("no capture shows a System 1 group-address download"), { code: "SYSTEM1_GROUP_TABLES_UNCAPTURED" }); return structural() ? result("dryRun", { structural: true }) : linksDiffer() ? result("dryRun") : result("unchanged"); },
       downloadDry: async () => (sc.system1 ? sys1Dry() : result("dryRun")),
-      flashReal: async () => { const st = structural(); calls.push(st ? "structuralFlash" : "flashParams"); device.params = Object.fromEntries(Object.entries(project.params).filter(([k]) => k !== MEMLESS)); if (sc.wrongRevert && ++paramFlashes === 2) device.params[PARAM] = "7"; return result("flashed", { verified: true, ...(st ? { structural: true } : {}), ...(ffRange && !sc.writeOnly!.givenBack ? (sc.writeOnly!.leftAlways || (sc.writeOnly!.leftAfterFirst && ++paramWrites > 1) ? { leftFF: ffRange } : { confirmedOnly: ffRange }) : {}) }); },
-      flashGaReal: async () => { if (sc.unlinkThrows && calls.includes("flashLinks")) throw new Error("TUNNEL_ACK_TIMEOUT: no ack"); calls.push("flashLinks"); const unverified = sc.gaFlashUnverified && Object.values(project.links).some((l) => l.includes(TEST_GA)); device.links = structuredClone(project.links); objOnDevice.push([...device.links[OBJ]]); return result("flashed", { verified: !unverified }); },
+      flashReal: async () => { const st = structural(); calls.push(st ? "structuralFlash" : "flashParams"); memWrite("flashParams"); device.params = Object.fromEntries(Object.entries(project.params).filter(([k]) => k !== MEMLESS)); if (sc.wrongRevert && ++paramFlashes === 2) device.params[PARAM] = "7"; return result("flashed", { verified: true, ...(st ? { structural: true } : {}), ...(ffRange && !sc.writeOnly!.givenBack ? (sc.writeOnly!.leftAlways || (sc.writeOnly!.leftAfterFirst && ++paramWrites > 1) ? { leftFF: ffRange } : { confirmedOnly: ffRange }) : {}) }); },
+      flashGaReal: async () => { if (sc.unlinkThrows && calls.includes("flashLinks")) throw new Error("TUNNEL_ACK_TIMEOUT: no ack"); calls.push("flashLinks"); if (sc.memory?.residue) mem.set(0x4004, 0xfa); const unverified = sc.gaFlashUnverified && Object.values(project.links).some((l) => l.includes(TEST_GA)); device.links = structuredClone(project.links); objOnDevice.push([...device.links[OBJ]]); return result("flashed", { verified: !unverified }); },
     },
     chan: {
       name: "api",
@@ -154,7 +167,7 @@ function scripted(sc: Script = {}) {
       addLink: async (obj, ga, own) => { calls.push("chan.addLink"); project.links[obj.refId] = [...own, gaToNum(ga)]; },
       flashParams: async () => { if (sc.chanThrowsOnStructuralRevert && calls.filter((c) => c === "structuralFlash").length === 1) { calls.push("structuralFlash"); device.params = { ...project.params }; throw new Error("dialog closed"); } if (sc.chanThrowsOnSecondParamFlash && calls.filter((c) => c === "flashParams").length === 1) { calls.push("flashParams"); device.params = { ...project.params }; throw new Error("dialog closed"); } const r = await io.api.flashReal(); return { structural: r.structural === true, result: r }; },
       flashLinks: async () => { const r = await io.api.flashGaReal(); return { structural: false, result: r }; },
-      fullDownload: async () => { calls.push("fullDownload"); if (sc.downloadBreaks) throw new Error("TUNNEL_ACK_TIMEOUT: no ack"); device.params = { ...project.params }; device.links = structuredClone(project.links); return { structural: false, result: result("flashed", { verified: true }) }; },
+      fullDownload: async () => { calls.push("fullDownload"); if (sc.downloadBreaks) throw new Error("TUNNEL_ACK_TIMEOUT: no ack"); memWrite("fullDownload"); device.params = { ...project.params }; device.links = structuredClone(project.links); return { structural: false, result: result("flashed", { verified: true }) }; },
       readBack: () => io.api.readBack(),
     },
     bus: {
@@ -202,7 +215,7 @@ describe("a unit with a field it does not give back", () => {
     expect(writesOf(calls)).toEqual(["flashParams", "flashParams", "flashLinks", "restart", "flashLinks"]);
     expect(r.found?.readsFF).toEqual([{ address: 0x1512, length: 20 }]);
     expect(r.capabilities.find((c) => c.capability === "flashParams")?.detail).toContain("verified, 0x1512-0x1525 written from the project on the write confirmation alone");
-    expect(r.restore).toEqual({ state: "pass", detail: "the device holds the configuration it was found with: parameter flash dry run differs only at the bytes taken as not given back (0x1512-0x1525), which the run's parameter writes set to the project's value: what the unit held there before is not known, GA flash dry run unchanged" });
+    expect(r.restore).toEqual({ state: "pass", detail: "the device holds the configuration it was found with: parameter flash dry run differs only at the bytes taken as not given back (0x1512-0x1525), which the run's parameter writes set to the project's value: what the unit held there before is not known, GA flash dry run unchanged; the unit's memory equals the backup read before the first write (6 byte(s))" });
     expect(device).toEqual(start);
   });
 
@@ -1077,7 +1090,7 @@ describe("a device in service: System 1", () => {
     expect(writesOf(calls)).toEqual(["flashParams", "flashParams", "fullDownload", "restart"]);
     expect(r.persistence).toEqual({ state: "pass", detail: "silent 50 ms after A_Restart, answering again after 900 ms; the run error read FF before the restart and after the reboot; parameters and links read back equal to the project after the reboot" });
     expect(r.persistenceOf).toBe("fullDownload");
-    expect(r.restore).toEqual({ state: "pass", detail: "the device holds the configuration it was found with: parameter flash dry run finds no byte that differs" });
+    expect(r.restore).toEqual({ state: "pass", detail: "the device holds the configuration it was found with: parameter flash dry run finds no byte that differs; the unit's memory equals the backup read before the first write (6 byte(s))" });
     expect(r.capabilities.find((c) => c.capability === "flashLinks")).toBeUndefined();
     expect(device).toEqual(start);
   });
@@ -1193,5 +1206,160 @@ describe("a weather station in service: the weather guard", () => {
     expect(() => planInService(station, NO_FULL)).toThrow("the unit is a weather station");
     expect(() => planInService(spec, GUARDED)).toThrow("--weather-guard is read for a weather station only");
     expect(() => planInService(station, { ...NO_FULL, weatherGuard: "rain:31/7/241" })).toThrow("no wind address");
+  });
+});
+
+describe("a device in service: its memory against the backup read before the first write", () => {
+  test("the backup is read before the first write", async () => {
+    const { io, calls } = scripted();
+    const r = await runInService(spec, io, NO_FULL);
+    expect(r.ok).toBe(true);
+    expect(calls.indexOf("collect")).toBeLessThan(calls.indexOf("flashParams"));
+    expect(calls.filter((c) => c === "collect")).toHaveLength(2);
+  });
+
+  test("a byte a write leaves changed, which the dry runs do not see, fails the restore and is named", async () => {
+    const { io } = scripted({ memory: { changedBy: "flashParams" } });
+    const r = await runInService(spec, io, NO_FULL);
+    expect(r.stopped).toBeUndefined();
+    expect(r.ok).toBe(false);
+    expect(r.restore?.state).toBe("fail");
+    expect(r.restore?.detail).toContain("the device holds the configuration it was found with");
+    expect(r.restore?.detail).toContain("the unit's memory differs from the backup read before the first write in 1 byte(s): 0x4616: 01 before the run, 00 after it");
+  });
+
+  test("the entry the link step leaves behind the group address table's count passes, named", async () => {
+    const { io } = scripted({ memory: { residue: true } });
+    const r = await runInService(spec, io, NO_FULL);
+    expect(r.ok).toBe(true);
+    expect(r.restore?.detail).toContain("the unit's memory equals the backup read before the first write (6 byte(s)), apart from 0x4004 behind the group address table's counted end, which the link step's tables covered and the unlink leaves as ETS's does");
+  });
+
+  test("without a link step a byte behind the table's count is a difference like any other", async () => {
+    const noLink: DeviceSpec = { ...spec, id: "nolink", behaviours: [], inService: { ...spec.inService!, link: undefined }, unsafe: [{ capability: "flashLinks", reason: "r" }] };
+    const { io } = scripted({ memory: { changedBy: "flashParams", at: 0x4004 } });
+    const r = await runInService(noLink, io, NO_FULL);
+    expect(r.stopped).toBeUndefined();
+    expect(r.restore?.state).toBe("fail");
+    expect(r.restore?.detail).toContain("0x4004: fc before the run, 00 after it");
+  });
+
+  test("an incomplete backup stops the run before the first write", async () => {
+    const { io, calls } = scripted({ memory: { unread: "before" } });
+    const r = await runInService(spec, io, NO_FULL);
+    expect(r.stopped?.phase).toBe("adopt");
+    expect(r.stopped?.detail).toContain("the backup of the unit's memory before the first write is incomplete, and no write goes out without one: application segment");
+    expect(writesOf(calls)).toEqual([]);
+  });
+
+  test("an incomplete read after the run fails the restore: nothing was compared", async () => {
+    const { io } = scripted({ memory: { unread: "after" } });
+    const r = await runInService(spec, io, NO_FULL);
+    expect(r.ok).toBe(false);
+    expect(r.restore?.state).toBe("fail");
+    expect(r.restore?.detail).toContain("the unit's memory read after the run is incomplete, so it is not compared with the backup");
+  });
+
+  test("the undo after a stop compares the memory too", async () => {
+    const { io } = scripted({ memory: { changedBy: "flashParams" }, chanThrowsOnSecondParamFlash: true });
+    const r = await runInService(spec, io, NO_FULL);
+    expect(r.stopped?.phase).toBe("flashParams");
+    expect(r.restore?.state).toBe("fail");
+    expect(r.restore?.detail).toContain("read-back without drift; the unit's memory differs from the backup read before the first write in 1 byte(s): 0x4616: 01 before the run, 00 after it");
+  });
+
+  test("a stop after every write was set back still compares the memory", async () => {
+    const { io, calls } = scripted({ memory: { changedBy: "flashParams" } });
+    const dry = io.api.flashDry.bind(io.api);
+    // The final dry run breaks off, with nothing of the run outstanding.
+    io.api.flashDry = async () => { if (writesOf(calls).length === 5) throw new Error("TUNNEL_CON_TIMEOUT: no confirmation"); return dry(); };
+    const r = await runInService(spec, io, NO_FULL);
+    expect(r.stopped?.phase).toBe("final");
+    expect(r.restore?.state).toBe("fail");
+    expect(r.restore?.detail).toBe("every write of the run was set back before the stop; the unit's memory differs from the backup read before the first write in 1 byte(s): 0x4616: 01 before the run, 00 after it");
+  });
+
+  test("a collection after the run that fails is a failed restore, with the dry runs' verdict kept", async () => {
+    const { io } = scripted();
+    let n = 0;
+    const memory = io.api.memory.bind(io.api);
+    io.api.memory = async () => { if (++n === 2) throw Object.assign(new Error("the collection broke off"), { code: "COLLECT_FAILED" }); return memory(); };
+    const r = await runInService(spec, io, NO_FULL);
+    expect(r.stopped).toBeUndefined();
+    expect(r.restore?.state).toBe("fail");
+    expect(r.restore?.detail).toContain("the device holds the configuration it was found with");
+    expect(r.restore?.detail).toContain("the unit's memory could not be collected again to compare it with the backup: COLLECT_FAILED: the collection broke off");
+  });
+
+  test("a full download that changes a byte fails the restore", async () => {
+    const { io } = scripted({ memory: { changedBy: "fullDownload" } });
+    const r = await runInService(spec, io, { ...NO_FULL, fullDownload: true });
+    expect(r.capabilities.find((c) => c.capability === "fullDownload")?.state).toBe("pass");
+    expect(r.restore?.state).toBe("fail");
+    expect(r.restore?.detail).toContain("0x4616: 01 before the run, 00 after it");
+  });
+});
+
+describe("the unit's memory from the server's diagnostic package", () => {
+  const pkg = (records: DiagnosticPackage["records"], extra: Partial<DiagnosticPackage> = {}): DiagnosticPackage => ({
+    format: "busforge-diagnostic/1", cleaned: { removed: [], notAnonymized: [] }, busforge: { version: "0", commit: "x" }, connection: { kind: "ip", ipTransport: "tcp" },
+    ia: "1.1.56", mask: "MV-0705", family: "system-7", secured: false, authorizeLevel: 0, maxApdu: 15, plan: planForMask("MV-0705", { mask: "MV-0705", absoluteSegments: [] }), records, limits: [], stop: null, error: null,
+    counts: { requests: 0, scanRequests: 0, memoryRequests: 0, memoryBytes: 0, reconnects: 0 }, startedAt: 0, finishedAt: 0, bus: { takenAt: 0, monitorClosedAt: null, releasedAt: 0 }, ...extra,
+  });
+  const mem = (step: string, address: number, bytes: string) => ({ step, space: "memory" as const, target: { address, length: bytes.length / 2 }, source: "device" as const, outcome: "bytes" as const, bytes, at: 0 });
+  const notAttempted = (name: string) => ({ step: "plan", space: "memory" as const, target: { name }, source: "master-data" as const, outcome: "not-attempted" as const, detail: "why", at: 0 });
+
+  test("takes every byte by address and each counted table's end; the System 7 group object table, which lies in the application segments, is no gap", () => {
+    const s = memorySnapshot(pkg([notAttempted("group object table"), mem("group address table", 0x4000, "02"), mem("group address table", 0x4001, "11381302"), mem("application segment AS-4400", 0x4610, "000000000000"), mem("application segment AS-4400", 0x4616, "01")]));
+    expect(s.unread).toEqual([]);
+    expect(s.bytes.get(0x4616)).toBe(0x01);
+    expect(s.bytes.get(0x4004)).toBe(0x02);
+    expect(s.tables).toEqual([{ name: "group address table", start: 0x4000, end: 0x4005, entryBytes: 2 }]);
+  });
+
+  test("application segments not read, a failed read and a stop are each unread; a limit of the interface-object scan is not", () => {
+    const s = memorySnapshot(pkg([notAttempted("application segments"), { ...mem("application segment AS-4400", 0x4400, "00"), outcome: "timeout", bytes: undefined }], { stop: { reason: "duration", detail: "10 min" }, limits: ["object 6 PID 214: 1024-byte property budget"] }));
+    expect(s.unread).toEqual([
+      "the collection stopped (duration): 10 min",
+      "plan (application segments): not-attempted (why)",
+      "application segment AS-4400 at 0x4400+1: timeout",
+    ]);
+  });
+
+  test("an unloaded table, a segment outside the mask's memory segments and a record whose bytes the package takes out are named as not compared", () => {
+    const state = (object: number, b: string) => ({ step: "load-states", space: "property" as const, target: { object, pid: 5, start: 1, count: 1 }, source: "device" as const, outcome: "bytes" as const, bytes: b, at: 0 });
+    const s = memorySnapshot(pkg([
+      state(5, "00"), { step: "PEI program", space: "memory", target: { object: 5 }, source: "device", outcome: "not-attempted", detail: "its load state is 0, not Loaded", at: 0 },
+      { step: "application segment AS-0700", space: "memory", target: { address: 0x0700, length: 190 }, source: "product-xml", outcome: "not-attempted", detail: "0x700+190 lies outside every memory segment the mask declares", at: 0 },
+      { step: "serial number", space: "memory", target: { address: 0xb61a, length: 6 }, source: "master-data", outcome: "bytes", removed: "the device's serial number (its length is kept)", at: 0 },
+    ]));
+    expect(s.unread).toEqual([]);
+    expect(s.notCompared).toEqual([
+      "PEI program (unloaded, it holds nothing)",
+      "application segment AS-0700 at 0x0700+190 (0x700+190 lies outside every memory segment the mask declares)",
+      "serial number at 0xB61A+6 (the device's serial number (its length is kept))",
+    ]);
+  });
+
+  test("only the load-state read the collector goes by counts: the scan's element count of PID 5 is no load state", () => {
+    const s = memorySnapshot(pkg([
+      { step: "scan", space: "property", target: { object: 4, pid: 5, start: 0, count: 1 }, source: "device", outcome: "bytes", bytes: "0001", at: 0 },
+      { step: "application", space: "memory", target: { object: 4 }, source: "device", outcome: "not-attempted", detail: "no 4-byte table reference (PID 7), so no start", at: 0 },
+    ]));
+    expect(s.notCompared).toEqual([]);
+    expect(s.unread).toEqual(["application (object 4): not-attempted (no 4-byte table reference (PID 7), so no start)"]);
+  });
+
+  test("a table right behind the address table is never taken as the address table's residue", () => {
+    const tables = [{ name: "group address table", start: 0x4000, end: 0x4005, entryBytes: 2 }, { name: "association table", start: 0x4005, end: 0x4008, entryBytes: 2 }];
+    const at = (m: Record<number, number>) => ({ bytes: new Map(Object.entries(m).map(([a, b]) => [Number(a), b])), tables, unread: [], notCompared: [] });
+    const r = memoryRestored(at({ 0x4005: 0x01, 0x4008: 0xff }), at({ 0x4005: 0x02, 0x4008: 0x07 }), true);
+    expect(r.pass).toBe(false);
+    expect(r.detail).toContain("in 1 byte(s): 0x4005: 01 before the run, 02 after it");
+  });
+
+  test("a table that is not unloaded and was not read is unread", () => {
+    const s = memorySnapshot(pkg([{ step: "application", space: "memory", target: { object: 4 }, source: "device", outcome: "not-attempted", detail: "no memory control block (PID 27), so the length is unknown", at: 0 }]));
+    expect(s.unread).toEqual(["application (object 4): not-attempted (no memory control block (PID 27), so the length is unknown)"]);
   });
 });

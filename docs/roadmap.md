@@ -118,6 +118,11 @@ depends on is hardware-proven.
 - **A com-object flag a device holds otherwise than its project, read back off the bus.** The bench
   smoke runs read every flag on the bus and found the imported project's; units in service take theirs
   as the project's. A flag set by another tool is shown on emulated units only.
+- **Interface object properties in the in-service restore.** The restore of a run on a device in service
+  compares the unit's memory with the backup collected before the first write, byte for byte; the
+  properties the writes set (load states, memory control blocks with their stamps, a KNXnet/IP object's
+  parameters) are collected too but not compared. A memory-only collection would also take the
+  interface-object scan out of each backup's bus time.
 - **The unread-attribute audit.** [ets-coverage.md](ets-coverage.md) names a script that lists every
   product-XML attribute the parser never reads; it does not exist, the table is maintained by hand.
 
@@ -128,8 +133,10 @@ depends on is hardware-proven.
 - **OpenKNX surgical flashes under an automated run.** The device-in-service spec
   (`openknx-raumcontroller-in-service`) drives the parameter flash and the GA flash on a commissioned
   unit, each reverted and read back, with a bus check and a restart; it passes on hardware in both
-  channels, its full download of the configuration found included. Still open: the
-  comparison with an ETS partial download (on a unit with a matching ETS
+  channels, its full download of the configuration found included. A run of it is refused today before
+  its first write: the unit reports no memory control block (PID 27), so a collection cannot size its
+  tables, and the run's restore needs a complete backup of the unit's memory. Still open: sizing its
+  tables for the collection, the comparison with an ETS partial download (on a unit with a matching ETS
   project), and a power cut.
 - **Hidden bits after an in-service structural step.** The run's restore compares the bits the found
   configuration owns, so a structural step whose revert hides parameters could leave other bits than the

@@ -12,12 +12,12 @@
 // All device access goes through InServiceIo, so the sequence runs against a scripted device in
 // inservice.test.ts exactly as against hardware.
 import { gaToNum, numToGa } from "../../packages/knx/src/index.ts";
-import { BCU1_APPLICATION_ID_RANGE, maskInfo, planForMask, type DeviceReadbackInfo, type SystemFamily } from "../../packages/product/src/index.ts";
+import { BCU1_APPLICATION_ID_RANGE, maskInfo, planForMask, unreadableReason, type DeviceReadbackInfo, type DiagnosticPackage, type SystemFamily } from "../../packages/product/src/index.ts";
 import { allComObjects, allParams, findComObject, findParam, type ConfigView, type DeviceCapabilities, type FlashResult } from "./client.ts";
 import { judgeLoadStates, judgeRestoredConfig, judgeRunError, type RebootObservation } from "./persistence.ts";
 import type { CapabilityResult } from "./capabilities.ts";
 import type { BehaviourResult } from "./behaviours.ts";
-import type { Channel, DeviceSpec } from "./spec.ts";
+import type { Channel, DeviceSpec, InServiceSpec } from "./spec.ts";
 import { serverDataPath } from "./evidence.ts";
 import { guardAddresses, judgeWeather, parseWeatherGuard, WIND_MARGIN, type WeatherGuard } from "./guard.ts";
 
@@ -42,6 +42,108 @@ export interface InServiceApi {
   downloadDry(): Promise<FlashResult>;
   flashReal(): Promise<FlashResult>;
   flashGaReal(): Promise<FlashResult>;
+  // The unit's memory as the server's collection reads it (read-only; memorySnapshot).
+  memory(): Promise<MemorySnapshot>;
+}
+
+// The unit's memory as a collection read it: every byte it gave back, by address; each count-prefixed
+// group table with the first address behind its last counted entry; what the collection's plan names in
+// memory but did not read (`unread`); and what it names but no read can show, so no comparison covers it
+// (`notCompared`). On System 7 the collection reads every application segment inside the mask's memory
+// segments (the group tables and the com-object table among them), on System B the tables of the
+// load-state machines, on System 1 the EEPROM segment.
+export interface MemorySnapshot {
+  bytes: Map<number, number>;
+  // `start`: the table's count byte; `end`: the first address behind its last counted entry.
+  tables: { name: string; start: number; end: number; entryBytes: number }[];
+  unread: string[];
+  notCompared: string[];
+}
+
+// The snapshot of a diagnostic package (POST .../collect). Not compared, and named: a table whose load
+// state is Unloaded (it holds nothing), an application segment the mask's master data does not let a
+// memory read reach (outside its memory segments: RAM), and a record whose bytes the package takes out
+// (the serial number). The System 7 plan always names the group object table as not attempted (the master
+// data gives it no location); it lies in the application segments, which the plan reads. The package's
+// `limits` are not counted: a memory read the collection cut short leaves a memory record that says so,
+// and its other limits bound the interface-object scan.
+export function memorySnapshot(pkg: DiagnosticPackage): MemorySnapshot {
+  const bytes = new Map<number, number>();
+  const unread: string[] = [];
+  const notCompared: string[] = [];
+  if (pkg.stop) unread.push(`the collection stopped (${pkg.stop.reason}): ${pkg.stop.detail}`);
+  if (pkg.error) unread.push(`the collection failed: ${pkg.error}`);
+  if (!pkg.plan) unread.push("the collection has no plan for the unit's mask");
+  const loadState = new Map<number, number>();
+  // The load states the collector itself goes by (its "load-states" step, element 1 of PID 5).
+  for (const r of pkg.records) if (r.step === "load-states" && r.space === "property" && r.target.pid === 5 && r.target.start === 1 && typeof r.target.object === "number" && r.outcome === "bytes" && r.bytes) loadState.set(r.target.object, parseInt(r.bytes.slice(0, 2), 16));
+  const spans = new Map<string, { start: number; end: number }>();
+  for (const r of pkg.records) {
+    if (r.space !== "memory" && r.space !== "memory-extended") continue;
+    const at = typeof r.target.address === "number" ? r.target.address : undefined;
+    const length = typeof r.target.length === "number" ? r.target.length : undefined;
+    const where = at !== undefined ? ` at ${hex(at)}${length !== undefined ? `+${length}` : ""}` : typeof r.target.name === "string" && r.target.name !== r.step ? ` (${r.target.name})` : typeof r.target.object === "number" ? ` (object ${r.target.object})` : "";
+    if (r.outcome === "bytes" && at !== undefined && r.bytes !== undefined) {
+      Buffer.from(r.bytes, "hex").forEach((b, i) => bytes.set(at + i, b));
+      const span = spans.get(r.step);
+      spans.set(r.step, { start: Math.min(span?.start ?? at, at), end: Math.max(span?.end ?? 0, at + r.bytes.length / 2) });
+      continue;
+    }
+    if (r.outcome === "bytes" && r.removed) { notCompared.push(`${r.step}${where} (${r.removed})`); continue; }
+    if (r.step === "plan" && pkg.family === "system-7" && r.target.name === "group object table") continue;
+    const object = r.target.object;
+    if (r.outcome === "not-attempted" && typeof object === "number" && loadState.get(object) === 0) { notCompared.push(`${r.step} (unloaded, it holds nothing)`); continue; }
+    if (r.outcome === "not-attempted" && r.source === "product-xml" && at !== undefined && length !== undefined && pkg.mask && unreadableReason(pkg.mask, { address: at, length }, pkg.plan?.segments ?? null)) {
+      notCompared.push(`${r.step}${where} (${r.detail ?? "the master data lets no memory read reach it"})`);
+      continue;
+    }
+    unread.push(`${r.step}${where}: ${r.outcome}${r.detail ? ` (${r.detail})` : ""}`);
+  }
+  const tables = (pkg.plan?.tables ?? []).flatMap((t) => (t.kind === "counted" && spans.has(t.name) ? [{ name: t.name, ...spans.get(t.name)!, entryBytes: t.entryBytes }] : []));
+  return { bytes, tables, unread, notCompared };
+}
+
+// The unit's memory collected again and compared with the backup; a collection that fails is a failed restore.
+async function compareMemory(io: InServiceIo, backup: MemorySnapshot, linked: boolean, runtime: InServiceSpec["runtimeMemory"]): Promise<{ pass: boolean; detail: string }> {
+  let after: MemorySnapshot;
+  try { after = await io.api.memory(); } catch (e) { return { pass: false, detail: `the unit's memory could not be collected again to compare it with the backup: ${errText(e)}` }; }
+  return memoryRestored(backup, after, linked, runtime);
+}
+
+// The unit's memory after the run against the backup read before its first write, byte for byte. Allowed to
+// differ, and named where they do: after a link step, the two entries behind a count-prefixed group table's
+// counted end, which the link's tables covered and the unlink leaves, as ETS's group-address downloads leave
+// them (docs/load-procedures.md, the table residues; two, since the association table, where it lies behind
+// the address table, moves by the added address and grows by the added association); and the bits the spec
+// names as ones the unit changes on its own (InServiceSpec.runtimeMemory).
+export function memoryRestored(before: MemorySnapshot, after: MemorySnapshot, linked: boolean, runtime: NonNullable<InServiceSpec["runtimeMemory"]> = []): { pass: boolean; detail: string } {
+  if (after.unread.length) return { pass: false, detail: `the unit's memory read after the run is incomplete, so it is not compared with the backup: ${after.unread.join("; ")}` };
+  const residue = new Map<number, string>();
+  if (linked) {
+    for (const t of after.tables) {
+      if (before.tables.find((b) => b.name === t.name)?.end !== t.end) continue;
+      // Never inside another table: an association table may start right behind the address table.
+      for (let i = 0; i < 2 * t.entryBytes; i++) if (!after.tables.some((o) => o !== t && t.end + i >= o.start && t.end + i < o.end)) residue.set(t.end + i, t.name);
+    }
+  }
+  const b2 = (v: number | undefined) => (v === undefined ? "not read" : v.toString(16).padStart(2, "0"));
+  const differ: string[] = [];
+  const left = new Map<string, number[]>();
+  const changedOwn: string[] = [];
+  for (const a of [...new Set([...before.bytes.keys(), ...after.bytes.keys()])].sort((x, y) => x - y)) {
+    const was = before.bytes.get(a), is = after.bytes.get(a);
+    if (was === is) continue;
+    const table = residue.get(a);
+    if (table !== undefined && was !== undefined && is !== undefined) { left.set(table, [...(left.get(table) ?? []), a]); continue; }
+    const own = runtime.find((x) => x.address === a);
+    if (own && was !== undefined && is !== undefined && ((was ^ is) & ~own.mask) === 0) { changedOwn.push(`${hex(a)} ${b2(was)} to ${b2(is)} (${own.why})`); continue; }
+    differ.push(`${hex(a)}: ${b2(was)} before the run, ${b2(is)} after it`);
+  }
+  if (differ.length) return { pass: false, detail: `the unit's memory differs from the backup read before the first write in ${differ.length} byte(s): ${differ.slice(0, 8).join("; ")}${differ.length > 8 ? "; ..." : ""}` };
+  const runs = (as: number[]) => as.reduce<Ranges>((rs, a) => { const l = rs.at(-1); if (l && l.address + l.length === a) l.length++; else rs.push({ address: a, length: 1 }); return rs; }, []);
+  const named = [...[...left].map(([table, as]) => `${rangeText(runs(as))} behind the ${table}'s counted end, which the link step's tables covered and the unlink leaves as ETS's does`), ...changedOwn];
+  const unseen = [...new Set([...before.notCompared, ...after.notCompared])];
+  return { pass: true, detail: `the unit's memory equals the backup read before the first write (${before.bytes.size} byte(s))${named.length ? `, apart from ${named.join(" and ")}` : ""}${unseen.length ? `; not compared: ${unseen.join("; ")}` : ""}` };
 }
 
 // The surface under test (api: the production endpoints, ui: the web app). A write on the ui channel
@@ -217,6 +319,7 @@ export function inServiceProblems(spec: DeviceSpec): string[] {
   if (spec.fuzz) out.push("a fuzz policy has no place on a device in service");
   if (spec.structuralTrigger) out.push("structuralTrigger is for the bench specs; a device in service names its structural step in inService.structural");
   if (s.param && s.structural && s.param.paramRefId === s.structural.paramRefId) out.push("param and structural name the same parameter");
+  for (const m of s.runtimeMemory ?? []) if (!m.why || !Number.isInteger(m.mask) || m.mask < 1 || m.mask > 0xff || !Number.isInteger(m.address) || m.address < 0) out.push(`runtimeMemory: an entry needs an address, a mask of 1 to 0xFF and why the unit changes the bits (${m.why || hex(m.address)})`);
   if (s.hiddenValuesFromProject && !s.structural) out.push("hiddenValuesFromProject without a structural step: no step shows a parameter the unit hides");
   for (const b of spec.behaviours) {
     if (b.kind !== "output" && b.kind !== "heartbeat") { out.push(`behaviour ${b.label}: only output and heartbeat behaviours observe the linked object`); continue; }
@@ -291,7 +394,7 @@ export function planInService(spec: DeviceSpec, opts: InServiceOptions): PlanSte
       read(`route: the individual address the interface reports for itself (KNXnet/IP device information) and the run's tunnel address${!iface ? "" : iface.restart === "drops" ? `; through ${iface.ia} too, whose tunnels a restart of this unit drops (${iface.shown}): the runner's own tunnels reconnect after it, and a tunnel loss is no proof of the reboot; refused when the interface is the unit itself` : `; through ${iface.ia} too, whose tunnels a restart of this unit keeps (${iface.shown})`}`);
       read(`fingerprint: ${s.fingerprint.map((f) => `${fingerprintTarget(f)} (${f.name}) = ${f.expect}`).join(", ")}`);
     }
-    if (phase === "adopt") read(`read-back${s.assumeParams?.length ? `, assuming ${s.assumeParams.map((e) => `${short(e.paramRefId)} (${e.name}) = ${e.value}`).join(", ")} (parameters the device does not hold: the server takes them only if the device's configuration then shows an object for every link and a parameter dry run under them finds nothing to write)` : ""}; the project takes the device's values; a second read-back under them must resolve every association (the server then no longer counts the device as never programmed from this project); the dry runs of the writes the product offers (parameter flash, GA flash) must find nothing to write (the server keeps their backups; a download that always writes, as System 1's: no byte that differs); the configuration found is recorded${s.expectParams?.length ? `; the device's own values: ${s.expectParams.map((e) => `${short(e.paramRefId)} (${e.name}) = ${e.value}`).join(", ")}` : ""}${s.hiddenValuesFromProject ? "; the configuration found must be the installation project's (each parameter it shows holds the project's value, and the project shows no other), so the parameters the unit hides keep the project's values; the second read-back must find the segment's <Data> at every parameter the configuration hides, which the structural step's revert writes there" : ""}`);
+    if (phase === "adopt") read(`read-back${s.assumeParams?.length ? `, assuming ${s.assumeParams.map((e) => `${short(e.paramRefId)} (${e.name}) = ${e.value}`).join(", ")} (parameters the device does not hold: the server takes them only if the device's configuration then shows an object for every link and a parameter dry run under them finds nothing to write)` : ""}; the project takes the device's values; a second read-back under them must resolve every association (the server then no longer counts the device as never programmed from this project); the dry runs of the writes the product offers (parameter flash, GA flash) must find nothing to write (the server keeps their backups; a download that always writes, as System 1's: no byte that differs); the configuration found is recorded${s.expectParams?.length ? `; the device's own values: ${s.expectParams.map((e) => `${short(e.paramRefId)} (${e.name}) = ${e.value}`).join(", ")}` : ""}${s.hiddenValuesFromProject ? "; the configuration found must be the installation project's (each parameter it shows holds the project's value, and the project shows no other), so the parameters the unit hides keep the project's values; the second read-back must find the segment's <Data> at every parameter the configuration hides, which the structural step's revert writes there" : ""}; the backup: the unit's memory as the server's collection reads it (on System 7 every application segment, on System B the tables of the load-state machines, on System 1 the EEPROM), complete or no write`);
     if (phase === "capabilities") read(`every claimed write capability has its step in the spec or is declared unsafe; readParams and readLinks are claimed; every step's target is visible on the device${s.link ? `; ${short(s.link.comObjRefId)} is ${s.link.addToLinked ? "linked" : "unlinked"} on the device${spec.behaviours.some((b) => b.kind === "output") ? " and has its read flag" : ""}; the test address: no object of the unit uses it${s.link.addToLinked ? ", it lies above every address of the object (which keeps sending on its own first address)" : ""}, nothing on the bus answers a read of it or sends on it within 5 s${s.dataSecure || s.hiddenValuesFromProject ? ", it is no group address of the installation's project" : ""}` : ""}`);
     if (phase === "params" || phase === "links" || phase === "structural" || phase === "fullDownload") read("before each write: the project holds the configuration found plus this step only, and the other kind of write, where the product offers it, reports unchanged");
     if (phase === "params") {
@@ -325,7 +428,7 @@ export function planInService(spec: DeviceSpec, opts: InServiceOptions): PlanSte
       read(`read-back: nothing differs from the configuration found${s.hiddenValuesFromProject ? "; a read-back comparing the parameters the configuration hides finds the segment's <Data> at each" : ""}`);
       if (!s.link) out.push({ phase, kind: "restart", text: `A_Restart, reboot observed, ${loaded}, read-back equal to the project` });
     }
-    if (phase === "final") read("the dry runs of the writes the product offers find nothing to write: the device holds the configuration it was found with");
+    if (phase === "final") read(`the dry runs of the writes the product offers find nothing to write: the device holds the configuration it was found with; the unit's memory, read again, equals the backup byte for byte${s.runtimeMemory?.length ? `, apart from the bits the unit changes on its own (${s.runtimeMemory.map((m) => `${hex(m.address)} mask ${m.mask.toString(16).padStart(2, "0")}: ${m.why}`).join("; ")})` : ""}${s.link ? " (named where it differs: the two entries behind a group table's counted end that the link step's tables covered and the unlink leaves, as ETS's does)" : ""}`);
   }
   return out;
 }
@@ -510,6 +613,12 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
   let persistenceOf: InServiceResult["persistenceOf"];
   let restore: InServiceResult["restore"];
   let found: FoundConfiguration | undefined;
+  // The unit's memory before the first write, which the restore compares the memory after the run with.
+  let backup: MemorySnapshot | undefined;
+  // A GA flash of the link step went out (or may have).
+  let linked = false;
+  // A write of the run went out (or may have).
+  let wrote = false;
   let stopped: InServiceResult["stopped"];
   let view: ConfigView | null = null;
   // A read-back of the channel under test decoded parameters and links completely and matched.
@@ -590,6 +699,7 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
     await dryBeforeWrite(() => io.api.flashDry(), `${phase} preflight`, structural, found!.readsFF);
     if (!structural) await onlyTheStep(`${phase} preflight`, { param: [step.paramRefId, step.value] }, gaDry);
     at = phase;
+    wrote = true;
     const thereOut = await io.chan.flashParams();
     const there = checkWritten(thereOut, phase, structural) + confirmFF(thereOut, found!, phase);
     await io.settle(2000);
@@ -719,6 +829,12 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
           if (differ.length) throw new Stop(phase, `the configuration found is not the installation project's: ${differ.length} parameter(s) differ (${differ.slice(0, 8).map((r) => `${short(r)} project ${projectParams.get(r) ?? "not shown"}, unit ${foundParams.get(r) ?? "not shown"}`).join("; ")}${differ.length > 8 ? "; ..." : ""}), so the project's values of the parameters the unit hides would be those of another configuration`);
           io.log("the configuration found is the installation project's: the parameters the unit hides keep the project's values");
         }
+        // The dry runs compare the unit with the project, which the run's own writes set; a byte a write
+        // changes and the project then holds (a parameter the configuration taken over hides) only the
+        // unit's memory against this backup shows.
+        backup = await io.api.memory();
+        if (backup.unread.length) throw new Stop(phase, `the backup of the unit's memory before the first write is incomplete, and no write goes out without one: ${backup.unread.join("; ")}`);
+        io.log(`memory backup: ${backup.bytes.size} byte(s) read${backup.notCompared.length ? `; not compared: ${backup.notCompared.join("; ")}` : ""}`);
       }
 
       if (phase === "capabilities") {
@@ -789,7 +905,9 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
         await onlyTheStep("flashLinks preflight", { link: [obj.refId, placedLinks] }, claims!.flashParams ? () => io.api.flashDry() : undefined);
         await dryBeforeWrite(() => io.api.flashGaDry(), "flashLinks preflight", false, found!.readsFF);
         at = "flashLinks";
-        const linked = checkWritten(await io.chan.flashLinks(), "flashLinks", false);
+        linked = true;
+        wrote = true;
+        const placedText = checkWritten(await io.chan.flashLinks(), "flashLinks", false);
         await io.settle(2000);
         const placed = await io.chan.readBack();
         await io.settle(3000);
@@ -850,8 +968,8 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
           io.log(`behaviour ${res.label}: ${behaviours.at(-1)!.detail}`);
         }
         cap("flashLinks", "pass", own.length
-          ? `added the test address to object ${obj.number} beside its ${own.length} own address(es), own sending address first (${linked}), read back; removed it (${unlinked}), zero drift on read-back`
-          : `linked object ${obj.number} to the test address (${linked}), read back; unlinked (${unlinked}), zero drift on read-back`, { object: obj.number });
+          ? `added the test address to object ${obj.number} beside its ${own.length} own address(es), own sending address first (${placedText}), read back; removed it (${unlinked}), zero drift on read-back`
+          : `linked object ${obj.number} to the test address (${placedText}), read back; unlinked (${unlinked}), zero drift on read-back`, { object: obj.number });
       }
 
       if (phase === "structural") await thereAndBack("structuralFlash", si.structural!, findParam(view!, si.structural!.paramRefId)!.value);
@@ -866,6 +984,7 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
         if (dry.kind !== "dryRun") throw new Stop("fullDownload preflight", `dry run reported ${dry.kind}`);
         await guardDownload?.();
         downloadOut = true;
+        wrote = true;
         at = "fullDownload";
         const done = checkWritten(await io.chan.fullDownload(), "fullDownload", false);
         downloadOut = false;
@@ -883,16 +1002,20 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
           cap("readLinks", "pass", "group tables read back and decoded, no gaps, equal to the configuration found");
         }
         const dries = await dryRuns();
-        restore = dries.every((d) => nothingToWrite(d.r, found!.readsFF))
+        const dryRestore: NonNullable<InServiceResult["restore"]> = dries.every((d) => nothingToWrite(d.r, found!.readsFF))
           ? { state: "pass", detail: `the device holds the configuration it was found with: ${dries.map((d) => `${d.name} dry run ${d.r.kind === "unchanged" ? (found!.readsFF?.length && d.r.leftFF?.length ? `unchanged, leaving the bytes taken as not given back (${rangeText(found!.readsFF)}), which the run's parameter writes set to the project's value: what the unit held there before is not known` : "unchanged") : onlyFF(d.r) ? `differs only at the bytes taken as not given back (${rangeText(d.r.readsFF!)}), which the run's parameter writes set to the project's value: what the unit held there before is not known` : "finds no byte that differs"}`).join(", ")}` }
           : { state: "fail", detail: `after the run ${dries.map((d) => `the ${d.name} dry run reports ${dryKind(d.r)}`).join(" and ")}` };
+        const mem = await compareMemory(io, backup!, linked, si.runtimeMemory);
+        restore = { state: dryRestore.state === "pass" && mem.pass ? "pass" : "fail", detail: `${dryRestore.detail}; ${mem.detail}` };
       }
     }
   } catch (e) {
     stopped = e instanceof Stop ? { phase: e.phase, detail: e.detail } : { phase: at, detail: errText(e) };
     io.log(`stopped in ${stopped.phase}: ${stopped.detail}`);
-    if (out.params.size || out.links.size) restore = await undo(io, out, found!, claims!, s?.hiddenValuesFromProject === true);
+    if (out.params.size || out.links.size) restore = await undo(io, out, found!, claims!, s?.hiddenValuesFromProject === true, backup!, linked, s?.runtimeMemory);
     else if (downloadOut) restore = { state: "fail", detail: "the full download broke off: the device may hold its application unloaded. Recover by hand from the configuration found and the server's backups" };
+    // Writes went out and were each set back before the stop: the unit's memory still has to show it.
+    else if (wrote && backup) { const mem = await compareMemory(io, backup, linked, s?.runtimeMemory); restore = { state: mem.pass ? "pass" : "fail", detail: `every write of the run was set back before the stop; ${mem.detail}` }; }
   }
 
   if (stopped) cap(stopped.phase, "fail", stopped.detail);
@@ -909,8 +1032,9 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
 // with, over the API. A dry run that finds nothing to write means the device never took the change.
 // Never a full download.
 // `hidden`: the spec takes hidden values from the project (hiddenValuesFromProject), so the undo's read-back
-// also compares the bits of the parameters the configuration hides with the segment's <Data>.
-async function undo(io: InServiceIo, out: Outstanding, found: FoundConfiguration, claims: DeviceCapabilities, hidden: boolean): Promise<NonNullable<InServiceResult["restore"]>> {
+// also compares the bits of the parameters the configuration hides with the segment's <Data>. Last, the
+// unit's memory is compared with the backup read before the run's first write (memoryRestored).
+async function undo(io: InServiceIo, out: Outstanding, found: FoundConfiguration, claims: DeviceCapabilities, hidden: boolean, backup: MemorySnapshot, linked: boolean, runtime: InServiceSpec["runtimeMemory"]): Promise<NonNullable<InServiceResult["restore"]>> {
   const done: string[] = [];
   // The bytes the adoption took as not given back, left by the undo's flash: they hold the project's value
   // the run's parameter write set, and what the unit held there before is not known.
@@ -945,7 +1069,10 @@ async function undo(io: InServiceIo, out: Outstanding, found: FoundConfiguration
     const drift = await noDrift(io, rb, "after the undo");
     if (drift) return fail(drift);
     const hiddenOff = hidden ? hiddenLeft(rb) : null;
-    return hiddenOff ? fail(`after the undo ${hiddenOff}`) : { state: "pass", detail: `${done.join("; ")}; read-back without drift${hidden ? ", the <Data> at every parameter the configuration hides" : ""}` };
+    if (hiddenOff) return fail(`after the undo ${hiddenOff}`);
+    done.push(`read-back without drift${hidden ? ", the <Data> at every parameter the configuration hides" : ""}`);
+    const mem = await compareMemory(io, backup, linked, runtime);
+    return mem.pass ? { state: "pass", detail: `${done.join("; ")}; ${mem.detail}` } : fail(mem.detail);
   } catch (e) {
     return fail(`undo aborted: ${errText(e)}`);
   }

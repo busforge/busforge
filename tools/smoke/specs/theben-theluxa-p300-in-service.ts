@@ -23,6 +23,9 @@ export const thebenTheluxaP300InService: DeviceSpec = {
   },
   provision: "in-service",
   inService: {
+    // The download marker P-2228 (docs/load-procedures.md R17): every parameter download writes AA, the unit
+    // reads it back 00.
+    runtimeMemory: [{ address: 0x4800, mask: 0xff, why: "download marker P-2228, written AA by each download and cleared by the unit" }],
     fingerprint: [
       { name: "application id", object: 3, pid: 13, expect: "0048107e12" },
       { name: "firmware revision", object: 0, pid: 9, expect: "01" },

@@ -5,7 +5,7 @@
 import { gaToNum } from "../../packages/knx/src/index.ts";
 // The authoritative config-view + capability types, imported from the product so the runner reads
 // exactly the shapes the server sends (a field renamed on either side is a compile error here).
-import type { DeviceConfigView, CfgItem, CfgParamView, CfgComObjView, DeviceCapabilities, DeviceReadbackInfo } from "../../packages/product/src/index.ts";
+import type { DeviceConfigView, CfgItem, CfgParamView, CfgComObjView, DeviceCapabilities, DeviceReadbackInfo, DiagnosticPackage } from "../../packages/product/src/index.ts";
 export type { DeviceConfigView as ConfigView, CfgItem, CfgParamView, CfgComObjView, DeviceCapabilities };
 
 export class ApiError extends Error {
@@ -101,6 +101,12 @@ export class Client {
   readBack(pid: string, did: string, onPhase?: (p: string) => void, assume?: { paramRefId: string; value: string }[], compareHidden?: boolean): Promise<DeviceReadbackInfo> {
     return this.submitAndWait(pid, `/api/projects/${pid}/devices/${did}/read-back`, "read-back", onPhase, { ...(assume ? { assume } : {}), ...(compareHidden ? { compareHidden } : {}) });
   }
+  // A collection of the device (read-only, docs/raw-acquisition.md) and its diagnostic package.
+  async collect(pid: string, did: string, onPhase?: (p: string) => void): Promise<DiagnosticPackage> {
+    const task = await this.call<Task>("POST", `/api/projects/${pid}/devices/${did}/collect`, undefined, 60_000);
+    await this.waitTask(pid, task, "collect", onPhase);
+    return this.call<DiagnosticPackage>("GET", `/api/projects/${pid}/diagnostics/${task.id}`);
+  }
   tasks(pid: string) { return this.call<Task[]>("GET", `/api/projects/${pid}/tasks`); }
   private projectFull(pid: string) { return this.call<ProjectView>("GET", `/api/projects/${pid}`); }
   private createGaRange(pid: string, parentId: number | string | null, num: number, name: string) { return this.call<ProjectView>("POST", `/api/projects/${pid}/group-ranges`, { parentId: parentId === null ? null : Number(parentId), number: num, name }); }
@@ -161,12 +167,14 @@ export class Client {
     return this.submitAndWait(pid, `/api/projects/${pid}/devices/${did}/flash`, "flash", onPhase);
   }
 
-  // Submit a write and poll ITS task (by id) to the end. A coded refusal before queueing (a guard,
+  // Submit an operation and poll ITS task (by id) to the end. A coded refusal before queueing (a guard,
   // DEVICE_WRITE_ACTIVE) throws from the POST. The device's own "not verified" verdict is returned
   // as the result it is, so the caller asserts on it; any other unsuccessful end throws its code.
   // A failed poll is retried: it says nothing about the job, which runs on in the server.
   private async submitAndWait<T>(pid: string, path: string, label: string, onPhase?: (p: string) => void, body?: unknown): Promise<T> {
-    const submitted = await this.call<Task>("POST", path, body, 60_000);
+    return this.waitTask<T>(pid, await this.call<Task>("POST", path, body, 60_000), label, onPhase);
+  }
+  private async waitTask<T>(pid: string, submitted: Task, label: string, onPhase?: (p: string) => void): Promise<T> {
     let lastPhase = "";
     for (let i = 0; i < 250; i++) { // up to ~20 min; the first 10 s at 1 s, as a dry run often ends in seconds
       await new Promise((r) => setTimeout(r, i < 10 ? 1_000 : 5_000));

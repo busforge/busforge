@@ -29,7 +29,7 @@ import { KnxIpTunnel, KnxDevice, KnxError, lsmState, SecureSession, iaToNum, num
 import { loadKnxproj } from "../../packages/project/src/index.ts";
 import { FaultProxy } from "./faultproxy.ts";
 import { connectTunnel, onFreshTunnel, isLinkLost } from "./tunnel.ts";
-import { runInService, planInService, optionProblems, inServiceFileKey, type InServiceIo, type InServiceOptions, type FoundConfiguration } from "./inservice.ts";
+import { runInService, planInService, optionProblems, inServiceFileKey, memorySnapshot, type InServiceIo, type InServiceOptions, type FoundConfiguration } from "./inservice.ts";
 import { BCU1_EEPROM, BCU1_RUN_ERROR, isMemoryMappedLsm, maskInfo, type Firmware } from "../../packages/product/src/index.ts";
 
 // A capability that has a UI surface but no meaningful API surface, or vice versa, is recorded — never
@@ -326,6 +326,7 @@ function inServiceIo(o: { client: Client; ui: UiDriver | null; pid: string; did:
       downloadDry: () => client.downloadDry(pid, did),
       flashReal: () => client.flashReal(pid, did, (p) => log(`flash ${p}`)),
       flashGaReal: () => client.flashGaReal(pid, did, (p) => log(`flash-ga ${p}`)),
+      memory: async () => memorySnapshot(await client.collect(pid, did, (p) => log(`collect ${p}`))),
     },
     chan: ui ? {
       name: "ui",
