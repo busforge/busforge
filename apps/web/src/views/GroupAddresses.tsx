@@ -7,6 +7,7 @@ import { useProject } from "../queries.ts";
 import { GaPill } from "@/components/GaPill.tsx";
 import { DptBadge } from "@/components/DptBadge.tsx";
 import { Button } from "@/components/ui/button";
+import { IconButton } from "@/components/ui/icon-button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { GroupEditor, type Editor, type Levels } from "./GroupEditDialogs.tsx";
@@ -15,19 +16,19 @@ import { cn } from "@/lib/utils";
 // The bright orange group number shown in front of each range name. Lets you read
 // where you are in the address tree at a glance (main group, then main/middle).
 function NumTag({ value, className }: { value: string; className?: string }) {
-  return <span className={cn("shrink-0 rounded bg-primary/15 px-1.5 py-0.5 font-mono font-semibold text-primary", className)}>{value}</span>;
+  return <span className={cn("shrink-0 rounded-md bg-primary/15 px-1.5 py-0.5 font-mono font-semibold text-primary", className)}>{value}</span>;
 }
 
-// A small ghost icon button for the row/heading edit affordances.
+// The row/heading edit affordances. Stops propagation so it never triggers a parent click.
 function IconBtn({ label, onClick, children, danger }: { label: string; onClick: () => void; children: ReactNode; danger?: boolean }) {
   return (
-    <button
-      type="button" aria-label={label} title={label}
+    <IconButton
+      size="icon-sm" label={label}
       onClick={(e) => { e.stopPropagation(); onClick(); }}
-      className={cn("rounded p-1 text-muted-foreground hover:bg-secondary", danger ? "hover:text-destructive" : "hover:text-foreground")}
+      className={cn("text-muted-foreground", danger ? "hover:not-disabled:text-destructive" : "hover:not-disabled:text-foreground")}
     >
       {children}
-    </button>
+    </IconButton>
   );
 }
 
@@ -194,7 +195,7 @@ export function GroupAddressesView() {
 
   const gaRows = (addresses: GroupAddress[]) =>
     addresses.map((g) => (
-      <div key={g.raw} className="group flex items-center justify-between gap-3 rounded px-2 py-1 text-sm hover:bg-secondary/50">
+      <div key={g.raw} className="group flex items-center justify-between gap-3 rounded-md px-2 py-1 text-sm hover:bg-secondary/50">
         <GaPill projectId={projectId} raw={g.raw} name={g.name} address={g.address} className="min-w-0" onEdit={() => actions.editGa(g)} />
         <div className="flex items-center gap-2">
           <DptBadge dpt={g.dpt} />
@@ -213,17 +214,17 @@ export function GroupAddressesView() {
           <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input ref={searchRef} placeholder={t("groups.searchPlaceholder")} value={q} onChange={(e) => setQ(e.target.value)} className="px-9" data-testid="group-search" />
           {q && (
-            <button
-              type="button" aria-label={t("groups.clearSearch")} onClick={() => setQ("")} data-testid="group-search-clear"
-              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
+            <IconButton
+              size="icon-xs" tooltip={false} label={t("groups.clearSearch")} onClick={() => setQ("")} data-testid="group-search-clear"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
             >
               <X className="size-4" />
-            </button>
+            </IconButton>
           )}
         </div>
         <div className="flex items-center gap-3">
           <span className="font-mono text-xs text-muted-foreground" data-testid="group-count">{t("groups.count", { shown: matched, total: project.gaCount })}</span>
-          <Button size="sm" variant="outline" className="gap-1.5" onClick={addMainGroup} data-testid="add-main-group">
+          <Button variant="outline" onClick={addMainGroup} data-testid="add-main-group">
             <Plus className="size-4" /> {t("groupEdit.addMainGroup")}
           </Button>
         </div>
@@ -245,7 +246,7 @@ export function GroupAddressesView() {
                       <button
                         key={id} type="button" onClick={() => scrollToSec(id)}
                         className={cn(
-                          "flex w-full items-center gap-1.5 whitespace-nowrap rounded border-l-2 py-1 pr-2 text-left text-sm transition-colors lg:truncate",
+                          "flex w-full items-center gap-1.5 whitespace-nowrap rounded-md border-l-2 py-1 pr-2 text-left text-sm transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 lg:truncate",
                           sub ? "pl-5" : "pl-2",
                           active ? "border-foreground/50 bg-secondary font-medium text-foreground"
                             : sub ? "border-transparent text-muted-foreground hover:bg-secondary/60 hover:text-foreground"

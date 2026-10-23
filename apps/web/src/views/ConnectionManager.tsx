@@ -13,7 +13,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import { errMsg } from "../lib/apiError.ts";
-import { cn } from "@/lib/utils";
+import { Chip } from "@/components/ui/chip";
 
 // USB identity carried around the UI (subset of a connection's usb_* fields).
 export interface UsbValue { usbVendorId: number | null; usbProductId: number | null; usbSerial: string | null }
@@ -25,15 +25,9 @@ const usbKey = (v: UsbValue) => `${v.usbVendorId}:${v.usbProductId}:${v.usbSeria
 export function TypeToggle({ value, onChange, disabled }: { value: ConnectionType; onChange: (t: ConnectionType) => void; disabled?: boolean }) {
   const { t } = useTranslation();
   const opt = (type: ConnectionType, Icon: typeof Usb, label: string) => (
-    <button
-      type="button" disabled={disabled} onClick={() => onChange(type)}
-      className={cn(
-        "flex flex-1 items-center justify-center gap-1.5 rounded-md border px-2 py-1.5 text-xs font-medium transition-colors disabled:opacity-50",
-        value === type ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:text-foreground",
-      )}
-    >
-      <Icon className="size-3.5" /> {label}
-    </button>
+    <Chip active={value === type} disabled={disabled} onClick={() => onChange(type)} className="h-8 flex-1 justify-center">
+      <Icon /> {label}
+    </Chip>
   );
   return (
     <div className="flex gap-2">
@@ -50,16 +44,9 @@ function TransportToggle({ value, onChange }: { value: IpTransport; onChange: (t
   return (
     <div className="flex gap-2" data-testid="conn-transport">
       {opts.map((o) => (
-        <button
-          key={o}
-          type="button" onClick={() => onChange(o)}
-          className={cn(
-            "flex flex-1 items-center justify-center rounded-md border px-2 py-1.5 text-xs font-medium transition-colors",
-            value === o ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:text-foreground",
-          )}
-        >
+        <Chip key={o} active={value === o} onClick={() => onChange(o)} className="h-8 flex-1 justify-center">
           {t(`conn.transport_${o}`)}
-        </button>
+        </Chip>
       ))}
     </div>
   );
@@ -96,7 +83,7 @@ export function UsbPicker({ value, onChange, disabled }: { value: UsbValue; onCh
     <div className="space-y-1.5">
       <div className="flex items-center justify-between">
         <Label className="text-[11px] text-muted-foreground">{t("iface.usbLabel")}</Label>
-        <button type="button" onClick={() => void scan()} disabled={scanning || disabled} className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground disabled:opacity-50">
+        <button type="button" onClick={() => void scan()} disabled={scanning || disabled} className="inline-flex items-center gap-1 rounded-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 text-[11px] text-muted-foreground hover:not-disabled:text-foreground disabled:opacity-50">
           {scanning ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />} {scanning ? t("iface.usbScanning") : t("iface.usbScan")}
         </button>
       </div>
@@ -107,7 +94,7 @@ export function UsbPicker({ value, onChange, disabled }: { value: UsbValue; onCh
           const d = options.find((o) => usbKey({ usbVendorId: o.vendorId, usbProductId: o.productId, usbSerial: o.serial ?? null }) === e.target.value);
           onChange(d ? { usbVendorId: d.vendorId, usbProductId: d.productId, usbSerial: d.serial ?? null } : { usbVendorId: null, usbProductId: null, usbSerial: null });
         }}
-        className="h-8 w-full rounded-md border border-border bg-background px-2 text-sm disabled:opacity-50"
+        className="h-8 w-full rounded-md border border-input bg-input/30 px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50"
         data-testid="usb-picker"
       >
         <option value="">{options.length ? t("conn.pick") : t("iface.usbNone")}</option>
@@ -142,11 +129,11 @@ export function ConnectionManager() {
   return (
     <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) setEditing(null); }}>
       <DialogTrigger asChild>
-        <button type="button" className="text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline" data-testid="manage-connections">
+        <button type="button" className="rounded-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline" data-testid="manage-connections">
           {t("iface.manage")}
         </button>
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent backdropClose={editing === null}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><Usb className="size-4 text-primary" /> {t("conn.title")}</DialogTitle>
           <DialogDescription>{t("conn.description")}</DialogDescription>
@@ -168,7 +155,7 @@ export function ConnectionManager() {
                       <div className="truncate font-mono text-[11px] text-muted-foreground">{connDetail(c)}</div>
                     </div>
                     <Button variant="ghost" size="icon" className="size-7 text-muted-foreground" onClick={() => setEditing(c)} title={t("conn.edit")}><Pencil className="size-3.5" /></Button>
-                    <Button variant="ghost" size="icon" className="size-7 text-muted-foreground hover:text-destructive" onClick={() => { if (confirm(t("conn.deleteConfirm"))) del.mutate(c.id); }} title={t("conn.delete")}><Trash2 className="size-3.5" /></Button>
+                    <Button variant="ghost" size="icon" className="size-7 text-muted-foreground hover:not-disabled:text-destructive" onClick={() => { if (confirm(t("conn.deleteConfirm"))) del.mutate(c.id); }} title={t("conn.delete")}><Trash2 className="size-3.5" /></Button>
                   </div>
                 ))}
               </div>
@@ -196,14 +183,14 @@ function GatewayScan({ onPick }: { onPick: (g: Gateway) => void }) {
   };
   return (
     <div className="space-y-1.5">
-      <button type="button" onClick={() => void scan()} disabled={scanning} className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground disabled:opacity-50" data-testid="scan-ip">
+      <button type="button" onClick={() => void scan()} disabled={scanning} className="inline-flex items-center gap-1.5 rounded-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 text-[11px] text-muted-foreground hover:not-disabled:text-foreground disabled:opacity-50" data-testid="scan-ip">
         {scanning ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />} {scanning ? t("conn.scanning") : t("conn.scanIp")}
       </button>
       {scanned && !scanning && gateways.length === 0 && <p className="text-[11px] text-muted-foreground">{t("conn.noGateways")}</p>}
       {gateways.length > 0 && (
         <div className="space-y-1">
           {gateways.map((g) => (
-            <button key={g.ip} type="button" onClick={() => onPick(g)} className="flex w-full items-center gap-2 rounded-md border border-border/60 px-2 py-1 text-left text-xs hover:border-primary">
+            <button key={g.ip} type="button" onClick={() => onPick(g)} className="flex w-full items-center gap-2 rounded-md border border-border/60 px-2 py-1 text-left text-xs outline-none hover:border-primary hover:bg-primary/5 focus-visible:ring-[3px] focus-visible:ring-ring/50">
               <Network className="size-3.5 shrink-0 text-muted-foreground" />
               <span className="flex-1 truncate">{g.name || g.ia}</span>
               <span className="font-mono text-[11px] text-muted-foreground">{g.ip}</span>

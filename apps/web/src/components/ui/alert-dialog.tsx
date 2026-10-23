@@ -3,11 +3,29 @@ import { AlertDialog as AlertDialogPrimitive } from "radix-ui"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { CloseCorner, dialogPanel } from "@/components/ui/dialog"
+
+// Radix keeps its cancel inside the content, so a click on the backdrop reaches the root's
+// onOpenChange through this context instead.
+const CloseFromBackdrop = React.createContext<() => void>(() => {})
 
 function AlertDialog({
+  open,
+  defaultOpen,
+  onOpenChange,
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Root>) {
-  return <AlertDialogPrimitive.Root data-slot="alert-dialog" {...props} />
+  const [uncontrolled, setUncontrolled] = React.useState(defaultOpen ?? false)
+  const controlled = open !== undefined
+  const setOpen = (o: boolean) => {
+    if (!controlled) setUncontrolled(o)
+    onOpenChange?.(o)
+  }
+  return (
+    <CloseFromBackdrop.Provider value={() => setOpen(false)}>
+      <AlertDialogPrimitive.Root data-slot="alert-dialog" open={controlled ? open : uncontrolled} onOpenChange={setOpen} {...props} />
+    </CloseFromBackdrop.Provider>
+  )
 }
 
 function AlertDialogTrigger({
@@ -34,7 +52,7 @@ function AlertDialogOverlay({
     <AlertDialogPrimitive.Overlay
       data-slot="alert-dialog-overlay"
       className={cn(
-        "fixed inset-0 z-50 bg-black/50 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0",
+        "fixed inset-0 z-50 bg-black/60 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0",
         className
       )}
       {...props}
@@ -42,25 +60,43 @@ function AlertDialogOverlay({
   )
 }
 
+// A confirmation: the question and its answers. Leaving it is always "no": its cancel button, the
+// close button, Esc or a click on the backdrop. `backdropClose={false}` where it holds typed input
+// a stray click would throw away. While the confirmed action runs (`dismissible` false) none of
+// these close it.
 function AlertDialogContent({
   className,
   size = "default",
+  dismissible = true,
+  backdropClose = true,
+  children,
+  onEscapeKeyDown,
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Content> & {
   size?: "default" | "sm"
+  dismissible?: boolean
+  backdropClose?: boolean
 }) {
+  const closeFromBackdrop = React.useContext(CloseFromBackdrop)
   return (
     <AlertDialogPortal>
-      <AlertDialogOverlay />
+      <AlertDialogOverlay onClick={dismissible && backdropClose ? closeFromBackdrop : undefined} />
       <AlertDialogPrimitive.Content
         data-slot="alert-dialog-content"
         data-size={size}
         className={cn(
-          "group/alert-dialog-content fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border bg-background p-6 shadow-lg duration-200 data-[size=sm]:max-w-xs data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[size=default]:sm:max-w-lg",
+          dialogPanel,
+          "group/alert-dialog-content data-[size=sm]:max-w-xs data-[size=default]:sm:max-w-lg",
           className
         )}
+        onEscapeKeyDown={(e) => { onEscapeKeyDown?.(e); if (!dismissible) e.preventDefault() }}
         {...props}
-      />
+      >
+        {/* Before the children: the confirmation's own cancel button mounts last and so takes the
+            initial focus. */}
+        {dismissible && <CloseCorner asClose={(b) => <AlertDialogPrimitive.Cancel asChild>{b}</AlertDialogPrimitive.Cancel>} />}
+        {children}
+      </AlertDialogPrimitive.Content>
     </AlertDialogPortal>
   )
 }
@@ -73,7 +109,7 @@ function AlertDialogHeader({
     <div
       data-slot="alert-dialog-header"
       className={cn(
-        "grid grid-rows-[auto_1fr] place-items-center gap-1.5 text-center has-data-[slot=alert-dialog-media]:grid-rows-[auto_auto_1fr] has-data-[slot=alert-dialog-media]:gap-x-6 sm:group-data-[size=default]/alert-dialog-content:place-items-start sm:group-data-[size=default]/alert-dialog-content:text-left sm:group-data-[size=default]/alert-dialog-content:has-data-[slot=alert-dialog-media]:grid-rows-[auto_1fr]",
+        "grid grid-rows-[auto_1fr] place-items-center gap-1.5 pr-8 text-center has-data-[slot=alert-dialog-media]:grid-rows-[auto_auto_1fr] has-data-[slot=alert-dialog-media]:gap-x-6 sm:group-data-[size=default]/alert-dialog-content:place-items-start sm:group-data-[size=default]/alert-dialog-content:text-left sm:group-data-[size=default]/alert-dialog-content:has-data-[slot=alert-dialog-media]:grid-rows-[auto_1fr]",
         className
       )}
       {...props}

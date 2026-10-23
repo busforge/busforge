@@ -10,6 +10,8 @@ import { ChangePill, changeTotal as total } from "@/components/ChangePill.tsx";
 import { DeviceLabel } from "@/components/DeviceLabel.tsx";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { IconButton } from "@/components/ui/icon-button";
+import { Chip } from "@/components/ui/chip";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -124,17 +126,17 @@ interface SpaceActions {
   deleteLabel: string;
 }
 
-// A small ghost icon button for the heading edit affordances (mirrors the
-// group-address page). Stops propagation so it never triggers a parent click.
+// The heading edit affordances (mirrors the group-address page). Stops propagation so it never
+// triggers a parent click.
 function IconBtn({ label, onClick, children, danger, testId }: { label: string; onClick: () => void; children: ReactNode; danger?: boolean; testId?: string }) {
   return (
-    <button
-      type="button" aria-label={label} title={label} data-testid={testId}
+    <IconButton
+      size="icon-sm" label={label} data-testid={testId}
       onClick={(e) => { e.stopPropagation(); onClick(); }}
-      className={cn("rounded p-1 text-muted-foreground hover:bg-secondary", danger ? "hover:text-destructive" : "hover:text-foreground")}
+      className={cn("text-muted-foreground", danger ? "hover:not-disabled:text-destructive" : "hover:not-disabled:text-foreground")}
     >
       {children}
-    </button>
+    </IconButton>
   );
 }
 
@@ -271,15 +273,15 @@ export function DevicesView() {
 
   // One device as a full-width row (readable name), mirroring the group-address rows.
   const deviceRow = (d: Device) => (
-    <div key={d.id} className="group/row flex items-center justify-between gap-3 rounded px-2 py-1.5 text-sm hover:bg-secondary/50" data-testid={`device-${d.ia}`}>
+    <div key={d.id} className="group/row flex items-center justify-between gap-3 rounded-md px-2 py-1.5 text-sm hover:bg-secondary/50" data-testid={`device-${d.ia}`}>
       <Link {...row(d)} className="flex min-w-0 flex-1 items-center"><DeviceLabel name={d.name} ia={d.ia} className="min-w-0" /></Link>
       <div className="flex shrink-0 items-center gap-2">
         {d.secure && (
-          <Badge variant="outline" className="gap-1 border-amber-500/40 text-amber-600 dark:text-amber-400" title={t("devices.secure")} data-testid={`device-secure-${d.ia}`}>
-            <ShieldCheck className="size-3" /> <span className="hidden sm:inline">{t("devices.secure")}</span>
+          <Badge tone="warning" size="sm" title={t("devices.secure")} data-testid={`device-secure-${d.ia}`}>
+            <ShieldCheck /> <span className="hidden sm:inline">{t("devices.secure")}</span>
           </Badge>
         )}
-        <Badge variant="outline" className="hidden font-mono text-[10px] sm:inline-flex">{manuf(d.manufacturer)}</Badge>
+        <Badge tone="outline" size="sm" mono className="hidden sm:inline-flex">{manuf(d.manufacturer)}</Badge>
         <ChangePill changes={d.changes} />
         <RoomSelect
           targets={targets} value={deviceSpace.get(d.id) ?? null} deviceIa={d.ia}
@@ -302,37 +304,37 @@ export function DevicesView() {
             <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input ref={searchRef} placeholder={t("devices.searchPlaceholder")} value={q} onChange={(e) => setQ(e.target.value)} className="px-9" data-testid="device-search" />
             {q && (
-              <button
-                type="button" aria-label={t("devices.clearSearch")} onClick={() => setQ("")} data-testid="device-search-clear"
-                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
+              <IconButton
+                size="icon-xs" tooltip={false} label={t("devices.clearSearch")} onClick={() => setQ("")} data-testid="device-search-clear"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
               >
                 <X className="size-4" />
-              </button>
+              </IconButton>
             )}
           </div>
           {buildings.length > 1 && selectedBuilding && (
             <BuildingCombobox buildings={buildings} value={selectedBuilding.id} onChange={setBuilding} />
           )}
           {editable && (
-            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setNameDialog({ parentId: null, type: "Building", initial: "" })} data-testid="add-building">
+            <Button variant="outline" onClick={() => setNameDialog({ parentId: null, type: "Building", initial: "" })} data-testid="add-building">
               <Building2 className="size-4" /> {t("devices.addBuilding")}
             </Button>
           )}
         </div>
         <div className="flex items-center gap-3">
           {anyChanged && (
-            <Button
-              size="sm" variant="outline" aria-pressed={onlyChanged}
+            <Chip
+              active={onlyChanged}
               disabled={!onlyChanged && changedCount === 0}
               onClick={toggleChanged} data-testid="filter-changed"
-              className={cn("gap-1.5 font-mono text-xs", onlyChanged ? "border-primary/50 bg-primary/10 text-primary" : "text-primary")}
+              className="h-9 font-mono"
               title={t("devices.toProgramTitle")}
             >
-              <Zap className="size-3.5" /> {t("devices.toProgram", { count: changedCount })}
-            </Button>
+              <Zap /> {t("devices.toProgram", { count: changedCount })}
+            </Chip>
           )}
           <span className="font-mono text-xs text-muted-foreground">{t("devices.count", { shown: shownCount, total: all.length })}</span>
-          <Button size="sm" onClick={() => setAddOpen(true)} data-testid="add-device">
+          <Button onClick={() => setAddOpen(true)} data-testid="add-device">
             <Plus className="size-4" /> {t("devices.addDevice")}
           </Button>
         </div>
@@ -362,7 +364,7 @@ export function DevicesView() {
                       <button
                         key={id} type="button" onClick={() => scrollToSec(id)} data-testid={`nav-${id}`}
                         className={cn(
-                          "flex w-full items-center gap-1.5 whitespace-nowrap rounded border-l-2 py-1 pr-2 text-left text-sm transition-colors lg:truncate",
+                          "flex w-full items-center gap-1.5 whitespace-nowrap rounded-md border-l-2 py-1 pr-2 text-left text-sm transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 lg:truncate",
                           sub ? "pl-5" : "pl-2",
                           active ? "border-foreground/50 bg-secondary font-medium text-foreground"
                             : sub ? "border-transparent text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
@@ -471,7 +473,7 @@ export function DevicesView() {
       />
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(o) => { if (!o) setDeleteTarget(null); }}>
-        <AlertDialogContent>
+        <AlertDialogContent dismissible={!spaceEdit.deleteSpace.isPending}>
           <AlertDialogHeader>
             <AlertDialogTitle>{t("devices.deleteTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
@@ -549,7 +551,7 @@ function SpaceNameDialog({ state, title, busy, onClose, onSubmit }: {
   const submit = () => { const v = name.trim(); if (v) onSubmit(v); };
   return (
     <Dialog open={!!state} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-sm">
+      <DialogContent className="max-w-sm" backdropClose={false}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
@@ -730,13 +732,13 @@ function AddDeviceDialog({
                 disabled={add.isPending}
                 onClick={() => add.mutate(p)}
                 data-testid="catalog-item"
-                className="flex w-full items-center justify-between gap-3 rounded-md border border-transparent px-3 py-2 text-left transition-colors hover:border-primary/50 hover:bg-primary/5 disabled:opacity-50"
+                className="flex w-full items-center justify-between gap-3 rounded-md border border-transparent px-3 py-2 text-left outline-none transition-colors hover:not-disabled:border-primary/50 hover:not-disabled:bg-primary/5 focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50"
               >
                 <div className="min-w-0">
                   <div className="truncate text-sm font-medium">{p.name || p.productRef}</div>
                   {p.orderNumber && <div className="font-mono text-[11px] text-muted-foreground">{t("catalog.orderNo")} {p.orderNumber}</div>}
                 </div>
-                <Badge variant="outline" className="shrink-0 font-mono text-[10px]">{manuf(p.manufacturer)}</Badge>
+                <Badge tone="outline" size="sm" mono>{manuf(p.manufacturer)}</Badge>
               </button>
             ))
           )}

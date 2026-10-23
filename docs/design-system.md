@@ -102,10 +102,64 @@ Two families, loaded from Google Fonts in `index.html`.
 
 - **Dark, instrument-like.** Slate surfaces, hairline `border`, generous use of `muted-foreground` for secondary info.
 - **Amber is focal.** Reserve `primary` for the brand, the active/primary action, and selection. Overuse erases the signal.
-- **Radius:** base `0.5rem` (`--radius`); `rounded-md` for tiles, `rounded-xl` for cards/containers.
+- **Radius:** base `0.5rem` (`--radius`); see the radius scale under [Components](#components).
 - **Tooltips** (Radix): instant, multiline; hide secondary detail (DPT/flags) there rather than inline.
 - **State in the URL:** filter/search/selection state is URL-encoded so views are shareable and reload-safe.
 - **Header lockup:** amber mark tile + `BUSFORGE` (Archivo 800, `0.2em`) + mono tagline (`common.tagline`), as in `Projects.tsx`.
+
+---
+
+## Components
+
+The primitives live in `apps/web/src/components/ui/`. Views use them instead of styling a `<button>` or a `<span>` themselves; a control that needs a new look gets a variant here, not a one-off class list.
+
+| Primitive | Use | Variants |
+|---|---|---|
+| `Button` | Every action with a text label | `default` (amber, the one primary action of a view), `outline`, `secondary`, `ghost`, `destructive`, `link`; sizes `xs` 24 px, `sm` 32 px, `default` 36 px, `lg` 40 px |
+| `IconButton` | An action shown only as an icon | Same variants and sizes (`icon-xs` to `icon-lg`). Its `label` is required: the accessible name and the tooltip |
+| `Badge` | A status or label mark that does nothing on click | Tones `neutral`, `outline`, `primary`, `ok`, `info`, `warning`, `danger`; sizes `sm` 20 px, `md` 24 px; `mono` for bus data |
+| `BadgeButton` | The same mark when it opens a detail (popover, dialog) | As `Badge`, plus the states of a control |
+| `Chip` | A filter toggle or one choice among a few (IP/USB, transport) | `active`, announced as `aria-pressed` |
+| `Dialog` | A task in a window: a form, a preview, a running read | `backdropClose`, `dismissible` |
+| `AlertDialog` | A question before an action (delete, restore, write) | `backdropClose`, `dismissible`; the cancel button takes the initial focus |
+
+### Radius scale
+
+One radius per role, so neighbours line up:
+
+| Radius | Where |
+|---|---|
+| `rounded-sm` (4 px) | Inside a control: segments of a segmented control, menu items, swatches |
+| `rounded-md` (6 px) | **Every control and mark**: buttons, icon buttons, inputs, selects, badges, tags, chips, list rows, tooltips, popovers and menus |
+| `rounded-lg` (8 px) | Dialogs |
+| `rounded-xl` (12 px) | Cards and page containers |
+| `rounded-full` | Only for shapes that are round by nature and never clickable: status dots, the "changed" dot, progress bars |
+
+There are no pill-shaped buttons or badges. A pill reads as a different kind of thing than the button next to it, which is the inconsistency this scale removes.
+
+### States
+
+Every clickable element shows, without exception:
+
+- **Pointer cursor.** The primitives set it; `index.css` sets it for any other `button`, `[role=button]`, tab, `summary`, `select`, checkbox and radio.
+- **Hover.** A lighter fill (`accent`) or, on amber, a slightly translucent amber. A disabled control shows no hover (`hover:not-disabled:`).
+- **Keyboard focus.** The amber ring, `focus-visible:ring-[3px] ring-ring/50`. Only on keyboard focus, never on click.
+- **Disabled.** 50 % opacity and the `not-allowed` cursor.
+
+A static `Badge` has none of these, so a mark that does nothing never looks clickable.
+
+### Tone of a badge
+
+Tones carry meaning, never decoration. `primary` (amber) marks the user's own pending work ("never programmed", "2 changes"). `ok` and `danger` are reserved for what was proven or failed on hardware. `warning` marks an unproven state (untested, assumed value), `info` a derived one (tested on a related product). Plain labels (manufacturer number, counts) are `neutral` or `outline`. Marks that sit side by side use the same size: device rows use `sm`, page headers `md`.
+
+### Dialogs are never a trap
+
+Every dialog can be left by its close button (top right), `Esc`, its cancel button, and a click on the backdrop. Two narrower cases, chosen per dialog:
+
+- `backdropClose={false}` where the dialog holds input a stray click would throw away (rename, a password, a connection being edited). The close button, `Esc` and cancel still work.
+- `dismissible={false}` only while an operation runs whose result the dialog has to show (a bus write, a running read). The dialog offers the operation's own cancel where it has one, and is closable again when the operation ends.
+
+A dialog is never taller than the window: its panel scrolls, so its buttons stay reachable on a small screen.
 
 ---
 

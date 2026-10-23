@@ -90,7 +90,7 @@ export function ReplaceDeviceDialog({ open, onOpenChange, projectId, device, vie
 
   return (
     <Dialog open={open} onOpenChange={close}>
-      <DialogContent className={cn(product ? "max-w-2xl" : "max-w-lg")}>
+      <DialogContent className={cn(product ? "max-w-2xl" : "max-w-lg")} backdropClose={!product} dismissible={!replaceProduct.isPending}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Repeat2 className="size-4 text-primary" /> {t("replace.title")}
@@ -118,13 +118,13 @@ export function ReplaceDeviceDialog({ open, onOpenChange, projectId, device, vie
                     type="button"
                     onClick={() => setProduct(p)}
                     data-testid="replace-catalog-item"
-                    className="flex w-full items-center justify-between gap-3 rounded-md border border-transparent px-3 py-2 text-left transition-colors hover:border-primary/50 hover:bg-primary/5"
+                    className="flex w-full items-center justify-between gap-3 rounded-md border border-transparent px-3 py-2 text-left outline-none transition-colors hover:border-primary/50 hover:bg-primary/5 focus-visible:ring-[3px] focus-visible:ring-ring/50"
                   >
                     <div className="min-w-0">
                       <div className="truncate text-sm font-medium">{p.name || p.productRef}</div>
                       {p.orderNumber && <div className="font-mono text-[11px] text-muted-foreground">{t("catalog.orderNo")} {p.orderNumber}</div>}
                     </div>
-                    <Badge variant="outline" className="shrink-0 font-mono text-[10px]">{manuf(p.manufacturer)}</Badge>
+                    <Badge tone="outline" size="sm" mono>{manuf(p.manufacturer)}</Badge>
                   </button>
                 ))
               )}
@@ -134,7 +134,7 @@ export function ReplaceDeviceDialog({ open, onOpenChange, projectId, device, vie
           <>
             <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-secondary/30 px-3 py-2 text-sm">
               <span className="min-w-0 truncate font-medium">{product.name || product.productRef}</span>
-              <Badge variant="outline" className="shrink-0 font-mono text-[10px]">{manuf(product.manufacturer)}</Badge>
+              <Badge tone="outline" size="sm" mono>{manuf(product.manufacturer)}</Badge>
             </div>
 
             {universe.isLoading ? (
@@ -164,7 +164,7 @@ export function ReplaceDeviceDialog({ open, onOpenChange, projectId, device, vie
                         <tr key={l.refId} className="border-b border-border/40 last:border-0">
                           <td className="px-3 py-1.5">
                             <span className="flex items-center gap-2">
-                              <Badge variant="outline" className="shrink-0 font-mono text-[10px]">{l.number}</Badge>
+                              <Badge tone="outline" size="sm" mono>{l.number}</Badge>
                               <span className="min-w-0 truncate" title={l.label}>{l.label}</span>
                             </span>
                           </td>

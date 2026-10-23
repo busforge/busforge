@@ -11,6 +11,8 @@ import { DiagnosticDialog } from "../views/DiagnosticDialog.tsx";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DeviceLabel } from "@/components/DeviceLabel.tsx";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { IconButton } from "@/components/ui/icon-button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { errMsg, localizeError } from "../lib/apiError.ts";
@@ -49,10 +51,11 @@ export function TaskIndicator({ projectId }: { projectId: string }) {
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <button
+        <Button
+          variant="outline" size="sm"
           className={cn(
-            "inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs",
-            active.length ? "text-primary" : status === "connected" ? "text-ok" : "text-muted-foreground",
+            "text-xs",
+            active.length ? "text-primary hover:not-disabled:text-primary" : status === "connected" ? "text-ok hover:not-disabled:text-ok" : "text-muted-foreground",
           )}
           data-testid="task-indicator"
         >
@@ -70,8 +73,8 @@ export function TaskIndicator({ projectId }: { projectId: string }) {
               {interruptedWrite && <AlertTriangle className="size-3.5 shrink-0 text-destructive" aria-label={t("task.interruptedWrite")} data-testid="task-interrupted-write" />}
             </>
           )}
-          {queued > 0 && <span className="rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary">+{queued}</span>}
-        </button>
+          {queued > 0 && <Badge tone="primary" size="sm" mono>+{queued}</Badge>}
+        </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-96 p-3">
         <ConnectionPanel projectId={projectId} status={status} />
@@ -218,14 +221,14 @@ function TaskRow({ task, t, onCancel, canceling, onView }: { task: Task; t: (k: 
           {task.state === "cancelled" && <Ban className="size-3.5 text-muted-foreground" />}
           {task.state === "interrupted" && <AlertTriangle className={cn("size-3.5", task.writes ? "text-destructive" : "text-muted-foreground")} />}
           {onView && (
-            <Button type="button" variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-foreground" title={t("diagnostic.view")} onClick={onView} data-testid="task-view-diagnostic">
-              <FileJson className="size-3.5" />
-            </Button>
+            <IconButton size="icon-xs" label={t("diagnostic.view")} className="text-muted-foreground hover:not-disabled:text-foreground" onClick={onView} data-testid="task-view-diagnostic">
+              <FileJson />
+            </IconButton>
           )}
           {onCancel && (
-            <Button type="button" variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-destructive" title={t(task.state === "running" ? "task.cancelRead" : "task.cancel")} disabled={canceling} onClick={onCancel}>
-              <X className="size-3.5" />
-            </Button>
+            <IconButton size="icon-xs" label={t(task.state === "running" ? "task.cancelRead" : "task.cancel")} className="text-muted-foreground hover:not-disabled:text-destructive" disabled={canceling} onClick={onCancel}>
+              <X />
+            </IconButton>
           )}
         </span>
       </div>

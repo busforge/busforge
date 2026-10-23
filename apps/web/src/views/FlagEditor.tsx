@@ -58,7 +58,7 @@ export function FlagEditorPanel({ co, editable, onEdit, onRevert, disabled, test
         <label className={cn("flex flex-1 items-center gap-2", !can.has("priority") && "text-muted-foreground")} title={can.has("priority") ? undefined : t("device.flagNotWritable")}>
           <span>{t("device.priority")}{co.overriddenPriority ? "*" : ""}</span>
           <select
-            className="h-7 rounded-md border bg-background px-1 text-sm" value={co.priority} disabled={disabled || !can.has("priority")} data-testid={`${testId}-priority`}
+            className="h-7 rounded-md border border-input bg-input/30 px-1 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50" value={co.priority} disabled={disabled || !can.has("priority")} data-testid={`${testId}-priority`}
             onChange={(e) => onEdit({ priority: e.target.value as (typeof PRIORITIES)[number] })}
           >
             {PRIORITIES.map((p) => <option key={p} value={p}>{t(`device.priority${p}`)}</option>)}

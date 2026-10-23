@@ -58,7 +58,7 @@ export function ProjectLayout() {
               key={tab.id}
               to={tab.to}
               params={{ projectId }}
-              className={`flex shrink-0 items-center gap-2 border-b-2 px-3 py-3 text-sm ${active ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+              className={`flex shrink-0 items-center gap-2 border-b-2 px-3 py-3 text-sm outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-ring/50 ${active ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}
             >
               <tab.icon className="size-4" />
               <span className="hidden sm:inline">{t(tab.labelKey)}</span>

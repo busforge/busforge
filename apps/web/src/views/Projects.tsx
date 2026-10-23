@@ -46,17 +46,17 @@ function ProjectCardBody({ name, deviceCount, gaCount, snapshotCount, buildingCo
       <div className="truncate text-lg font-bold">{name}</div>
       <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-2">
         <div className="flex items-center gap-2">
-          <Badge variant="secondary" className="gap-1 font-mono" title={t("nav.devices")}><Cpu className="size-3" />{deviceCount}</Badge>
-          <Badge variant="secondary" className="gap-1 font-mono" title={t("nav.groups")}><Network className="size-3" />{gaCount}</Badge>
-          <Badge variant="secondary" className="gap-1 font-mono" title={t("snapshot.title")}><History className="size-3" />{snapshotCount}</Badge>
+          <Badge mono title={t("nav.devices")}><Cpu className="size-3" />{deviceCount}</Badge>
+          <Badge mono title={t("nav.groups")}><Network className="size-3" />{gaCount}</Badge>
+          <Badge mono title={t("snapshot.title")}><History className="size-3" />{snapshotCount}</Badge>
         </div>
         {hasLocation && (
           <>
             <span className="h-4 w-px shrink-0 self-center bg-border" aria-hidden />
             <div className="flex items-center gap-2">
-              <Badge variant="outline" className="gap-1 font-mono text-muted-foreground" title={t("projects.buildings")}><Building2 className="size-3" />{buildingCount}</Badge>
-              <Badge variant="outline" className="gap-1 font-mono text-muted-foreground" title={t("projects.floors")}><Layers className="size-3" />{floorCount}</Badge>
-              <Badge variant="outline" className="gap-1 font-mono text-muted-foreground" title={t("projects.rooms")}><DoorOpen className="size-3" />{roomCount}</Badge>
+              <Badge tone="outline" mono title={t("projects.buildings")}><Building2 className="size-3" />{buildingCount}</Badge>
+              <Badge tone="outline" mono title={t("projects.floors")}><Layers className="size-3" />{floorCount}</Badge>
+              <Badge tone="outline" mono title={t("projects.rooms")}><DoorOpen className="size-3" />{roomCount}</Badge>
             </div>
           </>
         )}
@@ -88,7 +88,7 @@ function VersionFooter() {
       <span className="font-semibold text-muted-foreground">{v.version}</span>
       {built ? <span> · {t("footer.built", { date: built })}</span> : null}
       <span> · </span>
-      <button type="button" onClick={() => setReportOpen(true)} className="underline-offset-2 hover:text-foreground hover:underline" data-testid="report-app">{t("report.footer")}</button>
+      <button type="button" onClick={() => setReportOpen(true)} className="rounded-sm underline-offset-2 outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 hover:text-foreground hover:underline" data-testid="report-app">{t("report.footer")}</button>
       <ReportDialog open={reportOpen} onOpenChange={setReportOpen} />
     </footer>
   );
@@ -159,7 +159,7 @@ export function ProjectsScreen() {
         <button
           type="button"
           onClick={() => setImportOpen(true)}
-          className="rounded-xl border border-dashed border-border py-14 text-center text-sm text-muted-foreground transition-colors hover:border-primary/60 hover:text-foreground"
+          className="rounded-xl border border-dashed border-border py-14 text-center text-sm text-muted-foreground transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 hover:border-primary/60 hover:text-foreground"
         >
           {t("projects.empty")}
         </button>
@@ -204,7 +204,7 @@ export function ProjectsScreen() {
             <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => { const target = pendingDelete; setPendingDelete(null); if (target) del.mutate({ id: target.id, keysExported: false }); }}
-              className="bg-destructive text-white hover:bg-destructive/90" data-testid="confirm-delete"
+              variant="destructive" data-testid="confirm-delete"
             >
               {t("projects.delete")}
             </AlertDialogAction>
@@ -232,7 +232,7 @@ export function ProjectsScreen() {
             <AlertDialogAction
               disabled={!keysExported}
               onClick={() => { const target = keysTarget; setKeysTarget(null); if (target) del.mutate({ id: target.id, keysExported: true }); }}
-              className="bg-destructive text-white hover:bg-destructive/90" data-testid="confirm-delete-own-keys"
+              variant="destructive" data-testid="confirm-delete-own-keys"
             >
               {t("projects.delete")}
             </AlertDialogAction>
@@ -259,7 +259,7 @@ function ProjectCardMenu({ onRename, onExport, onDelete }: { onRename: () => voi
       <DropdownMenuTrigger asChild>
         <Button
           variant="ghost" size="icon"
-          className="shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 data-[state=open]:opacity-100"
+          className="shrink-0 text-muted-foreground opacity-0 transition-opacity hover:not-disabled:text-foreground group-hover:opacity-100 data-[state=open]:opacity-100"
           onClick={(e) => e.stopPropagation()}
           aria-label={t("projects.menuAria")}
           data-testid="project-menu"
@@ -303,7 +303,7 @@ function RenameDialog({ project, onClose }: { project: ProjectSummary; onClose: 
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent>
+      <DialogContent backdropClose={false}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><Pencil className="size-4 text-primary" /> {t("projects.renameTitle")}</DialogTitle>
           <DialogDescription>{t("projects.renameDescription")}</DialogDescription>
@@ -344,7 +344,7 @@ function BlankProjectDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) setName(""); onOpenChange(o); }}>
-      <DialogContent>
+      <DialogContent backdropClose={false}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><FilePlus2 className="size-4 text-primary" /> {t("projects.blankTitle")}</DialogTitle>
           <DialogDescription>{t("projects.blankDescription")}</DialogDescription>
@@ -416,7 +416,7 @@ function ImportDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) reset(); onOpenChange(o); }}>
-      <DialogContent>
+      <DialogContent backdropClose={false}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><FolderUp className="size-4 text-primary" /> {t("import.title")}</DialogTitle>
           <DialogDescription>{analysis ? t("import.previewHint") : t("import.description")}</DialogDescription>
@@ -476,7 +476,7 @@ function ImportDialog({
                 onDragLeave={() => setDrag(false)}
                 onDrop={(e) => { e.preventDefault(); setDrag(false); pick(e.dataTransfer.files?.[0] ?? null); }}
                 className={cn(
-                  "flex h-20 w-full flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed text-sm transition-colors",
+                  "flex h-20 w-full flex-col items-center justify-center gap-1.5 rounded-md border border-dashed text-sm transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50",
                   drag ? "border-primary bg-primary/5" : "border-border bg-secondary/30 hover:border-primary/60 hover:bg-secondary/50",
                 )}
               >

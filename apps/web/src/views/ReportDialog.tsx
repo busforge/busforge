@@ -50,7 +50,7 @@ export function ReportDialog({ open, onOpenChange, device }: { open: boolean; on
         <div className="max-h-[65vh] space-y-4 overflow-y-auto pr-1" data-testid="report-dialog">
           {/* Device feedback is about one device; without one there is only the problem report. */}
           {device && (
-            <div role="radiogroup" aria-label={t("report.kindLabel")} className="inline-flex rounded-lg bg-muted p-[3px]">
+            <div role="radiogroup" aria-label={t("report.kindLabel")} className="inline-flex rounded-md bg-muted p-[3px]">
               {(["problem", "feedback"] as const).map((k) => (
                 <button
                   key={k} type="button" role="radio" aria-checked={kind === k} tabIndex={kind === k ? 0 : -1} data-testid={`report-kind-${k}`}
@@ -62,7 +62,7 @@ export function ReportDialog({ open, onOpenChange, device }: { open: boolean; on
                     setKind(next);
                     (e.currentTarget.parentElement?.querySelector(`[data-testid=report-kind-${next}]`) as HTMLElement | null)?.focus();
                   }}
-                  className={cn("rounded-md px-3 py-1 text-sm font-medium text-muted-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50", kind === k && "bg-background text-foreground shadow-sm")}
+                  className={cn("rounded-sm px-3 py-1 text-sm font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50", kind === k && "bg-background text-foreground shadow-sm")}
                 >
                   {t(`report.kinds.${k}.label`)}
                 </button>

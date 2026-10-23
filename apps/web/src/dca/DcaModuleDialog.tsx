@@ -34,7 +34,7 @@ export function DcaModuleDialog({ projectId, deviceId, module }: { projectId: st
         </Button>
       </DialogTrigger>
 
-      <DialogContent className="max-h-[85vh] w-[92vw] max-w-6xl overflow-y-auto sm:max-w-6xl" aria-describedby={undefined}>
+      <DialogContent className="max-h-[85vh] w-[92vw] max-w-6xl sm:max-w-6xl" aria-describedby={undefined} backdropClose={false}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><Puzzle className="size-4" /> {module.displayName}</DialogTitle>
         </DialogHeader>

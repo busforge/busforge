@@ -166,7 +166,7 @@ export function CommissionDialog({ open, onOpenChange, projectId, device, onComm
     // reset the step state around the still-running task and let a fresh scan run
     // beside it, so the dialog stays up until the operation reports its result.
     <AlertDialog open={open} onOpenChange={(o) => { if (!o && busOpRunning) return; onOpenChange(o); }}>
-      <AlertDialogContent>
+      <AlertDialogContent dismissible={!busOpRunning}>
         <AlertDialogHeader>
           <AlertDialogTitle className="flex items-center gap-2">
             <RadioTower className="size-4 text-primary" /> {t("commission.title", { device: device.name || device.ia })}

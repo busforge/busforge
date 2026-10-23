@@ -54,7 +54,7 @@ export function SecureActivateDialog({ open, onOpenChange, projectId, device, on
     // Escape must not close the dialog over a running activation: the result is the only place
     // that says which key the device holds now.
     <AlertDialog open={open} onOpenChange={(o) => { if (!o && running) return; if (!o) reset(); onOpenChange(o); }}>
-      <AlertDialogContent>
+      <AlertDialogContent dismissible={!running} backdropClose={false}>
         <AlertDialogHeader>
           <AlertDialogTitle className="flex items-center gap-2">
             <ShieldCheck className="size-4 text-primary" /> {t("secureActivate.title", { device: device.name || device.ia })}

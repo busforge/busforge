@@ -76,12 +76,13 @@ export function DiagnosticDialog({ projectId, device, taskId: initialTaskId, ope
       : pkgQ.data && !pkgQ.isError ? "preview"
       : pkgQ.isError ? (pkgQ.error instanceof ApiError && pkgQ.error.code === "DIAGNOSTIC_NOT_FOUND" ? "missing" : "failed")
       : "loading";
-  // A running read cannot be closed by a click outside: it would leave no way back to its cancel.
+  // A running read is left by its own cancel button only: closing the dialog would leave no way back
+  // to it.
   const dismissible = stage !== "running";
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (o || dismissible) onOpenChange(o); }}>
-      <DialogContent className="sm:max-w-2xl" showCloseButton={dismissible}>
+      <DialogContent className="sm:max-w-2xl" dismissible={dismissible}>
         {stage === "consent" && <Consent device={device} starting={start.isPending} onStart={() => start.mutate()} onCancel={() => onOpenChange(false)} />}
         {stage === "running" && task && <Progress task={task} device={device} cancelling={cancelAsked} onCancel={() => cancel.mutate()} />}
         {stage === "cancelled" && (

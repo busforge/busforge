@@ -47,7 +47,7 @@ export function ToolKeyDialog({ open, onOpenChange, projectId, device, onStored 
 
   return (
     <AlertDialog open={open} onOpenChange={(o) => { if (!o && running) return; if (!o) reset(); onOpenChange(o); }}>
-      <AlertDialogContent>
+      <AlertDialogContent dismissible={!running} backdropClose={false}>
         <AlertDialogHeader>
           <AlertDialogTitle className="flex items-center gap-2">
             <KeyRound className="size-4 text-primary" /> {t("toolKey.title", { device: device.name || device.ia })}

@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { api } from "../api.ts";
 import { useProject } from "../queries.ts";
 import { Button } from "@/components/ui/button";
+import { IconButton } from "@/components/ui/icon-button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -58,18 +59,12 @@ export function ExportDialog({ projectId, open: openProp, onOpenChange }: { proj
     <Dialog open={open} onOpenChange={setOpen}>
       {!controlled && (
         <DialogTrigger asChild>
-          <button
-            type="button"
-            aria-label={t("nav.exportProject")}
-            title={t("nav.exportProject")}
-            className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
-            data-testid="export-project"
-          >
-            <Download className="size-3.5 shrink-0" />
-          </button>
+          <IconButton variant="outline" size="icon-sm" label={t("nav.exportProject")} className="text-muted-foreground" data-testid="export-project">
+            <Download />
+          </IconButton>
         </DialogTrigger>
       )}
-      <DialogContent>
+      <DialogContent backdropClose={false}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><Download className="size-4 text-primary" /> {t("export.title")}</DialogTitle>
           <DialogDescription>{t("export.description")}</DialogDescription>

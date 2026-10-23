@@ -10,6 +10,9 @@ import { DptBadge } from "@/components/DptBadge.tsx";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { errMsg } from "@/lib/apiError";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { IconButton } from "@/components/ui/icon-button";
+import { Input } from "@/components/ui/input";
 
 // A group-address pill that opens a details overlay on click: the address's
 // readable range path and datapoint type, plus the devices that use it, split
@@ -38,7 +41,7 @@ export function GaPill({ projectId, raw, name, address, fallback, className, onE
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <button type="button" className={cn("min-w-0 max-w-full cursor-pointer rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring", className)}>
+        <button type="button" className={cn("min-w-0 max-w-full cursor-pointer rounded-md text-left outline-none transition-[filter] hover:brightness-125 focus-visible:ring-[3px] focus-visible:ring-ring/50", className)}>
           <GaLabel name={name} address={address} fallback={fallback} className="min-w-0" />
         </button>
       </PopoverTrigger>
@@ -49,14 +52,14 @@ export function GaPill({ projectId, raw, name, address, fallback, className, onE
               {crumbs.length ? crumbs.join(" / ") : <span className="text-muted-foreground">{t("common.unnamed")}</span>}
             </div>
             {onEdit && (
-              <button
-                type="button" aria-label={t("groupEdit.edit")} title={t("groupEdit.edit")}
+              <IconButton
+                size="icon-sm" label={t("groupEdit.edit")}
                 onClick={() => { setOpen(false); onEdit(); }}
-                className="-mr-1 -mt-0.5 shrink-0 rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                className="-mr-1.5 -mt-1 text-muted-foreground"
                 data-testid="ga-overlay-edit"
               >
                 <Pencil className="size-3.5" />
-              </button>
+              </IconButton>
             )}
           </div>
           <div className="mt-1.5 flex items-center gap-2">
@@ -115,7 +118,7 @@ function Section({ icon, title, entries, projectId, emptyHint, onNavigate }: {
                 to="/projects/$projectId/devices/$deviceId"
                 params={{ projectId, deviceId: e.deviceId }}
                 onClick={onNavigate}
-                className="flex flex-col gap-0.5 rounded px-1.5 py-1 hover:bg-secondary/60"
+                className="flex flex-col gap-0.5 rounded-md px-1.5 py-1 outline-none hover:bg-secondary/60 focus-visible:ring-[3px] focus-visible:ring-ring/50"
               >
                 <DeviceLabel name={e.deviceName} ia={e.ia} className="max-w-full" />
                 <span className="truncate pl-1 text-xs text-muted-foreground" title={[e.comObjName, e.functionText].filter(Boolean).join(" · ")}>
@@ -149,23 +152,23 @@ function InterfaceSenders({ projectId, raw, data }: { projectId: string; raw: nu
       ) : (
         <ul className="space-y-0.5">
           {data.interfaceSenders.map((s) => (
-            <li key={s.ia} className="flex items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-secondary/60">
+            <li key={s.ia} className="flex items-center gap-2 rounded-md px-1.5 py-1 text-sm hover:bg-secondary/60">
               <span className="font-mono">{s.ia}</span>
               <span className="text-xs text-muted-foreground">{t(`gaDevices.senderSource.${s.source}`)}</span>
-              <button type="button" className="ml-auto rounded p-0.5 text-muted-foreground hover:text-foreground" aria-label={t("gaDevices.removeSender", { ia: s.ia })}
-                title={t("gaDevices.removeSender", { ia: s.ia })} onClick={() => remove.mutate(s.ia)} disabled={remove.isPending} data-testid={`ga-sender-remove-${s.ia}`}>
+              <IconButton size="icon-xs" className="ml-auto text-muted-foreground" label={t("gaDevices.removeSender", { ia: s.ia })}
+                onClick={() => remove.mutate(s.ia)} disabled={remove.isPending} data-testid={`ga-sender-remove-${s.ia}`}>
                 <X className="size-3.5" />
-              </button>
+              </IconButton>
             </li>
           ))}
         </ul>
       )}
       <form className="mt-2 flex gap-1.5" onSubmit={(e) => { e.preventDefault(); if (ia.trim()) add.mutate(ia.trim(), { onSuccess: () => setIa("") }); }}>
-        <input value={ia} onChange={(e) => setIa(e.target.value)} placeholder="1.2.250" aria-label={t("gaDevices.addSender")}
-          className="h-7 min-w-0 flex-1 rounded-md border bg-background px-2 font-mono text-xs" data-testid="ga-sender-input" />
-        <button type="submit" disabled={add.isPending || !ia.trim()} className="inline-flex h-7 items-center gap-1 rounded-md border px-2 text-xs hover:bg-secondary disabled:opacity-50" data-testid="ga-sender-add">
+        <Input value={ia} onChange={(e) => setIa(e.target.value)} placeholder="1.2.250" aria-label={t("gaDevices.addSender")}
+          className="h-7 min-w-0 flex-1 px-2 font-mono text-xs md:text-xs" data-testid="ga-sender-input" />
+        <Button type="submit" variant="outline" size="xs" className="h-7" disabled={add.isPending || !ia.trim()} data-testid="ga-sender-add">
           <Plus className="size-3.5" /> {t("gaDevices.addSender")}
-        </button>
+        </Button>
       </form>
       {failure && <p className="mt-1 text-xs text-destructive">{errMsg(t, failure)}</p>}
       {data.secured && <p className="mt-1.5 text-xs text-muted-foreground">{t("gaDevices.sendersNeedDownload")}</p>}

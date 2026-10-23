@@ -53,7 +53,7 @@ export function AddressDialog({ open, onOpenChange, projectId, device, onSaved, 
 
   return (
     <AlertDialog open={open} onOpenChange={(o) => { if (!o && saving) return; onOpenChange(o); }}>
-      <AlertDialogContent>
+      <AlertDialogContent dismissible={!saving} backdropClose={false}>
         <AlertDialogHeader>
           <AlertDialogTitle className="flex items-center gap-2">
             <MapPin className="size-4 text-primary" /> {t("address.title", { device: device.name || device.ia })}

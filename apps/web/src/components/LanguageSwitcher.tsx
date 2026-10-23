@@ -15,8 +15,8 @@ export function LanguageSwitcher({ className }: { className?: string }) {
           onClick={() => setLanguage(lng)}
           aria-pressed={current === lng}
           className={cn(
-            "px-2 uppercase transition-colors",
-            current === lng ? "bg-primary font-semibold text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+            "cursor-pointer px-2 uppercase outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-ring/50",
+            current === lng ? "bg-primary font-semibold text-primary-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground",
           )}
         >
           {lng}

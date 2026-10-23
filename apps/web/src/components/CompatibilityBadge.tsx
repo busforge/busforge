@@ -4,18 +4,19 @@ import type { DeviceConfigView } from "../api.ts";
 import { useManufacturers } from "../queries.ts";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { BadgeButton } from "@/components/ui/badge";
 import { MATRIX_OPS as OPS, summarize, orderOf, appVersionOf, type Summary } from "../lib/untested.ts";
 
 const manufacturerId = (n: number) => `M-${n.toString(16).toUpperCase().padStart(4, "0")}`;
 
-const SUMMARY_STYLE: Record<Summary, string> = {
-  tested: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-  partial: "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300",
-  derived: "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300",
-  otherVersion: "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300",
-  failed: "border-destructive/40 bg-destructive/10 text-destructive",
-  untested: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
-  unsupported: "border-border bg-secondary/40 text-muted-foreground",
+const SUMMARY_TONE: Record<Summary, "ok" | "info" | "danger" | "warning" | "neutral"> = {
+  tested: "ok",
+  partial: "info",
+  derived: "info",
+  otherVersion: "info",
+  failed: "danger",
+  untested: "warning",
+  unsupported: "neutral",
 };
 const SUMMARY_ICON = { tested: ShieldCheck, partial: ShieldCheck, derived: ShieldQuestion, otherVersion: ShieldQuestion, failed: ShieldAlert, untested: ShieldQuestion, unsupported: ShieldOff } as const;
 
@@ -34,10 +35,9 @@ export function CompatibilityBadge({ view, manufacturer }: { view: Pick<DeviceCo
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <button type="button" data-testid="compatibility-badge"
-          className={cn("inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium", SUMMARY_STYLE[summary])}>
-          <Icon className="size-4" /> {t(`compat.summary.${summary}`)}
-        </button>
+        <BadgeButton tone={SUMMARY_TONE[summary]} data-testid="compatibility-badge">
+          <Icon /> {t(`compat.summary.${summary}`)}
+        </BadgeButton>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-[26rem] max-w-[calc(100vw-2rem)] space-y-3 overflow-x-auto text-xs" data-testid="compatibility-detail">
         <p className="text-sm font-medium">{t("compat.title")}</p>

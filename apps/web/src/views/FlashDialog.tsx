@@ -222,8 +222,10 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
   };
 
   return (
-    <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent>
+    // A running write keeps the dialog up: its result line is the only place that says whether the
+    // device holds the bytes.
+    <AlertDialog open={open} onOpenChange={(o) => { if (!o && (anyFlashing || dlBusy)) return; onOpenChange(o); }}>
+      <AlertDialogContent dismissible={!(anyFlashing || dlBusy)}>
         <AlertDialogHeader>
           <AlertDialogTitle className="flex items-center gap-2">
             <Cpu className="size-4 text-primary" /> {t("flash.titleDevice", { device: deviceLabel })}
@@ -280,7 +282,7 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
           {/* The change needs the full download (the family cannot write it otherwise, or the device was
               never programmed): offer it as the way forward. */}
           {needsDownload && !dl && !anyFlashing && !anyChecking && (
-            <Button onClick={startDownload} className="bg-primary text-primary-foreground hover:bg-primary/90" data-testid="flash-needs-download">
+            <Button onClick={startDownload} data-testid="flash-needs-download">
               <Download className="size-4" /> {t("flash.needsDownloadCta")}
             </Button>
           )}
@@ -299,14 +301,14 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
           )}
           {/* Confirm the previewed full download. */}
           {dl?.dry?.kind === "dryRun" && !dl.done && !dlBusy && (
-            <Button onClick={runDownload} disabled={awaitingAck} className="bg-primary text-primary-foreground hover:bg-primary/90" data-testid="confirm-download">
+            <Button onClick={runDownload} disabled={awaitingAck} data-testid="confirm-download">
               <Download className="size-4" /> {t("flash.download")}
             </Button>
           )}
           {/* onClick returns void, so flash()'s promise is discarded explicitly. Nothing is lost by
               that: flash() catches each target's failure and shows it ON that target, and never rejects. */}
           {footer.flash !== "none" && (
-            <Button onClick={() => { void flash(); }} disabled={footer.flash === "disabled"} className="bg-primary text-primary-foreground hover:bg-primary/90" data-testid="confirm-flash">
+            <Button onClick={() => { void flash(); }} disabled={footer.flash === "disabled"} data-testid="confirm-flash">
               {anyFlashing ? <Loader2 className="size-4 animate-spin" /> : <Cpu className="size-4" />} {t("flash.flash")}
             </Button>
           )}

@@ -10,6 +10,7 @@ import { DeviceLabel } from "@/components/DeviceLabel.tsx";
 import { GaLabel } from "@/components/GaLabel.tsx";
 import { GaPill } from "@/components/GaPill.tsx";
 import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
 import { telegramValue } from "@/lib/telegramValue.ts";
 import { errMsg } from "@/lib/apiError";
 
@@ -21,10 +22,10 @@ function indexGas(ranges: GroupRangeNode[], into: Map<number, GaInfo>) {
   }
 }
 
-const kindStyle: Record<string, string> = {
-  GroupValueWrite: "border-primary/40 bg-primary/10 text-primary",
-  GroupValueRead: "border-border bg-secondary text-muted-foreground",
-  GroupValueResponse: "border-ok/40 bg-ok/10 text-ok",
+const kindTone: Record<string, "primary" | "neutral" | "ok"> = {
+  GroupValueWrite: "primary",
+  GroupValueRead: "neutral",
+  GroupValueResponse: "ok",
 };
 const time = (ts: number) => new Date(ts).toLocaleTimeString(undefined, { hour12: false }) + "." + String(ts % 1000).padStart(3, "0");
 
@@ -36,9 +37,9 @@ function KindChip({ telegram }: { telegram: Telegram }) {
       {security && <span title={t(`monitor.secure.${security}`)} data-testid="telegram-secured"><Lock className="size-3 text-muted-foreground" aria-label={t(`monitor.secure.${security}`)} /></span>}
       {/* A secured telegram that was not opened has no known service; the lock and the value column say why. */}
       {!(security && security !== "decrypted") && (
-        <span className={cn("inline-flex rounded border px-1.5 py-0.5 text-[10px]", kindStyle[kind] ?? "border-border text-muted-foreground")}>
+        <Badge tone={kindTone[kind] ?? "outline"} size="sm">
           {kind.replace("GroupValue", "")}
-        </span>
+        </Badge>
       )}
     </span>
   );
@@ -204,10 +205,10 @@ function SendPanel({ projectId, gas }: { projectId: string; gas: Map<number, GaI
   return (
     <Card className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm" data-testid="monitor-send">
       <Send className="size-3.5 text-muted-foreground" />
-      <select value={target} onChange={(e) => setGa(Number(e.target.value))} className="h-8 min-w-0 max-w-72 rounded-md border bg-background px-2 text-xs" aria-label={t("monitor.sendGa")} data-testid="monitor-send-ga">
+      <select value={target} onChange={(e) => setGa(Number(e.target.value))} className="h-8 min-w-0 max-w-72 rounded-md border border-input bg-input/30 px-2 outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 text-xs" aria-label={t("monitor.sendGa")} data-testid="monitor-send-ga">
         {options.map(([raw, g]) => <option key={raw} value={raw}>{g.address} {g.name}</option>)}
       </select>
-      <input value={value} onChange={(e) => setValue(e.target.value)} className="h-8 w-24 rounded-md border bg-background px-2 font-mono text-xs" aria-label={t("monitor.sendValue")} placeholder="01" data-testid="monitor-send-value" />
+      <input value={value} onChange={(e) => setValue(e.target.value)} className="h-8 w-24 rounded-md border border-input bg-input/30 px-2 outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 font-mono text-xs" aria-label={t("monitor.sendValue")} placeholder="01" data-testid="monitor-send-value" />
       <Button size="sm" variant="outline" onClick={() => go("write")} disabled={send.isPending} data-testid="monitor-send-write">{t("monitor.sendWrite")}</Button>
       <Button size="sm" variant="outline" onClick={() => go("read")} disabled={send.isPending} data-testid="monitor-send-read">{t("monitor.sendRead")}</Button>
       {send.error && <span className="text-xs text-destructive" data-testid="monitor-send-error">{errMsg(t, send.error)}</span>}

@@ -3,6 +3,8 @@ import { formatGa, type Levels } from "@busforge/knx/ga";
 import { ArrowUpToLine, Plus, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { IconButton } from "@/components/ui/icon-button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { GaLabel } from "@/components/GaLabel.tsx";
 import { cn } from "@/lib/utils";
@@ -65,22 +67,22 @@ export function LinkEditor({ options, gaRaws, onChange, disabled, testId, levels
               {i === 0 ? (
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary" data-testid={`${testId}-sending`}>{t("ga.sendingAddress")}</span>
+                    <Badge tone="primary" size="sm" data-testid={`${testId}-sending`}>{t("ga.sendingAddress")}</Badge>
                   </TooltipTrigger>
                   <TooltipContent className="max-w-64">{t("ga.sendingAddressHint")}</TooltipContent>
                 </Tooltip>
               ) : (
-                <Button type="button" variant="ghost" size="icon" className="size-7 shrink-0 text-muted-foreground" disabled={disabled}
-                  aria-label={t("ga.makeSending", { address })} title={t("ga.makeSending", { address })} data-testid={`${testId}-send-${i}`}
+                <IconButton size="icon-sm" className="size-7 text-muted-foreground" disabled={disabled}
+                  label={t("ga.makeSending", { address })} data-testid={`${testId}-send-${i}`}
                   onClick={() => onChange(makeSender(gaRaws, raw))}>
                   <ArrowUpToLine className="size-3.5" />
-                </Button>
+                </IconButton>
               )}
-              <Button type="button" variant="ghost" size="icon" className="size-7 shrink-0 text-muted-foreground" disabled={disabled}
-                aria-label={t("ga.removeAddress", { address })} title={t("ga.removeAddress", { address })} data-testid={`${testId}-remove-${i}`}
+              <IconButton size="icon-sm" className="size-7 text-muted-foreground" disabled={disabled}
+                label={t("ga.removeAddress", { address })} data-testid={`${testId}-remove-${i}`}
                 onClick={() => onChange(removeLink(gaRaws, raw))}>
                 <X className="size-3.5" />
-              </Button>
+              </IconButton>
             </li>
           );
         })}

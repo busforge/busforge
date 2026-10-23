@@ -130,6 +130,23 @@
   html, body, #root {
     height: 100%;
   }
+  /* Tailwind leaves buttons on the default cursor; here everything clickable shows the pointer and
+     a disabled control says it is not available (docs/design-system.md, "Components"). */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  [role="tab"]:not(:disabled),
+  summary,
+  select:not(:disabled),
+  input[type="checkbox"]:not(:disabled),
+  input[type="radio"]:not(:disabled),
+  label:has(> input[type="checkbox"]:not(:disabled)),
+  label:has(> input[type="radio"]:not(:disabled)) {
+    cursor: pointer;
+  }
+  :disabled,
+  [aria-disabled="true"] {
+    cursor: not-allowed;
+  }
   body {
     @apply bg-background text-foreground;
     font-feature-settings: "cv05", "ss01";

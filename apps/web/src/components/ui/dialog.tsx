@@ -1,8 +1,7 @@
-"use client"
-
 import * as React from "react"
 import { XIcon } from "lucide-react"
 import { Dialog as DialogPrimitive } from "radix-ui"
+import { useTranslation } from "react-i18next"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -39,7 +38,7 @@ function DialogOverlay({
     <DialogPrimitive.Overlay
       data-slot="dialog-overlay"
       className={cn(
-        "fixed inset-0 z-50 bg-black/50 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0",
+        "fixed inset-0 z-50 bg-black/60 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0",
         className
       )}
       {...props}
@@ -47,35 +46,61 @@ function DialogOverlay({
   )
 }
 
+// The frame shared by every dialog and confirmation: centred, never taller than the window, the
+// close button in its corner.
+const dialogFrame =
+  "fixed top-[50%] left-[50%] z-50 max-h-[calc(100dvh-2rem)] w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] rounded-lg border bg-popover text-popover-foreground shadow-lg duration-200 outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 sm:max-w-lg"
+
+// A confirmation scrolls as a whole when the window is too short, so its buttons stay reachable.
+const dialogPanel = cn(dialogFrame, "grid gap-4 overflow-y-auto p-6")
+
+function CloseCorner({ asClose }: { asClose: (button: React.ReactElement) => React.ReactElement }) {
+  const { t } = useTranslation()
+  return asClose(
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      data-slot="dialog-close"
+      aria-label={t("common.close")}
+      className="absolute top-3 right-3 text-muted-foreground hover:not-disabled:text-foreground"
+    >
+      <XIcon />
+    </Button>
+  )
+}
+
+// Every dialog can be left: by its close button, Esc, its cancel button, and a click on the
+// backdrop. Two narrower cases, both chosen by the caller:
+// - `backdropClose={false}` where a stray click would throw away what the user typed;
+// - `dismissible={false}` only while an operation runs whose result the dialog has to show: no
+//   close button, Esc or backdrop then. The dialog offers the operation's cancel where it has one,
+//   and becomes closable again when the operation ends.
 function DialogContent({
   className,
   children,
-  showCloseButton = true,
+  dismissible = true,
+  backdropClose = true,
+  onEscapeKeyDown,
+  onPointerDownOutside,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
-  showCloseButton?: boolean
+  dismissible?: boolean
+  backdropClose?: boolean
 }) {
   return (
     <DialogPortal data-slot="dialog-portal">
       <DialogOverlay />
+      {/* The frame does not clip: a list portaled into it (the datapoint type picker) may reach past
+          its edge. Its body scrolls instead, so the buttons stay reachable on a short window. */}
       <DialogPrimitive.Content
         data-slot="dialog-content"
-        className={cn(
-          "fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border bg-background p-6 shadow-lg duration-200 outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 sm:max-w-lg",
-          className
-        )}
+        className={cn(dialogFrame, "flex flex-col", className)}
+        onEscapeKeyDown={(e) => { onEscapeKeyDown?.(e); if (!dismissible) e.preventDefault() }}
+        onPointerDownOutside={(e) => { onPointerDownOutside?.(e); if (!dismissible || !backdropClose) e.preventDefault() }}
         {...props}
       >
-        {children}
-        {showCloseButton && (
-          <DialogPrimitive.Close
-            data-slot="dialog-close"
-            className="absolute top-4 right-4 rounded-xs opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
-          >
-            <XIcon />
-            <span className="sr-only">Close</span>
-          </DialogPrimitive.Close>
-        )}
+        <div data-slot="dialog-body" className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-6">{children}</div>
+        {dismissible && <CloseCorner asClose={(b) => <DialogPrimitive.Close asChild>{b}</DialogPrimitive.Close>} />}
       </DialogPrimitive.Content>
     </DialogPortal>
   )
@@ -85,20 +110,13 @@ function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="dialog-header"
-      className={cn("flex flex-col gap-2 text-center sm:text-left", className)}
+      className={cn("flex flex-col gap-2 pr-8 text-left", className)}
       {...props}
     />
   )
 }
 
-function DialogFooter({
-  className,
-  showCloseButton = false,
-  children,
-  ...props
-}: React.ComponentProps<"div"> & {
-  showCloseButton?: boolean
-}) {
+function DialogFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="dialog-footer"
@@ -107,14 +125,7 @@ function DialogFooter({
         className
       )}
       {...props}
-    >
-      {children}
-      {showCloseButton && (
-        <DialogPrimitive.Close asChild>
-          <Button variant="outline">Close</Button>
-        </DialogPrimitive.Close>
-      )}
-    </div>
+    />
   )
 }
 
@@ -125,7 +136,7 @@ function DialogTitle({
   return (
     <DialogPrimitive.Title
       data-slot="dialog-title"
-      className={cn("text-lg leading-none font-semibold", className)}
+      className={cn("text-lg leading-tight font-semibold", className)}
       {...props}
     />
   )
@@ -145,6 +156,7 @@ function DialogDescription({
 }
 
 export {
+  CloseCorner,
   Dialog,
   DialogClose,
   DialogContent,
@@ -155,4 +167,5 @@ export {
   DialogPortal,
   DialogTitle,
   DialogTrigger,
+  dialogPanel,
 }

@@ -10,6 +10,8 @@ import { isSecondsUnit, formatDuration, parseDuration, isValidIPv4, normalizeFlo
 import { CompatibilityBadge } from "@/components/CompatibilityBadge.tsx";
 import { ChangePill, changeTotal } from "@/components/ChangePill.tsx";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { IconButton } from "@/components/ui/icon-button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
@@ -59,18 +61,18 @@ function ChangedDot({ title }: { title: string }) {
 function AssumedBadge({ refId }: { refId: string }) {
   const { t } = useTranslation();
   return (
-    <span className="inline-flex shrink-0 items-center rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-700 dark:text-amber-300" title={t("device.assumedTitle")} data-testid={`assumed-${refId}`}>
+    <Badge tone="warning" title={t("device.assumedTitle")} data-testid={`assumed-${refId}`}>
       {t("device.assumedBadge")}
-    </span>
+    </Badge>
   );
 }
 
 // Per-row revert: discard one row's drift back to the device/baseline value.
 function RevertButton({ title, disabled, onClick }: { title: string; disabled?: boolean; onClick: () => void }) {
   return (
-    <Button type="button" variant="ghost" size="icon" className="size-7 shrink-0 text-muted-foreground" title={title} disabled={disabled} onClick={onClick}>
+    <IconButton size="icon-sm" className="size-7 text-muted-foreground" label={title} disabled={disabled} onClick={onClick}>
       <RotateCcw className="size-3.5" />
-    </Button>
+    </IconButton>
   );
 }
 
@@ -374,18 +376,13 @@ export function DeviceConfig() {
   }, [view, filteredGroups]);
 
   const actionBtn = (key: string, icon: ReactNode, onClick: () => void, opts?: { ghost?: boolean; disabled?: boolean; testId?: string }) => (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          variant={opts?.ghost ? "ghost" : "outline"} size="icon"
-          className={cn("size-9", opts?.ghost && "text-muted-foreground")}
-          disabled={opts?.disabled} onClick={onClick} aria-label={t(key)} data-testid={opts?.testId}
-        >
-          {icon}
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent>{t(key)}</TooltipContent>
-    </Tooltip>
+    <IconButton
+      variant={opts?.ghost ? "ghost" : "outline"} label={t(key)}
+      className={cn(opts?.ghost && "text-muted-foreground")}
+      disabled={opts?.disabled} onClick={onClick} data-testid={opts?.testId}
+    >
+      {icon}
+    </IconButton>
   );
 
   const registerRef = (id: string) => (el: HTMLElement | null) => { if (el) cardRefs.current.set(id, el); else cardRefs.current.delete(id); };
@@ -451,7 +448,7 @@ export function DeviceConfig() {
             <span className="min-w-0">{comObjLabel(co)}</span>
             <Tooltip>
               <TooltipTrigger asChild>
-                <button type="button" aria-label={info} className="shrink-0 text-muted-foreground"><Info className="size-3.5" /></button>
+                <button type="button" aria-label={info} className="shrink-0 cursor-help rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"><Info className="size-3.5" /></button>
               </TooltipTrigger>
               <TooltipContent className="whitespace-pre-line">{info}</TooltipContent>
             </Tooltip>
@@ -572,7 +569,7 @@ export function DeviceConfig() {
           </Button>
           <div className="flex min-w-0 items-center gap-2 font-semibold leading-tight">
             <DeviceLabel name={device?.name} ia={device?.ia ?? ""} />
-            <ChangePill changes={device?.changes} />
+            <ChangePill changes={device?.changes} size="md" />
             <CompatibilityBadge view={view} manufacturer={device?.manufacturer} />
           </div>
         </div>
@@ -581,12 +578,12 @@ export function DeviceConfig() {
             <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input ref={searchRef} placeholder={t("device.searchPlaceholder")} value={qRaw} onChange={(e) => setQ(e.target.value)} className="px-9" data-testid="config-search" />
             {qRaw && (
-              <button
-                type="button" aria-label={t("device.clearSearch")} onClick={() => setQ("")} data-testid="config-search-clear"
-                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
+              <IconButton
+                size="icon-xs" tooltip={false} label={t("device.clearSearch")} onClick={() => setQ("")} data-testid="config-search-clear"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
               >
                 <X className="size-4" />
-              </button>
+              </IconButton>
             )}
           </div>
         )}
@@ -621,7 +618,7 @@ export function DeviceConfig() {
           )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" className="size-9" aria-label={t("device.moreActions")} data-testid="device-menu">
+              <Button variant="outline" size="icon" aria-label={t("device.moreActions")} title={t("device.moreActions")} data-testid="device-menu">
                 <MoreVertical className="size-4" />
               </Button>
             </DropdownMenuTrigger>
@@ -692,10 +689,10 @@ export function DeviceConfig() {
       )}
 
       {device && (
-        <DiagnosticDialog key={device.id} open={diagnosticOpen} onOpenChange={setDiagnosticOpen} projectId={projectId} device={device} />
+        <DiagnosticDialog key={`diagnostic-${device.id}`} open={diagnosticOpen} onOpenChange={setDiagnosticOpen} projectId={projectId} device={device} />
       )}
 
-      {device && <ReportDialog key={device.id} open={reportOpen} onOpenChange={setReportOpen} device={device} />}
+      {device && <ReportDialog key={`report-${device.id}`} open={reportOpen} onOpenChange={setReportOpen} device={device} />}
 
       {device && (
         <ToolKeyDialog
@@ -706,7 +703,7 @@ export function DeviceConfig() {
       )}
 
       <AlertDialog open={plainLink !== null} onOpenChange={(o) => { if (!o) setPlainLink(null); }}>
-        <AlertDialogContent>
+        <AlertDialogContent dismissible={!setLink.isPending}>
           <AlertDialogHeader>
             <AlertDialogTitle>{t("device.plainLinkTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
@@ -723,7 +720,7 @@ export function DeviceConfig() {
       </AlertDialog>
 
       <AlertDialog open={revertOpen} onOpenChange={setRevertOpen}>
-        <AlertDialogContent>
+        <AlertDialogContent dismissible={!revert.isPending}>
           <AlertDialogHeader>
             <AlertDialogTitle>{t("device.revertTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
@@ -837,7 +834,7 @@ export function DeviceConfig() {
                       <button
                         key={id} type="button" onClick={() => scrollToSec(id)}
                         className={cn(
-                          "flex w-full items-center gap-2 whitespace-nowrap rounded border-l-2 py-1 pr-2 text-left text-sm transition-colors lg:truncate",
+                          "flex w-full items-center gap-2 whitespace-nowrap rounded-md border-l-2 py-1 pr-2 text-left text-sm transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 lg:truncate",
                           sub ? "pl-5" : "pl-2",
                           active ? "border-foreground/50 bg-secondary font-medium text-foreground"
                             : sub ? "border-transparent text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
@@ -1001,9 +998,9 @@ function ParamRow({ param, compact, changedTitle, revertTitle, reverting, onChan
             gap off as a value. */}
         {param.control === "unsupported" ? (
           <span className="flex w-full min-w-0 items-center gap-2" data-testid={`param-${param.refId}`}>
-            <span className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-xs text-amber-600 dark:text-amber-400">
-              <AlertTriangle className="size-3" />{t("device.unsupportedType", { type: param.typeLabel ?? "?" })}
-            </span>
+            <Badge tone="warning">
+              <AlertTriangle />{t("device.unsupportedType", { type: param.typeLabel ?? "?" })}
+            </Badge>
             <span className="truncate font-mono text-xs text-muted-foreground">{param.value}</span>
           </span>
         ) : param.readOnly ? (

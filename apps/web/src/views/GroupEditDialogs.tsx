@@ -163,7 +163,7 @@ function RangeDialog({ editor, onClose, projectId }: {
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent>
+      <DialogContent backdropClose={false}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{t("groupEdit.rangeDescription")}</DialogDescription>
@@ -247,7 +247,7 @@ function GaDialog({ editor, onClose, projectId, levels, dptSuggestions }: {
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent>
+      <DialogContent backdropClose={false}>
         <DialogHeader>
           <DialogTitle>{isCreate ? t("groupEdit.newGa") : t("groupEdit.editGa")}</DialogTitle>
           <DialogDescription>{isCreate ? t("groupEdit.gaCreateDescription") : t("groupEdit.gaEditDescription")}</DialogDescription>
@@ -276,7 +276,7 @@ function GaDialog({ editor, onClose, projectId, levels, dptSuggestions }: {
             <div className="space-y-1.5">
               <Label htmlFor="ga-security">{t("groupEdit.security")}</Label>
               <select id="ga-security" value={security} onChange={(e) => setSecurity(e.target.value as GroupAddressSecurity)} data-testid="ga-security"
-                className="h-9 w-56 rounded-md border bg-background px-2 text-sm">
+                className="h-9 w-56 rounded-md border border-input bg-input/30 px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50">
                 {(["auto", "on", "off"] as const).map((m) => <option key={m} value={m}>{t(`groupEdit.securityMode.${m}`)}</option>)}
               </select>
               <p className="text-xs text-muted-foreground">{t(`groupEdit.securityHint.${security}`)}</p>
@@ -323,7 +323,7 @@ function DeleteDialog({ editor, onClose, projectId }: {
 
   return (
     <AlertDialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <AlertDialogContent>
+      <AlertDialogContent dismissible={!pending}>
         <AlertDialogHeader>
           <AlertDialogTitle>{isRange ? t("groupEdit.deleteRangeTitle") : t("groupEdit.deleteGaTitle")}</AlertDialogTitle>
           <AlertDialogDescription>
@@ -334,7 +334,7 @@ function DeleteDialog({ editor, onClose, projectId }: {
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={pending}>{t("common.cancel")}</AlertDialogCancel>
-          <AlertDialogAction onClick={(e) => { e.preventDefault(); confirm(); }} disabled={pending} data-testid="confirm-delete" className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+          <AlertDialogAction onClick={(e) => { e.preventDefault(); confirm(); }} disabled={pending} data-testid="confirm-delete" variant="destructive">
             {pending && <Loader2 className="size-4 animate-spin" />} {t("common.delete")}
           </AlertDialogAction>
         </AlertDialogFooter>

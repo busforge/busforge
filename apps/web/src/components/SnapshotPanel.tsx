@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import type { SnapshotMeta } from "../api.ts";
 import { useSnapshots, useSnapshotActions } from "../queries.ts";
 import { Button } from "@/components/ui/button";
+import { IconButton } from "@/components/ui/icon-button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
@@ -53,14 +54,10 @@ export function SnapshotPanel({ projectId }: { projectId: string }) {
     <>
       <Popover>
         <PopoverTrigger asChild>
-          <button
-            className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
-            aria-label={t("snapshot.title")}
-            data-testid="snapshot-trigger"
-          >
-            <History className="size-3.5 shrink-0" />
-            {snapshots.length > 0 && <span className="tabular-nums">{snapshots.length}</span>}
-          </button>
+          <Button variant="outline" size="sm" className="text-muted-foreground" aria-label={t("snapshot.title")} title={t("snapshot.title")} data-testid="snapshot-trigger">
+            <History />
+            {snapshots.length > 0 && <span className="font-mono text-xs tabular-nums">{snapshots.length}</span>}
+          </Button>
         </PopoverTrigger>
         <PopoverContent align="end" className="w-96 p-3">
           <div className="mb-2 px-1 text-xs font-semibold text-muted-foreground">{t("snapshot.title")}</div>
@@ -92,21 +89,21 @@ export function SnapshotPanel({ projectId }: { projectId: string }) {
                     <div className={cn("truncate text-sm", s.kind === "auto" && "text-muted-foreground")}>{rowLabel(s)}</div>
                     <div className="font-mono text-[10px] text-muted-foreground">{fmtTime(s.createdAt)}</div>
                   </div>
-                  <button
-                    onClick={() => setConfirm(s)} aria-label={t("snapshot.restore")} title={t("snapshot.restore")}
-                    className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-primary"
+                  <IconButton
+                    size="icon-sm" label={t("snapshot.restore")} onClick={() => setConfirm(s)}
+                    className="text-muted-foreground hover:not-disabled:text-primary"
                     data-testid={`snapshot-restore-${s.id}`}
                   >
-                    <RotateCcw className="size-4" />
-                  </button>
-                  <button
+                    <RotateCcw />
+                  </IconButton>
+                  <IconButton
+                    size="icon-sm" label={t("snapshot.delete")}
                     onClick={() => remove.mutate(s.id, { onError: (e) => toast.error(t("snapshot.deleteError"), { description: errMsg(t, e) }) })}
-                    aria-label={t("snapshot.delete")} title={t("snapshot.delete")}
-                    className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-destructive"
+                    className="text-muted-foreground hover:not-disabled:text-destructive"
                     data-testid={`snapshot-delete-${s.id}`}
                   >
-                    <Trash2 className="size-4" />
-                  </button>
+                    <Trash2 />
+                  </IconButton>
                 </div>
               ))
             )}
@@ -115,7 +112,7 @@ export function SnapshotPanel({ projectId }: { projectId: string }) {
       </Popover>
 
       <AlertDialog open={!!confirm} onOpenChange={(o) => !o && setConfirm(null)}>
-        <AlertDialogContent>
+        <AlertDialogContent dismissible={!restore.isPending}>
           <AlertDialogHeader>
             <AlertDialogTitle>{t("snapshot.restoreTitle", { label: confirm ? rowLabel(confirm) : "" })}</AlertDialogTitle>
             <AlertDialogDescription>{t("snapshot.restoreBody")}</AlertDialogDescription>
