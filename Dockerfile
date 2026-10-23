@@ -19,13 +19,13 @@ FROM source AS build
 RUN bun install --frozen-lockfile
 RUN bun run build
 
-# Runtime payload, stated file by file: the license, the root manifests, the server and the
-# workspaces it imports, the server's production dependencies (and the peer dependencies Bun adds
-# for them), and the built web app. The web source, the web app's dependencies and the development
+# Runtime payload, stated file by file: the license and its notice, the root manifests, the server
+# and the workspaces it imports, the server's production dependencies (and the peer dependencies Bun
+# adds for them), and the built web app. The web source, the web app's dependencies and the development
 # toolchain (TypeScript, Vite, oxlint, Playwright) stay in the build stage.
 FROM oven/bun:1.3
 WORKDIR /app
-COPY --from=source /app/LICENSE /app/package.json /app/bun.lock /app/tsconfig.base.json ./
+COPY --from=source /app/LICENSE /app/NOTICE /app/package.json /app/bun.lock /app/tsconfig.base.json ./
 # Manifests of workspaces that are not shipped: a frozen-lockfile install resolves every workspace.
 COPY --from=source /app/tools/package.json ./tools/
 COPY --from=source /app/apps/bridge/package.json ./apps/bridge/
@@ -49,7 +49,7 @@ LABEL org.opencontainers.image.title="Busforge" \
       org.opencontainers.image.description="Self-hostable KNX project, bus monitor and device programming tool" \
       org.opencontainers.image.source="" \
       org.opencontainers.image.url="" \
-      org.opencontainers.image.licenses="PolyForm-Noncommercial-1.0.0" \
+      org.opencontainers.image.licenses="AGPL-3.0-or-later" \
       org.opencontainers.image.version="$BUSFORGE_VERSION" \
       org.opencontainers.image.revision="$BUSFORGE_COMMIT" \
       org.opencontainers.image.created="$BUSFORGE_BUILT_AT"

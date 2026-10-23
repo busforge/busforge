@@ -1,6 +1,7 @@
 {
   "name": "@busforge/tools",
   "private": true,
+  "license": "AGPL-3.0-or-later",
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",

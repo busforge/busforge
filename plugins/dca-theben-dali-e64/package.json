@@ -2,6 +2,7 @@
   "name": "@busforge/dca-theben-dali-e64",
   "version": "0.0.0",
   "private": true,
+  "license": "AGPL-3.0-or-later",
   "type": "module",
   "description": "busforge DCA replacement module for the Theben DALI-Gateway KNX plus (e64). Reimplements the read-only DALI configuration view from the device's own backup-store, so no ETS DCA plugin is needed.",
   "main": "src/index.ts",

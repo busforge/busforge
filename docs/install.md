@@ -195,8 +195,8 @@ project files, addresses), and how to share a diagnostic package.
 
 ## License
 
-Busforge is source-available under the [PolyForm Noncommercial License 1.0.0](../LICENSE):
-free for private, hobby, research and other noncommercial use. Commercial use, such as
-commissioning installations for paying clients, needs a separate license from the author
+Busforge is free software under the [GNU AGPL-3.0-or-later](../LICENSE): free for any use,
+including commissioning installations for paying clients. Building it into a closed product or
+service without the AGPL's obligations needs a commercial license from the author
 ([README](../README.md#license)). KNX and ETS are trademarks of KNX Association cvba; Busforge is
 not affiliated with or certified by it.

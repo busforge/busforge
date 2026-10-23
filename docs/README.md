@@ -48,6 +48,7 @@ document says so.
 
 | Document | What it answers |
 |---|---|
+| [../CONTRIBUTING.md](../CONTRIBUTING.md) | How to contribute: reports, pull requests, the CLA and why it exists. |
 | [development.md](development.md) | Local setup, the check gate, the workspace layout, and the command-line tools. |
 | [testing.md](testing.md) | The test levels, what each proves, the tests that need the private corpus, and the hardware smoke framework. |
 | [deployment.md](deployment.md) | Self-hosting: container, volume, environment, reverse proxy. |

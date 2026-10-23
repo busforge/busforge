@@ -30,14 +30,15 @@ runtime.
 
 ### What the image contains
 
-The build context is an allowlist (`.dockerignore` starts with `*`): the license, the root and
-workspace manifests, the lockfile, the source of the workspaces and the web build inputs. Tests,
-fixtures, `docs/`, `tools/` (apart from its manifest), local scratch and runtime state are never
-sent to the builder, so no layer of any build stage carries them. The runtime image then holds:
+The build context is an allowlist (`.dockerignore` starts with `*`): the license and its notice,
+the root and workspace manifests, the lockfile, the source of the workspaces and the web build
+inputs. Tests, fixtures, `docs/`, `tools/` (apart from its manifest), local scratch and runtime
+state are never sent to the builder, so no layer of any build stage carries them. The runtime
+image then holds:
 
 | Path in `/app` | What |
 |---|---|
-| `LICENSE` | The license, including its required notice |
+| `LICENSE`, `NOTICE` | The license and the copyright notice |
 | `package.json`, `bun.lock`, `tsconfig.base.json`, every workspace's `package.json` (`tools` and `apps/bridge` included) | Needed by the frozen-lockfile install |
 | `apps/server/src`, `packages/*/src`, `plugins/*/src`, the `tsconfig.json` of `packages/*` and `plugins/*` | The server and the workspaces it imports, run from source by Bun |
 | `node_modules` | Production dependencies of `@busforge/server` and the peer dependencies Bun adds for them (`react`, from the DALI plugin), about 9 MB |

@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-f3a44a" alt="License: PolyForm Noncommercial 1.0.0">
+  <img src="https://img.shields.io/badge/license-AGPL--3.0--or--later-f3a44a" alt="License: AGPL-3.0-or-later">
   <img src="https://img.shields.io/badge/runtime-Bun%20%2B%20TypeScript-e5e8eb" alt="Bun + TypeScript">
   <img src="https://img.shields.io/badge/verified-on%20real%20hardware-54c57a" alt="Verified on real hardware">
 </p>
@@ -204,16 +204,17 @@ by, sponsored by, or certified by the KNX Association** or any device manufactur
 
 ## License
 
-Busforge is **source-available under the
-[PolyForm Noncommercial License 1.0.0](LICENSE)**, a dual-licensing model:
+Busforge is free software under the **[GNU AGPL-3.0-or-later](LICENSE)**. Anyone may use,
+modify and share it, including professionally: homeowners, electricians and integrators
+commissioning installations for their customers. Copies you distribute, and modified versions you
+distribute or offer to others over a network, stay under the AGPL, with their source.
 
-- **Noncommercial use is free.** Private use, hobby projects, research, education and
-  noncommercial organizations may use, modify and share Busforge at no cost under the
-  license terms.
-- **Commercial use requires a separate commercial license** from the author. Using
-  Busforge (or parts of it) in a for-profit or business context, for example an
-  integrator commissioning client installations for pay, or a manufacturer embedding it
-  in a product or paid service, is **not** granted by the noncommercial license.
+If you want to build Busforge, or parts of it, into a closed product or service without the AGPL's
+obligations, a **commercial license** is available on request via the
+[project homepage](https://fohlmeister.com).
 
-For commercial licensing, reach out via the [project homepage](https://fohlmeister.com).
-Full terms are in [`LICENSE`](LICENSE). Copyright (c) 2026 Thorben Fohlmeister.
+Contributions are welcome ([CONTRIBUTING.md](CONTRIBUTING.md)). The first pull request asks once
+for a short [Contributor License Agreement](CLA.md), whose sole reason is to allow this dual
+licensing.
+
+Copyright (c) 2026 Thorben Fohlmeister ([NOTICE](NOTICE)).
