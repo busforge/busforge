@@ -10798,7 +10798,7 @@
     "transfer": {
      "state": "pass",
      "method": "the link flash reported verified by the server and the link read back; a second address behind it and, where the product's downloads write it, the object's read flag turned over, written in one GA flash and taken back in another, each read back",
-     "detail": "linked object 48 to the test address (5 B, verified), read back; unlinked (3 B, verified), zero drift on read-back"
+     "detail": "linked object 48 to the test address (3 B, verified), read back; unlinked (3 B, verified), zero drift on read-back"
     },
     "reference": {
      "state": "not-assessed"
@@ -10809,7 +10809,7 @@
     "persistence": {
      "state": "pass",
      "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
-     "detail": "silent 3722 ms after A_Restart, first in the restart's own connection, answering again after 3852 ms; load objects 1, 2, 3 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
+     "detail": "silent 5378 ms after A_Restart, first in the restart's own connection, answering again after 5499 ms; load objects 1, 2, 3 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
@@ -10943,7 +10943,7 @@
     "persistence": {
      "state": "pass",
      "method": "A_Restart, reboot observed (the device stopped answering, then answered again), every load object LOADED before is LOADED after, then a device read-back: decoded parameters and group links equal to the project, and where the product reads the com-object table, its flags",
-     "detail": "silent 3776 ms after A_Restart, first in the restart's own connection, answering again after 3910 ms; load objects 1, 2, 3 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
+     "detail": "silent 5456 ms after A_Restart, first in the restart's own connection, answering again after 5618 ms; load objects 1, 2, 3 LOADED after the reboot; parameters and links and the com-object flags read back equal to the project after the reboot"
     }
    }
   },
