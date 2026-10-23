@@ -123,6 +123,20 @@ depends on is hardware-proven.
   channels, its full download of the configuration found included. Still open: the
   comparison with an ETS partial download (on a unit with a matching ETS
   project), and a power cut.
+- **Hidden bits after an in-service structural step.** The run's restore compares the bits the found
+  configuration owns, so a structural step whose revert hides parameters could leave other bits than the
+  segment's `<Data>` at them unnoticed. A spec that takes hidden values from the installation's project
+  (`hiddenValuesFromProject`) compares every hidden bit with `<Data>` before its writes, after its
+  structural step and its full download, and in the undo after a broken-off step (`hiddenDiffer`). Still
+  open:
+  - The check is opt-in: other System 7 specs with a structural step that shows hidden parameters do not
+    run it, and the spec rules do not ask for the flag.
+  - Bits the structural step writes that its revert does not set back (an `Access="None"` parameter with
+    memory that only the step places, bits past the end of a segment's `<Data>`, a segment without
+    `<Data>`) are not refused before the step; the check after the step reports them as a failure, with
+    the unit left changed for a recovery by hand.
+  - The step's com-object table entries are written in ETS's template form, and only their config byte
+    is compared with the unit before.
 - **Devices in service with KNX Data Secure.** The device-in-service mode takes a secured unit from
   the installation's project file and runs under its secure session, also through an interface whose
   tunnels the unit's restart drops, connecting again after each restart ([testing.md](testing.md#devices-in-service)).

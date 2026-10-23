@@ -172,6 +172,45 @@ test("an Access=None internal byte is OWNED (written) but excluded from verify",
   expect(!!t.verify[1]).toBe(false); // ...but not asserted against the device read-back
 });
 
+test("the hidden bits: a ref of a placed parameter hides nothing, though its other ref is inactive", () => {
+  // P-2 has two refs on the same byte; R-b is placed, R-a is not.
+  expect(buildAbsoluteSegmentTargets(parseAppConfig(internalXml), new Map())[0].hidden).toEqual([0, 0]);
+});
+
+// Two 4-bit parameters share byte 0: A (shown) in its high nibble, B (no ParameterRefRef, never placed) in
+// its low one; C, never placed, fills byte 1, past the segment's one-byte <Data>.
+const sharedXml = `<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0007"><ApplicationPrograms>
+<ApplicationProgram Id="M-0007_A-0001-01-0001" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-0705" DefaultLanguage="en-US" Name="Shared Byte">
+<Static>
+<ParameterTypes>
+<ParameterType Id="M-0007_A-0001-01-0001_PT-4"><TypeNumber SizeInBit="4" Type="unsignedInt" minInclusive="0" maxInclusive="15"/></ParameterType>
+<ParameterType Id="M-0007_A-0001-01-0001_PT-8"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="255"/></ParameterType>
+</ParameterTypes>
+<Parameters>
+<Parameter Id="M-0007_A-0001-01-0001_P-A" ParameterType="M-0007_A-0001-01-0001_PT-4" Text="A" Value="5"><Memory CodeSegment="M-0007_A-0001-01-0001_AS-1" Offset="0" BitOffset="0"/></Parameter>
+<Parameter Id="M-0007_A-0001-01-0001_P-B" ParameterType="M-0007_A-0001-01-0001_PT-4" Text="B" Value="3"><Memory CodeSegment="M-0007_A-0001-01-0001_AS-1" Offset="0" BitOffset="4"/></Parameter>
+<Parameter Id="M-0007_A-0001-01-0001_P-C" ParameterType="M-0007_A-0001-01-0001_PT-8" Text="C" Value="1"><Memory CodeSegment="M-0007_A-0001-01-0001_AS-1" Offset="1" BitOffset="0"/></Parameter>
+</Parameters>
+<ParameterRefs>
+<ParameterRef Id="M-0007_A-0001-01-0001_P-A_R" RefId="M-0007_A-0001-01-0001_P-A"/>
+<ParameterRef Id="M-0007_A-0001-01-0001_P-B_R" RefId="M-0007_A-0001-01-0001_P-B"/>
+<ParameterRef Id="M-0007_A-0001-01-0001_P-C_R" RefId="M-0007_A-0001-01-0001_P-C"/></ParameterRefs>
+<Code><AbsoluteSegment Id="M-0007_A-0001-01-0001_AS-1" Address="100" Size="2"><Data>AA==</Data></AbsoluteSegment></Code>
+</Static>
+<Dynamic><ParameterBlock Id="M-0007_A-0001-01-0001_PB-1" Name="Main" Text="Main">
+<ParameterRefRef RefId="M-0007_A-0001-01-0001_P-A_R"/>
+</ParameterBlock></Dynamic>
+</ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+
+test("the hidden bits: only those of parameters the configuration does not place, the placed bits of a shared byte left out", () => {
+  const t = buildAbsoluteSegmentTargets(parseAppConfig(sharedXml), new Map())[0];
+  expect(t.owned).toEqual([0xf0, 0]);
+  expect(t.hidden).toEqual([0x0f, 0xff]);
+  // The image there: the <Data> nibble of B, FF past the end of the <Data>.
+  expect([t.bytes[0] & 0x0f, t.bytes[1]]).toEqual([0, 0xff]);
+});
+
 // Regression: the image-value pass must resolve choose/Assign in its OWN document
 // order, not against the UI walk's already-fully-mutated env. Here a <choose> on
 // `ctrl` precedes an <Assign ctrl=1>: in document order the choose sees ctrl=0 and

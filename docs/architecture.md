@@ -354,6 +354,13 @@ value the other way.
   [load-procedures.md](load-procedures.md#project-level-com-object-flags)). Since the read's image check
   compares the table under the flags it read, an assumed value only flags would tell apart is named
   in `unprovenAssumptions`.
+- **The bits of hidden parameters are compared, not taken.** On absolute segments (System 7) a read
+  asked for it (`compareHidden: true`) also reports where the device holds other bits than the image of the project's configuration at read time at the
+  parameters that configuration hides (`hiddenDiffer`, address ranges; empty where none differ, absent
+  where the configuration hides no bit; a `compareHidden` that is not a boolean is refused,
+  `READBACK_COMPARE_HIDDEN_INVALID`): the image holds
+  the segment's `<Data>` there, as ETS's downloads leave it, and a structural flash that shows such a
+  parameter and hides it again writes the `<Data>` back. No other family's read reports it.
 - **Parameters the device does not hold are invisible to it.** A parameter with neither a memory nor
   a property location, kept only in the project (a rocker's function, a status LED's mode), has no
   byte on the device, so the read leaves its baseline as it was. When such a parameter hides objects the device links, those

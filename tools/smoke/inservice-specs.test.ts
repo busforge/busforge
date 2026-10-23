@@ -1,4 +1,4 @@
-import { expect, mock, afterAll, test, setDefaultTimeout } from "bun:test";
+import { expect, mock, afterAll, describe, test, setDefaultTimeout } from "bun:test";
 import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,7 +6,9 @@ import type { KnxDevice } from "../../packages/knx/src/index.ts";
 import { buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, classify, classifyByMask, parseAppConfig, type AppConfig, type DeviceReadbackInfo } from "../../packages/product/src/index.ts";
 import { getDeviceModules, getDeviceParams } from "../../apps/server/src/db/deviceparams.ts";
 import { CollectedUnit, asDevice, type Collection } from "../../packages/product/test/collected-unit.ts";
-import { catalogueXml, corpusPath, inServiceCollection, IN_SERVICE_COLLECTIONS } from "../corpus.ts";
+import { captureText, catalogueXml, corpusPath, inServiceCollection, IN_SERVICE_COLLECTIONS } from "../corpus.ts";
+import { iaToNum } from "../../packages/knx/src/index.ts";
+import { memoryImage, parseCapture } from "../etsdiff.ts";
 import { corpusDescribe } from "../corpus-test.ts";
 import { runInService, planInService, type InServiceIo, type InServiceOptions } from "./inservice.ts";
 import { Client, type FlashResult, type ConfigView } from "./client.ts";
@@ -65,6 +67,10 @@ test("every registered device-in-service spec has its unit emulated here, or is 
   expect(IN_SERVICE.map((s) => s.id).filter((id) => !(IN_SERVICE_COLLECTIONS as readonly string[]).includes(id))).toEqual([...NOT_EMULATED.keys()]);
 });
 
+test("every spec whose hidden parameters take the installation project's values has those values here", () => {
+  expect(IN_SERVICE.filter((s) => s.inService?.hiddenValuesFromProject).map((s) => s.id).sort()).toEqual([...INSTALLATION_VALUES.keys()].sort());
+});
+
 corpusDescribe("the device-in-service specs, against the server and their emulated units", () => {
   const fixtures = join(import.meta.dir, "..", "..", "packages", "project", "test", "fixtures");
   const req = (path: string, init?: RequestInit) => new Request(`http://x${path}`, init);
@@ -84,7 +90,9 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
 
   // A project holding the unit as the runner places it: the application's defaults, nothing linked,
   // never programmed from this project. The demo project's device is turned into it.
-  async function placed(spec: DeviceSpec, xml: string): Promise<{ state: AppState; pid: string; did: string }> {
+  // A spec whose hidden parameters take the installation project's values gets them as the import of
+  // that project file holds them, live and baseline alike, on a unit ETS downloaded.
+  async function placed(spec: DeviceSpec, xml: string, projectValues?: Map<string, string>): Promise<{ state: AppState; pid: string; did: string }> {
     const dir = mkdtempSync(join(tmpdir(), "busforge-inservice-server-"));
     tmps.push(dir);
     const state = createState({ dbPath: ":memory:", dataDir: dir, now: () => 1000 });
@@ -97,7 +105,8 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
     for (const t of ["device_parameters", "device_param_base", "device_links", "device_link_base", "device_modules"]) state.db.run(`DELETE FROM ${t} WHERE project_id = ? AND device_id = ?`, [pid, did]);
     // A placed unit's project holds no group address of the installation: the demo's go.
     for (const t of ["device_links", "device_link_base", "group_addresses", "group_ranges"]) state.db.run(`DELETE FROM ${t} WHERE project_id = ?`, [pid]);
-    state.db.run("UPDATE devices SET never_programmed = 1, link_base_gaps = 0 WHERE project_id = ? AND instance_id = ?", [pid, did]);
+    state.db.run("UPDATE devices SET never_programmed = ?, link_base_gaps = 0 WHERE project_id = ? AND instance_id = ?", [projectValues ? 0 : 1, pid, did]);
+    for (const [refId, value] of projectValues ?? []) for (const t of ["device_parameters", "device_param_base"]) state.db.run(`INSERT INTO ${t} (project_id, device_id, param_ref_id, value) VALUES (?, ?, ?, ?)`, [pid, did, refId, value]);
     await call(state, "PUT", `/api/projects/${pid}/devices/${encodeURIComponent(did)}/address`, { ia: spec.device.ia });
     const conn = await call<{ id: string }>(state, "POST", "/api/connections", { type: "ip", name: "GW", host: "198.51.100.10", port: 3671 });
     await call(state, "PUT", `/api/projects/${pid}/connection`, { connectionId: conn.id });
@@ -125,7 +134,7 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
       }
     };
     const wait = (path: string) => settle<FlashResult>(path, true);
-    const readBack = (assume?: { paramRefId: string; value: string }[]) => settle<DeviceReadbackInfo | null>(`${d}/read-back`, false, assume ? { assume } : {});
+    const readBack = (assume?: { paramRefId: string; value: string }[], compareHidden?: boolean) => settle<DeviceReadbackInfo | null>(`${d}/read-back`, false, { ...(assume ? { assume } : {}), ...(compareHidden ? { compareHidden } : {}) });
     // The runner's own client, its requests answered by this server.
     const ensureGa = (ga: string) => withServer(state, () => new Client("http://x").ensureGa(pid, ga));
     const gaRaw = (ga: string) => { const [M, m, s] = ga.split("/").map(Number); return (M << 11) | (m << 8) | s; };
@@ -188,18 +197,41 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
   }
 
   const OPTS: InServiceOptions = { fullDownload: false, testGa: "15/7/250" };
-  const run = async (spec: DeviceSpec, given = OPTS) => {
-    const opts = spec.inService?.weatherGuard ? { ...given, weatherGuard: CALM_GUARD } : given;
+  // The operator's options a spec needs besides the given ones: the weather guard, and the installation's
+  // project file, which the emulated run holds as its values (INSTALLATION_VALUES).
+  const optsFor = (spec: DeviceSpec, given: InServiceOptions): InServiceOptions => ({
+    ...given,
+    ...(spec.inService?.weatherGuard ? { weatherGuard: CALM_GUARD } : {}),
+    ...(spec.inService?.hiddenValuesFromProject ? { knxproj: "installation.knxproj" } : {}),
+  });
+  const installationValues = (spec: DeviceSpec) => {
+    const file = INSTALLATION_VALUES.get(spec.id);
+    return file ? new Map((JSON.parse(captureText(file)) as { params: [string, string][] }).params) : undefined;
+  };
+  // `edit` changes, before the run, the project's values and the emulated unit's memory.
+  type Edit = { values?: (v: Map<string, string>) => void; memory?: (m: Map<number, number>) => void };
+  const run = async (spec: DeviceSpec, given = OPTS, edit: Edit = {}) => {
+    const opts = optsFor(spec, given);
     const xml = catalogueXml(`${appOf(spec)}.xml.gz`);
-    const { state, pid, did } = await placed(spec, xml);
+    const values = spec.inService?.hiddenValuesFromProject ? installationValues(spec) : undefined;
+    if (values) edit.values?.(values);
+    const { state, pid, did } = await placed(spec, xml, values);
     const dev = new CollectedUnit(JSON.parse(readFileSync(corpusPath(inServiceCollection(spec.id)), "utf8")) as Collection);
+    edit.memory?.(dev.mem);
     const memory = new Map(dev.mem);
     const log: string[] = [];
+    // The unit's memory after each parameter write the run makes, with whether it went out structural.
+    const after: { structural: boolean; memory: Map<number, number> }[] = [];
     unit = dev;
-    try { return { r: await runInService(spec, io(state, pid, did, dev, parseAppConfig(xml), log, spec.behaviours.flatMap((b) => (b.kind === "output" && b.expectValue ? [b.expectValue] : []))[0] ?? "00"), opts), log, dev, memory, state, pid, did }; }
+    try {
+      const ioOf = io(state, pid, did, dev, parseAppConfig(xml), log, spec.behaviours.flatMap((b) => (b.kind === "output" && b.expectValue ? [b.expectValue] : []))[0] ?? "00");
+      const chan = ioOf.chan;
+      ioOf.chan = { ...chan, flashParams: async () => { const o = await chan.flashParams(); after.push({ structural: o.structural, memory: new Map(dev.mem) }); return o; } };
+      return { r: await runInService(spec, ioOf, opts), log, dev, memory, state, pid, did, after };
+    }
     finally { unit = null; }
   };
-  const writes = (spec: DeviceSpec, opts: InServiceOptions) => planInService(spec, spec.inService?.weatherGuard ? { ...opts, weatherGuard: CALM_GUARD } : opts).filter((p) => p.kind !== "read").map((p) => (p.kind === "restart" ? "restart" : ({ flashParams: "flash", structuralFlash: "flash", flashLinks: "flash-ga", fullDownload: "download" } as const)[p.op!]));
+  const writes = (spec: DeviceSpec, opts: InServiceOptions) => planInService(spec, optsFor(spec, opts)).filter((p) => p.kind !== "read").map((p) => (p.kind === "restart" ? "restart" : ({ flashParams: "flash", structuralFlash: "flash", flashLinks: "flash-ga", fullDownload: "download" } as const)[p.op!]));
 
   // The bytes behind a System 7 unit's address and association tables that a link added and removed
   // again may leave, as ETS's group-address downloads leave them (docs/load-procedures.md, the table
@@ -263,6 +295,60 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
     expect([...memory].filter(([a, b]) => ((dev.mem.get(a)! ^ b) & ~(allowed.get(a) ?? 0)) !== 0).map(([a, b]) => `0x${a.toString(16)}: ${b.toString(16)} -> ${dev.mem.get(a)?.toString(16)}`)).toEqual([]);
   }, 890_000);
 
+  // The Meteodata's structural step switches threshold channel C14 on and off again, while the unit holds the
+  // channel's parameters at the segment's <Data>. ETS's partial downloads of the same change from the
+  // installation's project write the project's values of the channel (tools/etsdiff.test.ts); its writes,
+  // read and compared, are the bytes that differed on the unit.
+  describe("theben-meteodata-140s-in-service: the parameters the unit hides take the installation project's values", () => {
+    const spec = IN_SERVICE.find((s) => s.id === "theben-meteodata-140s-in-service")!;
+    const cfg = parseAppConfig(catalogueXml(`${appOf(spec)}.xml.gz`));
+    const ia = iaToNum(spec.device.ia);
+    const etsWrites = (f: string) => memoryImage(parseCapture(captureText(f), ia).writes);
+    // The parameter segments and the com-object table, without the download marker at 0x4800 (a
+    // constant parameter the real unit clears once it has seen a download).
+    const comObj = cfg.absoluteSegments.find((x) => x.id === cfg.groupTables.comObjectSegment)!;
+    const compared = [comObj, ...cfg.absoluteSegments.filter((x) => x.address >= 0x4800)].flatMap((x) => Array.from({ length: x.size }, (_, i) => x.address + i)).filter((a) => a !== 0x4800);
+    const differing = (got: Map<number, number>, want: (a: number) => number | undefined) =>
+      compared.filter((a) => got.get(a) !== want(a)).map((a) => `0x${a.toString(16)}: ${want(a)?.toString(16)} wanted, ${got.get(a)?.toString(16)} held`);
+    const C14 = "M-0048_A-140C-14-EB70_P-6571_R-6571";
+
+    test("switching C14 on writes ETS's bytes, the project's values of the channel included; off returns to the unit as found", async () => {
+      const { r, memory, after } = await run(spec);
+      expect(r.stopped).toBeUndefined();
+      expect(r.ok).toBe(true);
+      const [on, off] = after.filter((a) => a.structural).map((a) => a.memory);
+      const ets = etsWrites("meteodata-140s-ets-partial-c14-on.log");
+      expect(differing(on, (a) => ets.get(a) ?? memory.get(a))).toEqual([]);
+      // The channel's texts, telegram type and thresholds as 94 pins them, and object 84's type byte.
+      expect(Array.from({ length: 13 }, (_, i) => on.get(0x49f0 + i))).toEqual([0x32, 0x30, 0x2c, 0x30, 0x00, 0x31, 0x2c, 0x30, 0x00, 0x00, 0xba, 0x65, 0xa1]);
+      expect(on.get(0x4556)).toBe(0x08);
+      expect(differing(off, (a) => memory.get(a))).toEqual([]);
+    }, 1180_000);
+
+    test("a project value of a parameter the unit shows that differs from the unit's is refused before any write", async () => {
+      const { r, log } = await run(spec, OPTS, { values: (v) => v.set("M-0048_A-140C-14-EB70_P-2234_R-2234", "3") });
+      expect(r.stopped?.phase).toBe("adopt");
+      expect(r.stopped?.detail).toContain("the configuration found is not the installation project's");
+      expect(r.stopped?.detail).toContain("P-2234_R-2234 project 3, unit 0");
+      expect(log).toEqual([]);
+    }, 1180_000);
+
+    test("a project that shows the channel the unit hides is refused before any write", async () => {
+      const { r, log } = await run(spec, OPTS, { values: (v) => v.set(C14, "1") });
+      expect(r.stopped?.phase).toBe("adopt");
+      expect(r.stopped?.detail).toContain("the configuration found is not the installation project's");
+      expect(log).toEqual([]);
+    }, 1180_000);
+
+    // The dry runs compare only the bits the configuration places; the revert of C14 would write the <Data> over this one.
+    test("a unit that holds other bytes than the segment's <Data> at a hidden parameter is refused before any write", async () => {
+      const { r, log } = await run(spec, OPTS, { memory: (m) => m.set(0x49f5, m.get(0x49f5)! ^ 0x01) });
+      expect(r.stopped?.phase).toBe("adopt");
+      expect(r.stopped?.detail).toContain("at parameters its configuration hides the unit holds other bytes than the segment's <Data> (0x49F5)");
+      expect(log).toEqual([]);
+    }, 1180_000);
+  });
+
   for (const spec of IN_SERVICE.filter((s) => !NOT_EMULATED.has(s.id) && !STOPS_BEFORE_A_WRITE.has(s.id))) {
     test(`${spec.id}: the run makes the writes its plan lists, passes, and leaves the unit's memory as it found it`, async () => {
       const { r, log, dev, memory, state, pid, did } = await run(spec);
@@ -292,6 +378,12 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
 });
 
 const STOPS_BEFORE_A_WRITE = new Map<string, { stop: string; reason: string }>();
+
+// The values the installation's ETS project holds for a spec's unit (hiddenValuesFromProject), as the
+// private corpus captures them from that project's export: its ParameterInstanceRef values.
+const INSTALLATION_VALUES = new Map<string, string>([
+  ["theben-meteodata-140s-in-service", "meteodata-140s-config.json"],
+]);
 
 // Specs whose unit cannot be emulated, with the reason.
 const NOT_EMULATED = new Map<string, string>([

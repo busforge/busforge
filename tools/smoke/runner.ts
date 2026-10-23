@@ -29,7 +29,7 @@ import { KnxIpTunnel, KnxDevice, KnxError, lsmState, SecureSession, iaToNum, num
 import { loadKnxproj } from "../../packages/project/src/index.ts";
 import { FaultProxy } from "./faultproxy.ts";
 import { connectTunnel, onFreshTunnel, isLinkLost } from "./tunnel.ts";
-import { runInService, planInService, optionProblems, type InServiceIo, type InServiceOptions, type FoundConfiguration } from "./inservice.ts";
+import { runInService, planInService, optionProblems, inServiceFileKey, type InServiceIo, type InServiceOptions, type FoundConfiguration } from "./inservice.ts";
 import { BCU1_EEPROM, BCU1_RUN_ERROR, isMemoryMappedLsm, maskInfo, type Firmware } from "../../packages/product/src/index.ts";
 
 // A capability that has a UI surface but no meaningful API surface, or vice versa, is recorded — never
@@ -313,7 +313,7 @@ function inServiceIo(o: { client: Client; ui: UiDriver | null; pid: string; did:
   };
   return {
     api: {
-      readBack: (assume) => client.readBack(pid, did, (p) => log(`read ${p}`), assume),
+      readBack: (assume, compareHidden) => client.readBack(pid, did, (p) => log(`read ${p}`), assume, compareHidden),
       revert: () => client.revert(pid, did),
       getConfig: () => client.getConfig(pid, did),
       setParam: (ref, value) => client.setParam(pid, did, ref, value),
@@ -420,8 +420,10 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number, opts: I
     const products = await client.catalogProducts().catch((e) => { throw new Stop("preflight", `server unreachable: ${e instanceof Error ? e.message : String(e)}`); });
     const imported = spec.provision === "import-knxproj";
     // A Data Secure unit in service is taken from the installation's project file the operator gives,
-    // which brings its keys; its configuration is still the one the read-back finds on it.
-    const inServiceFile = spec.provision === "in-service" && spec.inService?.dataSecure === true;
+    // which brings its keys, and so is a unit whose hidden parameters take the project's values; the
+    // configuration is still the one the read-back finds on the unit.
+    const secureFile = spec.provision === "in-service" && spec.inService?.dataSecure === true;
+    const inServiceFile = secureFile || (spec.provision === "in-service" && spec.inService?.hiddenValuesFromProject === true);
     if (!imported && !inServiceFile && !products.some((p) => p.appRef === spec.device.appRef && p.productRef === spec.device.productRef)) throw new Stop("preflight", `product not in catalog (${spec.device.appRef}); import the .knxprod first`);
     const password = process.env.BUSFORGE_SMOKE_KNXPROJ_PASSWORD ?? "";
     if (imported && (!spec.device.knxprod || !password)) throw new Stop("preflight", "refused: import-knxproj needs device.knxprod in the spec and BUSFORGE_SMOKE_KNXPROJ_PASSWORD set");
@@ -465,9 +467,10 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number, opts: I
       if (placed.appRef !== spec.device.appRef || placed.productRef !== spec.device.productRef) throw new Stop("setup", `the project file's device at ${spec.device.ia} is ${placed.productRef} with ${placed.appRef}, not this spec's product`);
       did = placed.id;
       const sec = loadKnxproj(bytes, password, basename(file)).deviceSecurity.find((d) => d.deviceId === placed.id);
-      if (!sec) throw new Stop("setup", `the project file holds no tool key for the device at ${spec.device.ia}`);
-      creds = { toolKey: Buffer.from(sec.toolKey, "base64"), serial: Buffer.from(sec.serialNumber, "base64") };
-      log(`imported the installation's project file: the unit at ${spec.device.ia} with its tool key`);
+      const keyed = inServiceFileKey(spec, sec);
+      if ("refused" in keyed) throw new Stop("setup", keyed.refused);
+      creds = keyed.creds;
+      log(`imported the installation's project file: the unit at ${spec.device.ia} ${creds ? "with its tool key" : "with the project's values"}`);
     } else {
       const proj = await client.createProject(`smoke-${spec.id}-${channel}-${startedAt}`);
       pid = proj.id;

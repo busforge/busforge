@@ -84,6 +84,16 @@ export interface InServiceSpec {
   // and the group keys of its addresses, and the runner opens its own connections under the unit's
   // secure session. The configuration found is still the one the read-back takes off the unit.
   dataSecure?: true;
+  // The installation's ETS project holds values for parameters the unit's configuration hides, which
+  // the structural step shows (a channel switched on) and ETS then writes, while the unit holds the
+  // segment's <Data> at their bytes and no read-back sees them. The run imports the installation's
+  // project file the operator gives (--knxproj, its password in BUSFORGE_SMOKE_KNXPROJ_PASSWORD), so
+  // the project holds ETS's values; the read-back still takes every parameter the unit's configuration
+  // shows. Before the first write the run refuses unless the configuration found is the project's
+  // (each parameter it shows holds the project's value, and the project shows no other), so the
+  // project's values it keeps are of parameters hidden on the unit, and unless the read-back finds the
+  // segment's <Data> at every parameter the configuration hides, which the step's revert writes there.
+  hiddenValuesFromProject?: true;
   // The unit is a KNXnet/IP interface, shares its housing with one, or supplies the line one sits on:
   // `ia` is that interface's individual address, `restart` what a restart of the unit does to the
   // interface's tunnels, the run's own included, and `shown` says where that was shown (and with which

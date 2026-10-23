@@ -1,10 +1,10 @@
 import type { DeviceSpec } from "../spec.ts";
 
 // The Theben Meteodata 140 S (MV-0701, System 7 memory-mapped load state, dynamic tables) as a unit
-// in service: the run takes its configuration by read-back and writes one parameter flash and one GA
-// flash, each reverted (inservice.ts); a full download of the configuration found only with
-// --full-download. Refs pinned verbatim as the device configuration of this application lists
-// them, taken offline from its catalogue; the run refuses a ref the unit's configuration does not
+// in service: the run takes its configuration by read-back and writes one parameter flash, one GA
+// flash and one structural flash, each reverted (inservice.ts); a full download of the configuration
+// found only with --full-download. Refs pinned verbatim as the device configuration of this
+// application lists them, taken offline from its catalogue; the run refuses a ref the unit's configuration does not
 // list. The com-object ref is the one the configuration found activates: a unit whose
 // configuration activates another ref of the same object stops before the first write.
 //
@@ -27,6 +27,10 @@ export const thebenMeteodata140sInService: DeviceSpec = {
   },
   provision: "in-service",
   inService: {
+    // The structural step shows threshold channel C14, whose parameters the unit holds at the segment's
+    // <Data> while it is off; ETS writes the values its project holds for them (tools/etsdiff.test.ts),
+    // which only the installation's project file carries.
+    hiddenValuesFromProject: true,
     fingerprint: [
       { name: "application id", object: 3, pid: 13, expect: "0048140c14" },
       { name: "firmware revision", object: 0, pid: 9, expect: "06" },
@@ -46,6 +50,13 @@ export const thebenMeteodata140sInService: DeviceSpec = {
     // "C1 Brightness threshold" (read + transmit), linked to the run's test address while the run
     // observes it.
     link: { comObjRefId: "M-0048_A-140C-14-EB70_O-23_R-229" },
+    // "Activate threshold channel C14", off to on: shows the channel's parameters and objects 84 and 86,
+    // which take the structural flash; the objects stay unlinked (no group address). ETS's partial
+    // downloads of this change and its revert are captured (tools/etsdiff.test.ts): the change writes the
+    // switch, the channel's parameters as the project holds them (its texts included) and the entries
+    // of objects 84 and 86 in the com-object table; the revert sets them back, the channel's parameters
+    // to the segment's <Data>.
+    structural: { paramRefId: "M-0048_A-140C-14-EB70_P-6571_R-6571", value: "1" },
     fullDownload: true,
     // Its wind and rain alarms drive the installation's awnings, and it sends none while it restarts.
     weatherGuard: true,
@@ -56,7 +67,5 @@ export const thebenMeteodata140sInService: DeviceSpec = {
     // the run does not set.
     { kind: "output", label: "C1 Brightness threshold answers on the test link", comObjRefId: "M-0048_A-140C-14-EB70_O-23_R-229" },
   ],
-  unsafe: [
-    { capability: "structuralFlash", reason: "never written to this product on hardware: a product's first structural flash is not run on a unit in service without an ETS capture that pins the change" },
-  ],
+  unsafe: [],
 };

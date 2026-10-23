@@ -234,6 +234,25 @@ test("System 7 readState: a parameter's bytes count only where the device's conf
   expect((await read(unit([0, 3, 0, 0]), live)).paramBase).toEqual(new Map([[SEL, "0"], [X, "3"], [F, "0"]]));
 });
 
+test("System 7 readState: the bits of the parameters the configuration hides are compared with the image, and none where it hides none", async () => {
+  const cfg = parseAppConfig(hiddenXml);
+  const SEL = "M-0002_A-0051-01-0001_P-1_R-1", M = "M-0002_A-0051-01-0001_P-4_R-4";
+  const unit = (bytes: number[]) => {
+    const dev = new MockReadDevice({ 1: 0x1000, 2: 0x1010 });
+    seedBytes(dev, 256, Buffer.from(bytes));
+    dev.mem.set(0x1000, 0);
+    dev.mem.set(0x1010, 0);
+    return dev;
+  };
+  const read = async (bytes: number[], liveParams: Map<string, string>) => (await classify(cfg).readState(asDev(unit(bytes)), cfg.mask, { liveParams, baseParams: liveParams, moduleInstances: [] })).hiddenDiffer;
+  // sel 0 hides x, f, m and y (bytes 1-5), whose <Data> is 03 00 00 00 09.
+  expect(await read([0, 3, 0, 0, 0, 9], new Map())).toEqual([]);
+  expect(await read([0, 3, 0, 0, 0, 7], new Map())).toEqual([{ address: 261, length: 1 }]);
+  expect(await read([0, 4, 0, 1, 0, 9], new Map())).toEqual([{ address: 257, length: 1 }, { address: 259, length: 1 }]);
+  // sel 1 and m 1 place every parameter: no bit is compared, and the read says so by leaving the field out.
+  expect(await read([1, 3, 0x0c, 0x1a, 1, 2], new Map([[SEL, "1"], [M, "1"]]))).toBeUndefined();
+});
+
 corpusDescribe("System B (MV-07B0) readState: parameter drift projection", () => {
   const cfg = app("M-0162_A-0004-11-F245.xml.gz"); // hasModules false: readState image == buildParameterImage(toAppModel(cfg), 4, params)
   const liveParams = new Map<string, string>();

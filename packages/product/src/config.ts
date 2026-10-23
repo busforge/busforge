@@ -116,9 +116,11 @@ export interface CfgBlock {
 // in, which the image check counts as no change (FlashResult.constantsDiffer).
 // `flagsRead`: the read took each object's flags and priority from the device's com-object table into
 // the flag baseline; `flagsUndecoded`: the objects whose flags it could not take (their baseline kept);
-// `flagsUnreadable`: why the table gave no flags, where it gave none.
+// `flagsUnreadable`: why the table gave no flags, where it gave none. `hiddenDiffer`: asked for (compareHidden)
+// and where the read compares them (DeviceReadback.hiddenDiffer), the device's bytes at the parameters its configuration hides that are not
+// the image's, as address ranges (empty: none differ; absent: no such bit compared).
 export type NeverProgrammedReason = "readIncomplete" | "linksUnresolved" | "otherApplication" | "applicationIdNotReported" | "notLoaded" | "imageDiffers" | "imageNotCompared";
-export interface DeviceReadbackInfo { paramsRead: boolean; linksRead: boolean; linkGaps: number; unresolvedObjects?: number[]; unplacedObjects?: number[]; hiddenObjects?: number[]; unknownObjects?: number[]; unprovenAssumptions?: string[]; neverProgrammedKept?: { reason: NeverProgrammedReason; code?: string }[]; constantsDiffer?: ConstantDifference[]; flagsRead?: boolean; flagsUndecoded?: number[]; flagsUnreadable?: string }
+export interface DeviceReadbackInfo { paramsRead: boolean; linksRead: boolean; linkGaps: number; unresolvedObjects?: number[]; unplacedObjects?: number[]; hiddenObjects?: number[]; unknownObjects?: number[]; unprovenAssumptions?: string[]; neverProgrammedKept?: { reason: NeverProgrammedReason; code?: string }[]; constantsDiffer?: ConstantDifference[]; flagsRead?: boolean; flagsUndecoded?: number[]; flagsUnreadable?: string; hiddenDiffer?: { address: number; length: number }[] }
 
 // What can be done with a device today, split by aspect. Read and write are independent
 // capabilities (an unsupported family may be neither), as are parameters and links. Defined here

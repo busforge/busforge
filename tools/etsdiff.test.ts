@@ -2224,6 +2224,20 @@ corpusDescribe("Theben Meteodata 140 S (M-0048_A-140C-14-EB70) against ETS", () 
     expect(Array.from({ length: 13 }, (_, i) => ours.get(0x49f0 + i))).toEqual([...data.subarray(0x1f0, 0x1fc), data[0x1fc] & ~0x01]);
   });
 
+  test("the parameters the configuration hides: C14's bytes while it is off, where ETS's full download holds the segment's <Data>, and none the configuration places", () => {
+    const hiddenAt = (values: Map<string, string>) => new Map(buildAbsoluteSegmentTargets(cfg, values).flatMap((t) => t.hidden.flatMap((h, i) => (h ? [[t.address + i, h] as [number, number]] : []))));
+    const off = hiddenAt(projectParams), on = hiddenAt(c14On);
+    // 0x49F0-0x49FB: the channel's parameters, whole bytes.
+    // 0x49FC: P-6542 (0xF0) and P-6988 (0x0C) hidden, the switch P-6571 (0x01) placed.
+    expect(Array.from({ length: 13 }, (_, i) => off.get(0x49f0 + i) ?? 0)).toEqual([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfc]);
+    // With the channel on, the bits of five of its parameters the project's values do not place stay hidden
+    // (P-6543, P-6992, P-6544 at 0x49FA, P-6548 and P-6551 at 0x49FB).
+    expect(Array.from({ length: 12 }, (_, i) => on.get(0x49f0 + i) ?? 0)).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xf0, 0x0f]);
+    // The unit ETS downloaded holds the image at every hidden bit.
+    const image = new Map(buildAbsoluteSegmentTargets(cfg, projectParams).flatMap((t) => [...t.bytes].map((b, i) => [t.address + i, b] as [number, number])));
+    expect([...off].filter(([a, h]) => ((beforeC14.get(a)! ^ image.get(a)!) & h) !== 0)).toEqual([]);
+  });
+
   test("structural flash switching channel C14 on: ETS's steps, its texts and the project's values of the hidden channel, the bytes ETS writes", () => {
     const { plan } = system7StructuralFlash({ cfg, proc, ia, device: beforeC14, params: c14On, baseParams: projectParams, links: baseline.links });
     expectRevertForm(plan, C14_ON, ia, beforeC14, c14OnLog.image);

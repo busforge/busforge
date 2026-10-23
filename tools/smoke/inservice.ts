@@ -25,7 +25,7 @@ import { guardAddresses, judgeWeather, parseWeatherGuard, WIND_MARGIN, type Weat
 // (adoption, dry runs, the unlink, the restore after a failure).
 export interface InServiceApi {
   // `assume`: values of parameters without a memory location for the read to assume (read-back route).
-  readBack(assume?: { paramRefId: string; value: string }[]): Promise<DeviceReadbackInfo | null>;
+  readBack(assume?: { paramRefId: string; value: string }[], compareHidden?: boolean): Promise<DeviceReadbackInfo | null>;
   // Discard the project's edits: every parameter and link takes the baseline the last read-back set.
   revert(): Promise<unknown>;
   getConfig(): Promise<ConfigView>;
@@ -217,6 +217,7 @@ export function inServiceProblems(spec: DeviceSpec): string[] {
   if (spec.fuzz) out.push("a fuzz policy has no place on a device in service");
   if (spec.structuralTrigger) out.push("structuralTrigger is for the bench specs; a device in service names its structural step in inService.structural");
   if (s.param && s.structural && s.param.paramRefId === s.structural.paramRefId) out.push("param and structural name the same parameter");
+  if (s.hiddenValuesFromProject && !s.structural) out.push("hiddenValuesFromProject without a structural step: no step shows a parameter the unit hides");
   for (const b of spec.behaviours) {
     if (b.kind !== "output" && b.kind !== "heartbeat") { out.push(`behaviour ${b.label}: only output and heartbeat behaviours observe the linked object`); continue; }
     if (!s.link) { out.push(`behaviour ${b.label}: there is no link to observe it on`); continue; }
@@ -233,13 +234,15 @@ export function inServiceProblems(spec: DeviceSpec): string[] {
 
 const short = (ref: string) => ref.split("_").slice(-2).join("_");
 
-// What the operator's options must hold for this spec: a Data Secure unit needs the installation's
-// project file, and only such a unit takes one; a weather station needs the weather guard, and only
+// What the operator's options must hold for this spec: a Data Secure unit, and one whose hidden
+// parameters take the project's values, needs the installation's project file, and only such a unit
+// takes one; a weather station needs the weather guard, and only
 // such a unit takes one; a link step needs a valid test address.
 export function optionProblems(spec: DeviceSpec, opts: InServiceOptions): string[] {
   const out: string[] = [];
   if (spec.inService?.dataSecure && !opts.knxproj) out.push("the unit runs Data Secure: its keys come from the installation's project file (--knxproj=<file>, password in BUSFORGE_SMOKE_KNXPROJ_PASSWORD)");
-  if (!spec.inService?.dataSecure && opts.knxproj) out.push("--knxproj is read for a Data Secure unit's keys only; this unit is taken over without the installation's project");
+  if (spec.inService?.hiddenValuesFromProject && !spec.inService.dataSecure && !opts.knxproj) out.push("the unit's hidden parameters take the values of the installation's project file (--knxproj=<file>, password in BUSFORGE_SMOKE_KNXPROJ_PASSWORD)");
+  if (!spec.inService?.dataSecure && !spec.inService?.hiddenValuesFromProject && opts.knxproj) out.push("--knxproj is read for a Data Secure unit's keys, or for the values of parameters a unit hides (hiddenValuesFromProject), only; this unit is taken over without the installation's project");
   if (spec.inService?.weatherGuard && !opts.weatherGuard) out.push("the unit is a weather station: the run needs the installation's weather addresses and wind threshold (--weather-guard=wind:<ga>:<m/s>,<name>:<ga>,...)");
   if (!spec.inService?.weatherGuard && opts.weatherGuard) out.push("--weather-guard is read for a weather station only; this spec declares none");
   if (spec.inService?.weatherGuard && opts.weatherGuard) { const g = parseWeatherGuard(opts.weatherGuard); if ("refused" in g) out.push(g.refused); }
@@ -249,6 +252,19 @@ export function optionProblems(spec: DeviceSpec, opts: InServiceOptions): string
   const bad = `--test-ga=${opts.testGa} is not a group address of the form main/middle/sub`;
   if (!/^\d+\/\d+\/\d+$/.test(opts.testGa)) return [...out, bad];
   try { gaToNum(opts.testGa); return out; } catch { return [...out, bad]; }
+}
+
+// The tool key the installation's project file holds for an in-service unit (`sec`, base64 as the import
+// gives it) decides the runner's own sessions: a Data Secure unit needs it; a plain unit taken over for its
+// hidden values must have none, since a key would put the server's connections to it under Data Secure,
+// which the spec does not declare.
+export function inServiceFileKey(spec: DeviceSpec, sec: { toolKey: string; serialNumber: string } | undefined): { creds: { toolKey: Buffer; serial: Buffer } | undefined } | { refused: string } {
+  if (spec.inService?.dataSecure) {
+    if (!sec) return { refused: `the project file holds no tool key for the device at ${spec.device.ia}` };
+    return { creds: { toolKey: Buffer.from(sec.toolKey, "base64"), serial: Buffer.from(sec.serialNumber, "base64") } };
+  }
+  if (sec) return { refused: `the project file holds a tool key for the device at ${spec.device.ia}, which the spec takes over as a plain unit` };
+  return { creds: undefined };
 }
 
 // The sequence runInService performs, without a device. Values the device holds are named, not
@@ -270,12 +286,13 @@ export function planInService(spec: DeviceSpec, opts: InServiceOptions): PlanSte
       const g = opts.weatherGuard ? parseWeatherGuard(opts.weatherGuard) : null;
       if (g && !("refused" in g)) read(`weather guard, before the channel and before every write and restart (the undo's included): wind ${g.wind.ga} must answer below ${WIND_MARGIN * 100} % of ${g.wind.thresholdMs} m/s${g.bits.length ? `, ${g.bits.map((b) => `${b.name} ${b.ga}`).join(", ")} must answer 0` : ""}; an address the unit itself does not answer stops the run`);
       if (s.dataSecure) read(`the project file given with --knxproj is imported; the unit at ${spec.device.ia} must be this spec's product, and the file must hold its tool key: the server takes the unit's keys and those of its group addresses with it, and the runner's own connections (fingerprint, restart) open the unit's secure session`);
+      else if (s.hiddenValuesFromProject) read(`the project file given with --knxproj is imported; the unit at ${spec.device.ia} must be this spec's product and must hold no tool key in it: the project holds ETS's values of the parameters the unit hides`);
       const iface = s.ipInterface;
       read(`route: the individual address the interface reports for itself (KNXnet/IP device information) and the run's tunnel address${!iface ? "" : iface.restart === "drops" ? `; through ${iface.ia} too, whose tunnels a restart of this unit drops (${iface.shown}): the runner's own tunnels reconnect after it, and a tunnel loss is no proof of the reboot; refused when the interface is the unit itself` : `; through ${iface.ia} too, whose tunnels a restart of this unit keeps (${iface.shown})`}`);
       read(`fingerprint: ${s.fingerprint.map((f) => `${fingerprintTarget(f)} (${f.name}) = ${f.expect}`).join(", ")}`);
     }
-    if (phase === "adopt") read(`read-back${s.assumeParams?.length ? `, assuming ${s.assumeParams.map((e) => `${short(e.paramRefId)} (${e.name}) = ${e.value}`).join(", ")} (parameters the device does not hold: the server takes them only if the device's configuration then shows an object for every link and a parameter dry run under them finds nothing to write)` : ""}; the project takes the device's values; a second read-back under them must resolve every association (the server then no longer counts the device as never programmed from this project); the dry runs of the writes the product offers (parameter flash, GA flash) must find nothing to write (the server keeps their backups; a download that always writes, as System 1's: no byte that differs); the configuration found is recorded${s.expectParams?.length ? `; the device's own values: ${s.expectParams.map((e) => `${short(e.paramRefId)} (${e.name}) = ${e.value}`).join(", ")}` : ""}`);
-    if (phase === "capabilities") read(`every claimed write capability has its step in the spec or is declared unsafe; readParams and readLinks are claimed; every step's target is visible on the device${s.link ? `; ${short(s.link.comObjRefId)} is ${s.link.addToLinked ? "linked" : "unlinked"} on the device${spec.behaviours.some((b) => b.kind === "output") ? " and has its read flag" : ""}; the test address: no object of the unit uses it${s.link.addToLinked ? ", it lies above every address of the object (which keeps sending on its own first address)" : ""}, nothing on the bus answers a read of it or sends on it within 5 s${s.dataSecure ? ", it is no group address of the installation's project" : ""}` : ""}`);
+    if (phase === "adopt") read(`read-back${s.assumeParams?.length ? `, assuming ${s.assumeParams.map((e) => `${short(e.paramRefId)} (${e.name}) = ${e.value}`).join(", ")} (parameters the device does not hold: the server takes them only if the device's configuration then shows an object for every link and a parameter dry run under them finds nothing to write)` : ""}; the project takes the device's values; a second read-back under them must resolve every association (the server then no longer counts the device as never programmed from this project); the dry runs of the writes the product offers (parameter flash, GA flash) must find nothing to write (the server keeps their backups; a download that always writes, as System 1's: no byte that differs); the configuration found is recorded${s.expectParams?.length ? `; the device's own values: ${s.expectParams.map((e) => `${short(e.paramRefId)} (${e.name}) = ${e.value}`).join(", ")}` : ""}${s.hiddenValuesFromProject ? "; the configuration found must be the installation project's (each parameter it shows holds the project's value, and the project shows no other), so the parameters the unit hides keep the project's values; the second read-back must find the segment's <Data> at every parameter the configuration hides, which the structural step's revert writes there" : ""}`);
+    if (phase === "capabilities") read(`every claimed write capability has its step in the spec or is declared unsafe; readParams and readLinks are claimed; every step's target is visible on the device${s.link ? `; ${short(s.link.comObjRefId)} is ${s.link.addToLinked ? "linked" : "unlinked"} on the device${spec.behaviours.some((b) => b.kind === "output") ? " and has its read flag" : ""}; the test address: no object of the unit uses it${s.link.addToLinked ? ", it lies above every address of the object (which keeps sending on its own first address)" : ""}, nothing on the bus answers a read of it or sends on it within 5 s${s.dataSecure || s.hiddenValuesFromProject ? ", it is no group address of the installation's project" : ""}` : ""}`);
     if (phase === "params" || phase === "links" || phase === "structural" || phase === "fullDownload") read("before each write: the project holds the configuration found plus this step only, and the other kind of write, where the product offers it, reports unchanged");
     if (phase === "params") {
       const p = s.param!;
@@ -301,16 +318,23 @@ export function planInService(spec: DeviceSpec, opts: InServiceOptions): PlanSte
       const t = s.structural!;
       write("structuralFlash", `structural flash: ${short(t.paramRefId)} from the device's value to ${t.value} (dry run first: structural)`);
       write("structuralFlash", `structural flash: ${short(t.paramRefId)} back to the device's value (dry run first: structural)`);
-      read("read-back: nothing differs from the configuration found");
+      read(`read-back: nothing differs from the configuration found${s.hiddenValuesFromProject ? "; a read-back comparing the parameters the configuration hides finds the segment's <Data> at each" : ""}`);
     }
     if (phase === "fullDownload") {
       write("fullDownload", "full download of the configuration found (requested with --full-download)");
-      read("read-back: nothing differs from the configuration found");
+      read(`read-back: nothing differs from the configuration found${s.hiddenValuesFromProject ? "; a read-back comparing the parameters the configuration hides finds the segment's <Data> at each" : ""}`);
       if (!s.link) out.push({ phase, kind: "restart", text: `A_Restart, reboot observed, ${loaded}, read-back equal to the project` });
     }
     if (phase === "final") read("the dry runs of the writes the product offers find nothing to write: the device holds the configuration it was found with");
   }
   return out;
+}
+
+// What a read-back asked to compare the parameters the configuration hides (compareHidden) shows against
+// the unit holding the segment's <Data> there: null when it compared bits and found none differing.
+function hiddenLeft(rb: DeviceReadbackInfo | null): string | null {
+  if (!rb?.hiddenDiffer) return "the read-back compared no bits of parameters the unit's configuration hides with the segment's <Data>";
+  return rb.hiddenDiffer.length ? `at parameters its configuration hides the unit holds other bytes than the segment's <Data> (${rangeText(rb.hiddenDiffer)})` : null;
 }
 
 class Stop extends Error { constructor(readonly phase: string, readonly detail: string) { super(detail); } }
@@ -539,6 +563,13 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
     if (left) throw new Stop(phase, left);
     const extra = apartFromStep(await io.api.getConfig(), found!);
     if (extra.length) throw new Stop(phase, `${what}: the device differs from the configuration found in ${extra.slice(0, 5).join(", ")}`);
+    // The writes that show and hide parameters (the structural step, the full download) must leave the
+    // <Data> the adoption found at the parameters the configuration hides, which no other check compares.
+    if (s?.hiddenValuesFromProject && (phase === "structuralFlash" || phase === "fullDownload")) {
+      const hiddenOff = hiddenLeft(await io.api.readBack(undefined, true));
+      await io.settle(3000);
+      if (hiddenOff) throw new Stop(phase, `${what}: ${hiddenOff}`);
+    }
     channelReadOk = true;
   };
 
@@ -618,7 +649,8 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
         // A freshly placed device shows the catalogue defaults, under which objects the unit uses may
         // be hidden, so their links count as unresolved on the first read. The project first takes
         // the device's parameters, and a second read must then resolve every link.
-        claims = (await io.api.getConfig()).capabilities;
+        const projectView = await io.api.getConfig();
+        claims = projectView.capabilities;
         if (!claims) throw new Stop(phase, "device config carried no capabilities");
         const assume = (si.assumeParams ?? []).map(({ paramRefId, value }) => ({ paramRefId, value }));
         let first: DeviceReadbackInfo | null;
@@ -629,11 +661,15 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
         if (unproven.length) io.log(`assumed, not shown by the device (another value writes the same): ${unproven.map(short).join(", ")}`);
         await io.settle(3000);
         await io.api.revert();
-        const second = await io.api.readBack();
+        const second = await io.api.readBack(undefined, si.hiddenValuesFromProject);
         if (!second?.paramsRead || !second.linksRead) throw new Stop(phase, "the second read-back did not cover both parameters and links");
         if (second.linkGaps > 0) throw new Stop(phase, `${second.linkGaps} association(s) of the device did not resolve under its own configuration${second.unresolvedObjects?.length ? ` (object(s) ${second.unresolvedObjects.join(", ")})` : ""}; a GA flash would drop them. ${whatResolves(second, assume.length > 0)}`);
         // The project knows the flags a GA or structural flash rewrites only where the read took them.
         if (second.flagsUnreadable || second.flagsUndecoded?.length) throw new Stop(phase, `the read-back could not take the flags of the device's com-object table (${second.flagsUnreadable ?? `object(s) ${second.flagsUndecoded!.join(", ")}`}); a write that rewrites it would not know them`);
+        // A structural step writes the project's values where it shows a hidden parameter, and the segment's
+        // <Data> where it hides it again: only a unit holding the <Data> there gets back the bytes it held.
+        const hiddenOff = si.hiddenValuesFromProject ? hiddenLeft(second) : null;
+        if (hiddenOff) throw new Stop(phase, `${hiddenOff}; the structural step's revert would write the <Data> there, not what the unit held`);
         await io.settle(3000);
         await io.api.revert();
         const dries = await dryRuns();
@@ -671,6 +707,18 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
           if (!v || v.refId !== e.paramRefId || v.value !== e.value) throw new Stop(phase, `${e.name}: the configuration taken over shows ${v ? `${v.refId} = ${v.value}` : "no parameter"} for the assumed ${e.paramRefId} = ${e.value}`);
         }
         if (si.assumeParams?.length) io.log(`assumed values taken over: ${si.assumeParams.map((e) => `${e.name} ${e.value}`).join(", ")}`);
+        // The read-back takes every parameter the unit's configuration shows and keeps the project's
+        // values of the others; those are ETS's values of parameters the unit hides only where the
+        // unit's configuration is the project's. Compared: the parameters the config view lists. An
+        // active parameter it does not list (Access="None", a Merker) the read-back never takes, so it
+        // holds the project's value on both sides; with memory, the dry runs above compared its bits.
+        if (si.hiddenValuesFromProject) {
+          const projectParams = new Map(allParams(projectView).map((p) => [p.refId, p.value]));
+          const foundParams = new Map(allParams(view).map((p) => [p.refId, p.value]));
+          const differ = [...new Set([...projectParams.keys(), ...foundParams.keys()])].filter((r) => projectParams.get(r) !== foundParams.get(r));
+          if (differ.length) throw new Stop(phase, `the configuration found is not the installation project's: ${differ.length} parameter(s) differ (${differ.slice(0, 8).map((r) => `${short(r)} project ${projectParams.get(r) ?? "not shown"}, unit ${foundParams.get(r) ?? "not shown"}`).join("; ")}${differ.length > 8 ? "; ..." : ""}), so the project's values of the parameters the unit hides would be those of another configuration`);
+          io.log("the configuration found is the installation project's: the parameters the unit hides keep the project's values");
+        }
       }
 
       if (phase === "capabilities") {
@@ -843,7 +891,7 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
   } catch (e) {
     stopped = e instanceof Stop ? { phase: e.phase, detail: e.detail } : { phase: at, detail: errText(e) };
     io.log(`stopped in ${stopped.phase}: ${stopped.detail}`);
-    if (out.params.size || out.links.size) restore = await undo(io, out, found!, claims!);
+    if (out.params.size || out.links.size) restore = await undo(io, out, found!, claims!, s?.hiddenValuesFromProject === true);
     else if (downloadOut) restore = { state: "fail", detail: "the full download broke off: the device may hold its application unloaded. Recover by hand from the configuration found and the server's backups" };
   }
 
@@ -860,7 +908,9 @@ export async function runInService(spec: DeviceSpec, io: InServiceIo, opts: InSe
 // the configuration found, then write the difference with the kind of flash the change went out
 // with, over the API. A dry run that finds nothing to write means the device never took the change.
 // Never a full download.
-async function undo(io: InServiceIo, out: Outstanding, found: FoundConfiguration, claims: DeviceCapabilities): Promise<NonNullable<InServiceResult["restore"]>> {
+// `hidden`: the spec takes hidden values from the project (hiddenValuesFromProject), so the undo's read-back
+// also compares the bits of the parameters the configuration hides with the segment's <Data>.
+async function undo(io: InServiceIo, out: Outstanding, found: FoundConfiguration, claims: DeviceCapabilities, hidden: boolean): Promise<NonNullable<InServiceResult["restore"]>> {
   const done: string[] = [];
   // The bytes the adoption took as not given back, left by the undo's flash: they hold the project's value
   // the run's parameter write set, and what the unit held there before is not known.
@@ -891,8 +941,11 @@ async function undo(io: InServiceIo, out: Outstanding, found: FoundConfiguration
       done.push("links written back");
       await io.settle(3000);
     } else if (gDry) done.push(`links: dry run ${dryKind(gDry)}, nothing to write back`);
-    const drift = await noDrift(io, await io.api.readBack(), "after the undo");
-    return drift ? fail(drift) : { state: "pass", detail: `${done.join("; ")}; read-back without drift` };
+    const rb = await io.api.readBack(undefined, hidden || undefined);
+    const drift = await noDrift(io, rb, "after the undo");
+    if (drift) return fail(drift);
+    const hiddenOff = hidden ? hiddenLeft(rb) : null;
+    return hiddenOff ? fail(`after the undo ${hiddenOff}`) : { state: "pass", detail: `${done.join("; ")}; read-back without drift${hidden ? ", the <Data> at every parameter the configuration hides" : ""}` };
   } catch (e) {
     return fail(`undo aborted: ${errText(e)}`);
   }

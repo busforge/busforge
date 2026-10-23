@@ -97,8 +97,9 @@ export class Client {
   // the task's result; a large application reads for minutes, past what one request can be held open
   // for (Bun's fetch gives up after 300 s). A coded refusal before queueing (DEVICE_READBACK_UNSUPPORTED)
   // and a coded end of the task (DEVICE_NOT_ANSWERING, READBACK_ASSUMPTION_*) throw as an ApiError.
-  readBack(pid: string, did: string, onPhase?: (p: string) => void, assume?: { paramRefId: string; value: string }[]): Promise<DeviceReadbackInfo> {
-    return this.submitAndWait(pid, `/api/projects/${pid}/devices/${did}/read-back`, "read-back", onPhase, assume ? { assume } : {});
+  // `compareHidden`: the read also reports the bytes at parameters the configuration hides that are not the image's (hiddenDiffer).
+  readBack(pid: string, did: string, onPhase?: (p: string) => void, assume?: { paramRefId: string; value: string }[], compareHidden?: boolean): Promise<DeviceReadbackInfo> {
+    return this.submitAndWait(pid, `/api/projects/${pid}/devices/${did}/read-back`, "read-back", onPhase, { ...(assume ? { assume } : {}), ...(compareHidden ? { compareHidden } : {}) });
   }
   tasks(pid: string) { return this.call<Task[]>("GET", `/api/projects/${pid}/tasks`); }
   private projectFull(pid: string) { return this.call<ProjectView>("GET", `/api/projects/${pid}`); }

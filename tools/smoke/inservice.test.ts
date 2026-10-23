@@ -2,7 +2,7 @@ import { test, expect, describe } from "bun:test";
 import { gaToNum } from "../../packages/knx/src/index.ts";
 import type { CfgItem, DeviceCapabilities, DeviceConfigView } from "../../packages/product/src/index.ts";
 import type { FlashResult } from "./client.ts";
-import { runInService, planInService, inServiceProblems, inServicePhases, whatResolves, type InServiceIo, type InServiceOptions } from "./inservice.ts";
+import { runInService, planInService, inServiceProblems, inServiceFileKey, inServicePhases, whatResolves, type InServiceIo, type InServiceOptions } from "./inservice.ts";
 import { runEvidence, type RunConditions } from "./evidence.ts";
 import { openknxRaumControllerInService as spec } from "./specs/openknx-raumcontroller-in-service.ts";
 import { SPECS } from "./specs/index.ts";
@@ -37,6 +37,7 @@ interface Script {
   unlinkThrows?: boolean;                    // the GA flash that takes the test address back breaks off
   sideEffect?: boolean;                      // setting the step's parameter also changes another one
   chanThrowsOnSecondParamFlash?: boolean;    // the channel fails while writing the revert
+  chanThrowsOnStructuralRevert?: boolean;    // the channel fails while writing the structural step's revert, which the unit took
   rebootThrows?: boolean;
   rebootUnproven?: boolean;
   unloadedAfterReboot?: boolean;
@@ -55,6 +56,8 @@ interface Script {
   system1?: boolean;                         // a System 1 unit: no GA flash, a download that always writes, a run error byte
   runErrorAfter?: number;                    // the run error byte after the reboot
   gaInProject?: boolean;                     // the project already holds the test address
+  hiddenLeftAfterStructural?: { address: number; length: number }[]; // what hiddenDiffer reports once a structural flash has gone out
+  hiddenDiffer?: { address: number; length: number }[]; // asked for, where the unit holds other bytes than the image at the parameters its configuration hides (absent: the read does not compare them)
   // A field the unit stores and reads as FF (the MDT IP Interface/Router's web interface password): every
   // parameter dry run differs there, named in readsFF; a parameter write rests there on its confirmation
   // alone, unless `givenBack` (the unit returns the bytes once written: it held FF, not the project's value).
@@ -113,7 +116,7 @@ function scripted(sc: Script = {}) {
   };
   const io: InServiceIo = {
     api: {
-      readBack: async (assume) => {
+      readBack: async (assume, compareHidden) => {
         calls.push("read");
         for (const a of assume ?? []) {
           if (a.paramRefId !== MEMLESS) throw Object.assign(new Error(`${a.paramRefId} has a memory location`), { code: "READBACK_ASSUMPTION_HAS_MEMORY" });
@@ -126,7 +129,7 @@ function scripted(sc: Script = {}) {
         return {
           paramsRead: true, linksRead: true, linkGaps: n,
           ...(n ? { unresolvedObjects: sp.all, ...(sp.unplaced.length ? { unplacedObjects: sp.unplaced } : {}), ...(sp.hidden.length ? { hiddenObjects: sp.hidden } : {}), ...(sp.unknown.length ? { unknownObjects: sp.unknown } : {}) } : {}),
-          flagsRead: !sc.flagsNotTaken?.flagsUnreadable, ...sc.flagsNotTaken,
+          flagsRead: !sc.flagsNotTaken?.flagsUnreadable, ...sc.flagsNotTaken, ...(compareHidden && sc.hiddenDiffer ? { hiddenDiffer: sc.hiddenLeftAfterStructural && calls.includes("structuralFlash") ? sc.hiddenLeftAfterStructural : sc.hiddenDiffer } : {}),
         };
       },
       revert: async () => { project.params = { ...base.params }; project.links = structuredClone(base.links); },
@@ -149,7 +152,7 @@ function scripted(sc: Script = {}) {
       setParam: async (ref, value) => { project.params[ref] = value; if (sc.sideEffect && ref === PARAM && value !== device.params[PARAM]) project.params[STRUCT] = "5"; },
       link: async (obj, ga) => { project.links[obj.refId] = [gaToNum(ga)]; },
       addLink: async (obj, ga, own) => { calls.push("chan.addLink"); project.links[obj.refId] = [...own, gaToNum(ga)]; },
-      flashParams: async () => { if (sc.chanThrowsOnSecondParamFlash && calls.filter((c) => c === "flashParams").length === 1) { calls.push("flashParams"); device.params = { ...project.params }; throw new Error("dialog closed"); } const r = await io.api.flashReal(); return { structural: r.structural === true, result: r }; },
+      flashParams: async () => { if (sc.chanThrowsOnStructuralRevert && calls.filter((c) => c === "structuralFlash").length === 1) { calls.push("structuralFlash"); device.params = { ...project.params }; throw new Error("dialog closed"); } if (sc.chanThrowsOnSecondParamFlash && calls.filter((c) => c === "flashParams").length === 1) { calls.push("flashParams"); device.params = { ...project.params }; throw new Error("dialog closed"); } const r = await io.api.flashReal(); return { structural: r.structural === true, result: r }; },
       flashLinks: async () => { const r = await io.api.flashGaReal(); return { structural: false, result: r }; },
       fullDownload: async () => { calls.push("fullDownload"); if (sc.downloadBreaks) throw new Error("TUNNEL_ACK_TIMEOUT: no ack"); device.params = { ...project.params }; device.links = structuredClone(project.links); return { structural: false, result: result("flashed", { verified: true }) }; },
       readBack: () => io.api.readBack(),
@@ -931,7 +934,7 @@ describe("a device in service with KNX Data Secure", () => {
 
   test("the installation's project file is required, and taken only for such a unit", async () => {
     expect(() => planInService(secure, NO_FULL)).toThrow("its keys come from the installation's project file (--knxproj=<file>");
-    expect(() => planInService(spec, WITH_FILE)).toThrow("--knxproj is read for a Data Secure unit's keys only");
+    expect(() => planInService(spec, WITH_FILE)).toThrow("--knxproj is read for a Data Secure unit's keys, or for the values of parameters a unit hides (hiddenValuesFromProject), only");
     const { io, calls } = scripted();
     expect((await runInService(secure, io, NO_FULL)).stopped?.phase).toBe("spec");
     expect(calls).toEqual([]);
@@ -951,6 +954,101 @@ describe("a device in service with KNX Data Secure", () => {
     expect(r.stopped).toEqual({ phase: "capabilities", detail: "the test address is a group address of the installation's project; give one the installation does not use" });
     expect(writesOf(calls)).toEqual([]);
     expect(plain).toEqual([]);
+  });
+});
+
+describe("a device in service whose hidden parameters take the installation project's values", () => {
+  const hv: DeviceSpec = { ...spec, id: "hidden", inService: { ...spec.inService!, hiddenValuesFromProject: true, structural: { paramRefId: STRUCT, value: "0" } }, unsafe: [] };
+  const WITH_FILE: InServiceOptions = { ...NO_FULL, knxproj: "installation.knxproj" };
+  const sc = { caps: { structuralFlash: true }, structuralParams: [STRUCT], hiddenDiffer: [] };
+
+  test("the installation's project file is required, and a unit neither Data Secure nor of such a spec takes none", () => {
+    expect(() => planInService(hv, NO_FULL)).toThrow("the unit's hidden parameters take the values of the installation's project file (--knxproj=<file>");
+    expect(() => planInService(spec, { ...NO_FULL, knxproj: "installation.knxproj" })).toThrow("--knxproj is read for a Data Secure unit's keys, or for the values of parameters a unit hides (hiddenValuesFromProject), only");
+    expect(planInService(hv, WITH_FILE).some((p) => p.text.includes("must hold no tool key in it: the project holds ETS's values of the parameters the unit hides"))).toBe(true);
+  });
+
+  test("the flag without a structural step is refused: no step shows a hidden parameter", () => {
+    const { structural: _, ...noStep } = hv.inService!;
+    expect(inServiceProblems({ ...hv, inService: noStep })).toEqual(["hiddenValuesFromProject without a structural step: no step shows a parameter the unit hides"]);
+  });
+
+  test("the configuration found is the project's and holds the <Data> at the hidden parameters: the run passes", async () => {
+    const s = scripted(sc);
+    const r = await runInService(hv, s.io, WITH_FILE);
+    expect(r.ok).toBe(true);
+    expect(writesOf(s.calls)).toEqual(planned(hv, WITH_FILE));
+    expect(s.device).toEqual(s.start);
+  });
+
+  test("a project whose value of a parameter the unit shows is not the unit's is refused before any write", async () => {
+    const s = scripted({ ...sc, placedWithDefaults: true });
+    const r = await runInService(hv, s.io, WITH_FILE);
+    expect(r.stopped?.phase).toBe("adopt");
+    expect(r.stopped?.detail).toBe(`the configuration found is not the installation project's: 1 parameter(s) differ (${STRUCT.split("_").slice(-2).join("_")} project 0, unit 1), so the project's values of the parameters the unit hides would be those of another configuration`);
+    expect(writesOf(s.calls)).toEqual([]);
+  });
+
+  test("a unit holding other bytes than the <Data> at a hidden parameter is refused before any write", async () => {
+    const s = scripted({ ...sc, hiddenDiffer: [{ address: 0x49f5, length: 2 }] });
+    const r = await runInService(hv, s.io, WITH_FILE);
+    expect(r.stopped).toEqual({ phase: "adopt", detail: "at parameters its configuration hides the unit holds other bytes than the segment's <Data> (0x49F5-0x49F6); the structural step's revert would write the <Data> there, not what the unit held" });
+    expect(writesOf(s.calls)).toEqual([]);
+  });
+
+  test("a read-back that does not compare the hidden parameters' bytes is refused before any write", async () => {
+    const { hiddenDiffer: _, ...notCompared } = sc;
+    const s = scripted(notCompared);
+    const r = await runInService(hv, s.io, WITH_FILE);
+    expect(r.stopped?.phase).toBe("adopt");
+    expect(r.stopped?.detail).toBe("the read-back compared no bits of parameters the unit's configuration hides with the segment's <Data>; the structural step's revert would write the <Data> there, not what the unit held");
+    expect(writesOf(s.calls)).toEqual([]);
+  });
+
+  test("a structural step that leaves other bytes than the <Data> at hidden parameters stops the run after its revert, and nothing passes", async () => {
+    const s = scripted({ ...sc, hiddenLeftAfterStructural: [{ address: 0x49f5, length: 1 }] });
+    const r = await runInService(hv, s.io, WITH_FILE);
+    expect(r.stopped).toEqual({ phase: "structuralFlash", detail: "after the structuralFlash revert: at parameters its configuration hides the unit holds other bytes than the segment's <Data> (0x49F5)" });
+    expect(r.ok).toBe(false);
+    expect(r.capabilities.find((c) => c.capability === "structuralFlash")?.state).not.toBe("pass");
+  });
+
+  test("the undo after a broken-off structural step compares the hidden parameters' bytes: left over, the restore fails", async () => {
+    const { param: _, ...block } = hv.inService!;
+    const structuralOnly: DeviceSpec = { ...hv, inService: block, unsafe: [{ capability: "flashParams", reason: "the structural step alone" }] };
+    const left = scripted({ ...sc, hiddenLeftAfterStructural: [{ address: 0x49f5, length: 1 }], chanThrowsOnStructuralRevert: true });
+    const r = await runInService(structuralOnly, left.io, WITH_FILE);
+    expect(r.stopped?.phase).toBe("structuralFlash");
+    expect(r.restore?.state).toBe("fail");
+    expect(r.restore?.detail).toContain("after the undo at parameters its configuration hides the unit holds other bytes than the segment's <Data> (0x49F5)");
+    // The undo writing the change back leaves the <Data>: the restore passes and says what it compared.
+    const clean = scripted({ ...sc, chanThrowsOnStructuralRevert: true });
+    const c = await runInService(structuralOnly, clean.io, WITH_FILE);
+    expect(c.restore?.state).toBe("pass");
+    expect(c.restore?.detail).toContain("the <Data> at every parameter the configuration hides");
+  });
+
+  test("a spec without the flag ignores what the read-back reports of the hidden parameters", async () => {
+    const { hiddenValuesFromProject: _, ...plainBlock } = hv.inService!;
+    const plainSpec: DeviceSpec = { ...hv, inService: plainBlock };
+    const s = scripted({ ...sc, hiddenDiffer: [{ address: 0x49f5, length: 1 }], placedWithDefaults: true });
+    expect((await runInService(plainSpec, s.io, NO_FULL)).ok).toBe(true);
+  });
+});
+
+describe("the installation's project file's tool key for an in-service unit", () => {
+  const key = { toolKey: Buffer.alloc(16, 1).toString("base64"), serialNumber: Buffer.alloc(6, 2).toString("base64") };
+  const secure: DeviceSpec = { ...spec, inService: { ...spec.inService!, dataSecure: true } };
+  const plain: DeviceSpec = { ...spec, inService: { ...spec.inService!, hiddenValuesFromProject: true } };
+
+  test("a Data Secure unit takes its tool key, and is refused without one", () => {
+    expect(inServiceFileKey(secure, key)).toEqual({ creds: { toolKey: Buffer.alloc(16, 1), serial: Buffer.alloc(6, 2) } });
+    expect(inServiceFileKey(secure, undefined)).toEqual({ refused: `the project file holds no tool key for the device at ${spec.device.ia}` });
+  });
+
+  test("a plain unit takes none, and is refused when the file holds one", () => {
+    expect(inServiceFileKey(plain, undefined)).toEqual({ creds: undefined });
+    expect(inServiceFileKey(plain, key)).toEqual({ refused: `the project file holds a tool key for the device at ${spec.device.ia}, which the spec takes over as a plain unit` });
   });
 });
 

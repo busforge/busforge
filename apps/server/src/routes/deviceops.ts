@@ -318,11 +318,13 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
   // configuration then shows an object for every link the device holds and a parameter flash dry run
   // under it finds nothing to write; otherwise nothing is stored and the read is refused
   // (READBACK_ASSUMPTION_UNRESOLVED with the objects, READBACK_ASSUMPTION_IMAGE_DIFFERS).
+  // `compareHidden: true` adds `hiddenDiffer` where the family's read compares it (DeviceReadback.hiddenDiffer).
   if (seg.length === 6 && seg[3] === "devices" && seg[5] === "read-back" && req.method === "POST") {
     const deviceId = decodeURIComponent(seg[4]);
     const { dev, conn, appXml } = busOpPreamble(state, id, deviceId);
-    const body = (await req.json().catch(() => ({}))) as { assume?: unknown };
+    const body = (await req.json().catch(() => ({}))) as { assume?: unknown; compareHidden?: unknown };
     const assumed = assumedValues(parseAppConfig(appXml), body.assume);
+    if (body.compareHidden !== undefined && typeof body.compareHidden !== "boolean") return err("READBACK_COMPARE_HIDDEN_INVALID", "compareHidden must be true or false");
     // Refuse up front for device classes whose state we cannot read at all: reading anyway
     // would fabricate a "verified" parameter baseline or corrupt the link baseline. System B
     // and System 7 both read, System 1 where its application declares the EEPROM segment; a
@@ -415,7 +417,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
         const causes = lb?.byCause;
         return { paramsRead: read.paramsRead, linksRead: read.linksRead, linkGaps: lb?.gaps ?? 0, ...(lb?.unresolved.length ? { unresolvedObjects: lb.unresolved } : {}),
           ...(causes?.unplaced.length ? { unplacedObjects: causes.unplaced } : {}), ...(causes?.hidden.length ? { hiddenObjects: causes.hidden } : {}), ...(causes?.unknown.length ? { unknownObjects: causes.unknown } : {}),
-          ...(unproven.length ? { unprovenAssumptions: unproven } : {}), ...(kept.length ? { neverProgrammedKept: kept } : {}), ...(read.constantsDiffer?.length ? { constantsDiffer: read.constantsDiffer } : {}), flagsRead: read.comObjOverrideBase !== undefined, ...(read.comObjFlagsUndecoded?.length ? { flagsUndecoded: read.comObjFlagsUndecoded } : {}), ...(read.comObjFlagsUnreadable ? { flagsUnreadable: read.comObjFlagsUnreadable } : {}) };
+          ...(unproven.length ? { unprovenAssumptions: unproven } : {}), ...(kept.length ? { neverProgrammedKept: kept } : {}), ...(read.constantsDiffer?.length ? { constantsDiffer: read.constantsDiffer } : {}), flagsRead: read.comObjOverrideBase !== undefined, ...(read.comObjFlagsUndecoded?.length ? { flagsUndecoded: read.comObjFlagsUndecoded } : {}), ...(read.comObjFlagsUnreadable ? { flagsUnreadable: read.comObjFlagsUnreadable } : {}), ...(body.compareHidden === true && read.hiddenDiffer ? { hiddenDiffer: read.hiddenDiffer } : {}) };
       },
     );
     return json(task, 202);

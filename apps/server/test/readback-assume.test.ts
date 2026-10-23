@@ -449,4 +449,22 @@ corpusDescribe("a read-back of the Gira Tastsensor 3 Komfort, assuming the value
     } finally { readImpl = realRead; }
     expect(stored(state, pid, did)).toEqual(before);
   });
+
+  test("a compareHidden that is not true or false is refused before the bus is reached", async () => {
+    const { state, path } = await placed(xml);
+    readImpl = async () => { throw new Error("the bus must not be reached"); };
+    try {
+      const r = await readBackAs(handleApi, state, path, { compareHidden: "yes" });
+      expect([r.status, (r.body as Body).error?.code]).toEqual([400, "READBACK_COMPARE_HIDDEN_INVALID"]);
+    } finally { readImpl = realRead; }
+  });
+
+  test("the bits of the parameters the configuration hides are reported only when asked for", async () => {
+    const asked = await placed(xml);
+    const withIt = await onUnit(() => readBackAs(handleApi, asked.state, asked.path, { compareHidden: true }));
+    expect(Array.isArray((withIt.body as Body).readback?.hiddenDiffer)).toBe(true);
+    const plain = await placed(xml);
+    const without = await onUnit(() => readBack(plain.state, plain.path));
+    expect((without.body as Body).readback?.hiddenDiffer).toBeUndefined();
+  });
 });

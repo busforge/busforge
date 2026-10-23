@@ -144,7 +144,12 @@ export interface DeviceSegmentImage { id: string; address: number; size: number;
 // User-facing parameters (Access != None) stay in `verify`, so a real mis-write still fails.
 // `constant` is the subset of owned bits that hold a constant parameter's value (constantParams): a
 // unit differing from the image only there holds the configuration. `constants` names whose they are.
-export interface DeviceSegmentTarget extends DeviceSegmentImage { owned: number[]; verify: number[]; constant: number[]; constants: ConstantPlacement[]; }
+// `hidden`: the bits of the parameters the configuration does not place, where none it places lies: the
+// image holds the segment's <Data> there (FF past the end of its <Data>, zero in a segment without
+// <Data>), and a write that places
+// such a parameter writes its value there (a structural flash, which writes the image's bits back
+// once it hides the parameter again).
+export interface DeviceSegmentTarget extends DeviceSegmentImage { owned: number[]; verify: number[]; constant: number[]; constants: ConstantPlacement[]; hidden: number[] }
 
 // A constant parameter placed in a segment: its ParameterRef and the bits it holds there.
 export interface ConstantPlacement { paramRefId: string; paramId: string; offset: number; bitOffset: number; sizeInBit: number }
@@ -236,13 +241,16 @@ export function buildAbsoluteSegmentTargets(
     const constant = new Array<number>(seg.size).fill(0);
     const placements: ConstantPlacement[] = [];
     const constants = constantsAlone(app, [...model.params.values()].filter((p) => p.codeSegment === segId), model.types, seg.size);
+    const hidden = new Array<number>(seg.size).fill(0), placed = new Array<number>(seg.size).fill(0);
     for (const ref of model.refs.values()) {
       const param = model.params.get(ref.paramId);
       if (!param || param.codeSegment !== segId || param.offset === undefined) continue;
       const v = active.get(ref.id);
-      if (v === undefined) continue; // not visible / not active: keep the <Data> default
       const type = model.types.get(param.typeId);
-      if (!type || !Number.isFinite(type.sizeInBit) || type.sizeInBit === 0) continue;
+      const sized = !!type && Number.isFinite(type.sizeInBit) && type.sizeInBit > 0;
+      if (sized) markOwned(v === undefined ? hidden : placed, [], param.offset, param.bitOffset, type!.sizeInBit, seg.size, false);
+      if (v === undefined) continue; // not visible / not active: keep the <Data> default
+      if (!type || !sized) continue;
       // A colour on these segments: no ETS capture of a product with absolute segments shows one, so the
       // bytes stay unowned and refuseColorWrites refuses an operation that would have to write one.
       if (type.base === "Color") continue;
@@ -291,7 +299,7 @@ export function buildAbsoluteSegmentTargets(
         placements.push({ paramRefId: ref.id, paramId: param.id, offset: param.offset, bitOffset: param.bitOffset ?? 0, sizeInBit: type.sizeInBit });
       }
     }
-    out.push({ id: segId, address: seg.address, size: seg.size, bytes: img, owned, verify, constant, constants: placements });
+    out.push({ id: segId, address: seg.address, size: seg.size, bytes: img, owned, verify, constant, constants: placements, hidden: hidden.map((h, i) => h & ~placed[i] & 0xff) });
   }
   return out.sort((a, b) => a.address - b.address);
 }

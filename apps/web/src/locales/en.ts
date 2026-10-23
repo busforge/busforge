@@ -318,6 +318,7 @@ const en = {
     DEVICE_LOAD_INCOMPLETE: "The device already holds these bytes, but the part of it they belong to is not in the loaded state (an earlier write was interrupted), so it is not running them. This flash writes only what differs and cannot finish that; run a full download (with ETS where Busforge's full download does not load this application).",
     READBACK_UNSTABLE: "The device's configuration could not be read back reliably: which of its settings are in use never settled. Nothing was recorded.",
     READBACK_ASSUMPTION_INVALID: "The values to assume for the read-back are not valid: each needs a parameter and a value its type takes, once. Nothing was read.",
+    READBACK_COMPARE_HIDDEN_INVALID: "The request to compare the bytes of the hidden parameters on the read-back is not valid: it must be true or false. Nothing was read.",
     READBACK_ASSUMPTION_UNKNOWN_PARAM: "A parameter to assume for the read-back is not part of this device's application. Nothing was read.",
     READBACK_ASSUMPTION_HAS_MEMORY: "A parameter to assume is held by the device, in its memory or a property, so the read-back reads it; it cannot be assumed. Nothing was read.",
     READBACK_ASSUMPTION_UNPROVEN: "The read-back did not cover both parameters and links, so it cannot show the assumed values hold. Nothing was stored.",

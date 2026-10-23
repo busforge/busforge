@@ -165,6 +165,13 @@ function dropUnownedText(model: AppModel, vals: Map<string, string>, segOf: (p: 
   }
 }
 
+// Ascending device addresses as runs of consecutive bytes.
+function byteRanges(addresses: number[]): { address: number; length: number }[] {
+  const out: { address: number; length: number }[] = [];
+  for (const a of addresses) { const last = out[out.length - 1]; if (last && last.address + last.length === a) last.length++; else out.push({ address: a, length: 1 }); }
+  return out;
+}
+
 // Which refs a read-back records drift for: the ones the project's configuration shows, plus the
 // ones the DEVICE's configuration shows. Visibility depends on parameter values (a sensor type set
 // to "none" hides every setting of that sensor), so relevance from the project alone skips exactly
@@ -705,7 +712,10 @@ const structural = async (r: Promise<FlashResult>): Promise<FlashResult> => ({ .
 // object number (decodeComObjectTable, decodeComObjectTableMv0705); absent where the read does not
 // cover the table, or could not read it (`comObjFlagsUnreadable` says why: a read of parameters and
 // links that has succeeded is not ended by it).
-export interface DeviceReadback { mask: string; paramsRead: boolean; linksRead: boolean; paramBase: Map<string, string>; links: ComObjectLink[]; deviceConfig?: Map<string, string>; comObjFlags?: Map<number, ObservedComObjFlags>; comObjFlagsUnreadable?: string; }
+// `hiddenDiffer`: where a read compares them (absolute segments whose configuration hides any parameter bit), the
+// device's bytes whose bits of the parameters the read's configuration hides (DeviceSegmentTarget.hidden) are not
+// the image's, as address ranges; absent where no such bit was compared.
+export interface DeviceReadback { mask: string; paramsRead: boolean; linksRead: boolean; paramBase: Map<string, string>; links: ComObjectLink[]; deviceConfig?: Map<string, string>; comObjFlags?: Map<number, ObservedComObjFlags>; comObjFlagsUnreadable?: string; hiddenDiffer?: { address: number; length: number }[]; }
 
 // The flags a read takes from a com-object table, or why the table gave none: any failure of reading or
 // decoding the table alone (a table not loaded, one that contradicts itself or the application, a read
@@ -1968,7 +1978,9 @@ export class System7Profile extends DeviceProfile {
       const links = decodeGroupTablesMv0705(gt.addr, gt.assoc);
       const linked = new Set(links.map((l) => l.comObjNum));
       const flags = comObj ? comObjFlagsOf(comObj, (bytes) => decodeComObjectTableMv0705(bytes, linked), ctx.signal) : {};
-      return { mask, paramsRead: true, linksRead: true, paramBase, links, deviceConfig: device?.deviceConfig, ...flags };
+      const compared = absoluteTargets.some((t) => t.hidden.some((h) => h !== 0));
+      const hiddenDiffer = compared ? byteRanges(absoluteTargets.flatMap((t, i) => t.hidden.flatMap((h, k) => (((deviceImgs[i][k] ^ t.bytes[k]) & h) !== 0 ? [t.address + k] : [])))) : undefined;
+      return { mask, paramsRead: true, linksRead: true, paramBase, links, deviceConfig: device?.deviceConfig, ...flags, ...(hiddenDiffer ? { hiddenDiffer } : {}) };
     };
   }
 
