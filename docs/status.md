@@ -372,7 +372,10 @@ What each row does not show:
   the transfer of changed bytes is shown by the two flashes. Group reads were answered after each
   write, and an added address answered until the link was removed. The final read equals the
   reference, the table residue included (the manufacturer object's runtime values differ, as after
-  every restart). It writes its table segment's `<Data>` past what the tables can hold and the update
+  every restart). Its in-service smoke runs, in both channels, ran the parameter flash and the GA
+  flash there and back and the full download of the configuration found, each `verified`, the added
+  address answering a group read, and the reboot seen with the configuration read back unchanged. It
+  writes its table segment's `<Data>` past what the tables can hold and the update
   flag in config bit `0x80`, both as ETS does. Persistence is the restart each write ends with; no bus
   power cycle.
 - **Theben MIX 2 `M-0048_A-493B-21-B471`** (System B, module slots, two memory-control-block
@@ -418,9 +421,8 @@ What each row does not show:
   of each run.
 - **Gira M-0008 full download** is refused onto a unit that does not hold the application with
   load-state machines 1, 2 and 3 loaded (`FULL_DOWNLOAD_APPLICATION_NOT_LOADED`): its declared form
-  sends a step after the restart that no capture shows. The Meteodata's script runs are no smoke runs,
-  so the compatibility matrix does not count them; the Auro, Gira and TheLuxa count through their
-  in-service smoke runs.
+  sends a step after the restart that no capture shows. The Auro, Gira, TheLuxa and Meteodata count in the
+  compatibility matrix through their in-service smoke runs.
 - **Full download of the Steinel M-008E and the second Auro application `M-0081_A-FF31`** is refused
   before any write and not offered (`FULL_DOWNLOAD_SEGMENT_UNKNOWN`): a parameter segment without
   `<Data>`, and a `<Mask>` of a form no capture shows
@@ -481,7 +483,7 @@ spec states why no behaviour is observable.
 | `openknx-raumcontroller-in-service` | the same product, a commissioned unit (parameter flash and GA flash, each reverted; full download on request) | MV-07B0 | hardware | hardware | hardware, both channels | **met, as a unit in service** (taken over by read-back, not provisioned; its full download rewrote the configuration found, in the full form): parameter and GA flash, full download and behaviour pass in both channels, the click-through in the ui channel; the structural flash is refused by the firmware rule |
 | `gira-m0008-in-service` | Gira Tastsensor 3 Komfort (M-0008_A-10D7), a commissioned unit (parameter flash, GA flash and structural flash, each reverted; full download on request) | MV-0705 | hardware | hardware | hardware, both channels | **not met**: parameter, GA and structural flash (the lock function, whose object stays unlinked) and full download pass in both channels, the click-through in the ui channel, to the byte only (the spec declares no behaviour) |
 | `theben-theluxa-p300-in-service` | Theben TheLuxa P300, a commissioned unit (parameter, GA and structural flash, each reverted; full download on request) | MV-0705 | hardware | hardware | hardware, both channels | **met, as a unit in service** (taken over by read-back, not provisioned; its full download rewrote the configuration found): parameter, GA and structural flash, full download and behaviour pass in both channels, the click-through in the ui channel |
-| `theben-meteodata-140s-in-service` | Theben Meteodata 140 S, a commissioned unit (parameter and GA flash, each reverted; full download on request; structural flash declared unsafe) | MV-0701 | not proven | not proven | not proven | **not met** |
+| `theben-meteodata-140s-in-service` | Theben Meteodata 140 S, a commissioned unit (parameter and GA flash, each reverted; full download on request; structural flash declared unsafe) | MV-0701 | hardware | hardware | hardware, both channels | **not met**: parameter flash, GA flash, full download and behaviour pass in both channels, the click-through in the ui channel; the structural flash, which the spec declares unsafe, has not run |
 | `mdt-be06001-in-service` | MDT BE-06001.02 universal interface 6-fold, a commissioned unit (parameter, GA and structural flash, each reverted; full download on request) | MV-0705 | hardware | hardware | hardware, both channels | **met, as a unit in service** (taken over by read-back, not provisioned; its full download rewrote the configuration found): parameter, GA and structural flash, full download and behaviour pass in both channels, the click-through in the ui channel |
 | `auro-m0081-in-service` | Auro presence detector (M-0081_A-FE01), a commissioned unit (parameter flash, a GA flash that adds the test address to a linked object, and a structural flash, each reverted; full download on request) | MV-0705 | hardware | hardware | hardware, both channels | **met, as a unit in service** (taken over by read-back, not provisioned; its full download rewrote the configuration found): parameter, GA and structural flash (the heat alarm, whose table entry stays the same on the unit), full download and behaviour pass in both channels, the click-through in the ui channel |
 | `theben-hmg6t-in-service` | Theben HMG 6 T heating actuator (MIX 2), a commissioned unit (parameter, GA and structural flash, each reverted; full download on request) | MV-07B0 | hardware | hardware | hardware, both channels | **met, as a unit in service** (taken over by read-back, not provisioned; its full download rewrote the configuration found): parameter, GA and structural flash (the diagnostics of the first extension module, whose objects stay unlinked), full download and behaviour pass in both channels, the click-through in the ui channel |
@@ -537,7 +539,7 @@ report a device family as working on the strength of a passing test suite.
   `COM_OBJECT_FLAGS_UNKNOWN`; after the read-back takes it they run and keep it). On the bus, the bench
   smoke runs' read-backs took every object's flags and found them equal to the imported project's on
   the MDT BE-02001.02, the ABB US/U 4.2 and the Jung 400021SE (secure), also after the restart. On the
-  commissioned OpenKNX RaumController, Theben DALI-Gateway, Theben HMG 6 T, JMG 4 T and RMG 8 T, MDT IP Interface/Router and MEAN WELL power supply the
+  commissioned OpenKNX RaumController, Theben DALI-Gateway, Theben HMG 6 T, JMG 4 T and RMG 8 T, MDT IP Interface/Router, MEAN WELL power supply and Theben Meteodata 140 S the
   read-back took every object's flags as the project's own (no independent project to compare with),
   and the read-backs after each write and the restart found them unchanged; the MIX 2 units' test
   objects carry a read flag, read off the unit, with which they answered the read of their flashed
@@ -545,9 +547,9 @@ report a device family as working on the strength of a passing test suite.
   the same table code.
   On System B the communication flag of an object without a group address is written off whatever the
   project sets; whether ETS does the same for a project's flag is not captured.
-- **A device in service, taken over by read-back, has run on hardware for twelve products only:** the
+- **A device in service, taken over by read-back, has run on hardware for thirteen products only:** the
   OpenKNX RaumController, the Theben DALI-Gateway, the Auro M-0081_A-FE01, the Gira M-0008, the Theben
-  TheLuxa P300, the MDT BE-06001.02, the Theben HMG 6 T, JMG 4 T and RMG 8 T (MIX 2), the MDT IP
+  TheLuxa P300 and Meteodata 140 S, the MDT BE-06001.02, the Theben HMG 6 T, JMG 4 T and RMG 8 T (MIX 2), the MDT IP
   Interface Secure and the MDT IP Interface/Router (both in Data Secure mode) and the MEAN WELL power
   supply, both channels (the
   DALI-Gateway's ECG group assignments taken as assumed, unproven by the device, as its spec names
