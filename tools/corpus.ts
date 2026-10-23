@@ -65,6 +65,7 @@ export const CORPUS_FILES: readonly string[] = [
     "auro-m0081-ets6log-partial-relink9.txt",
     "auro-m0081-ets6log-partial-revert.txt",
     "auro-m0081-ets6log-partial-unlink9.txt",
+    "bench-ets-project-params-edited-after-download.knxproj",
     "bench-memory-refused.log",
     "dali-ets-fulldownload.log",
     "dali-ets6log-fulldownload.txt",

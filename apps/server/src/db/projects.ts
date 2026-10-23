@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Database } from "bun:sqlite";
 import type { Project, Device, GroupAddress, GroupRangeNode, CatalogProduct, SpaceNode } from "@busforge/project";
+import { etsLoadedCompletely } from "@busforge/project";
 import type { Levels } from "@busforge/knx";
 import { ApiError } from "../errors.ts";
 import { getProjectChanges, type DeviceChanges } from "./deviceparams.ts";
@@ -9,8 +10,8 @@ import { getConnection, type Connection } from "./connections.ts";
 // searchText is a server-built, lowercased blob (comment + user-entered text
 // parameter values like channel/actuator names) so the device list can search
 // deeper than the visible name/address.
-// The import's applicationProgramLoaded is not kept: it seeds changes.neverProgrammed.
-export type DeviceWithChanges = Omit<Device, "applicationProgramLoaded"> & { changes: DeviceChanges; searchText: string; secure: boolean };
+// The import's etsLoaded is not kept: it seeds changes.neverProgrammed.
+export type DeviceWithChanges = Omit<Device, "etsLoaded"> & { changes: DeviceChanges; searchText: string; secure: boolean };
 
 export interface ProjectSummary { id: string; name: string; deviceCount: number; gaCount: number; snapshotCount: number; buildingCount: number; floorCount: number; roomCount: number; importedAt: number; source: ImportSource | null; }
 
@@ -141,7 +142,7 @@ export function insertProject(db: Database, id: string, project: Project, source
 
   db.transaction(() => {
     insProject.run(id, project.name, now, sourceFile, project.groupAddressLevels);
-    for (const d of project.devices) insDevice.run(id, d.id, d.ia, d.name, d.productRef, d.appRef, d.manufacturer, d.comment, d.applicationProgramLoaded || !d.appRef ? 0 : 1);
+    for (const d of project.devices) insDevice.run(id, d.id, d.ia, d.name, d.productRef, d.appRef, d.manufacturer, d.comment, etsLoadedCompletely(d) || !d.appRef ? 0 : 1);
     for (const r of project.groupRanges) insertRange(r, null);
     for (const dp of project.deviceParams) for (const v of dp.values) { insParam.run(id, dp.deviceId, v.refId, v.value); insParamBase.run(id, dp.deviceId, v.refId, v.value); }
     for (const dm of project.deviceModules) if (dm.instances.length) insModules.run(id, dm.deviceId, JSON.stringify(dm.instances));
@@ -208,7 +209,7 @@ export function getProject(db: Database, id: string, security?: ReadonlyMap<stri
     | { id: string; name: string; connectionId: string | null; groupAddressLevels: Levels } | null;
   if (!p) return null;
 
-  const baseDevices = db.query("SELECT instance_id AS id, ia, name, product_ref AS productRef, app_ref AS appRef, manufacturer, comment FROM devices WHERE project_id = ? ORDER BY id").all(id) as Omit<Device, "applicationProgramLoaded">[];
+  const baseDevices = db.query("SELECT instance_id AS id, ia, name, product_ref AS productRef, app_ref AS appRef, manufacturer, comment FROM devices WHERE project_id = ? ORDER BY id").all(id) as Omit<Device, "etsLoaded">[];
   const changes = getProjectChanges(db, id);
 
   // Per-device deep-search text: the user-entered text parameter values (channel

@@ -330,6 +330,20 @@ describe("projects", () => {
     expect(flags).toEqual({ "P-TEST-0_DI-1": false, "P-TEST-0_DI-2": true });
   });
 
+  // ETS drops ParametersLoaded when a parameter is edited after the download, CommunicationPartLoaded when
+  // a link is (bench exports), and keeps the edited values in the project: imported as the baseline, they
+  // would read as nothing to program. Whatever flag is missing, what the device holds is not settled.
+  for (const flag of ["ParametersLoaded", "CommunicationPartLoaded", "IndividualAddressLoaded", "MediumConfigLoaded"]) {
+    test(`a device ETS loaded the application into but that lacks ${flag} imports as never programmed`, () => {
+      const db = fresh();
+      const xml = readFileSync(join(import.meta.dir, "../../../packages/project/test/fixtures/sample-0.xml"), "utf8")
+        .replace(new RegExp(`(Id="P-TEST-0_DI-2"[^>]*?) ${flag}="true"`), "$1");
+      insertProject(db, "p1", parseProject(xml, undefined, "x"), "/tmp/p1", 1000);
+      const flags = Object.fromEntries(getProject(db, "p1")!.devices.map((d) => [d.id, d.changes.neverProgrammed]));
+      expect(flags).toEqual({ "P-TEST-0_DI-1": false, "P-TEST-0_DI-2": true });
+    });
+  }
+
   test("a device without an application program (a power supply) is not seeded as never programmed", () => {
     const db = fresh();
     const xml = readFileSync(join(import.meta.dir, "../../../packages/project/test/fixtures/sample-0.xml"), "utf8")
@@ -343,7 +357,7 @@ describe("projects", () => {
   test("tracks parameter changes and resets on flash", () => {
     const xml0 = `<?xml version="1.0" encoding="utf-8"?>
       <KNX xmlns="http://knx.org/xml/project/23"><Project Id="P"><Installations><Installation><Topology>
-        <Area Address="1"><Line Address="1"><DeviceInstance Id="DI-9" Address="5" ApplicationProgramLoaded="true" ProductRefId="M-X_H-1_P-1" Hardware2ProgramRefId="M-X_H-1_HP-1">
+        <Area Address="1"><Line Address="1"><DeviceInstance Id="DI-9" Address="5" IndividualAddressLoaded="true" MediumConfigLoaded="true" ApplicationProgramLoaded="true" CommunicationPartLoaded="true" ParametersLoaded="true" ProductRefId="M-X_H-1_P-1" Hardware2ProgramRefId="M-X_H-1_HP-1">
           <ParameterInstanceRefs>
             <ParameterInstanceRef RefId="M-X_A-1_P-1_R-1" Value="600" />
             <ParameterInstanceRef RefId="M-X_A-1_P-2_R-1" Value="1" />

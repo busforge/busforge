@@ -338,7 +338,13 @@ function parseTopology(topo: unknown, productNames: Map<string, string>): { topo
           appRef: text(d.Hardware2ProgramRefId),
           manufacturer: manufacturerOf(text(d.ProductRefId)),
           comment: [d.Comment, d.Description].map((x) => text(x).trim()).filter(Boolean).join(" "),
-          applicationProgramLoaded: text(d.ApplicationProgramLoaded) === "true",
+          etsLoaded: {
+            individualAddress: text(d.IndividualAddressLoaded) === "true",
+            mediumConfig: text(d.MediumConfigLoaded) === "true",
+            application: text(d.ApplicationProgramLoaded) === "true",
+            parameters: text(d.ParametersLoaded) === "true",
+            communication: text(d.CommunicationPartLoaded) === "true",
+          },
         });
       }
       return { address: Number(attr(line.Address)), name: text(line.Name), devices };
@@ -397,4 +403,12 @@ function firstByKey(n: unknown, key: string): XmlNode | undefined {
   if (n[key] !== undefined) { const hit = kids(n[key])[0]; if (hit) return hit; }
   for (const k of Object.keys(n)) { const r = firstByKey(n[k], key); if (r) return r; }
   return undefined;
+}
+
+// Whether ETS's flags say the device holds the project's whole configuration as it stands: every part
+// downloaded and none edited since. Anything less (a part never downloaded, or edited in ETS after the
+// download) does not settle what the device holds.
+export function etsLoadedCompletely(d: Pick<Device, "etsLoaded">): boolean {
+  const l = d.etsLoaded;
+  return l.individualAddress && l.mediumConfig && l.application && l.parameters && l.communication;
 }

@@ -125,9 +125,12 @@ have, or one on a device whose application the artifact does not carry (`BUSFORG
 
 An empty baseline says nothing about whether the device was ever written, so a device placed from
 the catalog, or whose product was replaced, carries `devices.never_programmed`. A `.knxproj` import
-seeds it from ETS: a `DeviceInstance` without `ApplicationProgramLoaded="true"` was never downloaded
-by ETS and imports as never programmed, including a device another tool programmed (ETS cannot know
-of that). A device without an application program (a power supply) is not seeded. It shows as **Never
+seeds it from ETS's five load flags ([findings.md](findings.md#1-the-knxproj-is-self-contained)): a
+`DeviceInstance` that does not carry all of them as `"true"` imports as never programmed. That is a
+device ETS never downloaded, including one another tool programmed (ETS cannot know of that), and one
+edited in ETS after its last download (ETS dropped `ParametersLoaded` or `CommunicationPartLoaded`), whose
+project values are then not what it holds. A device without an application program (a power supply) is
+not seeded. It shows as **Never
 programmed** and counts as "to program" until a verified full download clears it, or a read-back that
 shows the device holds this project's application, parameters and links: one that read parameters and
 links, left no device link unresolved, found the device reporting this application's id (PID 13 of the

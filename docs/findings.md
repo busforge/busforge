@@ -39,6 +39,16 @@ Key relations in `0.xml`:
   group addresses.
 - Device to application via `Hardware2ProgramRefId` to `M-XXXX_A-….xml`.
 
+**What ETS last downloaded, per device.** A `DeviceInstance` carries five load flags:
+`IndividualAddressLoaded`, `MediumConfigLoaded`, `ApplicationProgramLoaded`, `ParametersLoaded` and
+`CommunicationPartLoaded`. ETS writes a flag as `"true"` and leaves it off when it is false; it never
+writes `"false"`. A download sets the flags of the parts it wrote. An edit afterwards drops the flag of
+the part it touched and keeps the others: a parameter edit drops `ParametersLoaded`, a group-address
+change `CommunicationPartLoaded`, and `LastModified` then lies after `LastDownload`. A device ETS never
+downloaded, or whose product was replaced in ETS, carries none of the application flags; one ETS gave
+its address but never downloaded carries only the address and medium flags. The project's parameter
+values and links are what ETS would download, not what the device holds, unless all five are set.
+
 ---
 
 ## 2. The device data model

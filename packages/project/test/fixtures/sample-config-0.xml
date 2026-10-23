@@ -7,7 +7,7 @@
           <Area Id="P-CFG-0_A-1" Address="1">
             <Line Id="P-CFG-0_L-1" Address="1">
               <Segment Id="P-CFG-0_S-1" Number="0">
-                <DeviceInstance Id="P-CFG-0_DI-1" Address="10" Name="Config Device" ApplicationProgramLoaded="true" ProductRefId="M-TEST_H-1_P-1" Hardware2ProgramRefId="M-TEST_H-1_HP-1">
+                <DeviceInstance Id="P-CFG-0_DI-1" Address="10" Name="Config Device" IndividualAddressLoaded="true" MediumConfigLoaded="true" ApplicationProgramLoaded="true" CommunicationPartLoaded="true" ParametersLoaded="true" ProductRefId="M-TEST_H-1_P-1" Hardware2ProgramRefId="M-TEST_H-1_HP-1">
                   <ParameterInstanceRefs>
                     <ParameterInstanceRef RefId="M-TEST_A-1_P-1_R-1" Value="0" />
                   </ParameterInstanceRefs>

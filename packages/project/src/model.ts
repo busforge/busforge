@@ -9,10 +9,13 @@ export interface Device {
   appRef: string;       // Hardware2ProgramRefId
   manufacturer: number; // from the M-XXXX prefix
   comment: string;      // ETS "Beschreibung" (Comment/Description), for search
-  // ETS sets ApplicationProgramLoaded="true" once it downloaded the device; a device another
-  // tool programmed reads false as well.
-  applicationProgramLoaded: boolean;
+  // What ETS last downloaded into the device, from its per-device load flags. ETS sets each to "true"
+  // when it downloads that part and drops it when the part is edited afterwards (a false flag is left
+  // off); a device another tool programmed reads false throughout.
+  etsLoaded: EtsLoaded;
 }
+
+export interface EtsLoaded { individualAddress: boolean; mediumConfig: boolean; application: boolean; parameters: boolean; communication: boolean }
 
 // A placeable catalog product: a manufacturer product paired with an application
 // program it runs. Extracted from the manufacturer Hardware.xml at ingest. The

@@ -2,7 +2,7 @@ import { test, expect, describe } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readZip } from "../src/zip.ts";
-import { parseProject } from "../src/parse.ts";
+import { parseProject, etsLoadedCompletely } from "../src/parse.ts";
 import { loadKnxproj, deriveWinzipPassword, extractAppPrograms, appProgramId, busInterfaceIndexes } from "../src/knxproj.ts";
 
 const fix = (n: string) => readFileSync(join(import.meta.dir, "fixtures", n));
@@ -48,14 +48,21 @@ describe("0.xml parser", () => {
     expect(proj.devices[1].manufacturer).toBe(0x83);
   });
 
-  test("reads whether ETS loaded a device's application program", () => {
-    expect(proj.devices.map((d) => d.applicationProgramLoaded)).toEqual([true, true]);
-    // ETS leaves the attribute off a device it never downloaded.
-    const xml = xml0.replace(/(Id="P-TEST-0_DI-2"[^>]*?) ApplicationProgramLoaded="true"/, "$1");
-    expect(xml).not.toBe(xml0);
-    expect(parseProject(xml, undefined, "fallback").devices.map((d) => d.applicationProgramLoaded)).toEqual([true, false]);
-    const explicitFalse = xml0.replace(/(Id="P-TEST-0_DI-2"[^>]*?) ApplicationProgramLoaded="true"/, '$1 ApplicationProgramLoaded="false"');
-    expect(parseProject(explicitFalse, undefined, "fallback").devices[1].applicationProgramLoaded).toBe(false);
+  test("reads what ETS last downloaded into each device from its five load flags", () => {
+    const all = { individualAddress: true, mediumConfig: true, application: true, parameters: true, communication: true };
+    expect(proj.devices.map((d) => d.etsLoaded)).toEqual([all, all]);
+    expect(proj.devices.every(etsLoadedCompletely)).toBe(true);
+    // ETS leaves a flag off when it is false: a part never downloaded, or edited after the download.
+    const drop = (flag: string) => xml0.replace(new RegExp(`(Id="P-TEST-0_DI-2"[^>]*?) ${flag}="true"`), "$1");
+    for (const [flag, key] of [["IndividualAddressLoaded", "individualAddress"], ["MediumConfigLoaded", "mediumConfig"], ["ApplicationProgramLoaded", "application"], ["ParametersLoaded", "parameters"], ["CommunicationPartLoaded", "communication"]] as const) {
+      const xml = drop(flag);
+      expect(xml).not.toBe(xml0);
+      const [first, second] = parseProject(xml, undefined, "fallback").devices;
+      expect(second.etsLoaded).toEqual({ ...all, [key]: false });
+      expect([etsLoadedCompletely(first), etsLoadedCompletely(second)]).toEqual([true, false]);
+    }
+    const explicitFalse = xml0.replace(/(Id="P-TEST-0_DI-2"[^>]*?) ParametersLoaded="true"/, '$1 ParametersLoaded="false"');
+    expect(etsLoadedCompletely(parseProject(explicitFalse, undefined, "fallback").devices[1])).toBe(false);
   });
 
   test("parses group addresses with 3-level address and DPT display", () => {
