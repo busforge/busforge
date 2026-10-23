@@ -368,11 +368,17 @@ Busforge's KNXnet/IP server to its USB interface). A line coupler between interf
 not pass long frames is not modelled, by ETS or by Busforge. The query and the longer writes have run on
 no device.
 
-**Which bytes a System 7 parameter download writes** (`parWriteSet`, family level): on a
-memory-mapped mask (MV-0700/0701) the bytes that differ from the unit, which ETS reads first
-(Theben Meteodata 140 S); on a property-mapped mask every byte a parameter's memory covers, changed or
-not, in every parameter segment (Auro M-0081_A-FE01, Theben TheLuxa P300, MDT BE-06001.02: their ETS
-logs list exactly those bytes). Where the application closes with image stamps (Gira M-0008) ETS
+**Which bytes a System 7 parameter download writes** (`parWriteSet`, family level): its image is
+every byte a parameter's memory covers, changed or not, in every parameter segment (Auro
+M-0081_A-FE01, Theben TheLuxa P300, MDT BE-06001.02, Theben Meteodata 140 S: their ETS logs list
+exactly those bytes). A property-mapped mask gets it written whole; on a memory-mapped mask
+(MV-0700/0701) ETS reads each run of it in blocks from the run's start and writes per block the span
+from the first to the last differing byte, as above (Meteodata: its parameter, structural and revert
+downloads read the whole image; switching a threshold channel on writes `0x49F1-0x49FB`, three equal
+bytes inside, and `0x49FC` from the next block; ABB US/U 4.2: the run `0x6F00+5` read whole).
+Busforge plans the same image and its read-compare writes the same spans; a byte inside a span that no
+parameter owns goes out with the unit's own value, where ETS writes its image's (the same value in
+every capture). Where the application closes with image stamps (Gira M-0008) ETS
 writes only what differs from its record of its last download while the stamps still equal it, the
 same every-covered-byte image otherwise; Busforge keeps no record and writes that image. A
 `TypeColor` parameter covers three bytes in the RGB and the HSV space (MDT BE-06001.02's image).
@@ -768,11 +774,20 @@ download unloads 1 and 2, re-declares the tables as one region (16384+43 and 164
 entries), writes them, then `Load` 3, the com-object table to its 747 bytes, `LoadCompleted` 3 and the
 restart: no `Unload` 3, no `TaskCtrl1`, nothing of `0x41FF-0x4200`. The revert runs the same brackets
 with the old tables. Busforge's group-address flash plans exactly these images
-(`planSystem7GaFlash`) and its parameter flash the two bytes ETS wrote (`planAbsoluteParFlash`;
-ETS's logged image of the parameter download holds 607 bytes, its wire these two), over `0x0104`.
-Its structural flash runs the revert's steps, and every byte it writes is in ETS's logged image of
-the revert with ETS's value; the writes on the wire are not compared, since ETS leaves out what the
-unit holds.
+(`planSystem7GaFlash`) and its parameter flash ETS's logged image of the parameter download (607
+bytes, `planAbsoluteParFlash`), read and compared as ETS does, so that the wire holds the two bytes
+ETS wrote, over `0x0104`. Its structural flash runs the revert's steps, and every byte it writes is
+in ETS's logged image of the revert with ETS's value.
+
+ETS was also captured switching "Activate threshold channel C14" (`P-6571`) on and off again, a
+parameter that shows two unlinked objects (84 and 86). Each is a structural partial download: the
+tables unloaded and re-declared, `Load` 3, the com-object table (objects 84 and 86 gain their config
+bytes, `0x4555` and `0x455D`, `DB` to `1B` and `4B`), the parameter image, `LoadCompleted` 3, the
+restart. Switching it on writes the values the project holds for the hidden channel and its two text
+parameters at their defaults ("20,0" and "1,0", [device-memory-model.md](device-memory-model.md#which-parameter-types-reach-the-image-at-all));
+switching it off writes the segment's `<Data>` back for the hidden parameters. Busforge's structural flash of each runs
+ETS's steps, plans exactly ETS's logged parameter image, and read and compared writes exactly ETS's
+bytes on the wire (`tools/etsdiff.test.ts`, "structural flash switching channel C14").
 
 ### The MDT BE-06001.02
 

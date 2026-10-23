@@ -387,17 +387,15 @@ function structuralTableImages(app: AppConfig, images: AbsStructuralImage[]) {
   };
   return { addrImg: imageAt(g.addressSegment, "address"), assocImg: imageAt(g.associationSegment, "association"), comImg: imageAt(g.comObjectSegment, "com-object") };
 }
-// What planAbsoluteStructuralFlash builds from the application alone: the table brackets and, where ETS
-// writes every byte a parameter's memory covers, each parameter segment's coverage (parameterMemoryBytes).
+// What planAbsoluteStructuralFlash builds from the application alone: the table brackets and each
+// parameter segment's coverage (parameterMemoryBytes), the image ETS writes (parWriteSet).
 export interface AbsStructuralBuild { tables: ReturnType<typeof planSystem7TableBrackets>; coverage?: ReadonlyMap<string, boolean[] | null> }
 export function absoluteStructuralBuild(app: AppConfig, images: AbsStructuralImage[], procedure: LoadProcedures, moduleInstances: ModuleInstance[]): AbsStructuralBuild {
   const { addrImg, assocImg, comImg } = structuralTableImages(app, images);
   const tableIds = new Set([addrImg.id, assocImg.id, comImg.id]);
   return {
     tables: planSystem7TableBrackets(app, procedure, { addr: addrImg.image, assoc: assocImg.image }),
-    ...(parWriteSet(app) === "parameterBytes"
-      ? { coverage: new Map(images.filter((w) => !tableIds.has(w.id)).map((w) => [w.id, parameterMemoryBytes(app, w.id, w.image.length, { moduleInstances, colorWidth: true })])) }
-      : {}),
+    coverage: new Map(images.filter((w) => !tableIds.has(w.id)).map((w) => [w.id, parameterMemoryBytes(app, w.id, w.image.length, { moduleInstances, colorWidth: true })])),
   };
 }
 
@@ -427,9 +425,9 @@ export function planAbsoluteStructuralFlash(
   const paramWrites: LoadStep[] = [];
   let changedBytes = 0;
   const tableIds = new Set([addrImg.id, assocImg.id, comImg.id]);
-  // The parameter bytes, as the parameter flash writes them (parWriteSet): those that differ from the
-  // device, and on a property-mapped mask, once any does, every byte a parameter covers in every parameter
-  // segment, a covered byte no parameter owns with the device's value and checked back as such.
+  // The parameter bytes, as the parameter flash writes them (parWriteSet): once any differs from the
+  // device, every byte a parameter covers in every parameter segment, a covered byte no parameter owns
+  // with the device's value and checked back as such.
   const params = images.filter((x) => !tableIds.has(x.id)).map((w) => {
     const have = current.get(w.address);
     if (!have || have.length !== w.image.length) {
@@ -441,7 +439,7 @@ export function planAbsoluteStructuralFlash(
   const anyDiffers = params.some((x) => x.differing.some(Boolean));
   for (const { w, image, differing } of params) {
     let write = differing, verify = w.verify;
-    if (anyDiffers && parWriteSet(app) === "parameterBytes") {
+    if (anyDiffers) {
       const cov = coverage?.has(w.id) ? coverage.get(w.id)! : parameterMemoryBytes(app, w.id, w.image.length, { moduleInstances, colorWidth: true });
       if (!cov) throw new ProductError("PARAM_SEGMENT_UNKNOWN", `a parameter in segment ${w.id} has a type of no known width, so the bytes ETS's download writes there cannot be told; refusing to guess`);
       const outside = differing.flatMap((d, i) => (d && !cov[i] ? [i] : []));
@@ -474,24 +472,25 @@ export function planAbsoluteStructuralFlash(
   return { plan, changedBytes, lsms, concerned: lsms, segments, ...tableRefsOf(app, tables) };
 }
 
-// Which bytes ETS's parameter download of a System 7 application writes, by its mask family. On a
-// memory-mapped mask (MV-0700/0701) ETS reads each block of its image and writes only the bytes that
-// differ (its "optimistic write"; Theben Meteodata 140 S, ABB US/U 4.2). On a property-mapped mask it
-// writes every byte a parameter's memory covers, changed or not (Auro M-0081_A-FE01, Theben TheLuxa
-// P300, MDT BE-06001.02 partial downloads; their ETS logs list exactly those bytes as the image). Where
-// the application closes with image stamps (LdCtrlLoadImageProp PID 27, the Gira M-0008), ETS writes only
-// what differs from its record of its last download while the stamps still equal that record, and the
-// same every-covered-byte image where they do not; Busforge keeps no record, so it writes that image.
-export type ParWriteSet = "differing" | "parameterBytes";
-export const parWriteSet = (app: AppConfig): ParWriteSet => (isMemoryMappedLsm(app.mask) ? "differing" : "parameterBytes");
+// Which bytes ETS's parameter download of a System 7 application writes (parWriteSet): its image is every
+// byte a parameter's memory covers, changed or not, in every parameter segment (their ETS logs list exactly
+// those bytes as the image: Auro M-0081_A-FE01, Theben TheLuxa P300, MDT BE-06001.02, Theben Meteodata
+// 140 S). A property-mapped mask gets it written whole. On a memory-mapped mask (MV-0700/0701) ETS reads
+// each run of it in 12-byte blocks from the run's start and writes per block the span from the first to
+// the last byte that differs (Theben Meteodata 140 S, meteodata-140s-ets-partial-{params,revert,c14-on,
+// c14-off}.log; c14-on writes 0x49F1-0x49FB with three equal bytes in it), which the runner's read-compare
+// does with the same steps (differingRuns). A covered byte no parameter owns carries the device's value,
+// so inside such a span it goes out as the unit held it before the bracket, where ETS writes its image's
+// value (equal in every captured case). Where the application closes with image stamps
+// (LdCtrlLoadImageProp PID 27, the Gira M-0008), ETS writes only what differs from its record of its last
+// download while the stamps still equal that record, and the same every-covered-byte image where they do
+// not; Busforge keeps no record, so it writes that image.
 
 // What planAbsoluteParFlash builds from the application alone, before the device is read: the segment
-// targets and, where ETS writes every byte a parameter's memory covers, each segment's coverage (null
-// where a parameter there has a type of no known width).
+// targets and each segment's coverage (null where a parameter there has a type of no known width).
 export interface AbsParFlashBuild { targets: DeviceSegmentTarget[]; coverage?: Map<string, boolean[] | null> }
 export function buildAbsoluteParFlash(app: AppConfig, values: Map<string, string>, opts: { lang?: string; moduleInstances?: ModuleInstance[] } = {}): AbsParFlashBuild {
   const targets = buildAbsoluteSegmentTargets(app, values, opts);
-  if (parWriteSet(app) !== "parameterBytes") return { targets };
   const instances = absoluteBuildInstances(app, values, opts.moduleInstances);
   return { targets, coverage: new Map(targets.map((t) => [t.id, parameterMemoryBytes(app, t.id, t.size, { moduleInstances: instances, colorWidth: true })])) };
 }
@@ -505,9 +504,9 @@ export function planAbsoluteParFlash(
 ): AbsParFlashPlan {
   const built = opts.built ?? buildAbsoluteParFlash(app, values, opts);
   const fp = planAbsoluteSegmentFlash(app, values, { ...opts, current, targets: built.targets });
-  // What ETS writes of a parameter download (parWriteSet): on a memory-mapped mask it reads its image
-  // first and writes the bytes that differ, which are fp's runs; elsewhere every byte a parameter's
-  // memory covers, in every parameter segment, once anything changed.
+  // What ETS writes of a parameter download (parWriteSet): once anything changed, every byte a parameter's
+  // memory covers, in every parameter segment; on a memory-mapped mask the runner's read-compare writes of
+  // it the blocks that differ, as ETS does.
   // `covered` is what the caller verifies besides the owned bytes: the device's own values it rewrote.
   const differing = fp.segments.reduce((n, sg) => n + sg.writtenBytes, 0);
   const covered: AbsParFlashPlan["covered"] = [];

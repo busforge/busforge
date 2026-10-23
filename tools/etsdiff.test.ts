@@ -2111,7 +2111,14 @@ corpusDescribe("Theben Meteodata 140 S (M-0048_A-140C-14-EB70) against ETS", () 
     expect([changedBytes, unplaceable]).toEqual([2, []]);
     expect(planSteps(plan)).toEqual(captureSteps(PARTIAL, ia));
     expect(planSteps(plan)).toEqual(["load:3", "write", "loadCompleted:3", "restart"]);
-    expect([...bytesOf(plan)]).toEqual([[0x4800, 0xaa], [0x4804, 0x01]]);
+    // The writes span ETS's image, every byte a parameter covers (meteodata-140s-ets6log-partial-params.txt from
+    // l. 121), which ETS reads in 12-byte blocks from each run's start (meteodata-140s-ets-partial-params.log from
+    // l. 62); read and compared, the bytes on the wire are ETS's.
+    const ours = bytesOf(plan);
+    const etsImage = new Map([...etsLog("meteodata-140s-ets6log-partial-params.txt").image].filter(([a]) => a >= 0x4800));
+    expect(sorted(ours)).toEqual(sorted(etsImage));
+    const unit = new Map([paramSeg, otherParams].flatMap((sg) => [...(sg === paramSeg ? onUnit : held4c)].map((b, i) => [sg.address + i, b] as [number, number])));
+    expect(sorted(readCompared(plan, heldBeforeWrite(PARTIAL, ia, unit)))).toEqual([[0x4800, 0xaa], [0x4804, 0x01]]);
     expect([...wire(PARTIAL)]).toEqual([[0x4800, 0xaa], [0x4804, 0x01]]);
   });
 
@@ -2172,7 +2179,8 @@ corpusDescribe("Theben Meteodata 140 S (M-0048_A-140C-14-EB70) against ETS", () 
     const before = Buffer.from(onUnit);
     before[4] = 1;
     const par = planAbsoluteParFlash(cfg, baseline.params, proc, new Map([[paramSeg.id, before], [otherParams.id, held4c]]));
-    expect([...bytesOf(par.plan)]).toEqual([[0x4800, 0xaa], [0x4804, 0x00]]);
+    const unit = new Map([paramSeg, otherParams].flatMap((sg) => [...(sg === paramSeg ? before : held4c)].map((b, i) => [sg.address + i, b] as [number, number])));
+    expect(sorted(readCompared(par.plan, unit))).toEqual([[0x4800, 0xaa], [0x4804, 0x00]]);
     const written = wire(REVERT);
     expect([written.get(0x4800), written.get(0x4804)]).toEqual([0xaa, 0x00]);
   });
@@ -2189,6 +2197,58 @@ corpusDescribe("Theben Meteodata 140 S (M-0048_A-140C-14-EB70) against ETS", () 
     const behind = [0x4050, 0x4051, 0x4052, 0x4053];
     expect(behind.filter((a) => revert.has(a))).toEqual([]);
     expect(behind.filter((a) => bytesOf(gaFlash(baseline.links, heldComObj).plan).has(a))).toEqual([]);
+  });
+
+  // Two ETS 6 partial downloads switching "Activate threshold channel C14" (P-6571, no memory of its own besides
+  // its bit at 0x49FC) on and off again, which shows objects 84 and 86 unlinked. The project's values, from the
+  // house project's export (private corpus captures/meteodata-140s-config.json), hold values for parameters of the
+  // channel while it is hidden, two of them on a ParameterRef the channel places only once it is on
+  // (P-6524_R-6539, P-6527_R-6536), and its "Telegram type" P-6512 as 3, which activates two text parameters at
+  // their defaults ("20,0" and "1,0"). ETS wrote exactly those values once the channel was on, and the segment's
+  // <Data> again once it was off (meteodata-140s-ets6log-partial-c14-{on,off}.txt, row 09F0).
+  const projectParams = new Map((JSON.parse(captureText("meteodata-140s-config.json")) as { params: [string, string][] }).params);
+  const C14 = "M-0048_A-140C-14-EB70_P-6571_R-6571";
+  const c14On = new Map(projectParams).set(C14, "1");
+  const C14_ON = "meteodata-140s-ets-partial-c14-on.log", C14_OFF = "meteodata-140s-ets-partial-c14-off.log";
+  const c14OnLog = etsLog("meteodata-140s-ets6log-partial-c14-on.txt"), c14OffLog = etsLog("meteodata-140s-ets6log-partial-c14-off.txt");
+  // What the unit held before C14 went on: the full download, its marker cleared (every download since was reverted).
+  const beforeC14 = unitMemory(cfg, ia, fullLog.image, new Map([[0x4800, 0x00]]));
+
+  test("the project's values: the parameter segments of ETS's full download, where the hidden channel C14 holds the segment's <Data>", () => {
+    const ours = new Map(buildAbsoluteSegmentTargets(cfg, projectParams).filter((t) => t.address >= 0x4800).flatMap((t) => [...t.bytes].map((b, i) => [t.address + i, b] as [number, number])));
+    const etsParams = [...fullLog.image].filter(([a]) => a >= 0x4800);
+    expect(etsParams.filter(([a, b]) => ours.get(a) !== b)).toEqual([]);
+    expect(projectParams.get(C14) ?? "0").toBe("0");
+    // 0x49F0-0x49FB: the channel's parameters at the segment's <Data>; 0x49FC its switch (bit 0x01) off beside them.
+    const data = cfg.absoluteSegments.find((sg) => sg.address === 0x4800)!.data;
+    expect(Array.from({ length: 13 }, (_, i) => ours.get(0x49f0 + i))).toEqual([...data.subarray(0x1f0, 0x1fc), data[0x1fc] & ~0x01]);
+  });
+
+  test("structural flash switching channel C14 on: ETS's steps, its texts and the project's values of the hidden channel, the bytes ETS writes", () => {
+    const { plan } = system7StructuralFlash({ cfg, proc, ia, device: beforeC14, params: c14On, baseParams: projectParams, links: baseline.links });
+    expectRevertForm(plan, C14_ON, ia, beforeC14, c14OnLog.image);
+    const ours = bytesOf(plan);
+    const params = (m: Map<number, number>) => sorted(m).filter(([a]) => a >= 0x4800);
+    expect(params(ours)).toEqual(params(c14OnLog.image));
+    // What the unit holds there after the flash: "20,0" in a 5-byte field and "1,0" in a 4-byte field, zeros behind;
+    // P-6524 2, P-6512 3, P-6546 0; P-6542 10, P-6988 0 and the switch itself.
+    expect(Array.from({ length: 13 }, (_, i) => ours.get(0x49f0 + i) ?? beforeC14.get(0x49f0 + i))).toEqual([0x32, 0x30, 0x2c, 0x30, 0x00, 0x31, 0x2c, 0x30, 0x00, 0x00, 0xba, 0x65, 0xa1]);
+    // Read and compared, the bytes on the wire are ETS's: the two object config bytes, the marker and the channel.
+    const written = readCompared(plan, heldBeforeWrite(C14_ON, ia, beforeC14));
+    expect(sorted(written)).toEqual(sorted(wire(C14_ON)));
+    expect(span(written)).toEqual(["4000-4000", "4555-4555", "455d-455d", "4800-4800", "49f1-49fc"]);
+  });
+
+  test("structural flash switching channel C14 off: ETS's steps, the channel's parameters back at the segment's <Data>, the bytes ETS writes", () => {
+    const device = unitMemory(cfg, ia, beforeC14, wire(C14_ON), new Map([[0x4800, 0x00]]));
+    const { plan } = system7StructuralFlash({ cfg, proc, ia, device, params: projectParams, baseParams: c14On, links: baseline.links });
+    expectRevertForm(plan, C14_OFF, ia, device, c14OffLog.image);
+    const ours = bytesOf(plan);
+    const params = (m: Map<number, number>) => sorted(m).filter(([a]) => a >= 0x4800);
+    expect(params(ours)).toEqual(params(c14OffLog.image));
+    expect(Array.from({ length: 13 }, (_, i) => ours.get(0x49f0 + i) ?? device.get(0x49f0 + i))).toEqual(Array.from({ length: 13 }, (_, i) => fullLog.image.get(0x49f0 + i)));
+    const written = readCompared(plan, heldBeforeWrite(C14_OFF, ia, device));
+    expect(sorted(written)).toEqual(sorted(wire(C14_OFF)));
   });
 
   test("a <Mask> shorter than its segment that marks a byte, and table <Data> reaching past the declared region, are refused", () => {

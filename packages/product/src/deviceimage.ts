@@ -4,6 +4,7 @@ import { buildDeviceConfig, decodeTextEntities } from "./config.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { byteWidth, MAX_INT_BYTES, encode } from "./image.ts";
 import { ProductError } from "./errors.ts";
+import { maskInfo } from "./masks.ts";
 
 // `textRefusals: "skip"`: a text parameter the codec refuses (and, on the relative segment, a colour) is
 // left unowned instead of failing the build. Only for the read-back, which compares what it can and does not write; every path that
@@ -245,19 +246,39 @@ export function buildAbsoluteSegmentTargets(
       // A colour on these segments: no ETS capture of a product with absolute segments shows one, so the
       // bytes stay unowned and refuseColorWrites refuses an operation that would have to write one.
       if (type.base === "Color") continue;
-      // An active text parameter on these (System 7) segments: no ETS capture of a System 7 product
-      // shows one (the Meteodata 140 S's are inactive in every captured configuration), so its byte
-      // layout here is not known.
+      // An active text parameter on System 7 takes the codec's layout, its characters and a closing zero:
+      // ETS's partial download activating the Theben Meteodata 140 S's threshold channel C14 (MV-0701)
+      // wrote "20,0" into a 5-byte field as 32 30 2c 30 00 and "1,0" into a 4-byte field as 31 2c 30 00,
+      // characters over <Data> bytes 32 and 19 (private corpus captures/meteodata-140s-ets6log-partial-c14-on.txt
+      // l. 183, row 09F0 of Memory[$4000-$5FFF]). Its <Data> held zeros behind the characters, so no capture
+      // of a System 7 product shows a zero written over a non-zero <Data> byte, nor a value filling its
+      // field, nor any text on System 1: those are refused.
+      let textRefusal: ProductError | undefined;
       if (type.base === "Text") {
-        if (opts.textRefusals === "skip") continue;
-        throw new ProductError("PARAM_TEXT_UNSUPPORTED", `text parameter ${param.id} at offset ${param.offset} of ${segId}: no ETS capture shows a text parameter on this memory model`);
+        const size = type.sizeInBit / 8;
+        if (maskInfo(app.mask).family !== "system-7") {
+          textRefusal = new ProductError("PARAM_TEXT_UNSUPPORTED", `text parameter ${param.id} at offset ${param.offset} of ${segId}: no ETS capture shows a text parameter on this memory model`);
+        } else if (v.length === size) {
+          textRefusal = new ProductError("PARAM_TEXT_TOO_LONG", `text parameter ${param.id} at offset ${param.offset} of ${segId}: "${v}" fills its ${size}-byte field, which no ETS capture of a System 7 product shows; it holds at most ${size - 1} characters`);
+        } else {
+          // The codec's zeros take the field from the value's length on.
+          const over = Array.from({ length: Math.max(0, size - v.length) }, (_, i) => param.offset! + v.length + i).find((o) => (seg.data[o] ?? 0) !== 0);
+          if (over !== undefined) textRefusal = new ProductError("PARAM_TEXT_UNSUPPORTED", `text parameter ${param.id} at offset ${param.offset} of ${segId}: "${v}" would write a zero over the <Data> byte ${seg.data[over].toString(16).padStart(2, "0")} at offset ${over}, which no ETS capture of a System 7 product shows`);
+        }
       }
       // Only mark bytes owned if encode ACTUALLY wrote them. A time/color/other
       // type (or a malformed value) writes nothing, so it must not claim authority over
       // its bytes: the flash path would otherwise push the segment's init/default value
       // over device memory the parameter never derived. Gating on the real write keeps
       // ownership exactly symmetric with the image, with no duplicated type gate.
-      const wrote = encode(img, param.offset, param.bitOffset, type, v);
+      let wrote: boolean;
+      try {
+        if (textRefusal) throw textRefusal;
+        wrote = encode(img, param.offset, param.bitOffset, type, v);
+      } catch (e) {
+        if (opts.textRefusals === "skip" && isTextRefusal(e)) continue;
+        throw e;
+      }
       if (!wrote) continue;
       // This parameter's value is authoritative: mark its byte(s) owned so the flash
       // path may write them. A sub-byte parameter owns the single byte it shares.

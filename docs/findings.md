@@ -448,6 +448,13 @@ ref of `P-7` and `P-16`, and the devices hold the placed ref's default.
 The same holds when a configuration switches which ref is shown: the newly placed ref's default
 applies, not the value stored on the ref shown before, as ETS does on the Jung (above). A value the
 user set through the old ref stays stored and returns when that ref is placed again.
+A value stored on a ref while the configuration hides the parameter altogether is kept the same way
+and written once a configuration places that ref. The Meteodata 140 S's project holds values for its
+threshold channel C14 while the channel is off ("Telegram type" `P-6512` 3, `P-6524` 2 on `R-6539`,
+`P-6527` 2 on `R-6536`); ETS's partial download that switches the channel on writes exactly those,
+the channel's other parameters at their defaults, and the one that switches it off again writes the
+segment's `<Data>` back for the hidden parameters (`tools/etsdiff.test.ts`, "structural flash
+switching channel C14").
 Only a parameter none of whose refs is placed reads a value stored on its refs (for a choose).
 A placed ref with nothing stored keeps its own default, because applications select an internal
 parameter's value by which ref an active branch places; when several refs with different defaults

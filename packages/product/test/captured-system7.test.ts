@@ -401,9 +401,10 @@ corpusDescribe("a memory-mapped System 7 parameter flash, run against an emulate
     });
     expect(r).toMatchObject({ kind: "flashed", verified: true, diffBytes: 1 });
     expect(dev.written).toEqual([[0x6f01, 5]]);
-    // The planned write was read first, in the unit's 12-byte read blocks, then the differing byte written.
+    // The bytes a parameter covers there were read first, in the unit's 12-byte read blocks, then the differing
+    // byte written: ETS reads that run as 0x6F00+5 (private corpus captures/abb-usu-4.2-ets-partial-links.log l. 348).
     const w = dev.ops.indexOf("write 6f01+1");
-    expect(dev.ops.slice(w - 1, w + 1)).toEqual(["read 6f01+1/12", "write 6f01+1"]);
+    expect(dev.ops.slice(w - 1, w + 1)).toEqual(["read 6f00+5/12", "write 6f01+1"]);
   });
 
   test("a full download reports the bytes it wrote, and its progress runs over the planned bytes", async () => {

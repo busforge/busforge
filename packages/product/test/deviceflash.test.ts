@@ -51,10 +51,8 @@ test("the plan writes only active-parameter bytes, never the inactive param or t
   expect(seg.runs.some((r) => r.address === 101)).toBe(false);
 });
 
-// A text parameter is NOT represented in the parameter image (encode writes nothing).
-// It must therefore own NO bytes: claiming its bytes would make the planner push the
-// segment's init value over device memory the parameter never derived. P-1 is an
-// active 32-bit text param at offset 0; P-2 is an active numeric param at offset 4.
+// A System 7 application with a <Data>-less absolute segment: P-1 is an active 32-bit text param at
+// offset 0, P-2 an active numeric param at offset 4.
 const textXml = `<?xml version="1.0" encoding="utf-8"?>
 <KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0006"><ApplicationPrograms>
 <ApplicationProgram Id="M-0006_A-0001-01-0001" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-0705" DefaultLanguage="en-US" Name="Text On An Absolute Segment">
@@ -78,13 +76,27 @@ const textXml = `<?xml version="1.0" encoding="utf-8"?>
 </ParameterBlock></Dynamic>
 </ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
 
-// No ETS capture of a System 7 product shows an active text parameter (the Meteodata 140 S's are inactive in every
-// captured configuration): an absolute-segment build refuses one; the read-back's build
-// leaves it out of the comparison.
-test("an active text parameter on an absolute segment is refused; the read-back target leaves it unowned", () => {
-  expect(() => planAbsoluteSegmentFlash(parseAppConfig(textXml), new Map())).toThrow(expect.objectContaining({ code: "PARAM_TEXT_UNSUPPORTED" }));
-  const [t] = buildAbsoluteSegmentTargets(parseAppConfig(textXml), new Map(), { textRefusals: "skip" });
-  expect(t.owned.map((m) => (m ? 1 : 0))).toEqual([0, 0, 0, 0, 1]);
+// An active text parameter on System 7 is its characters and a closing zero, as ETS's partial download activating the
+// Theben Meteodata 140 S's channel C14 wrote "1,0" into a 4-byte field: 31 2c 30 00 over <Data> 19 00 00 00 (private
+// corpus captures/meteodata-140s-ets6log-partial-c14-on.txt l. 183, row 09F0). No capture shows a value filling its
+// field on System 7, a zero written over a non-zero <Data> byte, or a text on System 1: an absolute-segment build
+// refuses those, and the read-back's build leaves them unowned.
+test("an active text parameter on a System 7 absolute segment is written as ETS writes it, what no capture shows is refused", () => {
+  const [t] = buildAbsoluteSegmentTargets(parseAppConfig(textXml), new Map());
+  expect([[...t.bytes], t.owned.map((m) => (m ? 1 : 0))]).toEqual([[0x68, 0x69, 0x00, 0x00, 0x03], [1, 1, 1, 1, 1]]);
+  const withData = (b64: string) => parseAppConfig(textXml.replace('MemoryType="EEPROM"/>', `MemoryType="EEPROM"><Data>${b64}</Data></AbsoluteSegment>`));
+  const [c] = buildAbsoluteSegmentTargets(withData("GQAAAAA="), new Map([["M-0006_A-0001-01-0001_P-1_R", "1,0"]]));
+  expect([...c.bytes.subarray(0, 4)]).toEqual([0x31, 0x2c, 0x30, 0x00]);
+  expect(() => buildAbsoluteSegmentTargets(withData("AAAHAAA="), new Map())).toThrow(expect.objectContaining({ code: "PARAM_TEXT_UNSUPPORTED" }));
+  expect([...buildAbsoluteSegmentTargets(withData("AAAHAAA="), new Map([["M-0006_A-0001-01-0001_P-1_R", "abc"]]))[0].bytes.subarray(0, 4)]).toEqual([0x61, 0x62, 0x63, 0x00]);
+  const full = new Map([["M-0006_A-0001-01-0001_P-1_R", "abcd"]]);
+  expect(() => planAbsoluteSegmentFlash(parseAppConfig(textXml), full)).toThrow(expect.objectContaining({ code: "PARAM_TEXT_TOO_LONG" }));
+  expect(buildAbsoluteSegmentTargets(parseAppConfig(textXml), full, { textRefusals: "skip" })[0].owned.map((m) => (m ? 1 : 0))).toEqual([0, 0, 0, 0, 1]);
+  const tooLong = new Map([["M-0006_A-0001-01-0001_P-1_R", "abcde"]]);
+  expect(() => planAbsoluteSegmentFlash(parseAppConfig(textXml), tooLong)).toThrow(expect.objectContaining({ code: "PARAM_TEXT_TOO_LONG" }));
+  expect(buildAbsoluteSegmentTargets(parseAppConfig(textXml), tooLong, { textRefusals: "skip" })[0].owned.map((m) => (m ? 1 : 0))).toEqual([0, 0, 0, 0, 1]);
+  const system1 = parseAppConfig(textXml.replace('MaskVersion="MV-0705"', 'MaskVersion="MV-0012"'));
+  expect(() => buildAbsoluteSegmentTargets(system1, new Map())).toThrow(expect.objectContaining({ code: "PARAM_TEXT_UNSUPPORTED" }));
 });
 
 test("with a device read-back, only owned bytes that actually differ are scheduled", () => {

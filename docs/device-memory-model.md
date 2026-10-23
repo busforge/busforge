@@ -287,20 +287,24 @@ where the colour lies. Five type details are easy to get wrong:
   image changes. A colour that does not start at a byte, a value that is no `#RRGGBB`, and a colour in
   an application with little-endian parameters are refused.
 
-- **`TypeText` is its ASCII characters, then zero bytes to the end of the field** (System B). A
-  value as long as its field fills it without a closing zero, and the segment's `<Data>` does not
-  enter: ETS writes the parameter's value over whatever `<Data>` holds there. ETS's images show it on
-  two products: the Theben DALI-Gateway KNX plus holds its admin password "dali" in its 8-byte field
-  as `64 61 6c 69 00 00 00 00`; the MDT IP Interface/Router holds every text field at its value with
-  zeros behind it (an empty description as 30 zero bytes where `<Data>` holds "Statuselement00"), its
-  30-character device name in its 30-byte field without a zero, and its parameter downloads write a
-  changed device name and the change back the same way. A text value is text, never a number: "123"
-  is `31 32 33 00…`. What no capture shows is refused (`PARAM_TEXT_UNSUPPORTED`,
+- **`TypeText` is its ASCII characters, then zero bytes to the end of the field** (System B and
+  System 7). A value as long as its field fills it without a closing zero, and on System B the
+  segment's `<Data>` does not enter: ETS writes the parameter's value over whatever `<Data>` holds there. ETS's images
+  show it on three products: the Theben DALI-Gateway KNX plus holds its admin password "dali" in its
+  8-byte field as `64 61 6c 69 00 00 00 00`; the MDT IP Interface/Router holds every text field at its
+  value with zeros behind it (an empty description as 30 zero bytes where `<Data>` holds
+  "Statuselement00"), its 30-character device name in its 30-byte field without a zero, and its
+  parameter downloads write a changed device name and the change back the same way; on the Theben
+  Meteodata 140 S (System 7) the partial download that switches a threshold channel on writes "20,0"
+  into its 5-byte field as `32 30 2c 30 00` over a `<Data>` byte `32`, and "1,0" into its 4-byte field
+  as `31 2c 30 00` over a `<Data>` byte `19`. A text value is text, never a number: "123" is
+  `31 32 33 00…`. What no capture shows is refused (`PARAM_TEXT_UNSUPPORTED`,
   `PARAM_TEXT_TOO_LONG`): a character beyond ASCII, a value longer than its field, a value as long as
-  its field where the application declares `<Options TextParameterZeroTerminate="true">`, a field
-  that is not whole bytes from bit 0, and any active text parameter of an absolute-segment
-  (System 7) application, since no System 7 capture shows one. A read-back leaves such a field out of
-  its comparison instead of refusing the whole read.
+  its field where the application declares `<Options TextParameterZeroTerminate="true">` and on any
+  System 7 application (no System 7 capture shows a field filled), on System 7 a zero over a non-zero
+  `<Data>` byte (the Meteodata's `<Data>` holds zeros behind the characters), a field that is not
+  whole bytes from bit 0, and any text parameter of a System 1 application. A read-back leaves such a
+  field out of its comparison instead of refusing the whole read.
 
 - **`TypeTime` is a raw unsigned integer**, a count of its `Unit` (seconds, milliseconds),
   and ETS stores it exactly that way (hardware-confirmed: a 60-second duration is stored as
