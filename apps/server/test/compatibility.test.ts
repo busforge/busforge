@@ -17,6 +17,16 @@ test("a bundled Product's own evidence makes it tested, a sibling Product on its
   expect(deviceCompatibility(JUNG.productRef, JUNG.appProgramId, { ...ALL, flashParams: false }).flashParams.state).toBe("refused");
 });
 
+test("another version of a bundled Product's application program is shown as such, never as tested", () => {
+  const openknx = evidenceBundle().products.find((p) => p.productRef.startsWith("M-00FA_"))!;
+  const other = openknx.appProgramId.replace(/-[0-9A-F]{4}$/, "-E5F5");
+  expect(other).not.toBe(openknx.appProgramId);
+  const ops = deviceCompatibility(openknx.productRef, other, ALL);
+  expect(ops.flashParams).toMatchObject({ state: "otherVersion", otherVersionTested: { productRef: openknx.productRef, appProgramId: openknx.appProgramId } });
+  // An operation the bundled version does not have tested is no more than untested here.
+  expect(ops.structuralFlash.state).toBe("eligible");
+});
+
 const dirs: string[] = [];
 afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
 

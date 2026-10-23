@@ -108,17 +108,37 @@ factual hint, never a test state:
 |---|---|
 | same Hardware and same application program version | state `derived`: "same KNX Hardware and application program as P-1, which was tested"; never counted as tested |
 | other Hardware, same application program version | "same application program as P-1, which was tested"; technically eligible, untested |
-| same application program, other version (`A-0072-30` vs `A-0072-31`) | no hint; technically eligible at most |
-| same mask or manufacturer only | no hint; technically eligible if `capabilities()` says so |
+| same Hardware (the Product itself or another), another version of the same application program | state `otherVersion`: "tested with 0072-30-69AA of this application, on P-1"; never counted as tested |
+| other Hardware, another version of the same application program | no hint; technically eligible at most |
+| another application program, or same mask or manufacturer only | no hint; technically eligible if `capabilities()` says so |
 
 Technically eligible Products may be programmed after an explicit notice that they are untested.
 The first relation gets its own state, `derived`: the same Hardware running the
 same application program version is likely to behave the same, which is worth showing apart from a
 Product nothing is known about, but the catalog does not prove shared electronics and firmware. It
 sits between technically eligible and tested, never raises a cell to `pass`, and does not count
-toward qualification. `buildMatrix()` in
-[`packages/product/src/compatibility.ts`](../packages/product/src/compatibility.ts) computes it; the
-app shows it in each device's compatibility badge.
+toward qualification.
+
+The third relation gets its own state too, `otherVersion`: a test of one version says nothing proven about
+another, whose image, load procedure and com-object table can all differ, but a user deciding whether
+to write it should know that the application program as such has been seen working on this Hardware,
+and with which version. It ranks below `derived`, never raises a cell to `pass`, needs the same
+acknowledgement as an untested Product before a write, and does not count toward qualification.
+
+Two application programs are versions of one when their catalogue ids name the same manufacturer,
+application number and OEM suffix, and differ only in version or content hash:
+
+| `M-0085` | `_A-0072` | `-30` | `-69AA` | `-O000A` |
+|---|---|---|---|---|
+| manufacturer | application number | version | content hash | OEM suffix, optional |
+| must match | must match | may differ | may differ | must match |
+
+So `M-0085_A-0072-30-69AA` and `M-0085_A-0072-31-69AB` are versions of one application program, and so
+are `M-00FA_A-A012-55-0000` and `M-00FA_A-A012-55-E5F5` (same version byte, another build). An id
+outside this form relates to no other application program. `buildMatrix()` in
+[`packages/product/src/compatibility.ts`](../packages/product/src/compatibility.ts) computes both
+states; the app shows them in each device's compatibility badge and in the notice before an
+untested write.
 
 ## The matrix state of an operation
 
@@ -131,6 +151,7 @@ app shows it in each device's compatibility badge.
 | `failed` | the newest transfer result of the Product's own records, in any channel, is `fail` |
 | `tested` | transfer `pass` in both the `api` and the `ui` channel, from the Product's own records |
 | `derived` | none of the above, and the same Hardware with the same application program version is `tested` on another known Product; shown with that Product and the firmware it was tested on |
+| `otherVersion` | none of the above, and another version of the same application program is `tested` on the same Hardware (this Product's own first, else another Product's); shown with that version, its Product and the firmware it was tested on; possibly with the hint below |
 | `eligible` | none of the above; possibly with a hint naming another Hardware where the same application program version is `tested` |
 
 ### The shipped records

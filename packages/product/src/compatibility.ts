@@ -6,7 +6,8 @@ import { cellState, parseEvidenceRecord, type AxisState, type EvidenceAxis, type
 // program, and each operation, what Busforge may attempt (capabilities, computed from the catalog)
 // and what was shown on hardware (evidence records of that Product only). Evidence of another
 // Product never raises a state; on the same Hardware with the same application program version it
-// yields `derived`, which never counts as tested.
+// yields `derived`, and another version of the same application program tested on the same Hardware
+// yields `otherVersion`. Neither counts as tested.
 
 export type MatrixOperation = keyof DeviceCapabilities;
 export const MATRIX_OPERATIONS: readonly MatrixOperation[] = ["readParams", "readLinks", "flashParams", "flashLinks", "fullDownload", "structuralFlash"];
@@ -16,7 +17,7 @@ const CHANNELS = ["api", "ui"] as const;
 type Channel = (typeof CHANNELS)[number];
 const AXES: EvidenceAxis[] = ["transfer", "reference", "behaviour", "persistence"];
 
-export type OperationState = "tested" | "failed" | "conflict" | "derived" | "eligible" | "refused";
+export type OperationState = "tested" | "failed" | "conflict" | "derived" | "otherVersion" | "eligible" | "refused";
 
 export interface MatrixCell { state: AxisState | "conflict"; basis: string[] }
 export interface OperationVerdict {
@@ -24,10 +25,13 @@ export interface OperationVerdict {
   // The Product's own cells per channel and axis; empty when it has no records for the operation.
   cells: Partial<Record<Channel | "tool", Record<EvidenceAxis, MatrixCell>>>;
   // Firmware the deciding transfer records were taken on ("unknown" where none was observed); for
-  // `derived`, those of the sibling it is derived from.
+  // `derived` and `otherVersion`, those of the test they name.
   firmware: string[];
   // `derived`: the Product on the same Hardware whose operation was tested.
   derivedFrom?: string;
+  // `otherVersion`: the Product on the same Hardware (this one or a sibling) and the other version of
+  // the application program the operation was tested with.
+  otherVersionTested?: { productRef: string; appProgramId: string };
   // A hint only, never a state: the same application program version was tested on other Hardware.
   sameAppTestedOn?: string;
 }
@@ -41,7 +45,18 @@ export function hardwareOf(productRef: string): string {
   return parts[0];
 }
 
+const byCodePoint = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const ownKey = (productRef: string, appProgramId: string) => `${productRef}|${appProgramId}`;
+
+// "M-0085_A-0072-30-69AA" -> "M-0085_A-0072": the catalogue id of an application program is its
+// manufacturer, application number, version and content hash, with an optional "-O<xxxx>" suffix of
+// the OEM it was built for. Two ids that differ only in version or hash are versions of one
+// application program. An id outside that form names no application, so it relates to none (null).
+const APP_ID = /^(M-[0-9A-F]{4})_A-([0-9A-F]{4})-[0-9A-F]{2}-[0-9A-F]{4}(-O[0-9A-F]{4})?$/;
+export function applicationOf(appProgramId: string): string | null {
+  const m = APP_ID.exec(appProgramId);
+  return m ? `${m[1]}_A-${m[2]}${m[3] ?? ""}` : null;
+}
 
 function ownVerdict(records: EvidenceRecord[], op: MatrixOperation): Pick<OperationVerdict, "cells" | "firmware"> & { transfer: Record<Channel | "tool", AxisState | "conflict"> } {
   const cells: OperationVerdict["cells"] = {};
@@ -69,8 +84,8 @@ function stateFromTransfer(t: Record<Channel | "tool", AxisState | "conflict">):
 
 // One row per Product. Records must already be validated (parseEvidenceRecord); one without a
 // Product is refused, as it cannot back any cell. Only Products in `products` count as tested
-// siblings for `derived` and the same-application hint: a record naming a Product the caller does
-// not know (a typo, an uncatalogued id) raises nothing.
+// siblings for `derived`, `otherVersion` and the same-application hint: a record naming a Product
+// the caller does not know (a typo, an uncatalogued id) raises nothing.
 export function buildMatrix(records: EvidenceRecord[], products: MatrixProduct[]): MatrixRow[] {
   const unattributed = records.find((r) => r.subject.productRef === null);
   if (unattributed) throw new ProductError("EVIDENCE_PRODUCT_UNKNOWN", `${unattributed.id} names no Product, so it cannot back a matrix cell`);
@@ -93,6 +108,7 @@ export function buildMatrix(records: EvidenceRecord[], products: MatrixProduct[]
 
   return products.map(({ productRef, appProgramId, capabilities }) => {
     const hardwareRef = hardwareOf(productRef);
+    const application = applicationOf(appProgramId);
     const own = byOwner.get(ownKey(productRef, appProgramId)) ?? [];
     const operations = {} as Record<MatrixOperation, OperationVerdict>;
     for (const op of MATRIX_OPERATIONS) {
@@ -101,13 +117,19 @@ export function buildMatrix(records: EvidenceRecord[], products: MatrixProduct[]
         .sort((a, b) => a.productRef.localeCompare(b.productRef));
       const sibling = others.find((t) => hardwareOf(t.productRef) === hardwareRef);
       const otherHardware = others.find((t) => hardwareOf(t.productRef) !== hardwareRef)?.productRef;
+      // Another version on the same Hardware, the Product's own first, then in code-point order so the
+      // generated compatibility page names the same one everywhere.
+      const version = application === null ? undefined : (tested.get(op) ?? [])
+        .filter((t) => t.appProgramId !== appProgramId && applicationOf(t.appProgramId) === application && hardwareOf(t.productRef) === hardwareRef)
+        .sort((a, b) => Number(b.productRef === productRef) - Number(a.productRef === productRef) || byCodePoint(a.productRef, b.productRef) || byCodePoint(a.appProgramId, b.appProgramId))[0];
       const verdict: OperationVerdict = { state: "eligible", cells, firmware };
       // Evidence stays visible after a policy refusal, but cannot make a refused operation tested.
       const shown = stateFromTransfer(transfer);
       if (!capabilities[op]) verdict.state = "refused";
       else if (shown) verdict.state = shown;
       else if (sibling) { verdict.state = "derived"; verdict.derivedFrom = sibling.productRef; verdict.firmware = sibling.firmware; }
-      if (verdict.state === "eligible" && otherHardware) verdict.sameAppTestedOn = otherHardware;
+      else if (version) { verdict.state = "otherVersion"; verdict.otherVersionTested = { productRef: version.productRef, appProgramId: version.appProgramId }; verdict.firmware = version.firmware; }
+      if ((verdict.state === "eligible" || verdict.state === "otherVersion") && otherHardware) verdict.sameAppTestedOn = otherHardware;
       operations[op] = verdict;
     }
     return { productRef, hardwareRef, appProgramId, operations };

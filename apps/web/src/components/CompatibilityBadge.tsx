@@ -4,7 +4,7 @@ import type { DeviceConfigView } from "../api.ts";
 import { useManufacturers } from "../queries.ts";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { MATRIX_OPS as OPS, summarize, orderOf, type Summary } from "../lib/untested.ts";
+import { MATRIX_OPS as OPS, summarize, orderOf, appVersionOf, type Summary } from "../lib/untested.ts";
 
 const manufacturerId = (n: number) => `M-${n.toString(16).toUpperCase().padStart(4, "0")}`;
 
@@ -12,11 +12,12 @@ const SUMMARY_STYLE: Record<Summary, string> = {
   tested: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
   partial: "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300",
   derived: "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300",
+  otherVersion: "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300",
   failed: "border-destructive/40 bg-destructive/10 text-destructive",
   untested: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
   unsupported: "border-border bg-secondary/40 text-muted-foreground",
 };
-const SUMMARY_ICON = { tested: ShieldCheck, partial: ShieldCheck, derived: ShieldQuestion, failed: ShieldAlert, untested: ShieldQuestion, unsupported: ShieldOff } as const;
+const SUMMARY_ICON = { tested: ShieldCheck, partial: ShieldCheck, derived: ShieldQuestion, otherVersion: ShieldQuestion, failed: ShieldAlert, untested: ShieldQuestion, unsupported: ShieldOff } as const;
 
 const mark = (s: string | undefined) => (s === "pass" ? "✓" : s === "fail" ? "✗" : s === "conflict" ? "!" : s === "not-applicable" ? "n/a" : "–");
 
@@ -55,8 +56,11 @@ export function CompatibilityBadge({ view, manufacturer }: { view: Pick<DeviceCo
                       {v.state === "tested" ? <CheckCircle2 className="size-3" /> : <CircleDashed className="size-3" />} {t(`compat.state.${v.state}`)}
                     </span>
                     {v.derivedFrom && <div className="text-muted-foreground">{t("compat.derivedFrom", { product: orderOf(v.derivedFrom) })}</div>}
+                    {v.otherVersionTested && <div className="text-muted-foreground" data-testid="compatibility-other-version">{t("compat.otherVersion", { app: appVersionOf(v.otherVersionTested.appProgramId), product: orderOf(v.otherVersionTested.productRef) })}</div>}
                     {v.sameAppTestedOn && <div className="text-muted-foreground">{t("compat.sameApp", { product: orderOf(v.sameAppTestedOn) })}</div>}
-                    {v.firmware.length > 0 && <div className="text-muted-foreground">{v.derivedFrom ? t("compat.firmwareOf", { fw: v.firmware.join(", "), product: orderOf(v.derivedFrom) }) : t("compat.firmware", { fw: v.firmware.join(", ") })}</div>}
+                    {v.firmware.length > 0 && <div className="text-muted-foreground">{v.derivedFrom ? t("compat.firmwareOf", { fw: v.firmware.join(", "), product: orderOf(v.derivedFrom) })
+                      : v.otherVersionTested ? t("compat.firmwareOfVersion", { fw: v.firmware.join(", "), app: appVersionOf(v.otherVersionTested.appProgramId) })
+                      : t("compat.firmware", { fw: v.firmware.join(", ") })}</div>}
                     {(v.cells.tool?.transfer.state === "fail" || v.cells.tool?.transfer.state === "conflict") && <div className="text-destructive">{t("compat.toolFailed")}</div>}
                   </td>
                   <td className="py-1 text-center font-mono" aria-label={`API ${v.cells.api?.transfer.state ?? "none"}, UI ${v.cells.ui?.transfer.state ?? "none"}`}>{mark(v.cells.api?.transfer.state)} / {mark(v.cells.ui?.transfer.state)}</td>

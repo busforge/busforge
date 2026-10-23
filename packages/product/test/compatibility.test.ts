@@ -68,12 +68,49 @@ describe("buildMatrix", () => {
     expect(v.sameAppTestedOn).toBe(P1);
   });
 
-  test("another application version gets neither derived nor a hint", () => {
-    const v = op(both(), product(P2, APP_NEXT));
-    expect(v.state).toBe("eligible");
-    expect(v.derivedFrom).toBeUndefined();
-    expect(v.sameAppTestedOn).toBeUndefined();
-    expect(op(both(), product(P1, APP_NEXT)).state).toBe("eligible"); // the tested Product itself, on a changed application
+  test("another version of the application tested on the same Hardware is its own state, never tested or derived", () => {
+    // The tested Product itself, on a changed application: only known when the tested one is known.
+    expect(op(both(), product(P1, APP_NEXT)).state).toBe("eligible");
+    const own = buildMatrix(both({ firmware: "2.1" }), [product(P1, APP_NEXT), product(P1)])[0].operations.flashParams;
+    expect(own).toMatchObject({ state: "otherVersion", otherVersionTested: { productRef: P1, appProgramId: APP }, firmware: ["2.1"] });
+    expect(own.derivedFrom).toBeUndefined();
+    // A sibling on the same Hardware.
+    const sibling = buildMatrix(both(), [product(P2, APP_NEXT), product(P1)])[0].operations.flashParams;
+    expect(sibling).toMatchObject({ state: "otherVersion", otherVersionTested: { productRef: P1, appProgramId: APP } });
+    // Only the content hash of the id differs (an OpenKNX build with the same version byte).
+    expect(buildMatrix(both(), [product(P1, "M-0085_A-0072-30-1234"), product(P1)])[0].operations.flashParams.state).toBe("otherVersion");
+  });
+
+  test("another version never reaches across Hardware or application programs", () => {
+    const otherHw = buildMatrix(both(), [product(P3, APP_NEXT), product(P1)])[0].operations.flashParams;
+    expect(otherHw.state).toBe("eligible");
+    expect(otherHw.otherVersionTested).toBeUndefined();
+    expect(otherHw.sameAppTestedOn).toBeUndefined();
+    for (const app of ["M-0085_A-0073-30-69AA", "M-0086_A-0072-30-69AA", "M-0085_A-0072-30-69AA-O000A"]) {
+      expect(`${app} ${buildMatrix(both(), [product(P2, app), product(P1)])[0].operations.flashParams.state}`).toBe(`${app} eligible`);
+    }
+    // An id outside the KNX form names no application, so it relates to none.
+    expect(buildMatrix(both({ app: "M-0085_A-0072" }), [product(P2, "M-0085_A-0072-31"), product(P1, "M-0085_A-0072")])[0].operations.flashParams.state).toBe("eligible");
+  });
+
+  test("the same application version on the same Hardware outranks another version", () => {
+    const records = [...both(), ...both({ product: P1, app: APP_NEXT })];
+    const v = buildMatrix(records, [product(P2), product(P1), product(P1, APP_NEXT)])[0].operations.flashParams;
+    expect(v).toMatchObject({ state: "derived", derivedFrom: P1 });
+    expect(v.otherVersionTested).toBeUndefined();
+  });
+
+  test("the Product's own other version is named before a sibling's, whatever the order of the products", () => {
+    const records = [...both({ product: P2 }), ...both({ product: P1 })];
+    for (const others of [[product(P1), product(P2)], [product(P2), product(P1)]]) {
+      expect(buildMatrix(records, [product(P1, APP_NEXT), ...others])[0].operations.flashParams.otherVersionTested).toEqual({ productRef: P1, appProgramId: APP });
+    }
+  });
+
+  test("a Product's own failure is not hidden behind another tested version", () => {
+    const records = [...both(), rec({ app: APP_NEXT, channel: "api", transfer: "fail" })];
+    expect(buildMatrix(records, [product(P1, APP_NEXT), product(P1)])[0].operations.flashParams.state).toBe("failed");
+    expect(buildMatrix(both(), [product(P1, APP_NEXT, { ...ALL, flashParams: false }), product(P1)])[0].operations.flashParams.state).toBe("refused");
   });
 
   test("a Product's own failure is not hidden behind a tested sibling", () => {

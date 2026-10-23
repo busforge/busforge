@@ -79,6 +79,14 @@ describe("the shipped records", () => {
     });
   });
 
+  test("the page names the other application version an operation was tested with, never as tested", () => {
+    const records = ["api", "ui"].map((channel) => record(`run-${channel}`, "2000-01-02T00:00:00.000Z", { transfer: pass }, { scope: { operation: "fullDownload", channel, configuration: "spec baseline", configurationFingerprint: null } }));
+    const next: MatrixProduct = { ...PRODUCT, appProgramId: "M-0002_A-0001-11-0000" };
+    const page = renderPage({ schema: "busforge.evidence-bundle/1", records, products: [PRODUCT, next] });
+    expect(page).toContain("| Full download | other version tested (`M-0002_A-0001-10-0000`) |");
+    expect(page).toContain("| M-0002 ORDER-1 | `M-0002_A-0001-11-0000` | eligible, untested | eligible, untested | eligible, untested | eligible, untested | other version tested | eligible, untested |");
+  });
+
   test("a reference pass keeps the artifact and hash it was compared with", () => {
     const ref = record("etsdiff-1", "2000-01-01T00:00:00.000Z", { reference: pass }, {
       scope: { operation: "fullDownload", channel: "tool", configuration: "application defaults", configurationFingerprint: null },

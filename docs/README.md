@@ -15,7 +15,7 @@ document says so.
 | [limitations.md](limitations.md) | What Busforge does not do, devices nobody has tested, Data Secure versus IP Secure, the known issues, how to report a problem. |
 | [status.md](status.md) | What works, on which real hardware, and how far it is proven. The canonical place for every verification claim. |
 | [device-support.md](device-support.md) | How a device is classified from its mask version, and the full mask matrix with per-model support. |
-| [compatibility.md](compatibility.md) | Generated: per Product and operation, what the kept evidence records show (tested, derived, eligible, refused). |
+| [compatibility.md](compatibility.md) | Generated: per Product and operation, what the kept evidence records show (tested, derived, other version tested, eligible, refused). |
 | [architecture.md](architecture.md) | How the running system fits together: server, database, web app, bus, and the flash safety model. |
 | [roadmap.md](roadmap.md) | What is next, and why. |
 

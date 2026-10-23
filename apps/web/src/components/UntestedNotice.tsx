@@ -3,7 +3,7 @@ import { AlertTriangle, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, type DeviceConfigView, type MatrixOperation } from "../api.ts";
-import { untestedOps, failedOps, orderOf } from "../lib/untested.ts";
+import { untestedOps, failedOps, orderOf, appVersionOf } from "../lib/untested.ts";
 import { Button } from "@/components/ui/button";
 import { errMsg } from "../lib/apiError.ts";
 
@@ -51,7 +51,9 @@ export function UntestedNotice({ projectId, deviceId, view, ops }: {
               <li key={op}>
                 {t(`untested.op.${op}`)}: {v.state === "derived"
                   ? t("untested.derived", { product: orderOf(v.derivedFrom!) })
-                  : t(`untested.state.${v.state}`)}
+                  : v.state === "otherVersion"
+                    ? t("untested.otherVersion", { app: appVersionOf(v.otherVersionTested!.appProgramId), product: orderOf(v.otherVersionTested!.productRef) })
+                    : t(`untested.state.${v.state}`)}
               </li>
             );
           })}

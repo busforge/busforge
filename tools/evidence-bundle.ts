@@ -13,7 +13,7 @@ import { join } from "node:path";
 import {
   parseEvidenceRecord, checkEvidenceSet, parseEvidenceBundle, buildMatrix, cellState, classify, parseAppConfig,
   EVIDENCE_BUNDLE_SCHEMA, MATRIX_OPERATIONS, type EvidenceBundle, type EvidenceRecord, type EvidenceAxis, type MatrixProduct,
-  type MatrixRow, type MatrixCell, type OperationState, type MatrixOperation,
+  type MatrixRow, type MatrixCell, type OperationState, type OperationVerdict, type MatrixOperation,
 } from "../packages/product/src/index.ts";
 import { catalogueDir, catalogueXml, corpusPath } from "./corpus.ts";
 import { SPECS } from "./smoke/specs/index.ts";
@@ -170,7 +170,7 @@ export function publicRecords(records: EvidenceRecord[], products: MatrixProduct
   out.sort((a, b) => byCodePoint(a.id, b.id));
   const shown = (rows: MatrixRow[], rename: (id: string) => string | undefined) => [
     ...cellsOf(rows).map((c) => ({ at: c.at, text: JSON.stringify({ ...c.cell, basis: c.cell.basis.map(rename) }) })),
-    ...rows.flatMap((row) => MATRIX_OPERATIONS.map((op) => ({ at: `${orderOf(row.productRef)} ${op}`, text: JSON.stringify({ state: row.operations[op].state, firmware: row.operations[op].firmware }) }))),
+    ...rows.flatMap((row) => MATRIX_OPERATIONS.map((op) => ({ at: `${orderOf(row.productRef)} ${op}`, text: JSON.stringify({ state: row.operations[op].state, firmware: row.operations[op].firmware, derivedFrom: row.operations[op].derivedFrom, otherVersionTested: row.operations[op].otherVersionTested }) }))),
   ];
   const asWritten = shown(kept, (id) => renamed.get(id));
   for (const order of [out, [...out].reverse()]) {
@@ -202,8 +202,10 @@ export function generateBundle(records = collectRecords()): EvidenceBundle {
 
 
 const LABEL: Record<OperationState, string> = {
-  tested: "tested", failed: "**failed**", conflict: "**conflict**", derived: "derived", eligible: "eligible, untested", refused: "refused",
+  tested: "tested", failed: "**failed**", conflict: "**conflict**", derived: "derived", otherVersion: "other version tested", eligible: "eligible, untested", refused: "refused",
 };
+// The state, naming the application program version the operation was tested with where it is another.
+const stateText = (v: OperationVerdict) => (v.otherVersionTested ? `${LABEL[v.state]} (\`${v.otherVersionTested.appProgramId}\`)` : LABEL[v.state]);
 const OP_LABEL: Record<MatrixOperation, string> = {
   readParams: "Read parameters", readLinks: "Read links", flashParams: "Parameter flash",
   flashLinks: "Group-address flash", fullDownload: "Full download", structuralFlash: "Structural flash",
@@ -247,7 +249,7 @@ export function renderPage(bundle: EvidenceBundle): string {
     for (const o of MATRIX_OPERATIONS) {
       const v = row.operations[o];
       const pair = (axis: "transfer" | "behaviour" | "persistence") => `${v.cells.api?.[axis].state ?? "none"} / ${v.cells.ui?.[axis].state ?? "none"}`;
-      out.push(`| ${OP_LABEL[o]} | ${LABEL[v.state]} | ${pair("transfer")} | ${pair("behaviour")} | ${pair("persistence")} | ${v.cells.tool?.reference.state ?? "none"} | ${v.firmware.join(", ") || "none"} |`);
+      out.push(`| ${OP_LABEL[o]} | ${stateText(v)} | ${pair("transfer")} | ${pair("behaviour")} | ${pair("persistence")} | ${v.cells.tool?.reference.state ?? "none"} | ${v.firmware.join(", ") || "none"} |`);
     }
   }
   return `${out.join("\n")}\n`;
