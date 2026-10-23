@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-24 -24 1048 576" width="1048" height="576" role="img" aria-labelledby="dg-t">
+  <rect x="-24" y="-24" width="1048" height="576" rx="18" fill="#13181d"/>
+  <rect x="-23" y="-23" width="1046" height="574" rx="17" fill="none" stroke="#282f35" stroke-width="2"/>
+            <title id="dg-t">How Busforge works: an ETS project, or a project started empty and filled from the manufacturers' product databases, is configured in the browser. Programming builds the device's memory image, reads the device to check its mask and back up what a partial write changes, and compares. A preview stops there. Otherwise it writes over a KNXnet/IP or USB interface, a partial write only what differs, and reads the device back: equal bytes mean verified, different bytes are reported. The bus monitor shows the bus live in the browser.</title>
+            <defs>
+              <marker id="dw" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#8d9399"/></marker>
+              <marker id="dw-a" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#f3a44a"/></marker>
+              <marker id="dw-ok" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#54c57a"/></marker>
+            </defs>
+            <g fill="none" stroke-width="1.2">
+              <path d="M192 60 C212 60 210 92 228 92" stroke="#8d9399" marker-end="url(#dw)"/>
+              <path d="M192 140 C212 140 210 108 228 108" stroke="#8d9399" marker-end="url(#dw)"/>
+              <path d="M392 100 H428" stroke="#8d9399" marker-end="url(#dw)"/>
+              <path d="M584 100 H620" stroke="#f3a44a" stroke-width="1.6" marker-end="url(#dw-a)"/>
+              <path d="M776 100 H812" stroke="#f3a44a" stroke-width="1.6" marker-end="url(#dw-a)"/>
+              <path d="M896 132 V214 H396" stroke="#8d9399" stroke-dasharray="5,4" marker-end="url(#dw)"/>
+              <path d="M312 188 V136" stroke="#8d9399" stroke-dasharray="5,4" marker-end="url(#dw)"/>
+              <path d="M856 68 V44 H508 V64" stroke="#f3a44a" stroke-dasharray="5,4" marker-end="url(#dw-a)"/>
+              <path d="M508 136 V206" stroke="#4a535b"/>
+              <path d="M508 222 V288" stroke="#4a535b" marker-end="url(#dw)"/>
+              <path d="M182 374 H198" stroke="#8d9399" marker-end="url(#dw)"/>
+              <path d="M336 374 H352" stroke="#8d9399" marker-end="url(#dw)"/>
+              <path d="M490 374 H506" stroke="#8d9399" marker-end="url(#dw)"/>
+              <path class="path-draw" d="M644 374 H660" stroke="#f3a44a" stroke-width="1.6" marker-end="url(#dw-a)"/>
+              <path d="M798 374 H814" stroke="#54c57a" marker-end="url(#dw-ok)"/>
+              <path d="M423 404 V440" stroke="#8d9399" stroke-dasharray="5,4" marker-end="url(#dw)"/>
+              <path d="M731 404 V440" stroke="#8d9399" stroke-dasharray="5,4" marker-end="url(#dw)"/>
+            </g>
+            <g font-family="'JetBrains Mono', monospace" font-size="12" text-anchor="middle">
+              <rect x="638" y="36" width="88" height="16" rx="2" fill="#13181d"/>
+              <text x="682" y="48" fill="#f3a44a">read back</text>
+              <rect x="592" y="206" width="40" height="16" rx="2" fill="#13181d"/>
+              <text x="612" y="218" fill="#8d9399">live</text>
+              <rect x="431" y="414" width="64" height="16" rx="2" fill="#13181d"/>
+              <text x="463" y="426" fill="#8d9399">dry run</text>
+              <rect x="739" y="414" width="64" height="16" rx="2" fill="#13181d"/>
+              <text x="771" y="426" fill="#8d9399">differs</text>
+            </g>
+            <g font-family="'Archivo', sans-serif" text-anchor="middle">
+              <rect x="24" y="28" width="168" height="64" rx="8" fill="rgba(141,147,153,0.10)" stroke="#717880"/>
+              <text x="108" y="55.5" fill="#e5e8eb" font-size="15" font-weight="600">ETS project</text>
+              <text x="108" y="74.5" fill="#8d9399" font-size="11" font-family="'JetBrains Mono', monospace">.knxproj</text>
+              <rect x="24" y="108" width="168" height="64" rx="8" fill="rgba(141,147,153,0.10)" stroke="#717880"/>
+              <text x="108" y="135.5" fill="#e5e8eb" font-size="15" font-weight="600">Start empty</text>
+              <text x="108" y="154.5" fill="#8d9399" font-size="11" font-family="'JetBrains Mono', monospace">place from catalogue</text>
+              <rect x="232" y="68" width="160" height="64" rx="8" fill="#090e12" stroke="#c3c8cd"/>
+              <text x="312" y="95.5" fill="#e5e8eb" font-size="15" font-weight="600">Configure</text>
+              <text x="312" y="114.5" fill="#8d9399" font-size="11" font-family="'JetBrains Mono', monospace">in the browser</text>
+              <rect x="432" y="68" width="152" height="64" rx="8" fill="rgba(243,164,74,0.08)" stroke="#f3a44a" stroke-width="1.4"/>
+              <text x="508" y="95.5" fill="#e5e8eb" font-size="16" font-weight="700">Program</text>
+              <text x="508" y="114.5" fill="#d9a46a" font-size="11" font-family="'JetBrains Mono', monospace">build, check, verify</text>
+              <rect x="624" y="68" width="152" height="64" rx="8" fill="#090e12" stroke="#c3c8cd"/>
+              <text x="700" y="95.5" fill="#e5e8eb" font-size="15" font-weight="600">Interface</text>
+              <text x="700" y="114.5" fill="#8d9399" font-size="11" font-family="'JetBrains Mono', monospace">KNXnet/IP or USB</text>
+              <rect x="816" y="68" width="160" height="64" rx="8" fill="#090e12" stroke="#c3c8cd"/>
+              <text x="896" y="95.5" fill="#e5e8eb" font-size="15" font-weight="600">KNX devices</text>
+              <text x="896" y="114.5" fill="#8d9399" font-size="11" font-family="'JetBrains Mono', monospace">twisted pair</text>
+              <rect x="232" y="188" width="160" height="52" rx="8" fill="#090e12" stroke="#c3c8cd"/>
+              <text x="312" y="209.5" fill="#e5e8eb" font-size="15" font-weight="600">Bus monitor</text>
+              <text x="312" y="228.5" fill="#8d9399" font-size="11" font-family="'JetBrains Mono', monospace">decoded values</text>
+              <rect x="24" y="292" width="952" height="212" rx="10" fill="rgba(141,147,153,0.04)" stroke="#3a434b"/>
+              <text x="44" y="320" fill="#8d9399" font-size="13" font-weight="600" text-anchor="start">Program, step by step</text>
+              <rect x="48" y="344" width="134" height="60" rx="8" fill="#090e12" stroke="#c3c8cd"/>
+              <text x="115" y="369.5" fill="#e5e8eb" font-size="14" font-weight="600">Build the image</text>
+              <text x="115" y="388.5" fill="#8d9399" font-size="11" font-family="'JetBrains Mono', monospace">parameters, tables</text>
+              <rect x="202" y="344" width="134" height="60" rx="8" fill="#090e12" stroke="#c3c8cd"/>
+              <text x="269" y="369.5" fill="#e5e8eb" font-size="14" font-weight="600">Read the device</text>
+              <text x="269" y="388.5" fill="#8d9399" font-size="11" font-family="'JetBrains Mono', monospace">mask, backup</text>
+              <rect x="356" y="344" width="134" height="60" rx="8" fill="#090e12" stroke="#c3c8cd"/>
+              <text x="423" y="369.5" fill="#e5e8eb" font-size="14" font-weight="600">Compare</text>
+              <text x="423" y="388.5" fill="#8d9399" font-size="11" font-family="'JetBrains Mono', monospace">against the device</text>
+              <rect x="510" y="344" width="134" height="60" rx="8" fill="#090e12" stroke="#c3c8cd"/>
+              <text x="577" y="369.5" fill="#e5e8eb" font-size="14" font-weight="600">Write</text>
+              <text x="577" y="388.5" fill="#8d9399" font-size="11" font-family="'JetBrains Mono', monospace">load procedure</text>
+              <rect x="664" y="344" width="134" height="60" rx="8" fill="rgba(243,164,74,0.12)" stroke="#f3a44a" stroke-width="1.4"/>
+              <text x="731" y="369.5" fill="#f3a44a" font-size="15" font-weight="700">Read back</text>
+              <text x="731" y="388.5" fill="#d9a46a" font-size="11" font-family="'JetBrains Mono', monospace">byte for byte</text>
+              <rect x="818" y="344" width="134" height="60" rx="8" fill="rgba(84,197,122,0.10)" stroke="#54c57a"/>
+              <text x="885" y="379" fill="#54c57a" font-size="15" font-weight="700">Verified</text>
+              <rect x="356" y="444" width="134" height="40" rx="8" fill="#090e12" stroke="#717880" stroke-dasharray="4,3"/>
+              <text x="423" y="469" fill="#c3c8cd" font-size="14" font-weight="600">Preview</text>
+              <rect x="664" y="444" width="134" height="40" rx="8" fill="#090e12" stroke="#717880" stroke-dasharray="4,3"/>
+              <text x="731" y="469" fill="#c3c8cd" font-size="14" font-weight="600">Reported</text>
+            </g>
+          </svg>

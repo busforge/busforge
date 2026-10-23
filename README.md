@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="docs/brand/busforge-banner.png" alt="Busforge, an open commissioning tool for KNX" width="880">
+  <img src="docs/brand/busforge-banner.png" alt="Busforge: commission KNX from a browser" width="880">
 </p>
 
 <p align="center">
-  <em>Cross-platform, self-hostable alternative to KNX ETS. Import a project, watch the bus, configure and program real KNX devices, all from a web UI.</em>
+  Busforge imports your ETS project, shows the bus live and programs real KNX devices, then reads each device back to check it holds what was written. Self-hosted in one Docker container, on Linux or a Mac.
 </p>
 
 <p align="center">
@@ -12,21 +12,37 @@
   <img src="https://img.shields.io/badge/verified-on%20real%20hardware-54c57a" alt="Verified on real hardware">
 </p>
 
----
-
-Busforge imports a `.knxproj`, browses the installation, watches the bus with decoded
-values, edits a device's configuration and **programs ("downloads") real KNX devices**
-over IP or USB. It runs as a single self-hostable container. TypeScript on Bun, React
-frontend, no ETS and no Windows required.
-
-The hard part is done: Busforge reads a device, reconstructs byte-for-byte what ETS
-flashed, and programs parameter and group-address changes that take effect on the bus,
-including first-time commissioning of a factory-fresh device. Every claim in this
-repository is backed by a read-back from real hardware or explicitly marked as unproven.
+<p align="center">
+  <img src="docs/screenshots/device-page.webp" alt="Busforge device page of an MDT universal interface, programmed and with every operation Busforge supports for the product tested: the parameters filtered for sending, each input's status object linked to a group address, and the Flash button." width="880">
+</p>
 
 <p align="center">
-  <img src="docs/brand/busforge-architecture.png" alt="Busforge data flow: knxproj import, parse, SQLite store, web UI, program and flash with verify, KNX bus, live bus monitor feedback" width="900">
+  <em>Public alpha, for technically capable KNX users. Keep your ETS project as a backup.</em>
 </p>
+
+---
+
+## How it works
+
+Bring an ETS project, or start empty and place devices from the product catalogue, and configure
+them in the browser. When you program, Busforge builds the device's memory image, checks the device,
+writes through your interface and reads it back byte for byte. A device that differs is reported,
+never shown as done.
+
+<p align="center">
+  <img src="docs/brand/busforge-how-it-works.png" alt="How Busforge works: an ETS project, or a project started empty from the product catalogue, is configured in the browser and programmed through a KNXnet/IP or USB interface into the KNX devices; the bus monitor shows the bus live. Programming step by step: build the image, read the device (mask, and a backup for a partial write), compare (a dry run stops at the preview), write, read back; equal bytes mean verified, different bytes are reported." width="880">
+</p>
+
+- **What a read-back proves:** that the device holds Busforge's bytes. Whether they are the bytes
+  ETS would write is a separate check, made against ETS captures product by product and shown in
+  [`docs/compatibility.md`](docs/compatibility.md).
+- **Drift before you write:** read any device and see, parameter by parameter, where it differs
+  from your project.
+- **Small writes:** a flash writes only the regions that differ, and backs them up first.
+
+Busforge reads a device, programs parameter and group-address changes that take effect on the
+bus, and commissions a factory-fresh device. Every claim in this repository is backed by a
+read-back from real hardware, by a comparison with an ETS capture, or explicitly marked as unproven.
 
 ## What it does
 
@@ -46,6 +62,18 @@ honestly in **[`docs/status.md`](docs/status.md)**. Read it before trusting a ca
 a passing test suite proves stability and codec math, never that a device is programmed
 correctly.
 
+## The application
+
+Screens from the demo project, an invented house with seventeen devices of ten manufacturers, one
+of them programmed on a test bench.
+
+| | |
+|---|---|
+| <img src="docs/screenshots/devices.webp" alt="Device overview of the demo house: floors and rooms on the left, each device under its room with its individual address, manufacturer and programming state." width="420"> | <img src="docs/screenshots/group-addresses.webp" alt="Group address overview: main and middle groups for central functions, lighting, blinds, heating and presence, each address with its name and datapoint type." width="420"> |
+| **Your building, room by room.** Every device with its individual address, its product and its programming state, under the floor and room it sits in. | **Group addresses, with their types.** Main and middle groups, names and datapoint types, editable in place; the bus monitor shows their values decoded. |
+| <img src="docs/screenshots/flash-preview.webp" alt="Program dialog for the MDT universal interface after one parameter and one group address were changed: checked against the device, 2 of 168 configuration bytes and 3 of 115 group address bytes will change." width="420"> | <img src="docs/screenshots/compatibility.webp" alt="Compatibility popover of the MDT universal interface: every operation, from reading parameters to the structural flash, tested on hardware, and the explanation of what tested means." width="420"> |
+| **A preview before every write.** The program dialog checks against the real device and says what it would write: here one parameter and one group address. | **What has been shown for this product.** Each operation with its state from the kept evidence. A product nobody has tested says so, and is written only after you confirm it for the project. |
+
 ## Design principle: refuse, never pretend
 
 Flashing writes bytes into a real device, and wrong bytes mean a misconfigured device in
@@ -64,10 +92,30 @@ a live building. Busforge therefore refuses loudly rather than guessing quietly.
 
 ## Install
 
-Busforge runs as one Docker container. **[`docs/install.md`](docs/install.md)** takes you from
-nothing to a project on your bus: start the container, create an empty project or import your ETS
-project, bring in the manufacturers' product definitions, set up a KNXnet/IP or USB interface. It
-also lists the platforms Busforge has actually run on, and the update, backup and restore route.
+One container, one data volume, one master key that seals the Data Secure keys Busforge stores.
+Keep the key with your backups: without it a restored backup cannot open them.
+
+```bash
+# once; keep this file safe
+[ -f busforge-master.key ] ||
+  openssl rand -hex 32 > busforge-master.key
+
+docker run -d --name busforge \
+  --stop-timeout 1800 \
+  -p 127.0.0.1:3000:3000 \
+  -v busforge-data:/app/apps/server/data \
+  -e BUSFORGE_MASTER_KEY="$(cat busforge-master.key)" \
+  ghcr.io/busforge/busforge:latest
+```
+
+Until the image package is public, pulling it needs a GitHub login that can read it; build the
+image yourself instead, as [`docs/install.md`](docs/install.md) shows. The published image is for
+x86_64; on arm64, build it from the source. Then open `http://127.0.0.1:3000`. Busforge has no
+login: keep it on a trusted network and never expose it to the internet.
+
+**[`docs/install.md`](docs/install.md)** takes you from nothing to a project on your bus: start
+the container, create an empty project or import your ETS project, bring in the manufacturers'
+product definitions, set up a KNXnet/IP or USB interface. It also lists the platforms Busforge has actually run on, and the update, backup and restore route.
 
 Busforge is an alpha. What it does not do yet, and the known issues, are in
 [`docs/limitations.md`](docs/limitations.md). Report a problem, or a device that works, as a
