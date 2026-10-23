@@ -40,4 +40,18 @@ describe("the state marks of a device", () => {
   test("a clean device shows nothing", () => {
     expect(render(<ChangePill changes={changes({})} targets={{ changes: { action: "x", onClick: noop } }} />)).toBe("");
   });
+
+  test("in the header a clean device says it is programmed, as a plain mark of the same height", () => {
+    const html = render(<ChangePill size="md" showProgrammed changes={changes({})} />);
+    expect(tag(html, "programmed")).toBe("span");
+    expect(html).toContain("h-6");
+    expect(html).toContain(" Programmed</span>");
+  });
+
+  test("the programmed mark gives way to what the device still needs, and is never claimed without a state", () => {
+    expect(render(<ChangePill size="md" showProgrammed changes={changes({ neverProgrammed: true })} />)).not.toContain('data-testid="programmed"');
+    expect(render(<ChangePill size="md" showProgrammed changes={changes({ params: 1 })} />)).not.toContain('data-testid="programmed"');
+    expect(render(<ChangePill size="md" showProgrammed changes={changes({ security: "unknown" })} />)).not.toContain('data-testid="programmed"');
+    expect(render(<ChangePill size="md" showProgrammed />)).toBe("");
+  });
 });

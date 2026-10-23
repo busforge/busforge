@@ -152,7 +152,16 @@ A static `Badge` has none of these, so a mark that does nothing never looks clic
 
 Tones carry meaning, never decoration. `primary` (amber) marks the user's own pending work ("never programmed", "2 changes"). `ok` and `danger` are reserved for what was proven or failed on hardware. `warning` marks an unproven state (untested, assumed value), `info` a derived one (tested on a related product). Plain labels (manufacturer number, counts) are `neutral` or `outline`. Marks that sit side by side use the same size: device rows use `sm`, page headers `md`.
 
-A state mark that has a remedy is a `BadgeButton` where the page offers that remedy: in the device page header "never programmed" and "N changes" open the flash (which offers the full download a never-programmed device needs, where Busforge can run one; Commission only where nothing can be flashed), a changed or unknown security object the group-address flash, the compatibility badge its detail. Its tooltip says what the state means and what a click opens. The same mark in a list row stays a plain `Badge`, because the row itself leads to the page.
+A state mark that has a remedy is a `BadgeButton` where the page offers that remedy: in the device page header "never programmed" and "N changes" open the flash (which offers the full download a never-programmed device needs, where Busforge can run one; Commission only where nothing can be flashed), a changed or unknown security object the group-address flash, the compatibility badge its detail. Its tooltip says what the state means and what a click opens. The same mark in a list row stays a plain `Badge`, because the row itself leads to the page. A device with an application and nothing pending shows a quiet `neutral` "Programmed" mark in the header (never in a row). It is the project's record (ETS's at import, or Busforge's last verified write or read-back), not a read of the device, so it is never `ok`, and its tooltip says that only a read-back shows what the device holds.
+
+### The device page header
+
+Two rows:
+
+1. **Who the device is and what state it is in:** back, the device label (name and individual address), the programming state ("never programmed"; or "N changes" and a security mark, either or both; or "programmed") and the compatibility badge. All marks `md`, one height.
+2. **What stands against it and what can be done with it:** the standing warnings on the left, the parameter filter after them, and the actions right-aligned as one group (Flash, revert, read back, diagnostic, the menu). A standing warning about the device (what the comparison with the device does not cover, what Busforge does not write, settings it does not support, links the page cannot show) is a `warning` `BadgeButton` with a short label and its count where the count is known; its popover carries the full title and the points.
+
+On a narrow window the second row wraps: warnings, then the filter at full width, then the action group, kept together on its own line and split only where the window is narrower than the group. Below the header, next to what they act on, stay what concerns single parameters or a read: values to assume, unresolved objects, why a device stays never programmed after a read, values assumed and not yet proven, and the DCA notice.
 
 ### Filters
 
@@ -163,7 +172,7 @@ A list filter always shows that it is on, and how to undo it:
 - "Reset filters" appears while any filter is on and clears them all. A choice of place (the building shown) is not a filter and stays.
 - Filter state lives in the URL, so reload, back and a shared link keep it.
 
-A filter sits next to the list it narrows, not in the page header: on the device page the parameter filter is the first row above the parameters, with its match count.
+A page filter sits in the toolbar row of the page it narrows: on the device page the parameter filter is in the header's second row, in front of the actions, with its match count.
 
 ### Dialogs are never a trap
 

@@ -38,6 +38,7 @@ import { FlagEditor } from "./FlagEditor.tsx";
 import { AssumeValuesPanel, NeverProgrammedKeptNote, UnprovenAssumptionsNote, UnresolvedNotes, assumeCandidates, assumeList, assumeReducer, assumedParams, initialAssumeState } from "./AssumeValues.tsx";
 import { addedLinks } from "@/lib/links.ts";
 import { DeviceLabel } from "@/components/DeviceLabel.tsx";
+import { HeaderWarning } from "@/components/HeaderWarning.tsx";
 import { DcaModuleDialog } from "../dca/DcaModuleDialog.tsx";
 import { cn } from "@/lib/utils";
 import { errMsg } from "../lib/apiError.ts";
@@ -578,74 +579,111 @@ export function DeviceConfig() {
 
   return (
     <div className="space-y-4">
-      {/* Two rows: who the device is and what state it is in, then what can be done with it. Every
-          mark in the first row has one height. */}
+      {/* Two rows: who the device is and what state it is in; then what stands against it, the filter
+          of its parameters, and what can be done with it, right-aligned as one group. Every mark in the
+          first row has one height. */}
       <header className="space-y-2" data-testid="device-header">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <IconButton asChild variant="ghost" size="icon-sm" label={t("device.back")} className="-ml-1 text-muted-foreground">
             <Link to="/projects/$projectId/devices" params={{ projectId }} search={{ q: search.q, changed: search.changed, b: search.b }}><ChevronLeft className="size-5" /></Link>
           </IconButton>
           <DeviceLabel name={device?.name} ia={device?.ia ?? ""} className="h-6 min-w-0 font-semibold" />
-          <ChangePill changes={device?.changes} size="md" targets={changeTargets} />
+          <ChangePill changes={device?.changes} size="md" targets={changeTargets} showProgrammed={!!device?.appRef} />
           <CompatibilityBadge view={view} manufacturer={device?.manufacturer} />
         </div>
-        <div className="flex flex-wrap items-center gap-2" data-testid="device-actions">
-          {flashTargetsAvail.length > 0 && (
-            <div className="flex">
-              <Button
-                onClick={() => setFlashTargets(flashTargetsAvail)} data-testid="program-device"
-                className={cn("gap-1.5", flashTargetsAvail.length > 1 && "rounded-r-none")}
-              >
-                <Cpu className="size-4" /> {t("device.flash")}
-              </Button>
-              {flashTargetsAvail.length > 1 && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button className="rounded-l-none border-l border-primary-foreground/20 px-1.5" aria-label={t("device.flashChoose")} data-testid="flash-menu">
-                      <ChevronDown className="size-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start">
-                    <DropdownMenuItem onClick={() => setFlashTargets(["params"])} data-testid="flash-only-params">{t("device.flashOnlyParams")}</DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => setFlashTargets(["ga"])} data-testid="flash-only-ga">{t("device.flashOnlyGAs")}</DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+        <div className="flex flex-wrap items-center gap-2" data-testid="device-toolbar">
+          {/* What this device's values are never compared with the device for. Not the product's test
+              state (the compatibility badge): a fully tested product has these gaps too. */}
+          <HeaderWarning label={t("device.warnReadback")} title={t("device.readbackUnsupportedTitle")} items={readbackNotes} testId="readback-unsupported" />
+          <HeaderWarning label={t("device.warnRefused")} title={t("device.refusedTitle")} items={refusedNotes} testId="device-refusals" />
+          <HeaderWarning
+            label={t("device.warnGaps")} title={t("device.gapsTitle")} testId="device-gaps"
+            items={[...gaps.types.map(([label, n]) => t("device.gapType", { type: label, count: n })), ...gaps.elements.map(([label, n]) => t("device.gapElement", { tag: label, count: n }))]}
+          />
+          {!!view?.linkBaseGaps && (
+            <HeaderWarning
+              label={t("device.warnLinkGaps")} title={t("device.linkGapsTitle")} testId="link-gaps-notice"
+              count={view.linkBaseGaps > 0 ? view.linkBaseGaps : null}
+              items={[view.linkBaseGaps > 0 ? t("device.linkGapsBlocked", { count: view.linkBaseGaps }) : t("device.linkGapsUnknown")]}
+            />
+          )}
+          {view && view.blocks.length > 0 && (
+            <div className="flex w-full items-center gap-2 sm:w-auto" data-testid="config-filter">
+              <div className="relative min-w-0 flex-1 sm:w-64 sm:flex-none">
+                <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input ref={searchRef} placeholder={t("device.searchPlaceholder")} value={qRaw} onChange={(e) => setQ(e.target.value)} className={cn("px-9", q && "border-primary/50")} data-testid="config-search" />
+                {qRaw && (
+                  <IconButton
+                    size="icon-xs" tooltip={false} label={t("device.clearSearch")} onClick={() => setQ("")} data-testid="config-search-clear"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
+                  >
+                    <X className="size-4" />
+                  </IconButton>
+                )}
+              </div>
+              {q && (
+                <span className="shrink-0 font-mono text-xs text-primary" data-testid="config-filter-count">{t("device.searchCount", { count: matchCount })}</span>
               )}
             </div>
           )}
-          {actionBtn("device.revert", <RotateCcw className="size-4" />, () => setRevertOpen(true), { ghost: true, disabled: !hasChanges || saving, testId: "revert-device" })}
-          {actionBtn("device.readFromDevice", readBack.isPending ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />, doReadBack, { disabled: readBack.isPending || saving || (!!view?.readbackSupport && !view.readbackSupport.params && !view.readbackSupport.links), testId: "read-back" })}
-          {/* Read-only, so offered for every device, also one Busforge cannot program or has no application for. */}
-          {actionBtn("diagnostic.open", <Stethoscope className="size-4" />, () => setDiagnosticOpen(true), { disabled: !device, testId: "diagnostic-open" })}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" aria-label={t("device.moreActions")} title={t("device.moreActions")} data-testid="device-menu">
-                <MoreVertical className="size-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => setAddressOpen(true)} disabled={!device} data-testid="change-address">
-                <MapPin className="size-4" /> {t("address.menu")}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setReplaceOpen(true)} disabled={!view} data-testid="replace-product">
-                <Repeat2 className="size-4" /> {t("replace.menu")}
-              </DropdownMenuItem>
-              {/* Commissioning is a full download; only offer it where the device can be commissioned. */}
-              <DropdownMenuItem onClick={() => setCommissionOpen(true)} disabled={!!caps && !caps.fullDownload} data-testid="commission-device">
-                <RadioTower className="size-4" /> {t("commission.menu")}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setSecureOpen(true)} data-testid="secure-activate-device">
-                <ShieldCheck className="size-4" /> {t("secureActivate.menu")}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setToolKeyOpen(true)} data-testid="tool-key-device">
-                <KeyRound className="size-4" /> {t("toolKey.menu")}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setReportOpen(true)} disabled={!device} data-testid="report-device">
-                <MessageSquareWarning className="size-4" /> {t("report.menu")}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          {saving && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-2" data-testid="device-actions">
+            {flashTargetsAvail.length > 0 && (
+              <div className="flex">
+                <Button
+                  onClick={() => setFlashTargets(flashTargetsAvail)} data-testid="program-device"
+                  className={cn("gap-1.5", flashTargetsAvail.length > 1 && "rounded-r-none")}
+                >
+                  <Cpu className="size-4" /> {t("device.flash")}
+                </Button>
+                {flashTargetsAvail.length > 1 && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button className="rounded-l-none border-l border-primary-foreground/20 px-1.5" aria-label={t("device.flashChoose")} data-testid="flash-menu">
+                        <ChevronDown className="size-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start">
+                      <DropdownMenuItem onClick={() => setFlashTargets(["params"])} data-testid="flash-only-params">{t("device.flashOnlyParams")}</DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => setFlashTargets(["ga"])} data-testid="flash-only-ga">{t("device.flashOnlyGAs")}</DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
+              </div>
+            )}
+            {actionBtn("device.revert", <RotateCcw className="size-4" />, () => setRevertOpen(true), { ghost: true, disabled: !hasChanges || saving, testId: "revert-device" })}
+            {actionBtn("device.readFromDevice", readBack.isPending ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />, doReadBack, { disabled: readBack.isPending || saving || (!!view?.readbackSupport && !view.readbackSupport.params && !view.readbackSupport.links), testId: "read-back" })}
+            {/* Read-only, so offered for every device, also one Busforge cannot program or has no application for. */}
+            {actionBtn("diagnostic.open", <Stethoscope className="size-4" />, () => setDiagnosticOpen(true), { disabled: !device, testId: "diagnostic-open" })}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="icon" aria-label={t("device.moreActions")} title={t("device.moreActions")} data-testid="device-menu">
+                  <MoreVertical className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => setAddressOpen(true)} disabled={!device} data-testid="change-address">
+                  <MapPin className="size-4" /> {t("address.menu")}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setReplaceOpen(true)} disabled={!view} data-testid="replace-product">
+                  <Repeat2 className="size-4" /> {t("replace.menu")}
+                </DropdownMenuItem>
+                {/* Commissioning is a full download; only offer it where the device can be commissioned. */}
+                <DropdownMenuItem onClick={() => setCommissionOpen(true)} disabled={!!caps && !caps.fullDownload} data-testid="commission-device">
+                  <RadioTower className="size-4" /> {t("commission.menu")}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setSecureOpen(true)} data-testid="secure-activate-device">
+                  <ShieldCheck className="size-4" /> {t("secureActivate.menu")}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setToolKeyOpen(true)} data-testid="tool-key-device">
+                  <KeyRound className="size-4" /> {t("toolKey.menu")}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setReportOpen(true)} disabled={!device} data-testid="report-device">
+                  <MessageSquareWarning className="size-4" /> {t("report.menu")}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            {saving && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
+          </div>
         </div>
       </header>
 
@@ -753,13 +791,6 @@ export function DeviceConfig() {
         </div>
       )}
 
-      {!!view?.linkBaseGaps && (
-        <div className="flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-sm text-amber-700 dark:text-amber-300" data-testid="link-gaps-notice">
-          <AlertTriangle className="size-4 shrink-0" />
-          <span>{view.linkBaseGaps > 0 ? t("device.linkGapsBlocked", { count: view.linkBaseGaps }) : t("device.linkGapsUnknown")}</span>
-        </div>
-      )}
-
       {!!read?.unplaced.length && assumable.length > 0 && (
         <AssumeValuesPanel
           candidates={assumable} unresolved={read.unplaced} choices={assume.choices} pending={readBack.isPending} error={assume.error}
@@ -771,44 +802,6 @@ export function DeviceConfig() {
       {read && device?.changes?.neverProgrammed && <NeverProgrammedKeptNote reasons={read.neverProgrammedKept} />}
       <UnprovenAssumptionsNote params={assumedNow} hidden={view?.assumedHidden} />
 
-      {(gaps.types.length > 0 || gaps.elements.length > 0) && (
-        <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
-          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-          <div className="space-y-1">
-            <p className="font-medium">{t("device.gapsTitle")}</p>
-            <ul className="flex flex-wrap gap-x-3 gap-y-0.5 text-amber-700/90 dark:text-amber-300/90">
-              {gaps.types.map(([label, n]) => <li key={`t-${label}`}>{t("device.gapType", { type: label, count: n })}</li>)}
-              {gaps.elements.map(([label, n]) => <li key={`e-${label}`}>{t("device.gapElement", { tag: label, count: n })}</li>)}
-            </ul>
-          </div>
-        </div>
-      )}
-
-      {refusedNotes.length > 0 && (
-        <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-700 dark:text-amber-300" data-testid="device-refusals">
-          <p className="flex items-center gap-2 font-medium"><AlertTriangle className="size-3.5 shrink-0" /> {t("device.refusedTitle")}</p>
-          <ul className="mt-1 list-disc space-y-0.5 pb-0.5 pl-5 text-amber-700/90 dark:text-amber-300/90">
-            {refusedNotes.map((n, i) => <li key={i}>{n}</li>)}
-          </ul>
-        </div>
-      )}
-      {/* What this device's values are never compared with the device for. Not the product's test
-          state (the compatibility badge): a fully tested product has these gaps too. Collapsed, the
-          title and the count stay visible. */}
-      {readbackNotes.length > 0 && (
-        <details className="group rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-700 dark:text-amber-300" data-testid="readback-unsupported">
-          <summary className="flex cursor-pointer list-none items-center gap-2 select-none">
-            <AlertTriangle className="size-3.5 shrink-0" />
-            <span className="font-medium">{t("device.readbackUnsupportedTitle")}</span>
-            <span className="text-amber-700/80 dark:text-amber-300/80">({readbackNotes.length})</span>
-            <ChevronDown className="ml-auto size-3.5 shrink-0 transition-transform group-open:rotate-180" />
-          </summary>
-          <ul className="mt-1.5 list-disc space-y-0.5 pb-0.5 pl-5 text-amber-700/90 dark:text-amber-300/90">
-            {readbackNotes.map((n, i) => <li key={i}>{n}</li>)}
-          </ul>
-        </details>
-      )}
-
       {isLoading && <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" /> {t("device.loadingConfig")}</div>}
       {error && <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{errMsg(t, error)}</p>}
       {view && !isLoading && view.blocks.length === 0 && !error && (
@@ -819,25 +812,6 @@ export function DeviceConfig() {
 
       {view && view.blocks.length > 0 && (
         <div className="space-y-4">
-          {/* The filter belongs to the list it narrows, not to the device: above it, with what it
-              matches and a way back to everything. */}
-          <div className="flex flex-wrap items-center gap-3" data-testid="config-filter">
-            <div className="relative w-full sm:max-w-xs">
-              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input ref={searchRef} placeholder={t("device.searchPlaceholder")} value={qRaw} onChange={(e) => setQ(e.target.value)} className={cn("px-9", q && "border-primary/50")} data-testid="config-search" />
-              {qRaw && (
-                <IconButton
-                  size="icon-xs" tooltip={false} label={t("device.clearSearch")} onClick={() => setQ("")} data-testid="config-search-clear"
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
-                >
-                  <X className="size-4" />
-                </IconButton>
-              )}
-            </div>
-            {q && (
-              <span className="font-mono text-xs text-primary" data-testid="config-filter-count">{t("device.searchCount", { count: matchCount })}</span>
-            )}
-          </div>
           {filteredGroups.length === 0 ? (
             <Card><CardContent className="py-4 text-sm text-muted-foreground">{t("device.searchEmpty")}</CardContent></Card>
           ) : (

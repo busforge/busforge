@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { ShieldAlert, Zap } from "lucide-react";
+import { CheckCircle2, ShieldAlert, Zap } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { DeviceChanges } from "../api.ts";
 import { Badge, BadgeButton } from "@/components/ui/badge";
@@ -31,9 +31,11 @@ function Mark({ size, explain, target, testId, children }: {
 }
 
 // Amber badge flagging a device with unprogrammed edits, or one never programmed at all: small in a
-// device row, medium in the device page header. With `targets` a mark opens what clears it. Renders
-// nothing when clean.
-export function ChangePill({ changes, size = "sm", targets }: { changes?: DeviceChanges; size?: "sm" | "md"; targets?: ChangeTargets }) {
+// device row, medium in the device page header. With `targets` a mark opens what clears it. A clean
+// device renders nothing, or with `showProgrammed` (the header) a quiet "programmed" mark: the
+// project's record (ETS's at import, or Busforge's last verified write or read-back), not a read of the
+// device, so it is neutral, never ok.
+export function ChangePill({ changes, size = "sm", targets, showProgrammed = false }: { changes?: DeviceChanges; size?: "sm" | "md"; targets?: ChangeTargets; showProgrammed?: boolean }) {
   const { t } = useTranslation();
   const n = changeTotal(changes);
   if (changes?.neverProgrammed) {
@@ -44,7 +46,14 @@ export function ChangePill({ changes, size = "sm", targets }: { changes?: Device
     );
   }
   const security = changes?.security;
-  if (!n && !security) return null;
+  if (!n && !security) {
+    if (!showProgrammed || !changes) return null;
+    return (
+      <Badge tone="neutral" size={size} mono title={t("changes.programmedTitle")} data-testid="programmed">
+        <CheckCircle2 /> {t("changes.programmed")}
+      </Badge>
+    );
+  }
   return (
     <>
       {n > 0 && (
