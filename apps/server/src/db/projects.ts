@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Database } from "bun:sqlite";
 import type { Project, Device, GroupAddress, GroupRangeNode, CatalogProduct, SpaceNode } from "@busforge/project";
-import { etsLoadedCompletely } from "@busforge/project";
+import { etsLoadedCompletely, etsNotDownloaded } from "@busforge/project";
 import type { Levels } from "@busforge/knx";
 import { ApiError } from "../errors.ts";
 import { getProjectChanges, type DeviceChanges } from "./deviceparams.ts";
@@ -112,7 +112,7 @@ export function readSpaces(db: Database, projectId: string): SpaceNode[] {
 // Persist a freshly parsed project (rows only; the caller stores the source file).
 export function insertProject(db: Database, id: string, project: Project, sourceFile: string, now: number): void {
   const insProject = db.prepare("INSERT INTO projects (id, name, imported_at, source_file, ga_levels) VALUES (?, ?, ?, ?, ?)");
-  const insDevice = db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment, never_programmed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+  const insDevice = db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment, never_programmed, ets_not_downloaded) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
   const insRange = db.prepare("INSERT INTO group_ranges (project_id, parent_id, name, range_start, range_end) VALUES (?, ?, ?, ?, ?)");
   const insGa = db.prepare("INSERT INTO group_addresses (project_id, range_id, raw, address, name, dpt, security) VALUES (?, ?, ?, ?, ?, ?, ?)");
   const insParam = db.prepare("INSERT OR REPLACE INTO device_parameters (project_id, device_id, param_ref_id, value) VALUES (?, ?, ?, ?)");
@@ -142,7 +142,11 @@ export function insertProject(db: Database, id: string, project: Project, source
 
   db.transaction(() => {
     insProject.run(id, project.name, now, sourceFile, project.groupAddressLevels);
-    for (const d of project.devices) insDevice.run(id, d.id, d.ia, d.name, d.productRef, d.appRef, d.manufacturer, d.comment, etsLoadedCompletely(d) || !d.appRef ? 0 : 1);
+    for (const d of project.devices) {
+      const never = !etsLoadedCompletely(d) && !!d.appRef;
+      const parts = never ? etsNotDownloaded(d) : null;
+      insDevice.run(id, d.id, d.ia, d.name, d.productRef, d.appRef, d.manufacturer, d.comment, never ? 1 : 0, parts?.length ? parts.join(",") : null);
+    }
     for (const r of project.groupRanges) insertRange(r, null);
     for (const dp of project.deviceParams) for (const v of dp.values) { insParam.run(id, dp.deviceId, v.refId, v.value); insParamBase.run(id, dp.deviceId, v.refId, v.value); }
     for (const dm of project.deviceModules) if (dm.instances.length) insModules.run(id, dm.deviceId, JSON.stringify(dm.instances));

@@ -3,4 +3,4 @@ export { loadKnxproj, deriveWinzipPassword, appProgramId, appProgramName, readAp
 export { readZip } from "./zip.ts";
 export { KnxprojError } from "./errors.ts";
 export { readKeyring, writeKeyring, KEYRING_NAMESPACE, type Keyring, type KeyringDevice, type KeyringGroup, type KeyringInterface } from "./keyring.ts";
-export { parseProject, deviceParamValues, etsLoadedCompletely } from "./parse.ts";
+export { parseProject, deviceParamValues, etsLoadedCompletely, etsNotDownloaded } from "./parse.ts";

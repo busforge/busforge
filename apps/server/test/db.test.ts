@@ -8,7 +8,7 @@ import { openDb, SCHEMA_VERSION } from "../src/db/schema.ts";
 import { insertProject, listProjects, getProject, deleteProject, setProjectConnection, getProjectConnection } from "../src/db/projects.ts";
 import { listConnections, getConnection, createConnection, updateConnection, deleteConnection, type ConnectionInput } from "../src/db/connections.ts";
 import { insertTelegram, recentTelegrams, pruneTelegrams } from "../src/db/telegrams.ts";
-import { getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceParams, getDeviceParamBase, setDeviceParam, getProjectChanges, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps, getDeviceComObjOverrides, replaceDeviceProduct, getDeviceComObjOverrideBase, setDeviceComObjOverride, revertDeviceComObjFlags, resetComObjOverrideBase, getDeviceParamAssumed, markParamAssumed, clearParamAssumed } from "../src/db/deviceparams.ts";
+import { getDeviceModules, getDeviceLinks, setDeviceLink, getDeviceParams, getDeviceParamBase, setDeviceParam, getProjectChanges, getDeviceChangedKeys, revertDevice, revertDeviceParam, revertDeviceLink, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps, getDeviceComObjOverrides, replaceDeviceProduct, getDeviceComObjOverrideBase, setDeviceComObjOverride, revertDeviceComObjFlags, resetComObjOverrideBase, getDeviceParamAssumed, markParamAssumed, clearParamAssumed, clearNeverProgrammed } from "../src/db/deviceparams.ts";
 import { serializeConfig, createSnapshot, listSnapshots, restoreSnapshot, deleteSnapshot } from "../src/db/snapshots.ts";
 import { putAppProgram, getAppProgram, putCatalogProduct, listCatalogProducts, getCatalogProduct, backfillCatalogFromDevices, gcAppPrograms } from "../src/db/catalog.ts";
 import { createProject, addDevice } from "../src/db/projects.ts";
@@ -328,6 +328,52 @@ describe("projects", () => {
     insertProject(db, "p1", parseProject(xml, undefined, "x"), "/tmp/p1", 1000);
     const flags = Object.fromEntries(getProject(db, "p1")!.devices.map((d) => [d.id, d.changes.neverProgrammed]));
     expect(flags).toEqual({ "P-TEST-0_DI-1": false, "P-TEST-0_DI-2": true });
+  });
+
+  test("a device ETS downloaded but edited afterwards keeps which parts ETS has still to download, through export and until it is programmed", () => {
+    const db = fresh();
+    const xml = readFileSync(join(import.meta.dir, "../../../packages/project/test/fixtures/sample-0.xml"), "utf8")
+      .replace(/(Id="P-TEST-0_DI-1"[^>]*?) ParametersLoaded="true"/, "$1")
+      .replace(/(Id="P-TEST-0_DI-1"[^>]*?) CommunicationPartLoaded="true"/, "$1")
+      .replace(/(Id="P-TEST-0_DI-2"[^>]*?) ApplicationProgramLoaded="true"/, "$1");
+    insertProject(db, "p1", parseProject(xml, undefined, "x"), "/tmp/p1", 1000);
+    const changes = (pid: string) => Object.fromEntries(getProject(db, pid)!.devices.map((d) => [d.id, d.changes]));
+    // The application never downloaded: never programmed, no part to name.
+    expect(changes("p1")).toEqual({
+      "P-TEST-0_DI-1": { params: 0, links: 0, flags: 0, neverProgrammed: true, etsNotDownloaded: ["parameters", "links"] },
+      "P-TEST-0_DI-2": { params: 0, links: 0, flags: 0, neverProgrammed: true },
+    });
+    const MK = Buffer.alloc(32, 7);
+    const data = exportProject(db, "p1", 5, MK)!;
+    expect(data.devices.find((d) => d.id === "P-TEST-0_DI-1")!.etsNotDownloaded).toEqual(["parameters", "links"]);
+    expect(data.devices.find((d) => d.id === "P-TEST-0_DI-2")).not.toHaveProperty("etsNotDownloaded");
+    importProjectExport(db, data, "p2", 6, MK);
+    expect(changes("p2")).toEqual(changes("p1"));
+    // A verified write ends the state and its reason with it.
+    clearNeverProgrammed(db, "p1", "P-TEST-0_DI-1");
+    expect(changes("p1")["P-TEST-0_DI-1"]).toEqual({ params: 0, links: 0, flags: 0, neverProgrammed: false });
+    // A product replacement makes the device never programmed again, with nothing ETS downloaded to name.
+    const product = { productRef: "M-0048_H-1_P-1", appRef: "M-0048_H-1_HP-1", manufacturer: 0x48 } as Parameters<typeof replaceDeviceProduct>[3];
+    replaceDeviceProduct(db, "p2", "P-TEST-0_DI-1", product, new Map());
+    expect(changes("p2")["P-TEST-0_DI-1"]).not.toHaveProperty("etsNotDownloaded");
+    expect(changes("p2")["P-TEST-0_DI-1"].neverProgrammed).toBe(true);
+  });
+
+  test("validateExport takes the parts ETS has still to download only on a never-programmed device, known and each once", () => {
+    const base = { busforgeExport: 1, project: { name: "x" }, groupRanges: [], groupAddresses: [], deviceParameters: [], deviceParamBase: [], deviceLinks: [], deviceLinkBase: [], deviceModules: [], deviceComObjOverrides: [], deviceComObjOverrideBase: [], deviceParamAssumed: [], baggage: [], catalog: {} };
+    const dev = (extra: object) => ({ ...base, devices: [{ id: "d", ia: "1.1.1", name: "n", appRef: "M-1_A-1_1", ...extra }] });
+    expect(() => validateExport(dev({ neverProgrammed: true, etsNotDownloaded: ["parameters", "links"] }))).not.toThrow();
+    for (const bad of [
+      { etsNotDownloaded: ["parameters"] },
+      { neverProgrammed: false, etsNotDownloaded: ["parameters"] },
+      { neverProgrammed: true, etsNotDownloaded: [] },
+      { neverProgrammed: true, etsNotDownloaded: ["parameters", "parameters"] },
+      { neverProgrammed: true, etsNotDownloaded: ["application"] },
+      { neverProgrammed: true, etsNotDownloaded: "parameters" },
+    ]) {
+      try { validateExport(dev(bad)); expect.unreachable(); }
+      catch (e) { expect((e as { code?: string }).code).toBe("BUSFORGE_INVALID"); }
+    }
   });
 
   // ETS drops ParametersLoaded when a parameter is edited after the download, CommunicationPartLoaded when

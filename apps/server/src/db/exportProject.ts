@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { appProgramId, type SpaceNode, type GroupAddressSecurity, type DeviceKnxIp } from "@busforge/project";
+import { appProgramId, type SpaceNode, type GroupAddressSecurity, type DeviceKnxIp, type EtsPart } from "@busforge/project";
 import { getDeviceKnxIp } from "./deviceparams.ts";
 import { getAppProgram, listCatalogBaggage } from "./catalog.ts";
 import { readSpaces, getProjectSource, type ImportSource } from "./projects.ts";
@@ -28,9 +28,11 @@ export interface ProjectExport {
   // linkBaseGaps: device associations the last read-back could not show (-1: not counted yet).
   // Optional so artifacts exported before it existed still import (as 0).
   // neverProgrammed: optional, absent in artifacts from before it was kept (read as false).
+  // etsNotDownloaded: on a never-programmed device ETS had downloaded, the parts ETS had not downloaded
+  // or that were edited after its download; absent otherwise.
   // securityBase: the fingerprint of the security object last verified on a Data Secure device; absent
   // when not known.
-  devices: { id: string; ia: string; name: string; productRef: string; appRef: string; manufacturer: number; comment: string; linkBaseGaps?: number; neverProgrammed?: boolean; securityBase?: string }[];
+  devices: { id: string; ia: string; name: string; productRef: string; appRef: string; manufacturer: number; comment: string; linkBaseGaps?: number; neverProgrammed?: boolean; etsNotDownloaded?: EtsPart[]; securityBase?: string }[];
   groupRanges: { id: number; parentId: number | null; name: string; rangeStart: number; rangeEnd: number }[];
   // Building structure (0.xml <Locations>). Optional so artifacts exported before
   // it was carried still import (they re-import with no location grouping).
@@ -97,9 +99,9 @@ export function exportProject(db: Database, projectId: string, now: number, mast
   const project = readProjectProperties(db, projectId);
   if (!project) return null;
 
-  const devices = (db.query("SELECT instance_id AS id, ia, name, product_ref AS productRef, app_ref AS appRef, manufacturer, comment, link_base_gaps AS linkBaseGaps, never_programmed AS np, security_base AS sb FROM devices WHERE project_id = ? ORDER BY instance_id")
-    .all(projectId) as (ProjectExport["devices"][number] & { np: number; sb: string | null })[])
-    .map(({ np, sb, ...d }) => ({ ...d, ...(np ? { neverProgrammed: true } : {}), ...(sb ? { securityBase: sb } : {}) }));
+  const devices = (db.query("SELECT instance_id AS id, ia, name, product_ref AS productRef, app_ref AS appRef, manufacturer, comment, link_base_gaps AS linkBaseGaps, never_programmed AS np, ets_not_downloaded AS ets, security_base AS sb FROM devices WHERE project_id = ? ORDER BY instance_id")
+    .all(projectId) as (ProjectExport["devices"][number] & { np: number; ets: string | null; sb: string | null })[])
+    .map(({ np, ets, sb, ...d }) => ({ ...d, ...(np ? { neverProgrammed: true } : {}), ...(np && ets ? { etsNotDownloaded: ets.split(",") as EtsPart[] } : {}), ...(sb ? { securityBase: sb } : {}) }));
   const groupRanges = db.query("SELECT id, parent_id AS parentId, name, range_start AS rangeStart, range_end AS rangeEnd FROM group_ranges WHERE project_id = ? ORDER BY id")
     .all(projectId) as ProjectExport["groupRanges"];
   const groupAddresses = db.query("SELECT range_id AS rangeId, raw, address, name, dpt, security FROM group_addresses WHERE project_id = ? ORDER BY raw")

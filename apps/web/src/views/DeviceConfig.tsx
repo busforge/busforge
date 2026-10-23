@@ -799,7 +799,7 @@ export function DeviceConfig() {
         />
       )}
       {read && <UnresolvedNotes hidden={read.hidden} unknown={read.unknown} unplacedUnoffered={assumable.length ? [] : read.unplaced} />}
-      {read && device?.changes?.neverProgrammed && <NeverProgrammedKeptNote reasons={read.neverProgrammedKept} />}
+      {read && device?.changes?.neverProgrammed && <NeverProgrammedKeptNote reasons={read.neverProgrammedKept} ets={!!device.changes.etsNotDownloaded?.length} />}
       <UnprovenAssumptionsNote params={assumedNow} hidden={view?.assumedHidden} />
 
       {isLoading && <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" /> {t("device.loadingConfig")}</div>}

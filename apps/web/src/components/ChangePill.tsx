@@ -36,8 +36,19 @@ function Mark({ size, explain, target, testId, children }: {
 // project's record (ETS's at import, or Busforge's last verified write or read-back), not a read of the
 // device, so it is neutral, never ok.
 export function ChangePill({ changes, size = "sm", targets, showProgrammed = false }: { changes?: DeviceChanges; size?: "sm" | "md"; targets?: ChangeTargets; showProgrammed?: boolean }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const n = changeTotal(changes);
+  // ETS downloaded the device once, so "never programmed" would be false: name what ETS has still to
+  // download. The state and its remedy are those of a never-programmed device.
+  const ets = changes?.neverProgrammed ? changes.etsNotDownloaded : undefined;
+  if (ets?.length) {
+    const parts = new Intl.ListFormat(i18n.language, { type: "conjunction" }).format(ets.map((p) => t(`changes.etsPart.${p}`)));
+    return (
+      <Mark size={size} explain={t("changes.etsTitle", { parts })} target={targets?.never} testId="ets-not-downloaded">
+        <Zap /> {t("changes.ets")}
+      </Mark>
+    );
+  }
   if (changes?.neverProgrammed) {
     return (
       <Mark size={size} explain={t("changes.neverTitle")} target={targets?.never} testId="never-programmed">

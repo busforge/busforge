@@ -129,8 +129,11 @@ seeds it from ETS's five load flags ([findings.md](findings.md#1-the-knxproj-is-
 `DeviceInstance` that does not carry all of them as `"true"` imports as never programmed. That is a
 device ETS never downloaded, including one another tool programmed (ETS cannot know of that), and one
 edited in ETS after its last download (ETS dropped `ParametersLoaded` or `CommunicationPartLoaded`), whose
-project values are then not what it holds. A device without an application program (a power supply) is
-not seeded. It shows as **Never
+project values are then not what it holds. For a device whose application ETS did download,
+`devices.ets_not_downloaded` keeps the parts ETS has still to download (address, medium, parameters,
+links: edited after the download, or never downloaded), and the device shows as **Not downloaded in ETS**, naming them, instead of **Never
+programmed**; state, gate and remedy are the same, and whatever clears the one clears the other. A
+device without an application program (a power supply) is not seeded. It shows as **Never
 programmed** and counts as "to program" until a verified full download clears it, or a read-back that
 shows the device holds this project's application, parameters and links: one that read parameters and
 links, left no device link unresolved, found the device reporting this application's id (PID 13 of the
@@ -145,7 +148,8 @@ download). Where the application's
 declared load procedure has a step the full download cannot execute, the surgical flash is refused all
 the same, naming ETS (`NEVER_PROGRAMMED_USE_ETS`): nothing would check which application the device
 runs before the flash writes into it. A family that cannot be downloaded in full for another reason
-is programmed surgically only; there a verified surgical flash clears it. It travels in a `.busforge` export; restore points do not carry it, being device
+is programmed surgically only; there a verified surgical flash clears it. It travels in a `.busforge` export with its parts (`etsNotDownloaded`, taken only on a never-programmed
+device); restore points do not carry it, being device
 state. A device with no value recorded reads as programmed.
 
 Each device also carries a local `programming_token`, regenerated on insertion and address/product/

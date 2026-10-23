@@ -16,6 +16,10 @@ export interface Device {
 }
 
 export interface EtsLoaded { individualAddress: boolean; mediumConfig: boolean; application: boolean; parameters: boolean; communication: boolean }
+// A part of a device ETS downloads apart from its application: its individual address, its medium
+// configuration, its parameters, its group-address links (ETS's communication part).
+export const ETS_PARTS = ["address", "medium", "parameters", "links"] as const;
+export type EtsPart = (typeof ETS_PARTS)[number];
 
 // A placeable catalog product: a manufacturer product paired with an application
 // program it runs. Extracted from the manufacturer Hardware.xml at ingest. The

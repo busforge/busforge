@@ -2,7 +2,7 @@ import { test, expect, describe } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readZip } from "../src/zip.ts";
-import { parseProject, etsLoadedCompletely } from "../src/parse.ts";
+import { parseProject, etsLoadedCompletely, etsNotDownloaded } from "../src/parse.ts";
 import { loadKnxproj, deriveWinzipPassword, extractAppPrograms, appProgramId, busInterfaceIndexes } from "../src/knxproj.ts";
 
 const fix = (n: string) => readFileSync(join(import.meta.dir, "fixtures", n));
@@ -63,6 +63,14 @@ describe("0.xml parser", () => {
     }
     const explicitFalse = xml0.replace(/(Id="P-TEST-0_DI-2"[^>]*?) ParametersLoaded="true"/, '$1 ParametersLoaded="false"');
     expect(etsLoadedCompletely(parseProject(explicitFalse, undefined, "fallback").devices[1])).toBe(false);
+  });
+
+  test("names the parts ETS has still to download only where it downloaded the application", () => {
+    expect(proj.devices.map(etsNotDownloaded)).toEqual([[], []]);
+    const edited = xml0.replace(/(Id="P-TEST-0_DI-2"[^>]*?) ParametersLoaded="true"/, "$1").replace(/(Id="P-TEST-0_DI-2"[^>]*?) IndividualAddressLoaded="true"/, "$1");
+    expect(etsNotDownloaded(parseProject(edited, undefined, "fallback").devices[1])).toEqual(["address", "parameters"]);
+    const never = edited.replace(/(Id="P-TEST-0_DI-2"[^>]*?) ApplicationProgramLoaded="true"/, "$1");
+    expect(etsNotDownloaded(parseProject(never, undefined, "fallback").devices[1])).toBeNull();
   });
 
   test("parses group addresses with 3-level address and DPT display", () => {

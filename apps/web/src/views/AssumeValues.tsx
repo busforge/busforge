@@ -164,14 +164,16 @@ export function UnresolvedNotes({ hidden, unknown, unplacedUnoffered }: { hidden
 
 // Why a device never programmed from this project still counts so after the last read.
 // The code of why the image was not compared is shown by its error text, else named as a code.
-export function NeverProgrammedKeptNote({ reasons }: { reasons: KeptReasons }) {
+// `ets`: the device is never programmed because ETS has parts still to download, not because nothing of
+// the project was ever in it.
+export function NeverProgrammedKeptNote({ reasons, ets = false }: { reasons: KeptReasons; ets?: boolean }) {
   const { t, i18n } = useTranslation();
   if (!reasons.length) return null;
   return (
     <div className={noteCls} data-testid="never-programmed-kept">
       <AlertTriangle className="mt-0.5 size-4 shrink-0" />
       <div className="space-y-0.5">
-        <p className="font-medium">{t("device.neverProgrammedKeptTitle")}</p>
+        <p className="font-medium">{t(ets ? "device.etsNotDownloadedKeptTitle" : "device.neverProgrammedKeptTitle")}</p>
         <p className="text-xs text-amber-700/90 dark:text-amber-300/90">{t("device.neverProgrammedKeptBody")}</p>
         <ul className="list-disc pl-4 text-xs text-amber-700/90 dark:text-amber-300/90">
           {reasons.map((r) => <li key={r.reason}>{t(`device.neverProgrammedReason.${r.reason}`)}{r.code ? ` (${i18n.exists(`errors.${r.code}`) ? t(`errors.${r.code}`) : t("device.errorCode", { code: r.code })})` : ""}</li>)}

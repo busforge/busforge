@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { ModuleInstance, ImageStamp } from "@busforge/product";
-import type { CatalogProduct, DeviceKnxIp } from "@busforge/project";
+import type { CatalogProduct, DeviceKnxIp, EtsPart } from "@busforge/project";
 import { ApiError } from "../errors.ts";
 
 // A device's stored parameter values (ParameterRef id -> value), seeded from the
@@ -204,7 +204,7 @@ export function setDeviceLink(db: Database, projectId: string, deviceId: string,
 // device's only config, all of it unprogrammed drift until the first flash.
 export function replaceDeviceProduct(db: Database, projectId: string, deviceId: string, product: CatalogProduct, links: Map<string, number[]>): void {
   db.transaction(() => {
-    const updated = db.prepare("UPDATE devices SET product_ref = ?, app_ref = ?, manufacturer = ?, link_base_gaps = 0, never_programmed = 1, security_base = NULL, image_stamps = NULL WHERE project_id = ? AND instance_id = ?")
+    const updated = db.prepare("UPDATE devices SET product_ref = ?, app_ref = ?, manufacturer = ?, link_base_gaps = 0, never_programmed = 1, ets_not_downloaded = NULL, security_base = NULL, image_stamps = NULL WHERE project_id = ? AND instance_id = ?")
       .run(product.productRef, product.appRef, product.manufacturer, projectId, deviceId).changes;
     // The route checked existence before parsing the body; if the device vanished in
     // that gap, a 0-row UPDATE would silently commit orphan device_links rows below
@@ -235,7 +235,7 @@ export function getDeviceForFlash(db: Database, projectId: string, deviceId: str
 // Only a verified full download shows the device holds this project's whole configuration (its
 // application, parameters, com-object and group tables); a surgical flash or a read-back does not.
 export function clearNeverProgrammed(db: Database, projectId: string, deviceId: string): void {
-  db.prepare("UPDATE devices SET never_programmed = 0 WHERE project_id = ? AND instance_id = ?").run(projectId, deviceId);
+  db.prepare("UPDATE devices SET never_programmed = 0, ets_not_downloaded = NULL WHERE project_id = ? AND instance_id = ?").run(projectId, deviceId);
 }
 
 // The stamps of the device's last verified download that wrote its parameters (ImageStamp), or none.
@@ -260,18 +260,23 @@ export function getSourceFile(db: Database, projectId: string): string | null {
 
 // Per-device change counts for a whole project: how many parameters differ from
 // their baseline, and how many com-objects have a differing GA-link set.
-// neverProgrammed: no configuration of this project has been verified on the device since it was
-// placed or its product replaced, so it needs a full download whatever its configuration.
+// neverProgrammed: no configuration of this project has been verified on the device: it was placed or
+// its product replaced, or the imported ETS project did not show it downloaded completely (ETS's load
+// flags); so it needs a full download whatever its configuration.
 // security: the device's Data Secure security object differs from the one last verified on it, or that
 // cannot be told (deviceservice.ts securityChanges, merged in by the routes); absent otherwise.
 // flags: com-objects whose flags or priority differ from what the device was last written with.
-export interface DeviceChanges { params: number; links: number; flags: number; neverProgrammed: boolean; security?: "changed" | "unknown" }
+// etsNotDownloaded: on a never-programmed device ETS had downloaded, the parts ETS had not downloaded or
+// that were edited after its download, as the imported project recorded them.
+export interface DeviceChanges { params: number; links: number; flags: number; neverProgrammed: boolean; etsNotDownloaded?: EtsPart[]; security?: "changed" | "unknown" }
 export function getProjectChanges(db: Database, projectId: string): Map<string, DeviceChanges> {
   const out = new Map<string, DeviceChanges>();
   const entry = (id: string) => { const c = out.get(id) ?? { params: 0, links: 0, flags: 0, neverProgrammed: false }; out.set(id, c); return c; };
   const bump = (id: string, k: "params" | "links" | "flags", n: number) => { entry(id)[k] = n; };
-  for (const r of db.query("SELECT instance_id AS id FROM devices WHERE project_id = ? AND never_programmed = 1").all(projectId) as { id: string }[]) {
-    entry(r.id).neverProgrammed = true;
+  for (const r of db.query("SELECT instance_id AS id, ets_not_downloaded AS ets FROM devices WHERE project_id = ? AND never_programmed = 1").all(projectId) as { id: string; ets: string | null }[]) {
+    const c = entry(r.id);
+    c.neverProgrammed = true;
+    if (r.ets) c.etsNotDownloaded = r.ets.split(",") as EtsPart[];
   }
   // Symmetric difference of (param, value) rows, counted as distinct params. A
   // plain JOIN would miss a param edited from its default: 0.xml is sparse, so

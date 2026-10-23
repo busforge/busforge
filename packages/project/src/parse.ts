@@ -1,6 +1,6 @@
 import { XMLParser } from "fast-xml-parser";
 import { formatGa, type Levels } from "@busforge/knx";
-import { COM_OBJ_INSTANCE_ATTRS, type Project, type Device, type Topology, type TopologyArea, type GroupAddress, type GroupRangeNode, type SpaceNode, type DeviceSecurity, type DeviceKnxIp, type GroupKey, type SecureSender, type GroupAddressSecurity, type ComObjInstanceAttrs } from "./model.ts";
+import { COM_OBJ_INSTANCE_ATTRS, type Project, type Device, type EtsPart, type Topology, type TopologyArea, type GroupAddress, type GroupRangeNode, type SpaceNode, type DeviceSecurity, type DeviceKnxIp, type GroupKey, type SecureSender, type GroupAddressSecurity, type ComObjInstanceAttrs } from "./model.ts";
 import { KnxprojError } from "./errors.ts";
 
 export const arr = <T,>(x: T | T[] | undefined): T[] => (x === undefined ? [] : Array.isArray(x) ? x : [x]);
@@ -411,4 +411,14 @@ function firstByKey(n: unknown, key: string): XmlNode | undefined {
 export function etsLoadedCompletely(d: Pick<Device, "etsLoaded">): boolean {
   const l = d.etsLoaded;
   return l.individualAddress && l.mediumConfig && l.application && l.parameters && l.communication;
+}
+
+// The parts ETS did not download, or that were edited after its download, on a device whose application
+// ETS did download: what ETS would still write. Null where ETS never downloaded the application (nothing
+// of the project was ever in the device), empty where every part is downloaded.
+export function etsNotDownloaded(d: Pick<Device, "etsLoaded">): EtsPart[] | null {
+  const l = d.etsLoaded;
+  if (!l.application) return null;
+  return ([["address", l.individualAddress], ["medium", l.mediumConfig], ["parameters", l.parameters], ["links", l.communication]] as const)
+    .filter(([, loaded]) => !loaded).map(([part]) => part);
 }

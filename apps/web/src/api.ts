@@ -15,12 +15,15 @@ export type {
   DiagnosticPackage, DiagnosticRecord, ComObjFlagEdit,
 };
 
-// neverProgrammed: no configuration of this project has been verified on the device since it was
-// placed or its product replaced.
+// neverProgrammed: no configuration of this project has been verified on the device: it was placed or
+// its product replaced, or the imported ETS project did not show it downloaded completely.
 // security: the device's Data Secure security object differs from the one last verified on it
 // ("changed", written by a GA flash or full download), or that cannot be told ("unknown").
 // flags: com-objects whose flags or priority differ from what the device was last written with.
-export interface DeviceChanges { params: number; links: number; flags?: number; neverProgrammed: boolean; security?: "changed" | "unknown" }
+// etsNotDownloaded: on a never-programmed device ETS had downloaded, the parts ETS had not downloaded or
+// that were edited after its download, as the imported project recorded them.
+export type EtsPart = "address" | "medium" | "parameters" | "links";
+export interface DeviceChanges { params: number; links: number; flags?: number; neverProgrammed: boolean; etsNotDownloaded?: EtsPart[]; security?: "changed" | "unknown" }
 export interface Device { id: string; ia: string; name: string; productRef: string; appRef: string; manufacturer: number; comment?: string; searchText?: string; changes?: DeviceChanges; secure?: boolean; }
 // security: the address's Data Secure mode, as ETS's "Automatisch" / "Erzwungen an" / "Erzwungen aus".
 export type GroupAddressSecurity = "auto" | "on" | "off";

@@ -513,6 +513,12 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (app_program_id, baggage_id)
   );
   `,
+  // Why a never-programmed device imported from ETS is so although ETS downloaded its application: the
+  // parts ETS had not downloaded, or that were edited after its download (etsNotDownloaded), comma-
+  // separated. NULL for every other device; it goes with never_programmed.
+  `
+  ALTER TABLE devices ADD COLUMN ets_not_downloaded TEXT;
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration

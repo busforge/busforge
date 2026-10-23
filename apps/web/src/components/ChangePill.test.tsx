@@ -37,6 +37,23 @@ describe("the state marks of a device", () => {
     expect(tag(html, "security-unknown")).toBe("span");
   });
 
+  test("a device ETS downloaded once is not called never programmed: it names what ETS has still to download, and opens the same remedy", () => {
+    const targets = { never: { action: "Open flashing", onClick: noop } };
+    const html = render(<ChangePill size="md" targets={targets} changes={changes({ neverProgrammed: true, etsNotDownloaded: ["parameters", "links"] })} />);
+    expect(tag(html, "ets-not-downloaded")).toBe("button");
+    expect(html).toContain("Not downloaded in ETS");
+    expect(html).not.toContain('data-testid="never-programmed"');
+    const row = render(<ChangePill changes={changes({ neverProgrammed: true, etsNotDownloaded: ["parameters", "links"] })} />);
+    expect(tag(row, "ets-not-downloaded")).toBe("span");
+    expect(row).toContain("not its parameters and group addresses as the project now stands");
+  });
+
+  test("the parts ETS has still to download speak only while the device is never programmed", () => {
+    const html = render(<ChangePill size="md" showProgrammed changes={changes({ neverProgrammed: false, etsNotDownloaded: ["parameters"] })} />);
+    expect(html).not.toContain("ets-not-downloaded");
+    expect(tag(html, "programmed")).toBe("span");
+  });
+
   test("a clean device shows nothing", () => {
     expect(render(<ChangePill changes={changes({})} targets={{ changes: { action: "x", onClick: noop } }} />)).toBe("");
   });
