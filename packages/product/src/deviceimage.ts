@@ -5,8 +5,8 @@ import { resolveModuleInstances } from "./modules.ts";
 import { byteWidth, MAX_INT_BYTES, encode } from "./image.ts";
 import { ProductError } from "./errors.ts";
 
-// `textRefusals: "skip"`: a text parameter the codec refuses is left unowned instead of failing the
-// build. Only for the read-back, which compares what it can and does not write; every path that
+// `textRefusals: "skip"`: a text parameter the codec refuses (and, on the relative segment, a colour) is
+// left unowned instead of failing the build. Only for the read-back, which compares what it can and does not write; every path that
 // writes keeps the refusal.
 type TextRefusals = "refuse" | "skip";
 const isTextRefusal = (e: unknown): boolean => e instanceof ProductError && e.code.startsWith("PARAM_TEXT_");
@@ -242,6 +242,9 @@ export function buildAbsoluteSegmentTargets(
       if (v === undefined) continue; // not visible / not active: keep the <Data> default
       const type = model.types.get(param.typeId);
       if (!type || !Number.isFinite(type.sizeInBit) || type.sizeInBit === 0) continue;
+      // A colour on these segments: no ETS capture of a product with absolute segments shows one, so the
+      // bytes stay unowned and refuseColorWrites refuses an operation that would have to write one.
+      if (type.base === "Color") continue;
       // An active text parameter on these (System 7) segments: no ETS capture of a System 7 product
       // shows one (the Meteodata 140 S's are inactive in every captured configuration), so its byte
       // layout here is not known.
@@ -419,7 +422,7 @@ export function buildRelativeSegmentTarget(
     try {
       wrote = encode(img, param.offset, param.bitOffset, type, v);
     } catch (e) {
-      if (opts.textRefusals === "skip" && isTextRefusal(e)) continue;
+      if (opts.textRefusals === "skip" && (isTextRefusal(e) || (type.base === "Color" && e instanceof ProductError))) continue;
       throw e;
     }
     if (!wrote) continue;
@@ -565,14 +568,14 @@ export function wholeBytes(verify: ReadonlyArray<number>, markers: ReadonlyArray
 // segment whether active or not (union members and module-instance parameters included). Null when a
 // parameter there has a type of no known width, so the bytes it covers cannot be told.
 // `colorWidth`: count a TypeColor parameter in the RGB or the HSV space as three bytes, for the set of bytes
-// a parameter download writes with the device's own values (no image path encodes a colour).
+// a parameter download writes with the device's own values (the absolute image path encodes no colour).
 export function parameterMemoryBytes(app: AppConfig, segId: string, size: number, opts: { moduleInstances?: ModuleInstance[]; colorWidth?: boolean } = {}): boolean[] | null {
   const model = toAppModel(app, { includeUnions: true, instances: opts.moduleInstances ?? [] });
   const covered = new Array<boolean>(size).fill(false);
   for (const p of model.params.values()) {
     if (p.codeSegment !== segId || p.offset === undefined) continue;
     const t = model.types.get(p.typeId);
-    const bits = t && Number.isFinite(t.sizeInBit) && t.sizeInBit > 0 ? t.sizeInBit : opts.colorWidth ? colorBits(app, p.typeId) : undefined;
+    const bits = t && t.base !== "Color" && Number.isFinite(t.sizeInBit) && t.sizeInBit > 0 ? t.sizeInBit : opts.colorWidth ? colorBits(app, p.typeId) : undefined;
     if (!bits) return null;
     for (let b = 0; b < byteWidth(bits, p.bitOffset); b++) if (p.offset + b < size) covered[p.offset + b] = true;
   }
@@ -580,7 +583,8 @@ export function parameterMemoryBytes(app: AppConfig, segId: string, size: number
 }
 // A TypeColor declares no SizeInBit; its memory is three bytes in the RGB and the HSV space, the bytes
 // ETS's image of the MDT BE-06001.02 parameter download lists for its RGBColor and HSV parameters. Other
-// spaces have no width shown by a capture. The image build encodes no colour, so a colour is never owned.
+// spaces have no width shown by a capture. The absolute image build encodes no colour, so a colour is never
+// owned there.
 function colorBits(app: AppConfig, typeId: string): number | undefined {
   const t = app.types.get(typeId);
   return t?.kind === "TypeColor" && (t.colorSpace === "RGB" || t.colorSpace === "HSV") ? 24 : undefined;
@@ -598,22 +602,31 @@ export function activeColorValues(app: AppConfig, values: Map<string, string>, i
   return out;
 }
 
-// No ETS download captured holds a colour parameter in use, so how ETS encodes a colour into memory is not
-// shown, and no image path writes one (encode()). An operation that would have to write a colour refuses
-// instead of leaving the device's bytes as they are and reporting the new colour programmed:
+// How ETS encodes a colour is shown for the RGB space on a relative segment (image.ts colorBytes): there
+// the image path writes it, and `rgbWritten` says the operation's path is that one. Every other colour
+// (another space, or any colour on an absolute segment, whose image path encodes none) has no encoding
+// shown, and an operation that would have to write one refuses instead of leaving the device's bytes as
+// they are and reporting the new colour programmed:
 //  - a parameter or structural flash, when a colour in use differs from the configuration the device was
 //    last programmed with, or comes into use (`base` given);
 //  - a full download, for any colour in use (`base` absent): it knows no configuration the device holds,
 //    and would leave there either the segment's <Data> (a segment loaded afresh) or the unit's bytes (a
 //    segment written into the loaded application), neither shown to be the colour.
-export function refuseColorWrites(app: AppConfig, values: Map<string, string>, instances: ModuleInstance[], base?: { values: Map<string, string>; instances: ModuleInstance[] }): void {
+export function refuseColorWrites(app: AppConfig, values: Map<string, string>, instances: ModuleInstance[], rgbWritten: boolean, base?: { values: Map<string, string>; instances: ModuleInstance[] }): void {
+  const model = toAppModel(app, { includeUnions: true, instances });
+  // Written by the relative image: an RGB colour in no code segment or in the parameter segment (LSM 4).
+  const encoded = (ref: string) => {
+    const p = model.params.get(model.refs.get(ref)?.paramId ?? "");
+    return rgbWritten && !!p && model.types.get(p.typeId)?.base === "Color"
+      && (!p.codeSegment || model.segments.find((s) => s.id === p.codeSegment)?.lsm === 4);
+  };
   const now = activeColorValues(app, values, instances);
   const before = base ? activeColorValues(app, base.values, base.instances) : new Map<string, string>();
-  const written = [...now].filter(([ref, v]) => !base || before.get(ref)?.toUpperCase() !== v.toUpperCase()).map(([ref]) => ref);
+  const written = [...now].filter(([ref, v]) => !encoded(ref) && (!base || before.get(ref)?.toUpperCase() !== v.toUpperCase())).map(([ref]) => ref);
   if (!written.length) return;
   const what = base
     ? `this flash writes the device's parameters, and ${written.length} colour parameter(s) among them changed or came into use (e.g. ${written[0]})`
     : `the configuration has ${written.length} colour parameter(s) in use (e.g. ${written[0]}), which a full download writes`;
   throw new ProductError("PARAM_COLOR_UNSUPPORTED",
-    `${what}; no ETS download shows how a colour is encoded in the device's memory, so Busforge cannot write it. Refusing rather than leaving the device's colour unchanged; apply the colour with ETS`);
+    `${what}; no ETS download shows how a colour of this kind is encoded in this device's memory (only an RGB colour on a relative segment is shown), so Busforge cannot write it. Refusing rather than leaving the device's colour unchanged; apply the colour with ETS`);
 }

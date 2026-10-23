@@ -1,12 +1,12 @@
 import { join } from "node:path";
 import { rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { loadKnxproj, extractAppPrograms, extractCatalogProducts } from "@busforge/project";
+import { loadKnxproj, extractAppPrograms, extractCatalogProducts, extractPictureBaggage } from "@busforge/project";
 import { insertProject, createProject, listProjects, getProject, deleteProject, renameProject, projectExists, setProjectConnection, countSpacesByType, listDeviceAppRefs, importSourceOf, setProjectSource } from "../db/projects.ts";
 import { getConnection } from "../db/connections.ts";
 import { listSnapshots, createSnapshot, restoreSnapshot, deleteSnapshot } from "../db/snapshots.ts";
-import { putAppProgram, putCatalogProduct, gcAppPrograms } from "../db/catalog.ts";
-import { putBaggage, readCheckedBaggage } from "../db/baggage.ts";
+import { putAppProgram, putCatalogProduct, putCatalogBaggage, gcAppPrograms } from "../db/catalog.ts";
+import { putBaggage, readCheckedBaggage, checkBaggageSize } from "../db/baggage.ts";
 import { exportProject } from "../db/exportProject.ts";
 import { exportKeyring } from "../db/keyringExport.ts";
 import { importProjectExport, validateExport, busforgeGaps } from "../db/importProject.ts";
@@ -53,6 +53,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // Catalog product metadata for browsing/placing devices later. Keep only the
     // products whose program we actually stored, so every catalog entry is placeable.
     const catalog = extractCatalogProducts(bytes).filter((p) => programs.has(p.appProgramId));
+    const pictures = extractPictureBaggage(bytes, programs);
 
     const id = randomUUID();
     // DCA baggage (BinaryData/UserFiles, e.g. a DALI gateway's backup-store): the
@@ -63,6 +64,9 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // result next to the other importGaps. Flattened name keeps the device-id
     // prefix the baggage endpoint filters on.
     const { baggage, baggageUnreadable } = readCheckedBaggage(bytes, password);
+    // The embedded-file limits hold for the DCA baggage and the product images together.
+    checkBaggageSize([...[...pictures.values()].flatMap((m) => [...m.values()]).map((f) => ({ name: f.name, bytes: f.data.length })),
+      ...[...baggage].map(([bname, buf]) => ({ name: bname, bytes: buf.length }))]);
 
     // Everything is stored in the DB; no project files are written at import. The
     // raw .knxproj is not kept (app programs live in the catalog, baggage in the
@@ -73,6 +77,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
       insertProject(db, id, project, "", state.now());
       setProjectSource(db, id, importSourceOf("knxproj", file instanceof File ? file.name : "project.knxproj", bytes));
       for (const [pid, xml] of programs) putAppProgram(db, pid, xml);
+      for (const [pid, files] of pictures) putCatalogBaggage(db, pid, files);
       for (const p of catalog) putCatalogProduct(db, p);
       for (const [bname, buf] of baggage) putBaggage(db, id, bname.replace(/[/\\]/g, "__"), buf);
       // KNX Data Secure tool keys, sealed under the instance master key. Only

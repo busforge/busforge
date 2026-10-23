@@ -19,6 +19,39 @@ export function getAppProgram(db: Database, id: string): string | null {
   return r?.xml ?? null;
 }
 
+// Store the images a program's TypePicture parameters show (extractPictureBaggage), after the program
+// itself. Idempotent like putAppProgram.
+export function putCatalogBaggage(db: Database, appProgramId: string, files: Map<string, { name: string; data: Buffer }>): void {
+  const ins = db.prepare("INSERT OR IGNORE INTO catalog_baggage (app_program_id, baggage_id, name, data) VALUES (?, ?, ?, ?)");
+  for (const [id, f] of files) ins.run(appProgramId, id, f.name, f.data);
+}
+
+// One stored baggage file of a program, or null.
+export function getCatalogBaggage(db: Database, appProgramId: string, baggageId: string): { name: string; data: Buffer } | null {
+  const r = db.query("SELECT name, data FROM catalog_baggage WHERE app_program_id = ? AND baggage_id = ?").get(appProgramId, baggageId) as { name: string; data: Uint8Array } | null;
+  return r ? { name: r.name, data: Buffer.from(r.data) } : null;
+}
+
+// Every stored baggage file of a program, by baggage id.
+export function listCatalogBaggage(db: Database, appProgramId: string): Map<string, { name: string; data: Buffer }> {
+  const rows = db.query("SELECT baggage_id AS id, name, data FROM catalog_baggage WHERE app_program_id = ?").all(appProgramId) as { id: string; name: string; data: Uint8Array }[];
+  return new Map(rows.map((r) => [r.id, { name: r.name, data: Buffer.from(r.data) }]));
+}
+
+// The image types the picture route serves, by file extension.
+export const PICTURE_TYPES: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", bmp: "image/bmp", svg: "image/svg+xml" };
+export const pictureType = (name: string): string | undefined => PICTURE_TYPES[name.slice(name.lastIndexOf(".") + 1).toLowerCase()];
+
+// The file names of a program's stored baggage, by baggage id.
+export function catalogBaggageNames(db: Database, appProgramId: string): Map<string, string> {
+  return new Map((db.query("SELECT baggage_id AS id, name FROM catalog_baggage WHERE app_program_id = ?").all(appProgramId) as { id: string; name: string }[]).map((r) => [r.id, r.name]));
+}
+
+// The baggage ids of a program the catalogue holds a file for.
+export function catalogBaggageIds(db: Database, appProgramId: string): Set<string> {
+  return new Set((db.query("SELECT baggage_id AS id FROM catalog_baggage WHERE app_program_id = ?").all(appProgramId) as { id: string }[]).map((r) => r.id));
+}
+
 // Catalog product metadata (the browsable layer for placing devices). Idempotent:
 // the first ingest of a (product, app program) wins; richer Hardware.xml data is
 // not overwritten by a later minimal backfill. `pin` marks an official-source

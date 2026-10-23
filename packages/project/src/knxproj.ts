@@ -204,6 +204,52 @@ export function extractAppPrograms(bytes: Buffer, appRefs: Iterable<string>): Ma
   return out;
 }
 
+// The images a product's TypePicture parameters show, for each given application program: the
+// program's TypePicture RefIds, looked up in its manufacturer's Baggages.xml (Id -> TargetPath and
+// Name) and read from M-XXXX/Baggages/<TargetPath>/<Name> in the archive. A .knxproj and a .knxprod
+// carry the same layout. A plain manufacturer XML lists its baggage but carries no file, so it yields
+// none; a picture whose file the archive lacks is left out, and the catalogue then has no image for it.
+// Keyed by application-program id, then by baggage id.
+export function extractPictureBaggage(bytes: Buffer, programs: Map<string, string>): Map<string, Map<string, { name: string; data: Buffer }>> {
+  const out = new Map<string, Map<string, { name: string; data: Buffer }>>();
+  if (!isZip(bytes)) return out;
+  const outer = readZip(bytes);
+  const index = new Map<string, Map<string, string>>(); // manufacturer -> baggage id -> archive path
+  const indexOf = (manufacturer: string): Map<string, string> => {
+    let m = index.get(manufacturer);
+    if (m) return m;
+    m = new Map();
+    index.set(manufacturer, m);
+    const key = [...outer.keys()].find((n) => n === `${manufacturer}/Baggages.xml` || n.endsWith(`/${manufacturer}/Baggages.xml`));
+    if (!key) return m;
+    const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", isArray: () => false });
+    // A Baggages.xml that does not parse gives no images; the rows then say the image is not in the catalogue.
+    let doc: XmlNode;
+    try { doc = parser.parse(dec.decode(outer.get(key)!)) as XmlNode; } catch { return m; }
+    const root = key.slice(0, key.length - "Baggages.xml".length);
+    for (const manu of kids(node(node(doc.KNX)?.ManufacturerData)?.Manufacturer)) {
+      for (const b of kids(node(manu.Baggages)?.Baggage)) {
+        const id = text(b.Id), name = text(b.Name);
+        if (!id || !name) continue;
+        const dir = text(b.TargetPath).replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+        m.set(id, `${root}Baggages/${dir ? `${dir}/` : ""}${name}`);
+      }
+    }
+    return m;
+  };
+  for (const [pid, xml] of programs) {
+    const refs = new Set([...xml.matchAll(/<TypePicture\b[^>]*\bRefId="([^"]+)"/g)].map((m) => m[1]));
+    for (const ref of refs) {
+      const path = indexOf(ref.split("_")[0]).get(ref);
+      const data = path ? outer.get(path) : undefined;
+      if (!path || !data?.length) continue;
+      if (!out.has(pid)) out.set(pid, new Map());
+      out.get(pid)!.set(ref, { name: path.slice(path.lastIndexOf("/") + 1), data });
+    }
+  }
+  return out;
+}
+
 // Pull every placeable catalog product out of the manufacturer Hardware.xml files
 // in the outer zip: each product paired with each application program its hardware
 // can run, carrying the catalogue name, order number and hardware version. These

@@ -53,11 +53,11 @@ limit, because it records drift only for the refs the view exposes.
 | `TypeText` | full | text input; the image writes its ASCII characters and zero bytes to the end of the field (a value as long as the field without a zero), and refuses what no capture shows ([device-memory-model.md](device-memory-model.md#which-parameter-types-reach-the-image-at-all)) |
 | `TypeTime` | full | raw integer count of the type's `Unit`; rendered as an `hh:mm:ss` duration for second-based units, else number plus unit |
 | `TypeIPAddress` | full | validated dotted quad, 4-byte codec |
-| `TypeColor` (RGB) | edit only | native colour picker, stores `#RRGGBB` in the project; programming a colour in use is refused, no ETS capture shows its encoding ([device-memory-model.md](device-memory-model.md#which-parameter-types-reach-the-image-at-all)) |
+| `TypeColor` (RGB) | full on System B (bytes pinned to ETS's captures, not yet written by Busforge onto a device), edit only elsewhere | native colour picker, stores `#RRGGBB` in the project; on a relative segment (System B) the image writes and the read-back reads its red, green and blue bytes, as ETS's downloads write them; on a System 7 device programming a colour in use is refused, no capture shows one there ([device-memory-model.md](device-memory-model.md#which-parameter-types-reach-the-image-at-all)) |
 | `TypeNone` (named) | full | display-only caption, rendered read-only; a nameless one is a pure layout spacer and is dropped |
 | `TypeRestriction` `Base="BinaryValue"` | not editable | badge; the image writes the bytes of the enumeration its value names (`Access="None"` object-link tables of the Theben MIX 2) |
-| `TypeColor` (HSV and any other space) | not supported | badge; an sRGB picker would mis-encode a non-sRGB register |
-| `TypePicture` | not supported | badge |
+| `TypeColor` (HSV and any other space) | not supported | badge; an sRGB picker would mis-encode a non-sRGB register, and programming one in use is refused (`PARAM_COLOR_UNSUPPORTED`): no capture shows its bytes |
+| `TypePicture` | full | display only: the image alone across its row, aligned by `HorizontalAlignment`, as ETS shows it. The file comes from the product's baggage (`M-XXXX/Baggages.xml` and `Baggages/`) in the imported `.knxproj` or `.knxprod` and is kept with the catalogue; where the catalogue holds no file (a plain manufacturer XML carries none) the row says the image is not in the catalogue |
 
 ## Attributes and layout semantics
 

@@ -435,6 +435,11 @@ describe("localization", () => {
     expect(byName("Strip colour").param).toMatchObject({ control: "color", value: "#FF0000" });
     // TypeColor HSV stays unsupported (encoding unverified) with a labelled badge.
     expect(byName("Mood colour").param).toMatchObject({ control: "unsupported", typeLabel: "Color (HSV)" });
+    // TypePicture shows its baggage image: a read-only "picture" control naming the image and its alignment.
+    expect(byName("Logo").param).toMatchObject({ control: "picture", readOnly: true, picture: { baggageId: "M-TEST_BG--logo.2Epng", align: "Right" } });
+    expect(byName("Logo").param.typeLabel).toBeUndefined();
+    // A TypePicture that names no image has nothing to show and stays an explicit unsupported row.
+    expect(byName("Picture without image").param).toMatchObject({ control: "unsupported", typeLabel: "Picture naming no image" });
   });
 
   test("sibling blocks are ordered by heading DisplayOrder, not document order (ETS parity)", () => {

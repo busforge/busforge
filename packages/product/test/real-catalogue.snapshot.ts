@@ -22,7 +22,7 @@ const sha = (s: string) => createHash("sha256").update(s).digest("hex").slice(0,
 
 // The image-model bases a healthy projection can produce (TypeTime is folded into
 // Number; IPAddress is a 4-byte host address).
-export const IMAGE_BASES = new Set(["Value", "BinaryValue", "Number", "Float", "Text", "IPAddress", "Other"]);
+export const IMAGE_BASES = new Set(["Value", "BinaryValue", "Number", "Float", "Text", "IPAddress", "Color", "Other"]);
 // The config-layer bases the parser can produce.
 export const CONFIG_BASES = new Set(["Value", "BinaryValue", "Number", "Float", "Color", "Text", "Time", "IPAddress", "Other"]);
 

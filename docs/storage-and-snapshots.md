@@ -87,6 +87,7 @@ and writes no programmed baseline.
 | `snapshots` | configuration restore points, one JSON payload per row |
 | `app_programs` | the global catalog of decrypted application-program XML |
 | `catalog_products` | browsable product metadata, with the `pinned` flag |
+| `catalog_baggage` | the images an application program's `TypePicture` parameters show, from its product baggage, by program and baggage id; dropped with its program |
 | `device_baggage` | DCA blobs (`BinaryData/`, `UserFiles/`) per project |
 | `connections` | the saved-connection library, see [connections.md](connections.md) |
 | `device_security` | sealed KNX Data Secure tool keys, see [knx-secure.md](knx-secure.md) |
@@ -233,4 +234,5 @@ picks one.
 | GET | `/api/catalog/products` | placeable products |
 | POST | `/api/catalog/import` | ingest a `.knxprod` product database |
 | GET | `/api/catalog/apps/:appProgramId/comobjects` | every com-object an application declares, not gated by parameter visibility (what the replace-device link mapping needs) |
+| GET | `/api/catalog/apps/:appProgramId/pictures/:baggageId` | the image a `TypePicture` parameter of the program shows (image types only, `PICTURE_MISSING` when the catalogue holds no file) |
 | POST | `/api/projects/:id/devices` | place a catalog product as a new device |

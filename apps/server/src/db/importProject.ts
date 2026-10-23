@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { appProgramId } from "@busforge/project";
 import { parseAppConfig, type AppConfig } from "@busforge/product";
 import { ApiError } from "../errors.ts";
-import { putAppProgram } from "./catalog.ts";
+import { putAppProgram, putCatalogBaggage } from "./catalog.ts";
 import { putBaggage, checkBaggageSize } from "./baggage.ts";
 import { insertSpaces, setProjectSource, SOURCE_NAME_MAX, type ImportSource } from "./projects.ts";
 import { applyProjectProperties } from "./projectProps.ts";
@@ -153,6 +153,21 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
     if (typeof c.deviceId !== "string" || typeof c.fdsk !== "string" || typeof c.serialNumber !== "string") throw new ApiError("BUSFORGE_INVALID", "malformed deviceCertificates entry");
   }
   if (!d.catalog || typeof d.catalog !== "object") throw new ApiError("BUSFORGE_INVALID", "missing catalog");
+  if (d.catalogPictures !== undefined) {
+    const pics = d.catalogPictures as Record<string, unknown>[];
+    // Each entry is an image a TypePicture of a carried program names, once, its bytes in canonical base64.
+    const catalog = d.catalog as Record<string, unknown>;
+    const names = (xml: unknown) => new Set(typeof xml === "string" ? [...xml.matchAll(/<TypePicture\b[^>]*\bRefId="([^"]+)"/g)].map((m) => m[1]) : []);
+    const seen = new Set<string>();
+    if (!Array.isArray(pics) || pics.some((p) => typeof p?.appProgramId !== "string" || typeof p.baggageId !== "string" || typeof p.name !== "string" || typeof p.dataBase64 !== "string"
+      || !Object.hasOwn(catalog, p.appProgramId) || !names(catalog[p.appProgramId]).has(p.baggageId)
+      || seen.size === seen.add(`${p.appProgramId}\n${p.baggageId}`).size
+      || Buffer.from(p.dataBase64, "base64").toString("base64") !== p.dataBase64)) {
+      throw new ApiError("BUSFORGE_INVALID", "malformed catalogPictures (each names, once, an image a TypePicture of an application program the artifact carries shows, in base64)");
+    }
+    checkBaggageSize([...pics.map((p) => ({ name: p.name as string, bytes: Buffer.byteLength(p.dataBase64 as string, "base64") })),
+      ...(d.baggage as { name: string; dataBase64: string }[]).map((b) => ({ name: b.name, bytes: Buffer.byteLength(b.dataBase64, "base64") }))]);
+  }
   // Only a parameter without a memory or property location can be assumed (the read-back's `assume`), so a
   // mark must name one of its device's carried application.
   const catalog = d.catalog as Record<string, unknown>;
@@ -238,6 +253,7 @@ export function importProjectExport(db: Database, data: ProjectExport, id: strin
     for (const { deviceId, ...settings } of data.deviceKnxIp ?? []) insKnxIp.run(id, deviceId, JSON.stringify(settings));
 
     for (const [cid, xml] of Object.entries(data.catalog)) putAppProgram(db, cid, xml);
+    for (const p of data.catalogPictures ?? []) putCatalogBaggage(db, p.appProgramId, new Map([[p.baggageId, { name: p.name, data: Buffer.from(p.dataBase64, "base64") }]]));
     for (const b of data.baggage) putBaggage(db, id, b.name, Buffer.from(b.dataBase64, "base64"));
 
     // Restore points and the recorded bus log. Snapshot ids are regenerated (the

@@ -2,8 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { iaToNum, numToGa, SENDER_ENTRY } from "@busforge/knx";
 import { appProgramId, readAppProgram, type Project } from "@busforge/project";
-import { parseAppConfig, buildDeviceConfig, buildSecurityObject, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, effectiveComObjFlags, ProductError, IMAGE_WRITABLE_BASES, type EffectiveComObjFlags, type ComObjInstanceOverride, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
-import { getAppProgram, putAppProgram } from "./db/catalog.ts";
+import { parseAppConfig, buildDeviceConfig, buildSecurityObject, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, effectiveComObjFlags, ProductError, imageWritableType, type EffectiveComObjFlags, type ComObjInstanceOverride, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
+import { getAppProgram, putAppProgram, catalogBaggageNames, pictureType } from "./db/catalog.ts";
 import { getDeviceParams, getDeviceParamBase, getDeviceParamAssumed, type SameParamValue, getDeviceModules, getDeviceAppRef, getDeviceProductRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps, getDeviceComObjOverrides, getDeviceComObjOverrideBase } from "./db/deviceparams.ts";
 import { deviceCompatibility } from "./compatibility.ts";
 import { isUntestedAcknowledged } from "./db/untestedAcks.ts";
@@ -278,7 +278,8 @@ export function loadCatalogApp(state: AppState, programId: string): AppConfig | 
 // The default value of a parameter (ref/param default, ignoring user overrides),
 // resolved from the built config view so module-instance params work too.
 // Two stored values of a parameter are one value where they decode the same: no row is the parameter's
-// default, and a float compares by number (ETS stores it in scientific notation, the UI as a decimal).
+// default, a float compares by number (ETS stores it in scientific notation, the UI as a decimal), and a
+// colour by its hex digits whatever their case (the read-back gives #RRGGBB, an edit may store #rrggbb).
 export function sameParamValue(app: AppConfig): SameParamValue {
   return (refId, a, b) => {
     const ref = app.refs.get(refId) ?? app.refs.get(refId.replace(/_M-\d+_MI-\d+/, ""));
@@ -286,7 +287,8 @@ export function sameParamValue(app: AppConfig): SameParamValue {
     const def = ref?.value ?? param?.value ?? "";
     const x = a ?? def, y = b ?? def;
     // An empty value (a parameter without a default) is no number: Number("") would read it as 0.
-    return x === y || (x !== "" && y !== "" && !!param && app.types.get(param.typeId)?.base === "Float" && Number(x) === Number(y));
+    const base = param ? app.types.get(param.typeId)?.base : undefined;
+    return x === y || (x !== "" && y !== "" && ((base === "Float" && Number(x) === Number(y)) || (base === "Color" && x.toUpperCase() === y.toUpperCase())));
   };
 }
 export function paramValueSame(state: AppState, projectId: string, deviceId: string): SameParamValue {
@@ -373,12 +375,22 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
   const same = sameParamValue(app);
   const assumed = new Set([...getDeviceParamAssumed(db, projectId, deviceId)].filter(([ref, v]) => same(ref, baseline.get(ref) ?? null, v)).map(([ref]) => ref));
   const shownParams = new Set<string>();
+  const programId = appProgramId(getDeviceAppRef(db, projectId, deviceId)!);
+  // A picture gets its url only where the catalogue holds a file the route serves; otherwise the row says
+  // the image is not in the catalogue.
+  const pictures = catalogBaggageNames(db, programId);
+  const served = (name: string) => pictureType(name) !== undefined;
   for (const b of view.blocks) for (const it of b.items) {
     if (it.kind === "param") {
+      if (it.param.picture && served(pictures.get(it.param.picture.baggageId) ?? "")) it.param.picture.url = `/api/catalog/apps/${encodeURIComponent(programId)}/pictures/${encodeURIComponent(it.param.picture.baggageId)}`;
       let isChanged = changed.params.has(it.param.refId);
       if (isChanged && it.param.float) {
         const o = overrides.get(it.param.refId), bv = baseline.get(it.param.refId);
         if (o !== undefined && bv !== undefined && Number(o) === Number(bv)) isChanged = false;
+      }
+      if (isChanged && it.param.control === "color") {
+        const o = overrides.get(it.param.refId), bv = baseline.get(it.param.refId);
+        if (o !== undefined && bv !== undefined && o.toUpperCase() === bv.toUpperCase()) isChanged = false;
       }
       it.param.changed = isChanged;
       if (!isChanged && assumed.has(it.param.refId)) it.param.assumed = true;
@@ -406,8 +418,8 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
 
 // Parameter refs a flash can never write, among the device's STORED overrides (the rows
 // resetParamBase would adopt): memory-backed params whose type base the image codec does
-// not represent (colour/other; IMAGE_WRITABLE_BASES mirrors encode()). A text param whose
-// write is refused is not here: the flash that would write it is refused, so nothing is adopted.
+// not represent (a colour outside the RGB space, other; imageWritableType mirrors encode()). A text or
+// colour param whose write is refused is not here: the flash that would write it is refused, so nothing is adopted.
 // Resolved on the flat application model, not the visibility-filtered view, so a
 // currently-hidden param is covered too. A ref we cannot resolve at all is kept
 // conservatively: we cannot prove the flash wrote it. Memory-less params are NOT kept:
@@ -422,15 +434,15 @@ export function unflashableParamRefs(state: AppState, projectId: string, deviceI
   for (const refId of stored.keys()) {
     // A module-instance ref (…_MD-x_M-k_MI-n_…) resolves through its ModuleDef ref (…_MD-x_…),
     // the inverse of the instance id the module expansion prefixes (application.ts).
-    let resolved: { base: string; hasMemory: boolean } | undefined;
+    let resolved: { base: string; colorSpace?: string; hasMemory: boolean } | undefined;
     for (const rid of [refId, refId.replace(/_M-\d+_MI-\d+/, "")]) {
       const ref = app.refs.get(rid);
       const param = ref ? app.params.get(ref.paramId) : undefined;
       const t = param ? app.types.get(param.typeId) : undefined;
-      if (param && t) { resolved = { base: t.base, hasMemory: param.hasMemory }; break; }
+      if (param && t) { resolved = { base: t.base, colorSpace: t.colorSpace, hasMemory: param.hasMemory }; break; }
     }
     if (!resolved) refs.add(refId);
-    else if (resolved.hasMemory && !IMAGE_WRITABLE_BASES.has(resolved.base)) refs.add(refId);
+    else if (resolved.hasMemory && !imageWritableType(resolved)) refs.add(refId);
   }
   return refs;
 }

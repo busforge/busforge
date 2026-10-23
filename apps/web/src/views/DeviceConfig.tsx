@@ -183,8 +183,8 @@ export function DeviceConfig() {
 
   // Honest read-back disclosure: every way the shown change state was NOT confirmed
   // against the hardware. Device-class limits (params/links unsupported) plus the
-  // type-level blind spot: colour parameters are not image-representable, and a text parameter only
-  // where its byte layout is known, so read-back cannot verify them on an otherwise supported device.
+  // type-level blind spot: a colour or text parameter is image-representable only where its byte layout
+  // is known, so read-back cannot verify the others on an otherwise supported device.
   const rb = view?.readbackSupport;
   const hasTextColorParams = !!view?.blocks.some((b) => b.items.some((i) => i.kind === "param" && (i.param.control === "text" || i.param.control === "color")));
   const readbackNotes: string[] = [];
@@ -963,6 +963,19 @@ function ParamRow({ param, compact, changedTitle, revertTitle, reverting, onChan
   // accessible name instead of leaving it nameless.
   const label = compact ? param.name.trim() || undefined : undefined;
 
+  // ETS TypePicture: the product's image alone across the row, aligned as its type says. Without the
+  // file in the catalogue the row says so instead of showing an empty box.
+  if (param.control === "picture" && param.picture) {
+    const justify = param.picture.align === "Right" ? "justify-end" : param.picture.align === "Middle" ? "justify-center" : "justify-start";
+    return (
+      <div className={cn("flex min-w-0 py-1.5", compact ? "pl-1.5" : "pl-3", justify)} data-testid={`param-${param.refId}`}>
+        {param.picture.url
+          ? <img src={param.picture.url} alt={param.name.trim()} className="max-w-full" />
+          : <span className="text-xs text-muted-foreground">{t("device.pictureMissing")}</span>}
+      </div>
+    );
+  }
+
   return (
     <div
       // In a grid cell the label is the author's separator / column header and the row
@@ -993,9 +1006,8 @@ function ParamRow({ param, compact, changedTitle, revertTitle, reverting, onChan
       {param.changed && <RevertButton title={revertTitle} disabled={reverting} onClick={onRevert} />}
       <div className={cn("flex items-center gap-2", compact ? "min-w-0 flex-1" : cn("shrink-0", CONTROL_W))}>
         {/* A type we cannot edit stays explicit even when it is read-only: rendering it
-            as a plain read-only value would show an empty field (e.g. a TypePicture,
-            whose image lives in the manufacturer baggage we do not import) and pass the
-            gap off as a value. */}
+            as a plain read-only value would show an empty field and pass the gap off as
+            a value. */}
         {param.control === "unsupported" ? (
           <span className="flex w-full min-w-0 items-center gap-2" data-testid={`param-${param.refId}`}>
             <Badge tone="warning">

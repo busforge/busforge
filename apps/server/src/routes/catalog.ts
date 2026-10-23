@@ -1,7 +1,8 @@
-import { extractAppPrograms, extractCatalogProducts } from "@busforge/project";
+import { extractAppPrograms, extractCatalogProducts, extractPictureBaggage } from "@busforge/project";
 import { comObjectUniverse, MANUFACTURERS } from "@busforge/product";
-import { putAppProgram, putCatalogProduct, listCatalogProducts, backfillCatalogFromDevices } from "../db/catalog.ts";
+import { putAppProgram, putCatalogProduct, putCatalogBaggage, getCatalogBaggage, pictureType, listCatalogProducts, backfillCatalogFromDevices } from "../db/catalog.ts";
 import { loadCatalogApp } from "../deviceservice.ts";
+import { checkBaggageSize } from "../db/baggage.ts";
 import { json, err } from "../httputil.ts";
 import type { AppState } from "../app.ts";
 
@@ -21,6 +22,17 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const app = loadCatalogApp(state, decodeURIComponent(seg[3]));
     if (!app) return err("APP_PROGRAM_MISSING", "application program not in catalog", 404);
     return json(comObjectUniverse(app, url.searchParams.get("lang") ?? undefined));
+  }
+
+  // /api/catalog/apps/:appProgramId/pictures/:baggageId  -> the image a TypePicture parameter of the
+  // program shows. Only image types are served, never sniffed, and a script in an SVG opened on its
+  // own does not run (the CSP).
+  if (seg.length === 6 && seg[2] === "apps" && seg[4] === "pictures" && req.method === "GET") {
+    const file = getCatalogBaggage(db, decodeURIComponent(seg[3]), decodeURIComponent(seg[5]));
+    if (!file) return err("PICTURE_MISSING", "the catalogue holds no such image for this application program", 404);
+    const type = pictureType(file.name);
+    if (!type) return err("PICTURE_TYPE_UNSUPPORTED", `the baggage file ${file.name} is not an image type Busforge shows`, 415);
+    return new Response(new Uint8Array(file.data), { headers: { "content-type": type, "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox; frame-ancestors 'none'; form-action 'none'; base-uri 'none'", "cache-control": "private, max-age=3600" } });
   }
 
   // /api/catalog/manufacturers  -> where each known manufacturer publishes its product data
@@ -49,8 +61,11 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // Only keep products whose application program is present, so every catalog
     // entry stays placeable.
     const placeable = products.filter((p) => programs.has(p.appProgramId));
+    const pictures = extractPictureBaggage(bytes, programs);
+    checkBaggageSize([...pictures.values()].flatMap((m) => [...m.values()]).map((f) => ({ name: f.name, bytes: f.data.length })));
     db.transaction(() => {
       for (const [pid, xml] of programs) putAppProgram(db, pid, xml);
+      for (const [pid, files] of pictures) putCatalogBaggage(db, pid, files);
       for (const p of placeable) putCatalogProduct(db, p, true);
     })();
     return json({ products: placeable.length, programs: programs.size }, 201);

@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { appProgramId, type SpaceNode, type GroupAddressSecurity, type DeviceKnxIp } from "@busforge/project";
 import { getDeviceKnxIp } from "./deviceparams.ts";
-import { getAppProgram } from "./catalog.ts";
+import { getAppProgram, listCatalogBaggage } from "./catalog.ts";
 import { readSpaces, getProjectSource, type ImportSource } from "./projects.ts";
 import { readProjectProperties, type ProjectProperties } from "./projectProps.ts";
 import { open } from "../secrets.ts";
@@ -54,6 +54,9 @@ export interface ProjectExport {
   // artifacts from before they were kept still import; such a device's download that writes them is refused.
   deviceKnxIp?: DeviceKnxIp[];
   catalog: Record<string, string>; // appProgramId -> application-program XML
+  // The images the carried programs' TypePicture parameters show (catalog_baggage). Optional so
+  // artifacts from before they were kept still import, their pictures then not in the catalogue.
+  catalogPictures?: { appProgramId: string; baggageId: string; name: string; dataBase64: string }[];
   baggage: { name: string; dataBase64: string }[];
   // Restore points and the recorded bus log. Optional so an artifact from before
   // these were added (a plain .busforge.json) still imports.
@@ -113,6 +116,8 @@ export function exportProject(db: Database, projectId: string, now: number, mast
     const xml = getAppProgram(db, cid);
     if (xml) catalog[cid] = xml;
   }
+  const catalogPictures = Object.keys(catalog).sort().flatMap((cid) => [...listCatalogBaggage(db, cid)].sort(([a], [b]) => a.localeCompare(b))
+    .map(([baggageId, f]) => ({ appProgramId: cid, baggageId, name: f.name, dataBase64: f.data.toString("base64") })));
 
   const baggage = (db.query("SELECT name, data FROM device_baggage WHERE project_id = ? ORDER BY name")
     .all(projectId) as { name: string; data: Uint8Array }[])
@@ -157,6 +162,7 @@ export function exportProject(db: Database, projectId: string, now: number, mast
     deviceKnxIp: (db.query("SELECT device_id AS deviceId FROM device_knxip WHERE project_id = ? ORDER BY device_id").all(projectId) as { deviceId: string }[])
       .map(({ deviceId }) => ({ deviceId, ...getDeviceKnxIp(db, projectId, deviceId)! })),
     catalog,
+    catalogPictures,
     baggage,
     snapshots,
     telegrams,

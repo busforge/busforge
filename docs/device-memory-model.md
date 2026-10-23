@@ -150,8 +150,8 @@ mark every byte they actually wrote as **owned**.
 | **Left alone** | manufacturer default, an erased `0xFF` gap, an inactive-branch parameter, an ETS-computed table | never written |
 
 Ownership is gated on the encoder actually writing: a type the image does not represent
-(color, other) or a malformed value writes nothing and claims no bytes; a text value the codec
-refuses fails the build (below).
+(a colour outside the RGB space, other) or a malformed value writes nothing and claims no bytes; a
+text or colour value the codec refuses fails the build (below).
 
 A second, narrower mask, `verify`, is the subset a post-flash read-back may assert. It
 excludes bytes owned only by `Access="None"` device-internal markers (download-recognition
@@ -270,14 +270,22 @@ rather than writing a wrong-sized value.
 
 ## Which parameter types reach the image at all
 
-Only `Value` (enum/restriction), `Number`, `Float`, `IPAddress` and `Text` are encoded into the
-parameter image. Time-of-day, color and unrecognised bases write nothing and therefore own
-nothing. No ETS download captured holds a colour parameter in use, so how ETS encodes a colour is
-not known: a parameter or structural flash refuses (`PARAM_COLOR_UNSUPPORTED`) when a colour in use
-differs from the configuration the device was last programmed with, or comes into use, and a full
-download refuses any colour in use: it knows no configuration the device holds, and would leave
-either the segment's `<Data>` or the unit's bytes where the colour lies. Four type details are easy
-to get wrong:
+Only `Value` (enum/restriction), `Number`, `Float`, `IPAddress`, `Text` and an RGB `Color` are
+encoded into the parameter image. Time-of-day, a colour in any other space and unrecognised bases
+write nothing and therefore own nothing. Where no capture shows how ETS encodes a colour (any space
+but RGB, and every colour on an absolute segment, System 7), a parameter or structural flash refuses
+(`PARAM_COLOR_UNSUPPORTED`) when a colour in use differs from the configuration the device was last
+programmed with, or comes into use, and a full download refuses any colour in use: it knows no
+configuration the device holds, and would leave either the segment's `<Data>` or the unit's bytes
+where the colour lies. Five type details are easy to get wrong:
+
+- **An RGB `TypeColor` is three bytes, red, green, blue** (System B). The type declares no
+  `SizeInBit`; the value `#RRGGBB` goes into the three bytes at the parameter's offset in that order,
+  and a read-back gives it back as `#RRGGBB` in upper case, as ETS stores it. ETS's parameter downloads
+  onto the Jung 400021SE show it: "Colour value when pressed" set to `#123456` and then `#A1B2C3`
+  wrote `12 34 56` and `A1 B2 C3`, and each of those downloads changed exactly the bytes Busforge's
+  image changes. A colour that does not start at a byte, a value that is no `#RRGGBB`, and a colour in
+  an application with little-endian parameters are refused.
 
 - **`TypeText` is its ASCII characters, then zero bytes to the end of the field** (System B). A
   value as long as its field fills it without a closing zero, and the segment's `<Data>` does not

@@ -502,6 +502,17 @@ const MIGRATIONS: string[] = [
   `
   ALTER TABLE tasks ADD COLUMN error_details TEXT;
   `,
+  // The images an application program's TypePicture parameters show, from its manufacturer's product
+  // baggage, keyed by program and baggage id; they go with their program.
+  `
+  CREATE TABLE catalog_baggage (
+    app_program_id TEXT NOT NULL REFERENCES app_programs(id) ON DELETE CASCADE,
+    baggage_id     TEXT NOT NULL,
+    name           TEXT NOT NULL,
+    data           BLOB NOT NULL,
+    PRIMARY KEY (app_program_id, baggage_id)
+  );
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration

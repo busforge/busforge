@@ -131,6 +131,12 @@ What each row does not show:
   - **Theben Meteodata 140 S, Steinel M-008E**: a configuration that activates one of their text
     parameters (the Meteodata's EIS 5 channels) is refused for every write, since no System 7 capture
     shows a text parameter; a read-back leaves those fields out.
+- **Colour parameters.** An RGB colour on a System B device is written and read back as ETS's
+  parameter downloads onto the Jung 400021SE write it (capture comparison: each download's changed
+  bytes equal Busforge's, and the unit's read-backs before and after equal that chain); Busforge has
+  not written a colour onto a device. An HSV colour, any other colour space, and any colour on a
+  System 7 device are refused for every write that would change one (`PARAM_COLOR_UNSUPPORTED`); a
+  read-back leaves them out.
 - **Jung 400021SE** runs in Data Secure mode, secure-commissioned by ETS. Its plain claims were shown
   in plain mode; the plain smoke spec applies again only after a master reset. Its load procedure
   declares two memory-control-block regions that every allocation resets, so the full download and

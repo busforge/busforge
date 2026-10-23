@@ -10,8 +10,9 @@ import { corpusDescribe } from "../../../tools/corpus-test.ts";
 // time, at least 60 s.
 setDefaultTimeout(60_000);
 
-// No ETS download captured holds a colour parameter in use, so Busforge writes no colour: every operation that
-// would have to write one refuses before it touches the bus.
+// ETS writes an RGB colour as its three bytes (image.ts colorBytes, shown by its downloads onto the Jung
+// 400021SE), and Busforge writes it so on a relative segment (System B). Every other colour has no encoding
+// shown: each operation that would have to write one refuses before it touches the bus.
 const untouched = new Proxy({}, { get: (_t, k) => () => { throw new Error(`the device was used: ${String(k)}`); } }) as unknown as KnxDevice;
 const refused = async (p: Promise<unknown>) => {
   const e = await p.then(() => null, (x: unknown) => x as { code?: string });
@@ -26,26 +27,43 @@ corpusDescribe("a colour parameter in use on a System B application", () => {
   const COLOUR_TYPE = "M-0048_A-9071-20-F258-O00EF_P-53_R-41";
   const withColour = new Map([[COLOUR_TYPE, "2"]]);
   const [colourRef] = [...activeColorValues(cfg, withColour, [])].map(([ref]) => ref);
+  const at = cfg.params.get(cfg.refs.get(colourRef)!.paramId)!.offset!;
 
   test("the defaults hold no colour in use; the colour control type puts one in use at its default", () => {
     expect(activeColorValues(cfg, new Map(), []).size).toBe(0);
     expect([...activeColorValues(cfg, withColour, [])]).toEqual([[colourRef, "#FF0000"]]);
   });
 
-  test("a full download refuses a colour in use, also at its default, and builds without one", () => {
-    expect(() => classify(cfg).planFullDownload(cfg.mask, { ia: "1.1.1", params: withColour, links: [], proc })).toThrow(expect.objectContaining({ code: "PARAM_COLOR_UNSUPPORTED" }));
-    expect(classify(cfg).planFullDownload(cfg.mask, { ia: "1.1.1", params: new Map(), links: [], proc }).imageBytes).toBeGreaterThan(0);
+  test("a full download writes an RGB colour in use as its red, green and blue bytes", () => {
+    const image = (params: Map<string, string>) => classify(cfg).planFullDownload(cfg.mask, { ia: "1.1.1", params, links: [], proc }).segments.find((s) => s.lsm === 4)!.image;
+    expect(image(withColour).subarray(at, at + 3).toString("hex")).toBe("ff0000");
+    expect(image(new Map(withColour).set(colourRef, "#102030")).subarray(at, at + 3).toString("hex")).toBe("102030");
   });
 
-  test("a parameter flash refuses a colour that changes or comes into use, and passes one the device holds", () => {
+  test("a parameter flash takes an RGB colour that changes on this path, and refuses it on a path that writes no colour", () => {
     const changed = new Map(withColour).set(colourRef, "#102030");
-    expect(() => refuseColorWrites(cfg, withColour, [], { values: withColour, instances: [] })).not.toThrow();
-    expect(() => refuseColorWrites(cfg, new Map(withColour).set(colourRef, "#ff0000"), [], { values: withColour, instances: [] })).not.toThrow();
-    expect(() => refuseColorWrites(cfg, changed, [], { values: withColour, instances: [] })).toThrow(expect.objectContaining({ code: "PARAM_COLOR_UNSUPPORTED" }));
-    expect(() => refuseColorWrites(cfg, withColour, [], { values: new Map(), instances: [] })).toThrow(expect.objectContaining({ code: "PARAM_COLOR_UNSUPPORTED" }));
+    expect(() => refuseColorWrites(cfg, changed, [], true, { values: withColour, instances: [] })).not.toThrow();
+    expect(() => refuseColorWrites(cfg, withColour, [], true)).not.toThrow();
+    expect(() => refuseColorWrites(cfg, withColour, [], false, { values: withColour, instances: [] })).not.toThrow();
+    expect(() => refuseColorWrites(cfg, new Map(withColour).set(colourRef, "#ff0000"), [], false, { values: withColour, instances: [] })).not.toThrow();
+    expect(() => refuseColorWrites(cfg, changed, [], false, { values: withColour, instances: [] })).toThrow(expect.objectContaining({ code: "PARAM_COLOR_UNSUPPORTED" }));
+    expect(() => refuseColorWrites(cfg, withColour, [], false, { values: new Map(), instances: [] })).toThrow(expect.objectContaining({ code: "PARAM_COLOR_UNSUPPORTED" }));
   });
+});
 
-  test("the parameter and the structural flash refuse a colour change before they use the device", async () => {
+// The same gateway with the RGB colour declared an HSV one (the application's own PT-ColorHSV): no capture shows an
+// HSV colour's bytes, so every operation that would write it refuses.
+corpusDescribe("an HSV colour in use on a System B application", () => {
+  const xml = catalogueXml("M-0048_A-9071-20-F258-O00EF.xml.gz").replace(
+    /(<Parameter Id="M-0048_A-9071-20-F258-O00EF_UP-13" [^>]*ParameterType=")[^"]+"/, '$1M-0048_A-9071-20-F258-O00EF_PT-ColorHSV"');
+  const cfg = parseAppConfig(xml);
+  const proc = parseLoadProcedures(xml);
+  const withColour = new Map([["M-0048_A-9071-20-F258-O00EF_P-53_R-41", "2"]]);
+  const [colourRef] = [...activeColorValues(cfg, withColour, [])].map(([ref]) => ref);
+
+  test("the full download, the parameter and the structural flash refuse it before they use the device", async () => {
+    expect(cfg.types.get(cfg.params.get(cfg.refs.get(colourRef)!.paramId)!.typeId)!.colorSpace).toBe("HSV");
+    expect(() => classify(cfg).planFullDownload(cfg.mask, { ia: "1.1.1", params: withColour, links: [], proc })).toThrow(expect.objectContaining({ code: "PARAM_COLOR_UNSUPPORTED" }));
     const ctx = { deviceId: "d", appXml: xml, params: new Map(withColour).set(colourRef, "#102030"), baseParams: withColour, moduleInstances: [], dryRun: false, persistBackups: () => "backup" };
     await refused(classify(cfg).flashParameters(untouched, cfg.mask, ctx));
     expect(classify(cfg).capabilities().structuralFlash).toBe(true);

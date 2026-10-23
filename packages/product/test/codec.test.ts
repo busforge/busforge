@@ -241,6 +241,26 @@ describe("IPAddress codec (4-byte host address)", () => {
   });
 });
 
+// ETS's parameter downloads onto the Jung 400021SE (private corpus captures/jung-400021se-ets6log-partial-colour-*.txt,
+// RelMemory(4) 0FC4): K2's "Colour value when pressed" #123456 went out as 12 34 56, #A1B2C3 as A1 B2 C3.
+describe("RGB colour codec (three bytes)", () => {
+  const m = mk({ Tc: { base: "Color", sizeInBit: 24 } }, { P: { type: "Tc", offset: 2 } }, [{ id: "S", lsm: 4, size: 8, data: Buffer.alloc(8) }]);
+  test("encodes #RRGGBB as its red, green and blue bytes at the offset", () => {
+    expect(buildHex(m, { "R-P": "#123456" })).toBe("0000123456000000");
+    expect(buildHex(m, { "R-P": "#a1b2c3" }).slice(4, 10)).toBe("a1b2c3");
+  });
+  test("reads back as ETS writes the value, upper case", () => {
+    expect(roundtrip(m, { "R-P": "#a1b2c3" })).toEqual({ "R-P": "#A1B2C3" });
+    expect(roundtrip(m, { "R-P": "#FFFFFF" })).toEqual({ "R-P": "#FFFFFF" });
+  });
+  test("a value that is no #RRGGBB, a colour off a byte, past the segment or in little-endian order is refused", () => {
+    for (const bad of ["#FFF", "123456", "#12345G", ""]) expect(() => buildHex(m, { "R-P": bad })).toThrow(expect.objectContaining({ code: "PARAM_VALUE_OUT_OF_RANGE" }));
+    expect(() => buildHex(mk({ Tc: { base: "Color", sizeInBit: 24 } }, { P: { type: "Tc", offset: 0, bit: 4 } }), { "R-P": "#123456" })).toThrow(expect.objectContaining({ code: "PARAM_COLOR_UNSUPPORTED" }));
+    expect(() => buildHex(mk({ Tc: { base: "Color", sizeInBit: 24 } }, { P: { type: "Tc", offset: 6 } }, [{ id: "S", lsm: 4, size: 8, data: Buffer.alloc(8) }]), { "R-P": "#123456" })).toThrow(expect.objectContaining({ code: "PARAM_COLOR_UNSUPPORTED" }));
+    expect(() => buildHex(mk({ Tc: { base: "Color", sizeInBit: 24, littleEndian: true } }, { P: { type: "Tc", offset: 0 } }), { "R-P": "#123456" })).toThrow(expect.objectContaining({ code: "PARAM_BYTE_ORDER_UNSUPPORTED" }));
+  });
+});
+
 describe("multiple refs to one param", () => {
   const m = mk({ Tu8: { sizeInBit: 8 } }, { P: { type: "Tu8", offset: 0 } });
   m.refs.set("R-b", { id: "R-b", paramId: "P" }); // a second ref to the same param

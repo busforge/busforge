@@ -214,9 +214,9 @@ corpusDescribe("POST /flash: keepDrift wiring for params the flash can never wri
   };
 
   test("a memory-backed COLOUR override keeps its changed chip across a verified flash; a VALUE override is adopted", async () => {
-    // No catalogue of the corpus has a memory-backed parameter of a type the codec does not represent, so the
-    // MDT A-0137's 30-byte text type is declared a colour here: memory-backed, never written.
-    const xml = catalogueXml("M-0083_A-0137-20-7EB2.xml.gz").replace('<TypeText SizeInBit="240" />', '<TypeColor Space="RGB" />');
+    // No catalogue of the corpus has a memory-backed parameter of a type the codec does not represent in use, so
+    // the MDT A-0137's 30-byte text type is declared an HSV colour here: memory-backed, never written.
+    const xml = catalogueXml("M-0083_A-0137-20-7EB2.xml.gz").replace('<TypeText SizeInBit="240" />', '<TypeColor Space="HSV" />');
     const COLOUR_REF = "M-0083_A-0137-20-7EB2_P-162_R-162";
     const VALUE_REF = "M-0083_A-0137-20-7EB2_P-1_R-1";
     const after = await flashTwo(xml, [[COLOUR_REF, "#102030"], [VALUE_REF, "1"]]);

@@ -995,9 +995,9 @@ function refuseSystem7UnknownFlags(baseline: () => BaselineObjects, ctx: FlagBas
 
 // A parameter or structural flash writing a colour parameter (refuseColorWrites), each configuration's
 // module instances resolved as moduleAwareModel does.
-function refuseColorChange(cfg: AppConfig, ctx: { params: Map<string, string>; baseParams: Map<string, string>; moduleInstances?: ModuleInstance[] }): void {
+function refuseColorChange(cfg: AppConfig, ctx: { params: Map<string, string>; baseParams: Map<string, string>; moduleInstances?: ModuleInstance[] }, rgbWritten: boolean): void {
   const at = (values: Map<string, string>) => moduleAwareModel(cfg, values, ctx.moduleInstances ?? []).instances;
-  refuseColorWrites(cfg, ctx.params, at(ctx.params), { values: ctx.baseParams, instances: at(ctx.baseParams) });
+  refuseColorWrites(cfg, ctx.params, at(ctx.params), rgbWritten, { values: ctx.baseParams, instances: at(ctx.baseParams) });
 }
 
 // Group-table readers (readGroupTables / readGroupTablesMv0705) live in @busforge/knx
@@ -1221,7 +1221,7 @@ export class SystemBProfile extends DeviceProfile {
         `${unmapped.length} stored value(s) cannot be placed in this device's parameter image (e.g. ${unmapped[0]}); refusing to commission a device with a configuration we cannot express`);
     }
 
-    refuseColorWrites(cfg, ctx.params, instances);
+    refuseColorWrites(cfg, ctx.params, instances, true);
     // In the full form the download owns the whole segment: every byte we do not derive is the
     // allocation's fill. The partial form merges the owned bytes into the unit's segment.
     const target = buildRelativeSegmentTarget(cfg, ctx.params, LSM, { moduleInstances: instances, ownIdleUnionDefaults: true });
@@ -1517,7 +1517,7 @@ export class SystemBProfile extends DeviceProfile {
     // The device keeps the com-object table it was last programmed with. If these parameters
     // imply a different one, flashing would leave that table stale while reporting success.
     assertComObjectTableStable(cfg, ctx.baseParams, ctx.params, ctx.moduleInstances ?? []);
-    refuseColorChange(cfg, ctx);
+    refuseColorChange(cfg, ctx, true);
     // Surgical owned-byte target: only these bytes may be written; everything ETS computes that
     // we cannot reproduce is preserved by sourcing unowned bytes from the live read. The unions with
     // no active member are owned at their DefaultUnionParameter, as ETS's parameter download writes
@@ -1732,7 +1732,7 @@ export class SystemBProfile extends DeviceProfile {
     if (!this.capabilities().structuralFlash) throw new UnsupportedOperation("structural flash", this.family, this.mask);
     const proc = cfg.loadProcedures;
     const coverage = assertParCoverage(proc, "relative");
-    refuseColorChange(cfg, ctx);
+    refuseColorChange(cfg, ctx, true);
     const { model, instances } = moduleAwareModel(cfg, ctx.params, ctx.moduleInstances ?? []);
     const unmapped = unmappedParamRefs(model, ctx.params);
     if (unmapped.length) {
@@ -1981,7 +1981,7 @@ export class System7Profile extends DeviceProfile {
     // com-object table too, so a parameter that changes the active object set or its flags
     // would silently invalidate it. See comobjtable.ts.
     assertComObjectTableStable(cfg, ctx.baseParams, ctx.params, ctx.moduleInstances ?? []);
-    refuseColorChange(cfg, ctx);
+    refuseColorChange(cfg, ctx, false);
     const moduleInstances = ctx.moduleInstances;
     const built = buildAbsoluteParFlash(cfg, ctx.params, { moduleInstances });
     const targets = built.targets.filter((t) => t.size > 0);
@@ -2173,7 +2173,7 @@ export class System7Profile extends DeviceProfile {
     if (!this.capabilities().structuralFlash) throw new UnsupportedOperation("structural flash", this.family, this.mask);
     const proc = cfg.loadProcedures;
     const coverage = assertParCoverage(proc, "absolute");
-    refuseColorChange(cfg, ctx);
+    refuseColorChange(cfg, ctx, false);
     const instances = cfg.hasModules ? (ctx.moduleInstances?.length ? ctx.moduleInstances : resolveModuleInstances(cfg, ctx.params)) : [];
     const view = buildDeviceConfig(cfg, ctx.params, undefined, instances);
     const active = new Set(view.imageComObjects.keys());
@@ -2252,7 +2252,7 @@ export class System7Profile extends DeviceProfile {
     refuse(absoluteFullStepRefusal(proc, absoluteFullForm(proc, ctx.unitHoldsApplication ?? false)) ?? fullDownloadSegmentRefusal(cfg, proc));
     refuseTunnelingEntries(cfg);
     const instances = cfg.hasModules ? (ctx.moduleInstances?.length ? ctx.moduleInstances : resolveModuleInstances(cfg, ctx.params)) : [];
-    refuseColorWrites(cfg, ctx.params, instances);
+    refuseColorWrites(cfg, ctx.params, instances, false);
     const view = buildDeviceConfig(cfg, ctx.params, undefined, instances);
     // A link whose com-object this configuration does not activate would build an association to an
     // object the device ignores: a group address the UI calls programmed and the device never answers.

@@ -19,8 +19,14 @@ const failure = (p: Promise<unknown>) => p.then(() => null, (x: unknown) => x as
 
 // The XML is read inside the corpus-guarded suite, never while this module loads.
 const cases = [
-  // Theben DALI-Gateway KNX plus, System B: "Colour Control Type" (P-53) = 2 puts a colour in use.
-  { family: "System B", xml: () => catalogueXml("M-0048_A-9071-20-F258-O00EF.xml.gz"), colourType: ["M-0048_A-9071-20-F258-O00EF_P-53_R-41", "2"] as const },
+  // Theben DALI-Gateway KNX plus, System B: "Colour Control Type" (P-53) = 2 puts a colour in use, here declared
+  // an HSV one (the application's own PT-ColorHSV), whose write is refused.
+  {
+    family: "System B",
+    xml: () => catalogueXml("M-0048_A-9071-20-F258-O00EF.xml.gz").replace(
+      /(<Parameter Id="M-0048_A-9071-20-F258-O00EF_UP-13" [^>]*ParameterType=")[^"]+"/, '$1M-0048_A-9071-20-F258-O00EF_PT-ColorHSV"'),
+    colourType: ["M-0048_A-9071-20-F258-O00EF_P-53_R-41", "2"] as const,
+  },
   // MDT BE-06001.02, System 7, with "Time for long keypress" (P-8) declared an RGB colour.
   {
     family: "System 7",

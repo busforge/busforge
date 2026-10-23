@@ -95,12 +95,13 @@ node decrypt-busforge.mjs project.busforge "my-password" | jq .project.name
 | the marks on baseline values a read-back assumed, not proven | |
 | device module instances | |
 | the referenced catalog application programs | |
+| the images those programs' `TypePicture` parameters show (`catalogPictures`) | |
 | DCA baggage | |
 | restore points (snapshots) | |
 | the recorded bus log | |
 | KNX Data Secure tool keys | |
 
-Several fields are optional in the schema (building structure, restore points, bus log, tool keys,
+Several fields are optional in the schema (building structure, catalogue pictures, restore points, bus log, tool keys,
 source), and an artifact without them imports. The marks on assumed baseline values
 (`deviceParamAssumed`) are required, as the baselines are: an artifact without them is refused, and
 so is one with a mark on a parameter that is not a parameter without a memory or property location

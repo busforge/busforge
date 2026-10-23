@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { iaToNum, numToIa, gaToNum, LSM, planSecurityObjectLoad, GROUP_KEY_ENTRY, ownedRuns, planSystemBGaFlash, fillAllocatedRuns, differingRuns, type LoadPlan } from "../packages/knx/src/index.ts";
-import { parseAppConfig, classify, parseLoadProcedures, relParamFillByte, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, differingFF, leaveUnreadUnchanged, buildDeviceConfig, buildComObjectTable, buildGroupTables, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosing, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, withInstanceOverrides, fullDownloadImageCoverage, planSystem1Download, MV0012_DEFAULT_LOAD, absoluteBuildInstances, checkedStamps, buildSecurityObject, writtenGroupKeys, relativeParWriteSet, relativeComObjWriteSet, constantParams, differingConstants, comObjectTableChanges, type KnxIpDevice, type ModuleInstance, type ComObjInstanceOverride, type ImageStamp } from "../packages/product/src/index.ts";
+import { parseAppConfig, classify, parseLoadProcedures, relParamFillByte, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, differingFF, leaveUnreadUnchanged, buildDeviceConfig, buildComObjectTable, buildGroupTables, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosing, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, withInstanceOverrides, fullDownloadImageCoverage, planSystem1Download, MV0012_DEFAULT_LOAD, absoluteBuildInstances, checkedStamps, buildSecurityObject, writtenGroupKeys, relativeParWriteSet, relativeComObjWriteSet, constantParams, differingConstants, comObjectTableChanges, decodeParameterImage, type KnxIpDevice, type ModuleInstance, type ComObjInstanceOverride, type ImageStamp } from "../packages/product/src/index.ts";
 import { catalogueDir, catalogueXml, captureText, capturePath, listCatalogue } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { CollectedUnit, asDevice, type Collection } from "../packages/product/test/collected-unit.ts";
@@ -717,6 +717,53 @@ corpusDescribe("Jung 400021SE full download on a loaded unit against ETS", () =>
     const { image, diffBytes } = mergeRelativeTarget(unit, target);
     expect([[...image.keys()].filter((o) => image[o] !== unit[o]), diffBytes]).toEqual([[7700], 0]);
     expect(differingConstants(cfg, target.constants, unit, image).map((c) => c.paramRefId)).toEqual([expect.stringMatching(/_P-1_R-/)]);
+  });
+});
+
+// ETS 6 partial downloads of a colour onto the bench Jung 400021SE (secured; the plaintext of every memory write
+// from ETS's own log), in a row: K2's function "Wertgeber" with the value range "RGB/HSV mit Farbkreisdurchlauf"
+// and "Colour value when pressed" #123456, then #A1B2C3 alone, then K2 back to "Schalten". The unit before the
+// first and after the last: its read-only reads of the parameter segment's first 7700 bytes (byte 7700, the
+// download marker the firmware clears, lies behind them; the q2 suite above pins it).
+corpusDescribe("Jung 400021SE: a colour parameter against ETS's partial downloads", () => {
+  const cfg = parseAppConfig(catalogueXml("M-0004_A-7072-21-99A7-O000A.xml.gz"));
+  const K = (s: string) => `M-0004_A-7072-21-99A7-O000A_${s}`;
+  const base: [string, string][] = [[K("MD-1_M-100_MI-1_P-154_R-220"), "Taster"], [K("MD-1_M-100_MI-1_P-150_R-243"), "Taster"], [K("MD-1_M-200_MI-1_P-154_R-220"), "Taster"], [K("MD-1_M-200_MI-1_P-150_R-243"), "Taster"]];
+  const COLOUR = K("MD-1_M-200_MI-1_UP-100030_R-100037");
+  const coloured = (c: string): [string, string][] => [...base, [K("MD-1_M-200_MI-1_P-2_R-2"), "3"], [K("MD-1_M-200_MI-1_UP-42_R-420"), "11"], [COLOUR, c]];
+  const runs = [
+    { log: "jung-400021se-ets6log-partial-colour-123456.txt", params: coloured("#123456") },
+    { log: "jung-400021se-ets6log-partial-colour-a1b2c3.txt", params: coloured("#A1B2C3") },
+    { log: "jung-400021se-ets6log-partial-colour-revert.txt", params: base },
+  ];
+  const read = (file: string) => JSON.parse(captureText(file)) as { paramsAt: number; params: string };
+  const sorted = (m: Map<number, number>) => [...m].sort((x, y) => x[0] - y[0]);
+
+  test("each download changes exactly the bytes Busforge's image changes, and the unit ends as read back", () => {
+    const before = read("jung-400021se-unit-colour-before.json");
+    const unit = Buffer.from(before.params, "hex");
+    for (const run of runs) {
+      const target = buildRelativeSegmentTarget(cfg, new Map(run.params), 4, { ownIdleUnionDefaults: true })!;
+      const { image } = mergeRelativeTarget(Buffer.from(unit), target);
+      const ours = new Map<number, number>();
+      for (let o = 0; o < unit.length; o++) if (image[o] !== unit[o]) ours.set(o, image[o]);
+      const ets = new Map([...etsWrites(run.log)].filter(([a]) => a >= before.paramsAt && a < before.paramsAt + unit.length).map(([a, b]) => [a - before.paramsAt, b]));
+      const changed = new Map([...ets].filter(([o, b]) => unit[o] !== b));
+      expect([run.log, sorted(ours)]).toEqual([run.log, sorted(changed)]);
+      for (const [o, b] of ets) unit[o] = b;
+    }
+    // ETS's colour bytes: #123456 as 12 34 56, #A1B2C3 as A1 B2 C3 (RelMemory(4) 0FC4).
+    expect(sorted(new Map([...etsWrites(runs[1].log)].filter(([a]) => a < before.paramsAt + unit.length)))).toEqual([[before.paramsAt + 0xfc4, 0xa1], [before.paramsAt + 0xfc5, 0xb2], [before.paramsAt + 0xfc6, 0xc3]]);
+    // The revert leaves the colour's bytes (and the hidden value range's) as the device holds them, as ETS does.
+    expect(unit.toString("hex")).toBe(read("jung-400021se-unit-colour-after.json").params);
+  });
+
+  test("the read-back takes the colour the device holds", () => {
+    const before = read("jung-400021se-unit-colour-before.json");
+    const unit = Buffer.from(before.params, "hex");
+    for (const run of runs.slice(0, 2)) for (const [a, b] of etsWrites(run.log)) if (a >= before.paramsAt && a < before.paramsAt + unit.length) unit[a - before.paramsAt] = b;
+    const instances = resolveModuleInstances(cfg, new Map(runs[1].params));
+    expect(decodeParameterImage(toAppModel(cfg, { includeUnions: true, instances }), 4, unit).get(COLOUR)).toBe("#A1B2C3");
   });
 });
 

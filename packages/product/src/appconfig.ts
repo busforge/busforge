@@ -26,6 +26,9 @@ export interface CfgType {
   increment?: number; // TypeNumber spinner step (ETS Increment)
   uiHint?: string;    // ETS UIHint on the type (e.g. "Slider" for a numeric range)
   colorSpace?: string; // TypeColor Space ("RGB" | "HSV")
+  // TypePicture: the Baggage id of the image it shows and its HorizontalAlignment ("Left" | "Middle" | "Right").
+  pictureRefId?: string;
+  pictureAlign?: string;
   unit?: string;      // TypeTime Unit ("Seconds", "Milliseconds", ...): how to read the raw integer
   moduleDefId?: string; // set when merged in from a ModuleDef Static
 }
@@ -431,6 +434,7 @@ function parseTypes(staticKids: ONode[]): Map<string, CfgType> {
       uiHint: ia.UIHint,
       colorSpace: ia.Space,
       unit: ia.Unit,
+      ...(tag === "TypePicture" && ia.RefId ? { pictureRefId: ia.RefId, ...(ia.HorizontalAlignment ? { pictureAlign: ia.HorizontalAlignment } : {}) } : {}),
     });
   }
   return out;

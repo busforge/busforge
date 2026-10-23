@@ -42,9 +42,10 @@ depends on is hardware-proven.
   a capture shows them. The editor does not check a text against its field when it is saved: the
   refusal comes at the flash
   ([device-memory-model.md](device-memory-model.md#which-parameter-types-reach-the-image-at-all)).
-- **Colour parameters.** No ETS download captured holds a colour in use, so a flash that would write
-  one is refused (`PARAM_COLOR_UNSUPPORTED`); an ETS download of an RGB and an HSV colour in use
-  (e.g. the DALI-Gateway's colour control type set to RGB) shows the encoding
+- **Colour parameters beyond RGB on System B.** An RGB colour on a relative segment is written as
+  ETS writes it; an HSV colour (the DALI-Gateway's and the MDT BE-06001.02's), any other space, and a
+  colour on a System 7 device are refused (`PARAM_COLOR_UNSUPPORTED`) until an ETS download of one in
+  use shows its bytes (e.g. the BE-06001.02's LED colour set in ETS)
   ([device-memory-model.md](device-memory-model.md#which-parameter-types-reach-the-image-at-all)).
 - **One parameter, several references.** Where an application gives one parameter several
   `ParameterRef`s, the image builders encode each and the last one wins; no corpus application

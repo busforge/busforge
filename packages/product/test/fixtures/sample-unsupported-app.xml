@@ -13,6 +13,8 @@
               <ParameterType Id="M-TEST_A-9_PT-ColorHsv"><TypeColor Space="HSV" /></ParameterType>
               <ParameterType Id="M-TEST_A-9_PT-Ip"><TypeIPAddress AddressType="HostAddress" /></ParameterType>
               <ParameterType Id="M-TEST_A-9_PT-Disp"><TypeNone /></ParameterType>
+              <ParameterType Id="M-TEST_A-9_PT-Pic"><TypePicture RefId="M-TEST_BG--logo.2Epng" HorizontalAlignment="Right" /></ParameterType>
+              <ParameterType Id="M-TEST_A-9_PT-PicNoRef"><TypePicture /></ParameterType>
             </ParameterTypes>
             <Parameters>
               <Parameter Id="M-TEST_A-9_P-1" Name="Temp" ParameterType="M-TEST_A-9_PT-Float" Text="Temperature" Value="21">
@@ -34,6 +36,8 @@
                 <Memory CodeSegment="M-TEST_A-9_RS-4" Offset="11" BitOffset="0" />
               </Parameter>
               <Parameter Id="M-TEST_A-9_P-7" Name="Heading" ParameterType="M-TEST_A-9_PT-Disp" Text="Section heading" Value="" />
+              <Parameter Id="M-TEST_A-9_P-8" Name="Logo" ParameterType="M-TEST_A-9_PT-Pic" Text="Logo" Access="Read" Value="" />
+              <Parameter Id="M-TEST_A-9_P-9" Name="Broken" ParameterType="M-TEST_A-9_PT-PicNoRef" Text="Picture without image" Access="Read" Value="" />
             </Parameters>
             <ParameterRefs>
               <ParameterRef Id="M-TEST_A-9_P-1_R-1" RefId="M-TEST_A-9_P-1" />
@@ -43,6 +47,8 @@
               <ParameterRef Id="M-TEST_A-9_P-5_R-5" RefId="M-TEST_A-9_P-5" />
               <ParameterRef Id="M-TEST_A-9_P-6_R-6" RefId="M-TEST_A-9_P-6" />
               <ParameterRef Id="M-TEST_A-9_P-7_R-7" RefId="M-TEST_A-9_P-7" />
+              <ParameterRef Id="M-TEST_A-9_P-8_R-8" RefId="M-TEST_A-9_P-8" />
+              <ParameterRef Id="M-TEST_A-9_P-9_R-9" RefId="M-TEST_A-9_P-9" />
             </ParameterRefs>
           </Static>
           <Dynamic>
@@ -55,6 +61,8 @@
                 <ParameterRefRef RefId="M-TEST_A-9_P-5_R-5" />
                 <ParameterRefRef RefId="M-TEST_A-9_P-6_R-6" />
                 <ParameterRefRef RefId="M-TEST_A-9_P-7_R-7" />
+                <ParameterRefRef RefId="M-TEST_A-9_P-8_R-8" />
+                <ParameterRefRef RefId="M-TEST_A-9_P-9_R-9" />
                 <FancyVendorWidget Id="M-TEST_A-9_FW-1" />
               </ParameterBlock>
             </ChannelIndependentBlock>

@@ -1291,4 +1291,9 @@ describe("whether two stored values of a parameter are one value", () => {
     const same = sameParamValue(parseAppConfig(xml("")));
     expect([same(R, null, "0"), same(R, "0", null), same(R, null, null), same(R, "0", "0")]).toEqual([false, false, true, true]);
   });
+
+  test("a colour compares by its hex digits whatever their case", () => {
+    const same = sameParamValue(parseAppConfig(xml(' Value="#FFFFFF"').replace('<TypeFloat Encoding="IEEE-754 Single" />', '<TypeColor Space="RGB" />')));
+    expect([same(R, "#a1b2c3", "#A1B2C3"), same(R, null, "#ffffff"), same(R, "#A1B2C3", "#A1B2C4")]).toEqual([true, true, false]);
+  });
 });

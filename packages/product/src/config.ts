@@ -9,7 +9,7 @@ import type { MatrixOperation, OperationVerdict } from "./compatibility.ts";
 function unsupportedTypeLabel(type: CfgType | undefined): string {
   const byTag: Record<string, string> = {
     TypeFloat: "Float", TypeTime: "Time",
-    TypeIPAddress: "IP address", TypePicture: "Picture", TypeNone: "Display",
+    TypeIPAddress: "IP address", TypeNone: "Display", TypePicture: "Picture naming no image",
   };
   // Only RGB colour is editable; other colour spaces (HSV) are surfaced as
   // unsupported so we never write an sRGB hex into a differently-encoded register.
@@ -33,7 +33,7 @@ function unsupportedTypeLabel(type: CfgType | undefined): string {
 export interface CfgParamView {
   refId: string;
   name: string;
-  control: "enum" | "number" | "text" | "color" | "time" | "ip" | "display" | "unsupported";
+  control: "enum" | "number" | "text" | "color" | "time" | "ip" | "display" | "picture" | "unsupported";
   value: string;
   options?: { value: number; text: string }[];
   min?: number;
@@ -47,6 +47,9 @@ export interface CfgParamView {
   changed?: boolean; // differs from the programmed baseline; filled in by the server
   defaultValue?: string; // value with no user override (ref/param default), for change detection
   typeLabel?: string; // for control "unsupported": a human label of the datapoint type we can't edit yet
+  // For control "picture" (ETS TypePicture): the product Baggage id of the image, its HorizontalAlignment,
+  // and where the image is served, set by the server only when the catalogue holds its file.
+  picture?: { baggageId: string; align?: string; url?: string };
   indent?: number; // ETS IndentLevel of the row within its block (1 or 2)
   // The parameter has neither a memory nor a property location: the device does not hold it, so no
   // read-back recovers it (a read-back can only be asked to assume its value).
@@ -468,6 +471,8 @@ export function buildDeviceConfig(
     // A named TypeNone is a display-only caption/heading (no datapoint): show it as a
     // read-only label, not an "unsupported" warning. Nameless ones are dropped above.
     else if (type?.kind === "TypeNone") control = "display";
+    // TypePicture shows an image from the product's baggage and holds no value.
+    else if (type?.kind === "TypePicture" && type.pictureRefId) control = "picture";
 
     const defaultValue = ref.value ?? param.value ?? "";
     const typeLabel = control === "unsupported" ? unsupportedTypeLabel(type) : undefined;
@@ -479,7 +484,8 @@ export function buildDeviceConfig(
     // A float number accepts decimals; the frontend uses step="any" so the browser does
     // not reject a fractional value against an integer step grid.
     const float = type?.base === "Float" || undefined;
-    return { kind: "param", param: { refId: scope.rewrite(defRefId), name, control, value, options, min: type?.min, max: type?.max, suffix, step, slider, unit, float, readOnly: access === "Read" || control === "display", defaultValue, typeLabel, ...(!param.hasMemory && !param.onProperty ? { memoryless: true as const } : {}) } };
+    return { kind: "param", param: { refId: scope.rewrite(defRefId), name, control, value, options, min: type?.min, max: type?.max, suffix, step, slider, unit, float, readOnly: access === "Read" || control === "display" || control === "picture", defaultValue, typeLabel,
+      ...(control === "picture" ? { picture: { baggageId: type!.pictureRefId!, ...(type!.pictureAlign ? { align: type!.pictureAlign } : {}) } } : {}), ...(!param.hasMemory && !param.onProperty ? { memoryless: true as const } : {}) } };
   };
 
   // Resolve just the table-relevant facts of a com-object (number with the module

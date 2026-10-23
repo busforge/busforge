@@ -12,7 +12,7 @@ import { ProductError } from "./errors.ts";
 // `base` is the parameter's value kind, needed to pick the right memory codec:
 // "Float" is a KNX 2-byte float (DPT 9), the integer write/read is wrong for it.
 // "BinaryValue" is a TypeRestriction whose enumerations each carry the bytes ETS writes.
-export type ParamBase = "Value" | "BinaryValue" | "Number" | "Float" | "Text" | "Time" | "IPAddress" | "Other";
+export type ParamBase = "Value" | "BinaryValue" | "Number" | "Float" | "Text" | "Time" | "IPAddress" | "Color" | "Other";
 // littleEndian: the application declares <Options ParameterByteOrder="LittleEndian">; a multi-byte
 // value is then stored least significant byte first.
 // zeroTerminate: a Text type of an application that declares <Options TextParameterZeroTerminate="true">.
@@ -33,9 +33,9 @@ export interface AppModel {
 const hex = (s: string) => parseInt(s, 16);
 
 // Map the config layer's richer type to the image codec's base: Float = DPT codec, Value/Number =
-// integer, BinaryValue = the chosen enumeration's bytes, IPAddress = four octets, Text = its characters;
-// everything else is not represented in the image.
-function imageBase(t: { base: CfgType["base"]; kind: string }): ParamBase {
+// integer, BinaryValue = the chosen enumeration's bytes, IPAddress = four octets, Text = its characters,
+// Color = a colour in the RGB space as three bytes; everything else is not represented in the image.
+function imageBase(t: { base: CfgType["base"]; kind: string; colorSpace?: string }): ParamBase {
   // TypeTime (durations/periods) has no float or enum semantics: ETS stores it in the
   // parameter image as a plain unsigned integer, so encode it as Number. The config
   // layer keeps it as "Other" (still surfaced as an unsupported row in the UI) until
@@ -54,7 +54,9 @@ function imageBase(t: { base: CfgType["base"]; kind: string }): ParamBase {
     // Not represented in the parameter image. Spelled out rather than left to a `default`: a base
     // type added later must fail here loudly, not quietly become "Other" and be dropped from the
     // bytes the device is programmed with.
-    case "Color": case "Other": case "Time": return "Other"; // Time is handled above (TypeTime)
+    // A colour in another space (HSV and the rest) has no byte layout an ETS download has shown.
+    case "Color": return t.colorSpace === "RGB" ? "Color" : "Other";
+    case "Other": case "Time": return "Other"; // Time is handled above (TypeTime)
   }
 }
 
@@ -71,7 +73,8 @@ function imageBase(t: { base: CfgType["base"]; kind: string }): ParamBase {
 function paramType(app: AppConfig, t: CfgType): ParamType {
   const base = imageBase(t);
   return {
-    id: t.id, base, sizeInBit: t.sizeInBit, signed: t.signed, ...(app.parameterByteOrder === "LittleEndian" ? { littleEndian: true } : {}),
+    // A TypeColor declares no SizeInBit; an RGB colour is three bytes.
+    id: t.id, base, sizeInBit: base === "Color" ? 24 : t.sizeInBit, signed: t.signed, ...(app.parameterByteOrder === "LittleEndian" ? { littleEndian: true } : {}),
     ...(base === "Text" && app.textParameterZeroTerminate ? { zeroTerminate: true } : {}),
     ...(base === "BinaryValue" ? { binaryValues: new Map(t.enums.flatMap((e) => (e.binary ? [[e.value, e.binary] as [number, Buffer]] : []))) } : {}),
   };

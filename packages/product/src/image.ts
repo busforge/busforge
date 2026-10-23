@@ -29,7 +29,7 @@ export function buildParameterImage(model: AppModel, lsm: number, instanceValues
 // Read the parameter values back out of a memory image. Inverse of
 // buildParameterImage: same ref iteration and skip conditions, so the keys line
 // up with what buildParameterImage would write. Types the codec does not represent
-// (time/colour/other) are skipped (left to the caller's existing value). Keyed by
+// (time, a colour outside the RGB space, other) are skipped (left to the caller's existing value). Keyed by
 // ParameterRef id.
 export function decodeParameterImage(model: AppModel, lsm: number, img: Buffer): Map<string, string> {
   const out = new Map<string, string>();
@@ -58,6 +58,8 @@ export function decodeAbsoluteImage(model: AppModel, segId: string, img: Buffer)
     if (!param || param.codeSegment !== segId || param.offset === undefined) continue;
     const type = model.types.get(param.typeId);
     if (!type || !Number.isFinite(type.sizeInBit) || type.sizeInBit === 0) continue;
+    // No capture shows a colour on an absolute segment, and buildAbsoluteSegmentTargets encodes none.
+    if (type.base === "Color") continue;
     const v = decode(img, param.offset, param.bitOffset, type);
     if (v === undefined) continue; // not represented in the image, or a field encode would refuse
     out.set(ref.id, v);
@@ -133,11 +135,13 @@ export const MAX_INT_BYTES = 6;
 // 493B = 11 bits at bit 5), so the width has to follow the field, not the type alone.
 export const byteWidth = (sizeInBit: number, bitOffset = 0): number => Math.max(1, Math.ceil((bitOffset + sizeInBit) / 8));
 
-// The type bases encode() can represent in the parameter image. MUST stay in sync with
-// encode() below: everything else (Time, Color, Other) writes nothing
+// The config-layer types encode() can represent in the parameter image. MUST stay in sync with
+// encode() below: everything else (Time, a colour outside the RGB space, Other) writes nothing
 // and therefore is never programmed by a flash. Consumers use this to avoid claiming
 // such a parameter as "programmed" (e.g. the post-flash baseline reset).
 export const IMAGE_WRITABLE_BASES: ReadonlySet<string> = new Set(["Value", "BinaryValue", "Number", "Float", "IPAddress", "Text"]);
+export const imageWritableType = (t: { base: string; colorSpace?: string }): boolean =>
+  IMAGE_WRITABLE_BASES.has(t.base) || (t.base === "Color" && t.colorSpace === "RGB");
 
 // A text parameter's field: the value's ASCII characters, then zero bytes to the end of the field; a
 // value as long as the field fills it without a closing zero. The segment's <Data> does not enter: ETS
@@ -172,6 +176,19 @@ export function textBytes(type: ParamType, offset: number, bit: number, valStr: 
 // enumeration's bytes fill the type exactly and start on a byte (the Theben MIX 2 object-link
 // tables, 21 to 116 bytes; the hardware-type restrictions, 6 bytes); any other shape, or a value no
 // enumeration declares bytes for, has no byte layout ETS is known to write, and is refused.
+// A colour in the RGB space ("#RRGGBB", as ETS stores the value): its red, green and blue bytes in that order,
+// from bit 0. Shown by ETS's parameter downloads onto the Jung 400021SE (private corpus captures/
+// jung-400021se-ets6log-partial-colour-*.txt): #123456 and then #A1B2C3 in K2's "Colour value when pressed"
+// wrote 12 34 56 and A1 B2 C3 at the parameter's offset. No capture shows a colour that does not start at a
+// byte, or one in an application with little-endian parameters: those are refused.
+function colorBytes(type: ParamType, offset: number, bit: number, valStr: string): Buffer {
+  if (type.littleEndian) throw new ProductError("PARAM_BYTE_ORDER_UNSUPPORTED", `a colour parameter in an application with little-endian parameters (offset ${offset}): its byte layout is not known`);
+  if (bit !== 0) throw new ProductError("PARAM_COLOR_UNSUPPORTED", `a colour parameter at bit ${bit} of offset ${offset}: no ETS download shows a colour that does not start at a byte`);
+  const m = /^#([0-9A-Fa-f]{6})$/.exec(valStr);
+  if (!m) throw new ProductError("PARAM_VALUE_OUT_OF_RANGE", `colour value "${valStr}" is not an RGB colour #RRGGBB`);
+  return Buffer.from(m[1], "hex");
+}
+
 function binaryValueBytes(type: ParamType, offset: number, bit: number, valStr: string): Buffer {
   const where = `BinaryValue parameter type ${type.id} at offset ${offset}`;
   if (type.littleEndian) throw new ProductError("PARAM_BYTE_ORDER_UNSUPPORTED", `a ${where} in an application with little-endian parameters: its byte layout is not known`);
@@ -190,6 +207,12 @@ export function encode(img: Buffer, offset: number, bit: number, type: ParamType
     const octets = parseIPv4(valStr);
     if (!octets || offset + 4 > img.length) return false; // malformed/short: own nothing
     for (let i = 0; i < 4; i++) img[offset + i] = octets[i]; // 4 bytes, big-endian (a.b.c.d)
+    return true;
+  }
+  if (type.base === "Color") {
+    const bytes = colorBytes(type, offset, bit, valStr);
+    if (offset + bytes.length > img.length) throw new ProductError("PARAM_COLOR_UNSUPPORTED", `colour parameter type ${type.id} at offset ${offset}: its 3 bytes reach past the ${img.length}-byte segment`);
+    bytes.copy(img, offset);
     return true;
   }
   if (type.base === "Text") {
@@ -269,6 +292,10 @@ function decode(img: Buffer, offset: number, bit: number, type: ParamType): stri
   if (type.base === "IPAddress") {
     if (offset + 4 > img.length) return undefined;
     return `${img[offset]}.${img[offset + 1]}.${img[offset + 2]}.${img[offset + 3]}`;
+  }
+  if (type.base === "Color") {
+    if (type.littleEndian || bit !== 0 || offset + 3 > img.length) return undefined; // mirror encode's refusal
+    return `#${img.subarray(offset, offset + 3).toString("hex").toUpperCase()}`;
   }
   if (type.base === "Text") {
     // The characters before the first zero byte, every byte after it zero, or a field of characters
