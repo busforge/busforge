@@ -10,8 +10,7 @@ depends on is hardware-proven.
   KNX-wide rules ([load-procedures.md](load-procedures.md#the-rules-by-level)); where that changed a
   plan, the new one is capture-tested only ([status.md](status.md#devices-driven-on-real-hardware)):
   the System B partial form of the full download on the Jung 400021SE, the Theben DALI-Gateway's full
-  download onto a unit without the application, the structural flash newly offered on the
-  Meteodata 140 S. Each needs its run on the device.
+  download onto a unit without the application. Each needs its run on the device.
 - **Hidden bytes in the System 7 full download.** The parameter and structural flash write a hidden
   parameter's bytes at the segment's `<Data>` only where the project is known to hold its parameters
   without memory, and refuse otherwise ([device-memory-model.md](device-memory-model.md#owned-bytes-and-left-alone-bytes)).
@@ -47,8 +46,8 @@ depends on is hardware-proven.
   matching stamps, so what ETS writes there without a record is not shown. The unit ends the same.
 - **Text parameters beyond what ETS's images show.** Characters beyond ASCII, a value that fills its
   field where the application declares `TextParameterZeroTerminate` (the GVS AMMA), and text on
-  System 7 applications (the Meteodata 140 S's EIS 5 channels, the Steinel M-008E) are refused until
-  a capture shows them. The editor does not check a text against its field when it is saved: the
+  System 7 applications beyond what ETS's captures show (the Steinel M-008E; on the Meteodata 140 S a
+  value that fills its field or meets a non-zero `<Data>` byte) are refused until a capture shows them. The editor does not check a text against its field when it is saved: the
   refusal comes at the flash
   ([device-memory-model.md](device-memory-model.md#which-parameter-types-reach-the-image-at-all)).
 - **Colour parameters beyond RGB on System B.** An RGB colour on a relative segment is written as
