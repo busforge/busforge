@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ExportDialog } from "@/components/ExportDialog.tsx";
 import { ReportDialog } from "./ReportDialog.tsx";
+import { SourceCodeLink } from "@/components/SourceCodeLink.tsx";
 import { cn } from "@/lib/utils";
 import { errMsg } from "../lib/apiError.ts";
 
@@ -81,14 +82,20 @@ function VersionFooter() {
   const { t } = useTranslation();
   const { data: v } = useVersion();
   const [reportOpen, setReportOpen] = useState(false);
-  if (!v) return null;
-  const built = v.builtAt ? fmtDate(Date.parse(v.builtAt)) : null;
+  const built = v?.builtAt ? fmtDate(Date.parse(v.builtAt)) : null;
+  // The source code link stands even while the version is unknown (AGPL section 13).
   return (
-    <footer className="mt-auto pt-10 text-center font-mono text-[11px] text-muted-foreground/70" title={v.commit !== "unknown" ? `commit ${v.commit}` : undefined}>
-      <span className="font-semibold text-muted-foreground">{v.version}</span>
-      {built ? <span> · {t("footer.built", { date: built })}</span> : null}
-      <span> · </span>
+    <footer className="mt-auto pt-10 text-center font-mono text-[11px] text-muted-foreground/70" title={v && v.commit !== "unknown" ? `commit ${v.commit}` : undefined}>
+      {v ? (
+        <>
+          <span className="font-semibold text-muted-foreground">{v.version}</span>
+          {built ? <span> · {t("footer.built", { date: built })}</span> : null}
+          <span> · </span>
+        </>
+      ) : null}
       <button type="button" onClick={() => setReportOpen(true)} className="rounded-sm underline-offset-2 outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 hover:text-foreground hover:underline" data-testid="report-app">{t("report.footer")}</button>
+      <span> · </span>
+      <SourceCodeLink />
       <ReportDialog open={reportOpen} onOpenChange={setReportOpen} />
     </footer>
   );

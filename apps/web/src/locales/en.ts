@@ -15,6 +15,8 @@ const en = {
 
   footer: {
     built: "built {{date}}",
+    source: "Source code",
+    license: "Busforge is free software under the GNU AGPL-3.0-or-later",
   },
   status: {
     connected: "connected",

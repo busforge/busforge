@@ -205,7 +205,9 @@ by, sponsored by, or certified by the KNX Association** or any device manufactur
 Busforge is free software under the **[GNU AGPL-3.0-or-later](LICENSE)**. Anyone may use,
 modify and share it, including professionally: homeowners, electricians and integrators
 commissioning installations for their customers. Copies you distribute, and modified versions you
-distribute or offer to others over a network, stay under the AGPL, with their source.
+distribute or offer to others over a network, stay under the AGPL, with their source. The start
+page links to the source code (`SOURCE_URL` in `apps/web/src/components/SourceCodeLink.tsx`); a
+modified version offered over a network has to point it to its own source.
 
 If you want to build Busforge, or parts of it, into a closed product or service without the AGPL's
 obligations, a **commercial license** is available on request via the

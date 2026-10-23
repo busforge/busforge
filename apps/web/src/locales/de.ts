@@ -17,6 +17,8 @@ const de: Messages = {
 
   footer: {
     built: "gebaut {{date}}",
+    source: "Quelltext",
+    license: "Busforge ist freie Software unter der GNU AGPL-3.0-or-later",
   },
   status: {
     connected: "verbunden",
