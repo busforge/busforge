@@ -108,9 +108,7 @@ docker run -d --name busforge \
   ghcr.io/busforge/busforge:latest
 ```
 
-Until the image package is public, pulling it needs a GitHub login that can read it; build the
-image yourself instead, as [`docs/install.md`](docs/install.md) shows. The published image is for
-x86_64; on arm64, build it from the source. Then open `http://127.0.0.1:3000`. Busforge has no
+The published image is for x86_64; on arm64, build it from the source. Then open `http://127.0.0.1:3000`. Busforge has no
 login: keep it on a trusted network and never expose it to the internet.
 
 **[`docs/install.md`](docs/install.md)** takes you from nothing to a project on your bus: start
