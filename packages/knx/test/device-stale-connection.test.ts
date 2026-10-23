@@ -103,11 +103,11 @@ describe("a connection to a device after the tunnel of the one before was lost",
   });
 
   test("refused again after the wait, is refused by name", async () => {
-    const bus = new Bus(10_000, 0x1122);
-    const other = new KnxDevice(bus.tunnel(0x1105), "1.1.34", undefined, timeouts);
+    const bus = new Bus(10_000, 0x1222);
+    const other = new KnxDevice(bus.tunnel(0x1105), "1.2.34", undefined, timeouts);
     await other.connect();
     expect(await other.deviceDescriptor()).toBe("MV-07B0");
-    const b = new KnxDevice(bus.tunnel(0x11fd), "1.1.34", undefined, timeouts);
+    const b = new KnxDevice(bus.tunnel(0x11fd), "1.2.34", undefined, timeouts);
     await b.connect();
     const err = await b.deviceDescriptor().then(() => null, (e: { code?: string; message?: string }) => e);
     expect(err?.code).toBe("DEVICE_CLOSED_CONNECTION");
