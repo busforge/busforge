@@ -54,6 +54,8 @@ class TpUnit {
   disconnectOnRestart = false;
   // Acknowledge A_Restart and carry on without rebooting.
   ignoreRestart = false;
+  // Pass over a numbered frame on a closed connection without a T_Disconnect, as a Theben Meteodata 140 S does.
+  silentWhenClosed = false;
   constructor(private readonly toBus: (dst: number, tpdu: Buffer) => void) {
     for (let i = 0; i < this.memory.length; i++) this.memory[i] = (i * 7 + 3) & 0xff;
   }
@@ -87,6 +89,7 @@ class TpUnit {
       } else if (src === this.partner) this.close();
       return;
     }
+    if (this.state === "closed" && this.silentWhenClosed) return;
     if (this.state === "closed" || src !== this.partner) { this.toBus(src, tpDisconnect()); return; }
     this.armConnection();
     const seq = (t >> 2) & 0x0f;
@@ -176,6 +179,9 @@ class StallingLink implements TcpSocket {
   }
   // A stall of `ms` that starts when Busforge writes the first frame `at` matches, that frame held in it.
   stallWhen(ms: number, at: (frame: Buffer) => boolean): void { this.stallMs = ms; this.stallAt = at; }
+  // A stall of `ms` that starts when the interface sends Busforge the first frame `at` matches, that frame held in it.
+  stallWhenDown(ms: number, at: (frame: Buffer) => boolean): void { this.stallMs = ms; this.stallDownAt = at; }
+  private stallDownAt: ((frame: Buffer) => boolean) | null = null;
 
   connect(_port: number, _ip: string, onConnect: () => void): void { onConnect(); }
   onData(cb: (c: Buffer) => void): void { this.dataCb = cb; }
@@ -200,6 +206,7 @@ class StallingLink implements TcpSocket {
     }, this.stallMs);
   }
   private toClient(frame: Buffer): void {
+    if (this.stallDownAt?.(frame)) { this.stallDownAt = null; this.stall(); }
     if (this.downHeld) { this.downHeld.push(frame); return; }
     setTimeout(() => this.dataCb?.(frame), 0);
   }
@@ -405,6 +412,25 @@ describe("a stalled link to the interface", () => {
     expect(got.equals(link.unit.memory.subarray(0x4000, 0x4000 + 60))).toBe(true);
     await dev.disconnect(); await tun.disconnect();
   }, 60_000);
+
+  for (const silent of [false, true]) {
+    test(`a read survives a 15 s stall that holds the device's answer, its repetition and its closing of the connection, and the next read goes out on a new connection (${silent ? "a device silent on a closed connection" : "a device that answers it with T_Disconnect"})`, async () => {
+      const { link, tun, dev } = await open();
+      link.unit.silentWhenClosed = silent;
+      let answers = 0;
+      link.stallWhenDown(15 * SEC, (f) => {
+        const t = tpduOfReq(f);
+        return f[10] === CEMI.LDATA_IND && t !== null && numbered(t) && (service(t) & 0x3c0) === APCI.MEMORY_RESPONSE && ++answers === 3;
+      });
+      await dev.connect();
+      const got = await dev.memRead(0x4000, 60, 12);
+      expect(link.stalls).toBe(1);
+      expect(got.equals(link.unit.memory.subarray(0x4000, 0x4000 + 60))).toBe(true);
+      expect(link.written.filter((t) => t[0] === 0x80).length).toBe(2);
+      expect(link.unit.executed).toEqual(["read 4000", "read 400c", "read 4018", "read 4024", "read 4030"]);
+      await dev.disconnect(); await tun.disconnect();
+    }, 60_000);
+  }
 
   test("a stall longer than the interface's three unanswered connection-state requests ends the tunnel, and the device is reported neither silent nor written", async () => {
     const { link, dev } = await open();

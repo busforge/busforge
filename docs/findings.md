@@ -871,7 +871,8 @@ Busforge tells the two apart by waiting, over TCP, for the interface's confirmat
   frame for 6 s, and one whose frame of its own we do not acknowledge after three repetitions 3 s
   apart (thelsing/OpenKNX `transport_layer.cpp`, Calimero `TransportLayerImpl`). A stall that long
   ends the connection under the request. A closed connection answers a numbered frame with
-  `T_Disconnect` and passes nothing on (thelsing A10), and a stalled stream delivers the device's
+  `T_Disconnect` and passes nothing on (thelsing A10); a Theben Meteodata 140 S passes it over without
+  a word, so its silence on a closed connection looks like a device not answering. A stalled stream delivers the device's
   `T_Disconnect`, our frame's confirmation and what follows in order, in one burst: Busforge hands
   each frame behind a confirmation in that burst on one event-loop turn later, so the request the
   confirmation settles sees what came before it, not what came after. Over USB each frame arrives as
@@ -891,6 +892,14 @@ Busforge tells the two apart by waiting, over TCP, for the interface's confirmat
   probes included), not for a request sent only once (the tool key write), and not for the first frame of
   a connection, where a `T_Disconnect` is the refusal of a device that holds another connection (§37). A
   device that took the request and then closed (the MDT BE-02001.02 of §24) is not asked again.
+- **A close behind the answer.** A stall that starts after the device's acknowledgement of a read
+  holds its answer, the repetitions it sends while our acknowledgement does not come, and the
+  device's `T_Disconnect` (its idle or its repetition timeout), and delivers them in one burst. The answer came ahead of the
+  close and is the read's, taken once our acknowledgement of it is out. The connection is closed all
+  the same, so the next request does not go out on it: once the device has closed a connection it had
+  taken or sent a frame on, the next request waits 2.3 s and opens a new connection first, whether the
+  device would answer the request with `T_Disconnect` or not at all. Not after an A_Restart on that
+  connection (its proof reads the closed connection).
 - **The restart.** An A_Restart that met a closed connection was dropped by the device, and the
   silence after it would pass for the reboot. So a connection the device closed is opened again
   before A_Restart (and before the master reset), and a restart whose confirmation came after the
@@ -915,7 +924,9 @@ Shown on hardware: the confirmation matches against Busforge's bridge and an MDT
 (reads and a secured smoke run). Shown against a scripted interface and unit (`link-stall.test.ts`):
 stalls of 2, 5, 8 and 15 s in both directions, at a read, a write, the load bracket's `LoadCompleted`
 and the restart, end in the device's bytes, each write and event carried out once and one proven
-reboot; a stall longer than the heartbeat's three requests ends the tunnel as `TUNNEL_CLOSED`; a device
+reboot; a 15 s stall that holds a read's answer, its repetition and the device's close ends in the
+device's bytes, the next read on a new connection, for a device that answers a closed connection with
+`T_Disconnect` and for one silent on it; a stall longer than the heartbeat's three requests ends the tunnel as `TUNNEL_CLOSED`; a device
 that ignores A_Restart is not taken as rebooted, with the probe held by a stall in both directions or
 towards the interface only and the restart's confirmation late or not, and a device that closes as it takes
 A_Restart behind a late confirmation is reported unproven. The smoke runner's persistence check takes such

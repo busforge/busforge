@@ -315,6 +315,11 @@ export class KnxDevice {
   // restart's proof reads, so no request on it reconnects.
   private closedSinceConnect = false;
   private restartSentSinceConnect = false;
+  // Whether the device closed this connection after any frame of it to us: a close that lands before
+  // the device sent anything may be a late one of the connection before.
+  private closedAfterTaken = false;
+  // Our T_ACK of an awaited answer still being sent: the answer is taken once it is out (onCemi).
+  private answerAcking: Promise<void> | null = null;
   // T_Disconnects that came as their own event, not handed back inside a send call, counted: only those
   // can have been on the bus ahead of a frame of ours. A transport that hands a frame back inside the send call
   // (a scripted one) answers the frame it was given; a real link delivers nothing synchronously.
@@ -399,6 +404,7 @@ export class KnxDevice {
       if ((tpdu[0] & 0x03) === 0x01 && dst === this.me) {
         this.peerClosedAt = Date.now();
         this.closedSinceConnect = true;
+        if (this.takenSinceConnect) this.closedAfterTaken = true;
         if (this.inSendCall === 0) { this.closesAhead++; this.closedAheadAt = Date.now(); if (this.takenSinceConnect && this.inFlight === null) this.closedAheadAfterTaken = true; }
         if (unclosed.get(this.dst)?.ia === this.me) unclosed.delete(this.dst);
         this.peerClosed?.();
@@ -452,7 +458,10 @@ export class KnxDevice {
     // Taken only once our T_ACK is out: a frame whose T_ACK failed to send is not delivered, and the
     // device's repetition of it is then the only copy, which has to get through.
     const plain = !this.secure;
-    this.sendCemi(cemiLData(this.me, this.dst, tpAck(outer.seq))).then(() => { if (plain) this.lastRxSeq = outer.seq; this.respResolve?.(p); }).catch(() => {});
+    const resolve = this.respResolve;
+    const acking = this.sendCemi(cemiLData(this.me, this.dst, tpAck(outer.seq))).then(() => { if (plain) this.lastRxSeq = outer.seq; resolve?.(p); }).catch(() => {})
+      .finally(() => { if (this.answerAcking === acking) this.answerAcking = null; });
+    this.answerAcking = acking;
   }
 
   private owe(r: ParsedApdu): void {
@@ -501,6 +510,8 @@ export class KnxDevice {
     this.numberedSinceConnect = 0;
     this.takenSinceConnect = false;
     this.closedSinceConnect = false;
+    this.closedAfterTaken = false;
+    this.answerAcking = null;
     this.closedAheadAfterTaken = false;
     this.restartSentSinceConnect = false;
     this.connectedAt = Date.now();
@@ -579,6 +590,15 @@ export class KnxDevice {
   private async request(build: (seq: number) => Buffer, expectResponse: boolean, tries = Number(process.env.KNX_TRIES) || 3, afterWrap?: () => void, deviceAckSuffices = false, reconnected = false): Promise<ParsedApdu | null> {
     // A caller awaiting an answer past the request (the confirmed restart) set it before; it stays.
     const awaitedBefore = this.answers;
+    // The device closed this connection since its last request: a link that stalled past its 6 s
+    // connection timeout delivers the close only behind the answer it held. A closed connection takes
+    // no numbered frame (some devices answer it with T_Disconnect, others pass it over in silence), so
+    // the request goes out on a new connection, after the pause ETS makes before it reconnects. Not
+    // after an A_Restart, whose proof reads the closed connection.
+    if (this.closedAfterTaken && !this.restartSentSinceConnect) {
+      await sleep(this.timeouts.reconnectGapMs);
+      await this.connect();
+    }
     const first = this.numberedSinceConnect === 0;
     try {
       try { return await this.requestTries(build, expectResponse, tries, afterWrap, deviceAckSuffices); }
@@ -674,7 +694,14 @@ export class KnxDevice {
         ? new Promise<ParsedApdu | null>((res) => { this.respResolve = (p) => { got = p; res(p); }; respTimeout = () => res(null); })
         : Promise.resolve<ParsedApdu | null>(null);
       let closedByDevice = false;
-      this.peerClosed = () => { closedByDevice = true; ackTimeout(); respTimeout(); };
+      this.answerAcking = null;
+      // An answer that came ahead of the T_Disconnect (one burst of a stalled link) is still taken
+      // once our T_ACK of it is out.
+      this.peerClosed = () => {
+        closedByDevice = true; ackTimeout();
+        const acking = this.answerAcking;
+        if (acking) void acking.then(() => respTimeout()); else respTimeout();
+      };
       const plainApdu = build(this.seq);
       this.inFlight = Buffer.concat([Buffer.from([plainApdu[0] & 0x03]), plainApdu.subarray(1)]);
       const service = parseApdu(plainApdu).apci;
