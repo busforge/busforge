@@ -18,7 +18,7 @@ The hardware smoke framework in `smoke/` has its own document, [`docs/testing.md
 | `intake.ts` | Take a diagnostic package a user sent into the private corpus with its provenance and consent, list the received packages, delete one (the procedure is internal, kept in the corpus) |
 | `flashtest.ts` | **Writes to a real device.** Live group-address flash harness with revert |
 | `udp-ssh-relay.ts` | Carry KNXnet/IP over an SSH TCP forward when the direct UDP route is broken |
-| `demo-project.ts` | **Writes to a Busforge instance, not to a bus.** Build the demo project through the API of a running server, from the corpus' product data (docs/testing.md, "The demo project") |
+| `demo-project.ts` | **Writes to a Busforge instance, not to a bus.** Build a demo project through the API of a running server: the open demo from OpenKNX's release archives, or the manufacturer demo from the product databases given (docs/demo.md) |
 | `smoke/runner.ts` | The hardware smoke framework: capabilities and behaviours on real devices, in the `api` and `ui` channels |
 
 Output written by the read-back tools is **real device memory**, including group addresses from a

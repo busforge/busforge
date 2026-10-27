@@ -65,7 +65,9 @@ correctly.
 ## The application
 
 Screens from the demo project, an invented house with seventeen devices of ten manufacturers, one
-of them programmed on a test bench.
+of them programmed on a test bench. To try Busforge without a bus, build a demo project of open
+OpenKNX devices into your instance, or this one from your manufacturers' product databases:
+[`docs/demo.md`](docs/demo.md).
 
 | | |
 |---|---|

@@ -1,28 +1,199 @@
-// Build the demo project in a running Busforge instance through its API: an invented single-family
-// house with products of several manufacturers, the ones the device table of docs/status.md lists.
-// Screenshots and rehearsals use this project, so it has to come out the same in every fresh instance.
+// Build a demo project in a running Busforge instance through its API. Nothing touches a bus:
+// placing, linking and parameter edits are model state. Two demos, the same invented kind of
+// building, rooms, names, individual and group addresses (docs/demo.md):
 //
-//   BUSFORGE_CORPUS=/abs/corpus bun run tools/demo-project.ts http://localhost:3000
+//   bun run tools/demo-project.ts http://localhost:3000
+//   bun run tools/demo-project.ts --openknx <dir> http://localhost:3000
+//   bun run tools/demo-project.ts --manufacturers <a.knxprod> [<b.knxprod> ...] http://localhost:3000
 //
-// The product data (manufacturer Hardware.xml and application programs, nothing of a project) comes
-// from the private corpus, demo/*.knxprod, because it is third-party catalogue data
-// (docs/testing.md, "The demo project"). The building, rooms, names, individual and group addresses
-// are invented here. Nothing touches a bus: placing, linking and parameter edits are model state.
+// The open demo places OpenKNX applications only. Their product data is OpenKNX's own release
+// archive, taken from GitHub (or from <dir>, where the archives were downloaded before) and
+// checked against the SHA-256 pinned here; the repository carries none of it. The manufacturer
+// demo places products of several manufacturers, the ones the device table of docs/status.md
+// lists; its product databases are third-party catalogue data the user brings.
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 import { manufacturerId, manufacturerInfo } from "../packages/product/src/manufacturers.ts";
-import { corpusPath, DEMO_PRODUCT_FILES } from "./corpus.ts";
-
-export const DEMO_PROJECT_NAME = "Musterhaus Sonnenweg";
+import { readZip } from "../packages/project/src/zip.ts";
+import { OPENKNX_RELEASES, type OpenKnxRelease } from "./openknx-releases.ts";
 
 // One HTTP exchange with the instance: the CLI passes fetch against a base URL, the test the
 // in-process handler.
 export type DemoApi = (path: string, init?: RequestInit) => Promise<Response>;
 
-type Room = "wohnen" | "kueche" | "flur" | "technik" | "verteiler" | "schlafen" | "kind" | "bad" | "dach";
+export interface DemoDevice {
+  ia: string;
+  name: string;
+  room: string;
+  appRef: string;
+  productRef: string;
+  // Parameters to set, in order (a channel's function before what it unlocks): ref id, value.
+  params: [string, string][];
+  // Com-object ref id and its group addresses, the sending one first.
+  links: [string, string[]][];
+}
 
-// The space tree: building > floors > rooms. A device sits in one leaf.
-export const FLOORS: { name: string; rooms: { key: Room; name: string; type: string }[] }[] = [
+export interface Demo {
+  name: string;
+  building: string;
+  // The space tree: building > floors > rooms. A device sits in one leaf.
+  floors: { name: string; rooms: { key: string; name: string; type: string }[] }[];
+  // Group addresses, three levels: main > middle > address, with the datapoint type the linked
+  // objects carry.
+  groups: { main: number; name: string; middles: { mid: number; name: string; addresses: [number, string, string][] }[] }[];
+  // Ref ids are the application's own: each device names one application version, and a ref the
+  // application does not have makes the build fail at that device.
+  devices: DemoDevice[];
+}
+
+// A small flat with OpenKNX devices only: a switch actuator for the lights, a presence detector in
+// the hall whose movement a logic channel passes on to the hall light outside the night, and a room
+// controller measuring the living room.
+const SWITCH = "M-00FA_A-A602-03-0000";
+const LOGIC = "M-00FA_A-A030-35-0000";
+const ROOM = "M-00FA_A-A012-55-0000";
+const PRESENCE = "M-00FA_A-A002-36-0000";
+// Switch actuator channel n (1-based): its activity, its status and its description unlock and
+// name the switching and status objects, nine object numbers per channel from 450.
+const switchChannel = (n: number, description: string, gaSwitch: string, gaStatus: string): Pick<DemoDevice, "params" | "links"> => ({
+  params: [
+    [`${SWITCH}_UP-200${n}002_R-200${n}00201`, "1"],
+    [`${SWITCH}_UP-200${n}009_R-200${n}00901`, "1"],
+    [`${SWITCH}_P-200${n}001_R-200${n}00101`, description],
+  ],
+  links: [
+    [`${SWITCH}_O-${450 + 9 * (n - 1)}_R-200${n}00101`, [gaSwitch]],
+    [`${SWITCH}_O-${451 + 9 * (n - 1)}_R-200${n}00201`, [gaStatus]],
+  ],
+});
+const switchChannels = [
+  switchChannel(1, "Wohnen Decke", "1/0/0", "1/0/1"),
+  switchChannel(2, "Küche Decke", "1/0/2", "1/0/3"),
+  switchChannel(3, "Flur Decke", "1/0/4", "1/0/5"),
+  switchChannel(4, "Bad Spiegel", "1/0/6", "1/0/7"),
+];
+
+export const OPEN_DEMO: Demo = {
+  name: "OpenKNX-Musterwohnung",
+  building: "Musterwohnung",
+  floors: [{ name: "Erdgeschoss", rooms: [
+    { key: "wohnen", name: "Wohnen", type: "Room" },
+    { key: "kueche", name: "Küche", type: "Room" },
+    { key: "flur", name: "Flur", type: "Corridor" },
+    { key: "bad", name: "Bad", type: "Room" },
+    { key: "verteiler", name: "Verteiler", type: "DistributionBoard" },
+  ] }],
+  groups: [
+    { main: 0, name: "Zentral", middles: [{ mid: 0, name: "Zeit", addresses: [
+      [0, "Datum/Uhrzeit", "DPST-19-1"],
+      [1, "Nachtbetrieb", "DPST-1-1"],
+    ] }] },
+    { main: 1, name: "Beleuchtung", middles: [{ mid: 0, name: "Erdgeschoss", addresses: [
+      [0, "Wohnen schalten", "DPST-1-1"], [1, "Wohnen Status", "DPST-1-1"],
+      [2, "Küche schalten", "DPST-1-1"], [3, "Küche Status", "DPST-1-1"],
+      [4, "Flur schalten", "DPST-1-1"], [5, "Flur Status", "DPST-1-1"],
+      [6, "Bad schalten", "DPST-1-1"], [7, "Bad Status", "DPST-1-1"],
+    ] }] },
+    { main: 2, name: "Raumklima", middles: [{ mid: 0, name: "Wohnen", addresses: [
+      [0, "Wohnen Temperatur", "DPST-9-1"],
+      [1, "Wohnen Luftfeuchte", "DPST-9-7"],
+    ] }] },
+    { main: 3, name: "Präsenz", middles: [{ mid: 0, name: "Melder", addresses: [
+      [0, "Flur Bewegung", "DPST-1-1"],
+    ] }] },
+  ],
+  devices: [
+    { ia: "1.4.1", name: "Schaltaktor Licht", room: "verteiler",
+      productRef: "M-00FA_H-0xA602-1_P-OpenKnxSwitchActuator", appRef: "M-00FA_H-0xA602-1_HP-A602-03-0000",
+      params: switchChannels.flatMap((c) => c.params),
+      links: [...switchChannels.flatMap((c) => c.links), [`${SWITCH}_O-1000002_R-100000202`, ["0/0/0"]]] },
+    { ia: "1.4.2", name: "Logikmodul", room: "verteiler",
+      productRef: "M-00FA_H-WPKNX101-1_P-OpenKnxLogic", appRef: "M-00FA_H-WPKNX101-1_HP-A030-35-0000",
+      params: [
+        [`${LOGIC}_UP-1001003_R-100100301`, "1"],
+        [`${LOGIC}_UP-1001008_R-100100801`, "1"],
+        [`${LOGIC}_UP-1001028_R-100102801`, "2"],
+        [`${LOGIC}_P-1001001_R-100100101`, "Flurlicht außer nachts"],
+      ],
+      links: [
+        [`${LOGIC}_O-22_R-100100201`, ["1/0/4"]],
+        [`${LOGIC}_O-20_R-100100001`, ["3/0/0"]],
+        [`${LOGIC}_O-21_R-100100101`, ["0/0/1"]],
+      ] },
+    { ia: "1.4.10", name: "Raumcontroller Wohnen", room: "wohnen",
+      productRef: "M-00FA_H-0xA012-1_P-OpenKnxRaumController", appRef: "M-00FA_H-0xA012-1_HP-A012-55-0000",
+      params: [[`${ROOM}_UP-4000200_R-400020001`, "1"], [`${ROOM}_UP-4000201_R-400020101`, "1"]],
+      links: [
+        [`${ROOM}_O-45_R-400006001`, ["2/0/0"]],
+        [`${ROOM}_O-48_R-400006101`, ["2/0/1"]],
+        [`${ROOM}_O-1000002_R-100000202`, ["0/0/0"]],
+      ] },
+    { ia: "1.4.11", name: "Präsenzmelder Flur", room: "flur",
+      productRef: "M-00FA_H-0xA002-1_P-OpenKnxPresenceBig", appRef: "M-00FA_H-0xA002-1_HP-A002-36-0000",
+      params: [
+        [`${PRESENCE}_UP-2000022_R-200002201`, "1"],
+        [`${PRESENCE}_UP-2001008_R-200100801`, "1"],
+        [`${PRESENCE}_UP-2001036_R-200103601`, "1"],
+        [`${PRESENCE}_P-2001000_R-200100001`, "Flur"],
+      ],
+      links: [
+        [`${PRESENCE}_O-63_R-200101301`, ["3/0/0"]],
+        [`${PRESENCE}_O-55_R-200100501`, ["1/0/5"]],
+      ] },
+  ],
+};
+
+export const openKnxReleaseUrl = (r: OpenKnxRelease): string =>
+  `https://github.com/OpenKNX/${r.repo}/releases/download/${encodeURIComponent(r.tag)}/${r.asset}`;
+
+export { OPENKNX_RELEASES, type OpenKnxRelease };
+
+export type ProductDb = { name: string; bytes: Uint8Array<ArrayBuffer> };
+
+// The product XML of one OpenKNX release archive. Refuses an archive whose hash is not the pinned
+// one and one that does not hold exactly one product XML. The archives name their entries with
+// either path separator.
+export function openKnxProductDb(release: OpenKnxRelease, archive: Uint8Array): ProductDb {
+  const hash = createHash("sha256").update(archive).digest("hex");
+  if (hash !== release.sha256) throw new Error(`${release.asset} has SHA-256 ${hash}, not the ${release.sha256} of OpenKNX's release ${release.repo} ${release.tag}`);
+  const entries = [...readZip(Buffer.from(archive)).entries()].filter(([name]) => /^data[\\/][^\\/]+\.xml$/.test(name) && !/[\\/]content\.xml$/.test(name));
+  if (entries.length !== 1) throw new Error(`${release.asset} holds ${entries.length} product XML files under data/, not one`);
+  const [name, bytes] = entries[0];
+  return { name: name.split(/[\\/]/).pop()!, bytes: new Uint8Array(bytes) };
+}
+
+// One archive is at most 16 MB; ten minutes is a slow line's time for it, not a stalled one's.
+const DOWNLOAD_TIMEOUT_MS = 600_000;
+
+// The open demo's product data: each release archive from `dir` where given, else downloaded from
+// GitHub.
+export async function openKnxProductDbs(dir: string | null, download: typeof fetch = fetch): Promise<ProductDb[]> {
+  const dbs: ProductDb[] = [];
+  for (const r of OPENKNX_RELEASES) {
+    let archive: Uint8Array;
+    if (dir) {
+      archive = readFileSync(join(dir, r.asset));
+    } else {
+      const url = openKnxReleaseUrl(r);
+      const fail = (why: string) => new Error(`GET ${url} ${why}; download the archive another way and name its directory with --openknx`);
+      try {
+        const res = await download(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
+        if (!res.ok) throw fail(`answered ${res.status}`);
+        archive = new Uint8Array(await res.arrayBuffer());
+      } catch (e) {
+        if (e instanceof Error && e.message.startsWith(`GET ${url}`)) throw e;
+        throw fail(`failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    dbs.push(openKnxProductDb(r, archive));
+  }
+  return dbs;
+}
+
+// An invented single-family house with products of ten manufacturers, the ones the device table of
+// docs/status.md lists. Screenshots and rehearsals use it.
+const MANUFACTURER_FLOORS: Demo["floors"] = [
   { name: "Erdgeschoss", rooms: [
     { key: "wohnen", name: "Wohnen/Essen", type: "Room" },
     { key: "kueche", name: "Küche", type: "Room" },
@@ -38,9 +209,7 @@ export const FLOORS: { name: string; rooms: { key: Room; name: string; type: str
   { name: "Außen", rooms: [{ key: "dach", name: "Dach", type: "Room" }] },
 ];
 
-// Group addresses, three levels: main > middle > address, with the datapoint type the linked
-// objects carry.
-export const GROUPS: { main: number; name: string; middles: { mid: number; name: string; addresses: [number, string, string][] }[] }[] = [
+const MANUFACTURER_GROUPS: Demo["groups"] = [
   { main: 0, name: "Zentral", middles: [
     { mid: 0, name: "Zeit und Wetter", addresses: [
       [0, "Datum/Uhrzeit", "DPST-19-1"],
@@ -95,22 +264,8 @@ export const GROUPS: { main: number; name: string; middles: { mid: number; name:
   ] },
 ];
 
-export interface DemoDevice {
-  ia: string;
-  name: string;
-  room: Room;
-  appRef: string;
-  productRef: string;
-  // Parameters to set, in order (a channel's function before what it unlocks): ref id, value.
-  params: [string, string][];
-  // Com-object ref id and its group addresses, the sending one first.
-  links: [string, string[]][];
-}
-
-// Ref ids are the application's own: each device names one application version, and a ref the
-// application does not have makes the build fail at that device.
 const MIX2 = "M-0048_A-493B-21-B471";
-export const DEVICES: DemoDevice[] = [
+const MANUFACTURER_DEVICES: DemoDevice[] = [
   { ia: "1.3.1", name: "Spannungsversorgung", room: "verteiler",
     productRef: "M-0162_H-KNX.2D40E.2D1280D-1_P-KNX.2D40E.2D1280D", appRef: "M-0162_H-KNX.2D40E.2D1280D-1_HP-0004-11-F245",
     params: [], links: [["M-0162_A-0004-11-F245_O-1_R-1", ["0/1/0"]]] },
@@ -216,6 +371,14 @@ export const DEVICES: DemoDevice[] = [
     ] },
 ];
 
+export const MANUFACTURER_DEMO: Demo = {
+  name: "Musterhaus Sonnenweg",
+  building: "Musterhaus",
+  floors: MANUFACTURER_FLOORS,
+  groups: MANUFACTURER_GROUPS,
+  devices: MANUFACTURER_DEVICES,
+};
+
 export const gaRaw = (ga: string): number => {
   const [main, mid, sub] = ga.split("/").map(Number);
   return (main << 11) | (mid << 8) | sub;
@@ -232,10 +395,10 @@ export interface DemoSummary {
   links: number;
 }
 
-// Build the demo project. Refuses when the instance already holds a project of that name, when a
+// Build a demo project. Refuses when the instance already holds a project of that name, when a
 // product is missing from the catalogue after the import, and when any write does not read back
 // as written.
-export async function buildDemoProject(api: DemoApi, productDbs: { name: string; bytes: Uint8Array<ArrayBuffer> }[]): Promise<DemoSummary> {
+export async function buildDemoProject(api: DemoApi, demo: Demo, productDbs: ProductDb[]): Promise<DemoSummary> {
   const call: Call = async <T>(method: string, path: string, body?: unknown, form?: FormData): Promise<T> => {
     const r = await api(path, {
       method,
@@ -248,8 +411,8 @@ export async function buildDemoProject(api: DemoApi, productDbs: { name: string;
   };
 
   const existing = await call<{ name: string }[]>("GET", "/api/projects");
-  if (existing.some((p) => p.name === DEMO_PROJECT_NAME)) {
-    throw new Error(`the instance already holds a project named "${DEMO_PROJECT_NAME}"; build the demo into a fresh instance or delete that project first`);
+  if (existing.some((p) => p.name === demo.name)) {
+    throw new Error(`the instance already holds a project named "${demo.name}"; build the demo into a fresh instance or delete that project first`);
   }
 
   for (const db of productDbs) {
@@ -259,12 +422,12 @@ export async function buildDemoProject(api: DemoApi, productDbs: { name: string;
   }
   const catalogue = await call<CatalogueProduct[]>("GET", "/api/catalog/products");
   const products = new Map(catalogue.map((p) => [`${p.appRef} ${p.productRef}`, p]));
-  const missing = DEVICES.filter((d) => !products.has(`${d.appRef} ${d.productRef}`));
-  if (missing.length) throw new Error(`the product databases lack ${missing.map((d) => d.productRef).join(", ")}`);
+  const missing = demo.devices.filter((d) => !products.has(`${d.appRef} ${d.productRef}`));
+  if (missing.length) throw new Error(`the product databases lack ${missing.map((d) => `${d.productRef} with application ${d.appRef}`).join(", ")}`);
 
-  const project = await call<{ id: string }>("POST", "/api/projects", { name: DEMO_PROJECT_NAME });
+  const project = await call<{ id: string }>("POST", "/api/projects", { name: demo.name });
   try {
-    return await fillDemoProject(call, project.id, products);
+    return await fillDemoProject(call, demo, project.id, products);
   } catch (e) {
     throw new Error(`the demo project ${project.id} is left half-built and has to be deleted before the next run: ${e instanceof Error ? e.message : String(e)}`, { cause: e });
   }
@@ -273,7 +436,7 @@ export async function buildDemoProject(api: DemoApi, productDbs: { name: string;
 type Call = <T>(method: string, path: string, body?: unknown, form?: FormData) => Promise<T>;
 type CatalogueProduct = { appRef: string; productRef: string; manufacturer: number; name: string };
 
-async function fillDemoProject(call: Call, projectId: string, products: Map<string, CatalogueProduct>): Promise<DemoSummary> {
+async function fillDemoProject(call: Call, demo: Demo, projectId: string, products: Map<string, CatalogueProduct>): Promise<DemoSummary> {
   const base = `/api/projects/${projectId}`;
 
   // Spaces: each POST answers with the whole project; the new node is found by name under its parent.
@@ -283,21 +446,21 @@ async function fillDemoProject(call: Call, projectId: string, products: Map<stri
     if (!n) throw new Error(`"${name}" is not in the tree the instance answered with`);
     return n;
   };
-  let tree = await call<Tree>("POST", `${base}/spaces`, { parentId: null, type: "Building", name: "Musterhaus" });
-  const building = child(tree.locations, "Musterhaus");
-  const roomIds = new Map<Room, number>();
-  for (const floor of FLOORS) {
+  let tree = await call<Tree>("POST", `${base}/spaces`, { parentId: null, type: "Building", name: demo.building });
+  const building = child(tree.locations, demo.building);
+  const roomIds = new Map<string, number>();
+  for (const floor of demo.floors) {
     tree = await call<Tree>("POST", `${base}/spaces`, { parentId: Number(building.id), type: "Floor", name: floor.name });
-    const floorId = Number(child(child(tree.locations, "Musterhaus").children, floor.name).id);
+    const floorId = Number(child(child(tree.locations, demo.building).children, floor.name).id);
     for (const room of floor.rooms) {
       tree = await call<Tree>("POST", `${base}/spaces`, { parentId: floorId, type: room.type, name: room.name });
-      const node = child(child(child(tree.locations, "Musterhaus").children, floor.name).children, room.name);
+      const node = child(child(child(tree.locations, demo.building).children, floor.name).children, room.name);
       roomIds.set(room.key, Number(node.id));
     }
   }
 
   let gaCount = 0;
-  for (const main of GROUPS) {
+  for (const main of demo.groups) {
     tree = await call<Tree>("POST", `${base}/group-ranges`, { parentId: null, name: main.name, number: main.main });
     const mainId = Number(child(tree.groupRanges, main.name).id);
     for (const mid of main.middles) {
@@ -310,8 +473,8 @@ async function fillDemoProject(call: Call, projectId: string, products: Map<stri
     }
   }
 
-  const summary: DemoSummary = { projectId, name: DEMO_PROJECT_NAME, devices: [], groupAddresses: gaCount, links: 0 };
-  for (const d of DEVICES) {
+  const summary: DemoSummary = { projectId, name: demo.name, devices: [], groupAddresses: gaCount, links: 0 };
+  for (const d of demo.devices) {
     const placed = await call<{ id: string }>("POST", `${base}/devices`, { appRef: d.appRef, productRef: d.productRef, name: d.name });
     const dev = `${base}/devices/${encodeURIComponent(placed.id)}`;
     await call("PUT", `${dev}/address`, { ia: d.ia });
@@ -337,7 +500,7 @@ async function fillDemoProject(call: Call, projectId: string, products: Map<stri
       if (!got || got.join(",") !== gas.map(gaRaw).join(",")) throw new Error(`${d.name}: object ${ref} links ${got?.join(",") ?? "nothing"}, not ${gas.join(", ")}`);
     }
     const p = products.get(`${d.appRef} ${d.productRef}`)!;
-    const room = FLOORS.flatMap((f) => f.rooms).find((r) => r.key === d.room)!.name;
+    const room = demo.floors.flatMap((f) => f.rooms).find((r) => r.key === d.room)!.name;
     const manufacturer = manufacturerInfo(manufacturerId(p.manufacturer))?.name ?? manufacturerId(p.manufacturer);
     summary.devices.push({ ia: d.ia, name: d.name, manufacturer, product: p.name, room, links: d.links.length });
     summary.links += d.links.length;
@@ -347,7 +510,7 @@ async function fillDemoProject(call: Call, projectId: string, products: Map<stri
   const roomOf = new Map<string, number>();
   const walk = (n: Node & { deviceIds: string[] }) => { for (const id of n.deviceIds) roomOf.set(id, Number(n.id)); n.children.forEach((c) => walk(c as typeof n)); };
   stored.locations.forEach(walk);
-  for (const d of DEVICES) {
+  for (const d of demo.devices) {
     const dev = stored.devices.find((x) => x.name === d.name);
     if (!dev || dev.ia !== d.ia) throw new Error(`${d.name}: the project holds ${dev?.ia ?? "no such device"}, not ${d.ia}`);
     if (roomOf.get(dev.id) !== roomIds.get(d.room)) throw new Error(`${d.name}: not in room ${d.room}`);
@@ -356,19 +519,36 @@ async function fillDemoProject(call: Call, projectId: string, products: Map<stri
   return summary;
 }
 
-// The product databases of the demo, from the private corpus.
-export function demoProductDbs(): { name: string; bytes: Uint8Array<ArrayBuffer> }[] {
-  return DEMO_PRODUCT_FILES.map((f) => ({ name: basename(f), bytes: readFileSync(corpusPath(f)) }));
+// The command line: the open demo by default, the manufacturer demo from the product databases named.
+export function parseDemoArgs(argv: string[]): { baseUrl: string; openKnxDir: string | null; manufacturerDbs: string[] | null } {
+  const usage = "usage: bun run tools/demo-project.ts [--openknx <dir> | --manufacturers <file.knxprod> ...] <base-url>";
+  const baseUrl = argv.at(-1);
+  const options = argv.slice(0, -1);
+  if (!baseUrl || !/^https?:\/\//.test(baseUrl)) throw new Error(usage);
+  const values = options.slice(1);
+  const plain = values.length > 0 && values.every((v) => !v.startsWith("--"));
+  let openKnxDir: string | null = null;
+  let manufacturerDbs: string[] | null = null;
+  if (options[0] === "--openknx" && plain && values.length === 1) openKnxDir = values[0];
+  else if (options[0] === "--manufacturers" && plain) manufacturerDbs = values;
+  else if (options.length > 0) throw new Error(usage);
+  return { baseUrl: baseUrl.replace(/\/+$/, ""), openKnxDir, manufacturerDbs };
 }
 
 if (import.meta.main) {
-  const baseUrl = process.argv[2];
-  if (!baseUrl) {
-    console.error("usage: BUSFORGE_CORPUS=/abs/corpus bun run tools/demo-project.ts <base-url>");
+  let args: ReturnType<typeof parseDemoArgs>;
+  try {
+    args = parseDemoArgs(process.argv.slice(2));
+  } catch (e) {
+    console.error(e instanceof Error ? e.message : String(e));
     process.exit(2);
   }
-  const root = baseUrl.replace(/\/+$/, "");
-  const summary = await buildDemoProject((path, init) => fetch(`${root}${path}`, init), demoProductDbs());
+  const { baseUrl, openKnxDir, manufacturerDbs } = args;
+  const demo = manufacturerDbs ? MANUFACTURER_DEMO : OPEN_DEMO;
+  const dbs = manufacturerDbs
+    ? manufacturerDbs.map((f) => ({ name: basename(f), bytes: new Uint8Array(readFileSync(f)) }))
+    : await openKnxProductDbs(openKnxDir);
+  const summary = await buildDemoProject((path, init) => fetch(`${baseUrl}${path}`, init), demo, dbs);
   console.log(`${summary.name}: ${summary.devices.length} devices, ${summary.groupAddresses} group addresses, ${summary.links} linked objects (project ${summary.projectId})`);
   for (const d of summary.devices) console.log(`  ${d.ia.padEnd(7)} ${d.name.padEnd(30)} ${d.room.padEnd(13)} ${d.manufacturer}: ${d.product}`);
 }

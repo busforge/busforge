@@ -104,6 +104,10 @@ definition. It never downloads or ships that data: you bring it.
   manufacturer's website or the ETS Online Catalog is the source. The imported products then
   appear in the catalog, ready to *Add*.
 
+To look around before your own project, the repository's demo tool builds a demo project of
+OpenKNX devices into the instance ([demo.md](demo.md)). That tool, not Busforge, downloads OpenKNX's
+own release archives when you run it.
+
 ## 4. Set up the interface
 
 In a project, open the bus indicator in the header (it shows *disconnected*), then *Manage

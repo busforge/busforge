@@ -12,6 +12,7 @@ document says so.
 | Document | What it answers |
 |---|---|
 | [install.md](install.md) | Installing Busforge, the first project, product definitions, the interface; tested platforms; update and backup in short. |
+| [demo.md](demo.md) | Trying Busforge without a bus: a demo project of OpenKNX devices, or one built from your manufacturers' product databases. |
 | [limitations.md](limitations.md) | What Busforge does not do, devices nobody has tested, Data Secure versus IP Secure, the known issues, how to report a problem. |
 | [status.md](status.md) | What works, on which real hardware, and how far it is proven. The canonical place for every verification claim. |
 | [device-support.md](device-support.md) | How a device is classified from its mask version, and the full mask matrix with per-model support. |

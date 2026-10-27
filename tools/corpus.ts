@@ -10,6 +10,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { gunzipSync } from "node:zlib";
+import { OPENKNX_RELEASES } from "./openknx-releases.ts";
 
 export const CORPUS_ENV = "BUSFORGE_CORPUS";
 
@@ -22,9 +23,12 @@ export const IN_SERVICE_COLLECTIONS = [
 ] as const;
 export const inServiceCollection = (specId: string) => `collections/in-service/${specId}.json`;
 
-// The product databases of the demo project (tools/demo-project.ts): manufacturer data only
+// The product databases of the manufacturer demo (tools/demo-project.ts): manufacturer data only
 // (hardware, application programs, their images), nothing of a project.
 export const DEMO_PRODUCT_FILES = ["demo/bench-products.knxprod", "demo/house-products.knxprod"] as const;
+// The OpenKNX release archives of the open demo, as OpenKNX publishes them, so its test runs
+// without the network.
+export const OPENKNX_DEMO_DIR = "demo/openknx";
 
 // Every file the tests and tools read, relative to the corpus root. A corpus may hold more; it
 // may not hold less.
@@ -209,6 +213,7 @@ export const CORPUS_FILES: readonly string[] = [
   "dca-theben-dali-e64/backup-store.expected.json",
   ...IN_SERVICE_COLLECTIONS.map(inServiceCollection),
   ...DEMO_PRODUCT_FILES,
+  ...OPENKNX_RELEASES.map((r) => `${OPENKNX_DEMO_DIR}/${r.asset}`),
 ];
 
 // Bun loads the .env files of the directory a process starts in: `bun run check` those of the
