@@ -59,8 +59,8 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     if (products.length === 0) return err("CATALOG_IMPORT_EMPTY", "no manufacturer products found in the archive");
     const programs = extractAppPrograms(bytes, products.map((p) => p.appRef));
     // Only keep products whose application program is present, so every catalog
-    // entry stays placeable.
-    const placeable = products.filter((p) => programs.has(p.appProgramId));
+    // entry stays placeable, and the products that carry no application program.
+    const placeable = products.filter((p) => programs.has(p.appProgramId) || !p.hasApplication);
     const pictures = extractPictureBaggage(bytes, programs);
     checkBaggageSize([...pictures.values()].flatMap((m) => [...m.values()]).map((f) => ({ name: f.name, bytes: f.data.length })));
     db.transaction(() => {

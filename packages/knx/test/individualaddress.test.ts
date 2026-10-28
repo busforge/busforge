@@ -23,6 +23,10 @@ class SimDevice {
   // miss a device that IS on the target address.
   // `closes`: answer every numbered frame with a T_Disconnect, as a device in another tool's
   // connection (or one that missed our T_Connect) does.
+  // `mask`: what A_DeviceDescriptor_Read answers. `noProperties`: a device without interface objects
+  // (a BCU1), which leaves a property write unanswered.
+  mask = "07b0";
+  noProperties = false;
   constructor(public ia: string, public progMode: boolean, public takesWrite = true, public deafFor = 0, public closes = false) {}
 }
 
@@ -32,6 +36,11 @@ class SimBus implements KnxTransport {
   onClosed: ((reason: string) => void) | null = null;
   broadcastWrites: string[] = [];
   progModeWrites = 0;
+  restarts = 0;
+  // Every frame on the line, in order: the broadcast services and the point-to-point ones by name.
+  wire: string[] = [];
+  // `stuckInProgMode`: the device ignores A_Restart.
+  stuckInProgMode = false;
 
   // `negativeCon`: a frame to an address no device acknowledges comes back as a negative
   // L_Data.con (as an ABB KNX-USB stick behind a bridge does) instead of silence.
@@ -47,6 +56,7 @@ class SimBus implements KnxTransport {
     const p = parseApdu(tpdu);
 
     if (isGroup && dst === BROADCAST) {
+      this.wire.push(p.apci === APCI.INDIVIDUAL_ADDRESS_READ ? "IA_Read" : p.apci === APCI.INDIVIDUAL_ADDRESS_WRITE ? "IA_Write" : "broadcast");
       if (p.apci === APCI.INDIVIDUAL_ADDRESS_READ) {
         // every device in programming mode answers, with its own address as the frame source
         for (const d of this.devices.filter((x) => x.progMode)) {
@@ -64,6 +74,8 @@ class SimBus implements KnxTransport {
     }
 
     // Connection-oriented management: only a device that exists at the destination answers.
+    const t0 = tpdu[0];
+    this.wire.push(`${numToIa(dst)} ${t0 === 0x80 ? "T_Connect" : t0 === 0x81 ? "T_Disconnect" : (t0 & 0xc3) === 0xc2 ? "T_ACK" : p.apci === APCI.DEVICE_DESCRIPTOR_READ ? "DescRead" : p.apci === APCI.RESTART ? "Restart" : p.apci === APCI.PROPERTY_WRITE ? "PropWrite" : "other"}`);
     const dev = this.deviceAt(dst);
     if (!dev && this.negativeCon) { this.nacks++; throw new KnxError("BUS_SEND_FAILED", "negative L_Data.con"); } // T_Connect included, as a USB interface confirms it
     if (!dev) return; // silence: the request times out, which is how a free address looks
@@ -75,8 +87,10 @@ class SimBus implements KnxTransport {
     const seq = (t >> 2) & 0x0f;
     this.deliver(dst, this.assignedIa, Buffer.from([0xc2 | (seq << 2)]), false);                // T_ACK the request
     if (p.apci === APCI.DEVICE_DESCRIPTOR_READ) {
-      this.deliver(dst, this.assignedIa, Buffer.from([0x43 | (seq << 2), 0x40, 0x07, 0xb0]), false); // A_DeviceDescriptor_Response, MV-07B0
+      this.deliver(dst, this.assignedIa, Buffer.concat([Buffer.from([0x43 | (seq << 2), 0x40]), Buffer.from(dev.mask, "hex")]), false); // A_DeviceDescriptor_Response
     }
+    if (p.apci === APCI.RESTART) { this.restarts++; if (!this.stuckInProgMode) dev.progMode = false; return; } // reboots, which ends programming mode
+    if (p.apci === APCI.PROPERTY_WRITE && dev.noProperties) return; // no interface objects: no answer
     if (p.apci === APCI.PROPERTY_WRITE) {
       const [obj, pid] = [p.data[0], p.data[1]];
       if (obj === 0 && pid === 54) { this.progModeWrites++; dev.progMode = p.data[4] !== 0; }
@@ -124,6 +138,77 @@ describe("assigning an individual address", () => {
     expect(bus.broadcastWrites).toEqual([NEW_IA]);
     expect(bus.progModeWrites).toBe(1);
   }, 100_000); // the "is the target free?" probe waits out a silent address (3 tries x 1.5 s)
+
+  test("ends programming mode with A_Restart where the caller names the restart for the device's mask", async () => {
+    // A BCU1 (mask 0012) has no device object, so PID_PROGMODE goes unanswered; ETS ends its
+    // programming mode with A_Restart after the descriptor read at the new address (private corpus
+    // internal/captures/hager-th001/ets-ia-assign-proxy.log).
+    const bcu1 = new SimDevice("1.1.255", true);
+    bcu1.mask = "0012";
+    bcu1.noProperties = true;
+    const bus = new SimBus([bcu1]);
+    const asked: string[] = [];
+
+    const res = await assignIndividualAddress(bus, NEW_IA, { ...fast, progModeEnd: (mask) => { asked.push(mask); return mask === "MV-0012" ? "restart" : "property"; } });
+
+    expect(res).toEqual({ previous: "1.1.255", assigned: NEW_IA, verified: true, progModeCleared: true, progModeError: null });
+    expect(asked).toEqual(["MV-0012"]);
+    expect(bus.restarts).toBe(1);
+    expect(bus.progModeWrites).toBe(0);
+    expect(bcu1.progMode).toBe(false);
+    // From the write on, ETS's frames: the address write, the read that finds the device there, one
+    // connection with the descriptor read, its acknowledgement and the restart right behind it, closed
+    // once. The closing IA_Read is Busforge's proof that the mode ended.
+    expect(bus.wire.slice(bus.wire.indexOf("IA_Write"))).toEqual([
+      "IA_Write", "IA_Read", `${NEW_IA} T_Connect`, `${NEW_IA} DescRead`, `${NEW_IA} T_ACK`, `${NEW_IA} Restart`, `${NEW_IA} T_Disconnect`, "IA_Read",
+    ]);
+  }, 100_000);
+
+  test("a device still in programming mode after the restart is reported, the address stays verified", async () => {
+    const bcu1 = new SimDevice("1.1.255", true);
+    bcu1.mask = "0012";
+    bcu1.noProperties = true;
+    const bus = new SimBus([bcu1]);
+    bus.stuckInProgMode = true;
+
+    const res = await assignIndividualAddress(bus, NEW_IA, { ...fast, progModeEnd: () => "restart" });
+
+    expect(res).toEqual({ previous: "1.1.255", assigned: NEW_IA, verified: true, progModeCleared: false, progModeError: "the device still answers in programming mode after the restart" });
+  }, 100_000);
+
+  test("a device that closes the connection instead of handing out its descriptor takes PID_PROGMODE", async () => {
+    // Its mask is unknown (""), so no route a mask names applies.
+    const dev = new SimDevice("1.1.255", true);
+    const bus = new SimBus([dev]);
+    const asked: string[] = [];
+    const orig = bus.sendCemi.bind(bus);
+    let written = false;
+    bus.sendCemi = async (cemi: Buffer) => {
+      const { dst, tpdu, isGroup } = parseCemiLData(cemi);
+      if (isGroup && parseApdu(tpdu).apci === APCI.INDIVIDUAL_ADDRESS_WRITE) written = true;
+      // After the write, the device answers its first point-to-point request with T_Disconnect.
+      if (written && !isGroup && dst === iaToNum(NEW_IA) && (tpdu[0] & 0x40) && !dev.closes && asked.length === 0) { dev.closes = true; }
+      return orig(cemi);
+    };
+
+    const res = await assignIndividualAddress(bus, NEW_IA, { ...fast, progModeEnd: (mask) => { asked.push(mask); dev.closes = false; return mask === "MV-0012" ? "restart" : "property"; } });
+
+    expect(asked).toEqual([""]);
+    expect(bus.restarts).toBe(0);
+    expect(bus.progModeWrites).toBe(1);
+    expect(res.progModeCleared).toBe(true);
+  }, 100_000);
+
+  test("a mask the caller names the property route for still gets PID_PROGMODE", async () => {
+    const dev = new SimDevice("15.15.255", true);
+    const bus = new SimBus([dev]);
+
+    const res = await assignIndividualAddress(bus, NEW_IA, { ...fast, progModeEnd: () => "property" });
+
+    expect(res.progModeCleared).toBe(true);
+    expect(bus.progModeWrites).toBe(1);
+    expect(bus.restarts).toBe(0);
+  }, 100_000);
 
   test("REFUSES when no device is in programming mode, and writes nothing", async () => {
     const bus = new SimBus([new SimDevice("1.1.5", false)]);

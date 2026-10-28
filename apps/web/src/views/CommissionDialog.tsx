@@ -44,6 +44,8 @@ export function CommissionDialog({ open, onOpenChange, projectId, device, onComm
   const awaitingAck = untestedOps(view, ["fullDownload"]).length > 0;
   const refreshOnUntested = useRefreshOnUntested(projectId, device.id);
   const busyRef = useRef(false); // guards against a same-tick double click
+  // A product without an application program takes its address and nothing else: no download step.
+  const addressOnly = device.hasApplication === false;
 
   const doScan = useCallback(() => {
     // A rescan restarts the whole flow: the assign step trusts THIS scan's picture.
@@ -73,7 +75,8 @@ export function CommissionDialog({ open, onOpenChange, projectId, device, onComm
     api.assignIa(projectId, device.id)
       .then((result) => {
         setAssign({ running: false, result, error: null });
-        if (result.verified) runCheck();
+        if (result.verified && addressOnly) onCommissioned?.();
+        else if (result.verified) runCheck();
       })
       .catch((e) => setAssign({ running: false, result: null, error: e }))
       .finally(() => { busyRef.current = false; });
@@ -97,8 +100,8 @@ export function CommissionDialog({ open, onOpenChange, projectId, device, onComm
   const scanReady = !scan.running && !!scan.devices;
   const exactlyOne = scan.devices?.length === 1;
   const canAssign = scanReady && exactlyOne && !assign.result && !assign.error && !busOpRunning;
-  const canDownload = assignVerified && dl.dry?.kind === "dryRun" && !dl.done && !busOpRunning && !dl.checking;
-  const finished = !!dl.done;
+  const canDownload = !addressOnly && assignVerified && dl.dry?.kind === "dryRun" && !dl.done && !busOpRunning && !dl.checking;
+  const finished = !!dl.done || (addressOnly && assignVerified);
 
   const line = (icon: ReactNode, text: ReactNode, tone: "muted" | "ok" | "warn" | "err" | "run" = "muted") => (
     <span className={{
@@ -132,7 +135,7 @@ export function CommissionDialog({ open, onOpenChange, projectId, device, onComm
     return (
       <span className="flex flex-col gap-0.5">
         {r.verified
-          ? line(okIcon, t("commission.assigned", { previous: r.previous, assigned: r.assigned }), "ok")
+          ? <span data-testid={addressOnly ? "commission-ok" : undefined}>{line(okIcon, t("commission.assigned", { previous: r.previous, assigned: r.assigned }), "ok")}</span>
           : <span data-testid="commission-fail">{line(warnIcon, t("commission.assignedUnverified", { ia: device.ia }), "err")}</span>}
         {r.verified && !r.progModeCleared && line(warnIcon, t("commission.progModeNotCleared", { error: r.progModeError ?? "?" }), "warn")}
       </span>
@@ -158,7 +161,7 @@ export function CommissionDialog({ open, onOpenChange, projectId, device, onComm
   const steps: { label: string; body: ReactNode }[] = [
     { label: t("commission.stepScan"), body: scanLine() },
     { label: t("commission.stepAssign"), body: assignLine() },
-    { label: t("commission.stepDownload"), body: downloadLine() },
+    { label: t("commission.stepDownload"), body: addressOnly ? <span className="text-muted-foreground">{t("commission.noDownload")}</span> : downloadLine() },
   ];
 
   return (
@@ -172,7 +175,7 @@ export function CommissionDialog({ open, onOpenChange, projectId, device, onComm
             <RadioTower className="size-4 text-primary" /> {t("commission.title", { device: device.name || device.ia })}
           </AlertDialogTitle>
           <AlertDialogDescription>
-            {t("commission.description", { ia: device.ia })}
+            {t(addressOnly ? "commission.descriptionAddressOnly" : "commission.description", { ia: device.ia })}
           </AlertDialogDescription>
         </AlertDialogHeader>
 
@@ -185,7 +188,7 @@ export function CommissionDialog({ open, onOpenChange, projectId, device, onComm
           ))}
         </div>
 
-        {!finished && <UntestedNotice projectId={projectId} deviceId={device.id} view={view} ops={["fullDownload"]} />}
+        {!finished && !addressOnly && <UntestedNotice projectId={projectId} deviceId={device.id} view={view} ops={["fullDownload"]} />}
 
         <AlertDialogFooter>
           <AlertDialogCancel disabled={busOpRunning}>{finished ? t("common.close") : t("common.cancel")}</AlertDialogCancel>

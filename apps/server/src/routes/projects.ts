@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { loadKnxproj, extractAppPrograms, extractCatalogProducts, extractPictureBaggage } from "@busforge/project";
+import { loadKnxproj, extractAppPrograms, extractCatalogProducts, extractPictureBaggage, type CatalogProduct } from "@busforge/project";
 import { insertProject, createProject, listProjects, getProject, deleteProject, renameProject, projectExists, setProjectConnection, countSpacesByType, listDeviceAppRefs, importSourceOf, setProjectSource } from "../db/projects.ts";
 import { getConnection } from "../db/connections.ts";
 import { listSnapshots, createSnapshot, restoreSnapshot, deleteSnapshot } from "../db/snapshots.ts";
@@ -22,6 +22,9 @@ import type { AppState } from "../app.ts";
 // Project lifecycle: list/create, .knxproj and .busforge import (+ analyze
 // preview), get/rename/delete, the saved-connection pointer, telegrams, the
 // .busforge export, and snapshots.
+// The Hardware2Program ids of the products in a project file that carry no application program.
+const applicationless = (products: CatalogProduct[]): Set<string> => new Set(products.filter((p) => !p.hasApplication).map((p) => p.appRef));
+
 export async function handle(req: Request, url: URL, seg: string[], state: AppState): Promise<Response | null> {
   const { db, bus } = state;
 
@@ -51,8 +54,12 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // so a bad archive fails before anything is written to disk or the DB.
     const programs = extractAppPrograms(bytes, project.devices.map((d) => d.appRef));
     // Catalog product metadata for browsing/placing devices later. Keep only the
-    // products whose program we actually stored, so every catalog entry is placeable.
-    const catalog = extractCatalogProducts(bytes).filter((p) => programs.has(p.appProgramId));
+    // products whose program we actually stored, so every catalog entry is placeable,
+    // and the products that carry no application program at all.
+    const products = extractCatalogProducts(bytes);
+    const used = new Set(project.devices.map((d) => d.appRef));
+    const catalog = products.filter((p) => programs.has(p.appProgramId) || (!p.hasApplication && used.has(p.appRef)));
+    const withoutApplication = applicationless(products);
     const pictures = extractPictureBaggage(bytes, programs);
 
     const id = randomUUID();
@@ -74,7 +81,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // atomic transaction with nothing to clean up on failure. The legacy on-disk
     // path column source_file stays empty.
     db.transaction(() => {
-      insertProject(db, id, project, "", state.now());
+      insertProject(db, id, project, "", state.now(), withoutApplication);
       setProjectSource(db, id, importSourceOf("knxproj", file instanceof File ? file.name : "project.knxproj", bytes));
       for (const [pid, xml] of programs) putAppProgram(db, pid, xml);
       for (const [pid, files] of pictures) putCatalogBaggage(db, pid, files);
@@ -100,7 +107,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // the archive (they import as un-configurable husks) and group-address links that
     // referenced an address not in the tree (silently lost). The count alone is no
     // longer the only success signal.
-    return json({ id, name: project.name, deviceCount: project.devices.length, gaCount: project.groupAddresses.length, ...importGaps(project, programs), baggageUnreadable });
+    return json({ id, name: project.name, deviceCount: project.devices.length, gaCount: project.groupAddresses.length, ...importGaps(project, programs, withoutApplication), baggageUnreadable });
   }
 
   // /api/projects/analyze  (POST: parse a file's metadata for an import preview,
@@ -120,7 +127,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
       // gaps match what import will actually produce (no clean-looking false promise).
       const programs = extractAppPrograms(bytes, project.devices.map((d) => d.appRef));
       const { baggageUnreadable } = readCheckedBaggage(bytes, password);
-      return json({ kind: "knxproj", name: project.name, deviceCount: project.devices.length, gaCount: project.groupAddresses.length, snapshotCount: 0, ...countSpacesByType(project.locations), modifiedAt: null, ...importGaps(project, programs), baggageUnreadable });
+      return json({ kind: "knxproj", name: project.name, deviceCount: project.devices.length, gaCount: project.groupAddresses.length, snapshotCount: 0, ...countSpacesByType(project.locations), modifiedAt: null, ...importGaps(project, programs, applicationless(extractCatalogProducts(bytes))), baggageUnreadable });
     }
     const data = await unpackBusforge(bytes, password); // throws a coded ApiError (encrypted/wrong-password/invalid)
     validateExport(data);

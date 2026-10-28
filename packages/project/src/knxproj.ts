@@ -280,9 +280,13 @@ export function extractCatalogProducts(bytes: Buffer): CatalogProduct[] {
           for (const h2p of programs) {
             const appRef = text(h2p.Id);
             if (!appRef) continue;
+            // The Hardware2Program, not the hardware's HasApplicationProgram flag, says whether a
+            // program belongs to the product: ETS's conversion of Hager's ETS2 data sets the flag on
+            // a Hardware2Program that names none.
+            const hasApplication = h2p.ApplicationProgramRef !== undefined;
             out.push({
-              appRef, productRef,
-              appProgramId: appProgramId(appRef),
+              appRef, productRef, hasApplication,
+              appProgramId: hasApplication ? appProgramId(appRef) : "",
               manufacturer: manufacturerOf(productRef),
               name: text(p.Text),
               orderNumber: text(p.OrderNumber),

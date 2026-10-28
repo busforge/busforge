@@ -11,7 +11,8 @@ import { getConnection, type Connection } from "./connections.ts";
 // parameter values like channel/actuator names) so the device list can search
 // deeper than the visible name/address.
 // The import's etsLoaded is not kept: it seeds changes.neverProgrammed.
-export type DeviceWithChanges = Omit<Device, "etsLoaded"> & { changes: DeviceChanges; searchText: string; secure: boolean };
+// hasApplication: false where the device's product carries no application program (address only).
+export type DeviceWithChanges = Omit<Device, "etsLoaded"> & { changes: DeviceChanges; searchText: string; secure: boolean; hasApplication: boolean };
 
 export interface ProjectSummary { id: string; name: string; deviceCount: number; gaCount: number; snapshotCount: number; buildingCount: number; floorCount: number; roomCount: number; importedAt: number; source: ImportSource | null; }
 
@@ -109,10 +110,11 @@ export function readSpaces(db: Database, projectId: string): SpaceNode[] {
   return roots;
 }
 
-// Persist a freshly parsed project (rows only; the caller stores the source file).
-export function insertProject(db: Database, id: string, project: Project, sourceFile: string, now: number): void {
+// Persist a freshly parsed project (rows only; the caller stores the source file). `withoutApplication`:
+// the Hardware2Program ids (device appRefs) whose product carries no application program.
+export function insertProject(db: Database, id: string, project: Project, sourceFile: string, now: number, withoutApplication: ReadonlySet<string> = new Set()): void {
   const insProject = db.prepare("INSERT INTO projects (id, name, imported_at, source_file, ga_levels) VALUES (?, ?, ?, ?, ?)");
-  const insDevice = db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment, never_programmed, ets_not_downloaded, config_from_ets) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)");
+  const insDevice = db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment, never_programmed, ets_not_downloaded, config_from_ets, has_application) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)");
   const insRange = db.prepare("INSERT INTO group_ranges (project_id, parent_id, name, range_start, range_end) VALUES (?, ?, ?, ?, ?)");
   const insGa = db.prepare("INSERT INTO group_addresses (project_id, range_id, raw, address, name, dpt, security) VALUES (?, ?, ?, ?, ?, ?, ?)");
   const insParam = db.prepare("INSERT OR REPLACE INTO device_parameters (project_id, device_id, param_ref_id, value) VALUES (?, ?, ?, ?)");
@@ -143,9 +145,11 @@ export function insertProject(db: Database, id: string, project: Project, source
   db.transaction(() => {
     insProject.run(id, project.name, now, sourceFile, project.groupAddressLevels);
     for (const d of project.devices) {
-      const never = !etsLoadedCompletely(d) && !!d.appRef;
-      const parts = never ? etsNotDownloaded(d) : null;
-      insDevice.run(id, d.id, d.ia, d.name, d.productRef, d.appRef, d.manufacturer, d.comment, never ? 1 : 0, parts?.length ? parts.join(",") : null);
+      // A product without an application program has nothing to load but its address.
+      const hasApplication = !withoutApplication.has(d.appRef);
+      const never = hasApplication ? !etsLoadedCompletely(d) && !!d.appRef : !d.etsLoaded.individualAddress;
+      const parts = never && hasApplication ? etsNotDownloaded(d) : null;
+      insDevice.run(id, d.id, d.ia, d.name, d.productRef, d.appRef, d.manufacturer, d.comment, never ? 1 : 0, parts?.length ? parts.join(",") : null, hasApplication ? 1 : 0);
     }
     for (const r of project.groupRanges) insertRange(r, null);
     for (const dp of project.deviceParams) for (const v of dp.values) { insParam.run(id, dp.deviceId, v.refId, v.value); insParamBase.run(id, dp.deviceId, v.refId, v.value); }
@@ -184,8 +188,8 @@ export function addDevice(db: Database, projectId: string, product: CatalogProdu
   if (!ia) throw new ApiError("NO_FREE_IA", "no free individual address in area 1");
   const instanceId = `BF-${randomUUID()}`;
   db.prepare(
-    "INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment, never_programmed) VALUES (?, ?, ?, ?, ?, ?, ?, '', 1)",
-  ).run(projectId, instanceId, ia, name || product.name, product.productRef, product.appRef, product.manufacturer);
+    "INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment, never_programmed, has_application) VALUES (?, ?, ?, ?, ?, ?, ?, '', 1, ?)",
+  ).run(projectId, instanceId, ia, name || product.name, product.productRef, product.appRef, product.manufacturer, product.hasApplication ? 1 : 0);
   return { id: instanceId, ia };
 }
 
@@ -213,7 +217,7 @@ export function getProject(db: Database, id: string, security?: ReadonlyMap<stri
     | { id: string; name: string; connectionId: string | null; groupAddressLevels: Levels } | null;
   if (!p) return null;
 
-  const baseDevices = db.query("SELECT instance_id AS id, ia, name, product_ref AS productRef, app_ref AS appRef, manufacturer, comment FROM devices WHERE project_id = ? ORDER BY id").all(id) as Omit<Device, "etsLoaded">[];
+  const baseDevices = db.query("SELECT instance_id AS id, ia, name, product_ref AS productRef, app_ref AS appRef, manufacturer, comment, has_application AS ha FROM devices WHERE project_id = ? ORDER BY id").all(id) as (Omit<Device, "etsLoaded"> & { ha: number })[];
   const changes = getProjectChanges(db, id);
 
   // Per-device deep-search text: the user-entered text parameter values (channel
@@ -228,8 +232,9 @@ export function getProject(db: Database, id: string, security?: ReadonlyMap<stri
     paramText.set(r.deviceId, set);
   }
   const secureIds = new Set((db.query("SELECT device_id AS id FROM device_security WHERE project_id = ?").all(id) as { id: string }[]).map((r) => r.id));
-  const devices: DeviceWithChanges[] = baseDevices.map((d) => ({
+  const devices: DeviceWithChanges[] = baseDevices.map(({ ha, ...d }) => ({
     ...d,
+    hasApplication: ha !== 0,
     changes: { ...(changes.get(d.id) ?? { params: 0, links: 0, flags: 0, neverProgrammed: false }), ...(security?.has(d.id) ? { security: security.get(d.id) } : {}) },
     searchText: [d.comment, ...(paramText.get(d.id) ?? [])].filter(Boolean).join(" ").toLowerCase(),
     secure: secureIds.has(d.id),
@@ -335,7 +340,8 @@ export function setDeviceAddress(db: Database, projectId: string, deviceId: stri
   if (!dev) throw new ApiError("DEVICE_NOT_FOUND", "device not found", 404);
   const taken = db.query("SELECT name FROM devices WHERE project_id = ? AND ia = ? AND instance_id != ?").get(projectId, ia, deviceId) as { name: string } | null;
   if (taken) throw new ApiError("IA_TAKEN", `${ia} is already used by "${taken.name}" in this project`);
-  db.prepare("UPDATE devices SET ia = ?, image_stamps = NULL WHERE project_id = ? AND instance_id = ?").run(ia, projectId, deviceId);
+  // The address is all a device without an application program holds, so a new one is not in it yet.
+  db.prepare("UPDATE devices SET never_programmed = CASE WHEN has_application = 0 AND ia != ? THEN 1 ELSE never_programmed END, ia = ?, image_stamps = NULL WHERE project_id = ? AND instance_id = ?").run(ia, ia, projectId, deviceId);
   return { id: deviceId, ia };
 }
 

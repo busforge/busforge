@@ -123,10 +123,11 @@ export function useSnapshotActions(projectId: string) {
   return { create, restore, remove };
 }
 
-export const useDeviceConfig = (id: string, deviceId: string) => {
+// `enabled`: false for a device whose product carries no application program, which has no configuration.
+export const useDeviceConfig = (id: string, deviceId: string, enabled = true) => {
   const { i18n } = useTranslation();
   const lang = i18n.language;
-  return useQuery({ queryKey: qk.deviceConfig(id, deviceId, lang), queryFn: () => api.deviceConfig(id, deviceId, lang) });
+  return useQuery({ queryKey: qk.deviceConfig(id, deviceId, lang), queryFn: () => api.deviceConfig(id, deviceId, lang), enabled });
 };
 
 // Group-address structure edits (ranges + addresses). Each returns the refreshed

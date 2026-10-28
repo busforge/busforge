@@ -204,8 +204,8 @@ export function setDeviceLink(db: Database, projectId: string, deviceId: string,
 // device's only config, all of it unprogrammed drift until the first flash.
 export function replaceDeviceProduct(db: Database, projectId: string, deviceId: string, product: CatalogProduct, links: Map<string, number[]>): void {
   db.transaction(() => {
-    const updated = db.prepare("UPDATE devices SET product_ref = ?, app_ref = ?, manufacturer = ?, link_base_gaps = 0, never_programmed = 1, ets_not_downloaded = NULL, security_base = NULL, image_stamps = NULL, config_from_ets = 0 WHERE project_id = ? AND instance_id = ?")
-      .run(product.productRef, product.appRef, product.manufacturer, projectId, deviceId).changes;
+    const updated = db.prepare("UPDATE devices SET product_ref = ?, app_ref = ?, manufacturer = ?, has_application = ?, link_base_gaps = 0, never_programmed = 1, ets_not_downloaded = NULL, security_base = NULL, image_stamps = NULL, config_from_ets = 0 WHERE project_id = ? AND instance_id = ?")
+      .run(product.productRef, product.appRef, product.manufacturer, product.hasApplication ? 1 : 0, projectId, deviceId).changes;
     // The route checked existence before parsing the body; if the device vanished in
     // that gap, a 0-row UPDATE would silently commit orphan device_links rows below
     // (device_links has no FK on the device row). Throwing rolls the transaction back.
@@ -224,6 +224,13 @@ export function replaceDeviceProduct(db: Database, projectId: string, deviceId: 
   })();
 }
 
+// Whether the device's product carries an application program (devices.has_application); true for a
+// device not in the project, which the caller refuses on its own terms.
+export function deviceHasApplication(db: Database, projectId: string, deviceId: string): boolean {
+  const r = db.query("SELECT has_application AS h FROM devices WHERE project_id = ? AND instance_id = ?").get(projectId, deviceId) as { h: number } | null;
+  return r?.h !== 0;
+}
+
 // `configFromEts`: the device's parameter values came from an ETS project (devices.config_from_ets).
 export function getDeviceForFlash(db: Database, projectId: string, deviceId: string): { ia: string; appRef: string; name: string; programmingToken: string; neverProgrammed: boolean; configFromEts: boolean } | null {
   const r = db.query("SELECT ia, app_ref AS appRef, name, programming_token AS programmingToken, never_programmed AS np, config_from_ets AS ets FROM devices WHERE project_id = ? AND instance_id = ?")
@@ -234,7 +241,8 @@ export function getDeviceForFlash(db: Database, projectId: string, deviceId: str
 }
 
 // Only a verified full download shows the device holds this project's whole configuration (its
-// application, parameters, com-object and group tables); a surgical flash or a read-back does not.
+// application, parameters, com-object and group tables); a surgical flash or a read-back does not. On a
+// device whose product carries no application program the verified address assignment is all there is.
 export function clearNeverProgrammed(db: Database, projectId: string, deviceId: string): void {
   db.prepare("UPDATE devices SET never_programmed = 0, ets_not_downloaded = NULL WHERE project_id = ? AND instance_id = ?").run(projectId, deviceId);
 }

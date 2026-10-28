@@ -33,7 +33,8 @@ export interface ProjectExport {
   // securityBase: the fingerprint of the security object last verified on a Data Secure device; absent
   // when not known.
   // configFromEts: the device's parameter values came from an ETS project; absent otherwise.
-  devices: { id: string; ia: string; name: string; productRef: string; appRef: string; manufacturer: number; comment: string; linkBaseGaps?: number; neverProgrammed?: boolean; etsNotDownloaded?: EtsPart[]; securityBase?: string; configFromEts?: boolean }[];
+  // withoutApplication: the device's product carries no application program; absent otherwise.
+  devices: { id: string; ia: string; name: string; productRef: string; appRef: string; manufacturer: number; comment: string; linkBaseGaps?: number; neverProgrammed?: boolean; etsNotDownloaded?: EtsPart[]; securityBase?: string; configFromEts?: boolean; withoutApplication?: boolean }[];
   groupRanges: { id: number; parentId: number | null; name: string; rangeStart: number; rangeEnd: number }[];
   // Building structure (0.xml <Locations>). Optional so artifacts exported before
   // it was carried still import (they re-import with no location grouping).
@@ -103,9 +104,9 @@ export function exportProject(db: Database, projectId: string, now: number, mast
   const project = readProjectProperties(db, projectId);
   if (!project) return null;
 
-  const devices = (db.query("SELECT instance_id AS id, ia, name, product_ref AS productRef, app_ref AS appRef, manufacturer, comment, link_base_gaps AS linkBaseGaps, never_programmed AS np, ets_not_downloaded AS ets, security_base AS sb, config_from_ets AS cfe FROM devices WHERE project_id = ? ORDER BY instance_id")
-    .all(projectId) as (ProjectExport["devices"][number] & { np: number; ets: string | null; sb: string | null; cfe: number })[])
-    .map(({ np, ets, sb, cfe, ...d }) => ({ ...d, ...(np ? { neverProgrammed: true } : {}), ...(np && ets ? { etsNotDownloaded: ets.split(",") as EtsPart[] } : {}), ...(sb ? { securityBase: sb } : {}), ...(cfe ? { configFromEts: true } : {}) }));
+  const devices = (db.query("SELECT instance_id AS id, ia, name, product_ref AS productRef, app_ref AS appRef, manufacturer, comment, link_base_gaps AS linkBaseGaps, never_programmed AS np, ets_not_downloaded AS ets, security_base AS sb, config_from_ets AS cfe, has_application AS ha FROM devices WHERE project_id = ? ORDER BY instance_id")
+    .all(projectId) as (ProjectExport["devices"][number] & { np: number; ets: string | null; sb: string | null; cfe: number; ha: number })[])
+    .map(({ np, ets, sb, cfe, ha, ...d }) => ({ ...d, ...(np ? { neverProgrammed: true } : {}), ...(np && ets ? { etsNotDownloaded: ets.split(",") as EtsPart[] } : {}), ...(sb ? { securityBase: sb } : {}), ...(cfe ? { configFromEts: true } : {}), ...(ha === 0 ? { withoutApplication: true } : {}) }));
   const groupRanges = db.query("SELECT id, parent_id AS parentId, name, range_start AS rangeStart, range_end AS rangeEnd FROM group_ranges WHERE project_id = ? ORDER BY id")
     .all(projectId) as ProjectExport["groupRanges"];
   const groupAddresses = db.query("SELECT range_id AS rangeId, raw, address, name, dpt, security FROM group_addresses WHERE project_id = ? ORDER BY raw")

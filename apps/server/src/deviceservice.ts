@@ -1,10 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
+import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { iaToNum, numToGa, SENDER_ENTRY } from "@busforge/knx";
 import { appProgramId, readAppProgram, type Project } from "@busforge/project";
 import { parseAppConfig, buildDeviceConfig, buildSecurityObject, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, effectiveComObjFlags, ProductError, imageWritableType, type EffectiveComObjFlags, type ComObjInstanceOverride, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
 import { getAppProgram, putAppProgram, catalogBaggageNames, pictureType } from "./db/catalog.ts";
-import { getDeviceParams, getDeviceParamBase, getDeviceParamAssumed, type SameParamValue, getDeviceModules, getDeviceAppRef, getDeviceProductRef, getDeviceForFlash, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps, getDeviceComObjOverrides, getDeviceComObjOverrideBase } from "./db/deviceparams.ts";
+import { getDeviceParams, getDeviceParamBase, getDeviceParamAssumed, type SameParamValue, getDeviceModules, getDeviceAppRef, getDeviceProductRef, getDeviceForFlash, deviceHasApplication, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps, getDeviceComObjOverrides, getDeviceComObjOverrideBase } from "./db/deviceparams.ts";
 import { deviceCompatibility } from "./compatibility.ts";
 import { isUntestedAcknowledged } from "./db/untestedAcks.ts";
 import { projectExists, getGaMeta } from "./db/projects.ts";
@@ -237,9 +238,11 @@ export function lookupAppXml(state: AppState, projectId: string, appRef: string)
 // DeviceInstances the parser dropped as unkeyable/unaddressable (missing Id or address), bus
 // interfaces assigned to a group address whose own address could not be resolved, and secure devices
 // ETS never commissioned, imported without their tool key.
-export function importGaps(project: Project, programs: Map<string, string>): { devicesWithoutProgram: { ia: string; name: string }[]; unresolvedLinks: number; malformedDevices: number; unresolvedSenders: number; secureDevicesWithoutSerial: number } {
+// A device whose product carries no application program (`withoutApplication`, by Hardware2Program id)
+// lacks nothing.
+export function importGaps(project: Project, programs: Map<string, string>, withoutApplication: ReadonlySet<string> = new Set()): { devicesWithoutProgram: { ia: string; name: string }[]; unresolvedLinks: number; malformedDevices: number; unresolvedSenders: number; secureDevicesWithoutSerial: number } {
   const devicesWithoutProgram = project.devices
-    .filter((d) => !programs.has(appProgramId(d.appRef)))
+    .filter((d) => !programs.has(appProgramId(d.appRef)) && !withoutApplication.has(d.appRef))
     .map((d) => ({ ia: d.ia, name: d.name }));
   return { devicesWithoutProgram, unresolvedLinks: project.unresolvedLinks, malformedDevices: project.malformedDevices, unresolvedSenders: project.unresolvedSenders, secureDevicesWithoutSerial: project.secureDevicesWithoutSerial };
 }
@@ -336,11 +339,20 @@ export function deviceComObjFlags(state: AppState, projectId: string, deviceId: 
   }
 }
 
+// The refusal for an operation that needs the device's application program and has none: a product
+// that carries none (DEVICE_WITHOUT_APPLICATION, it takes its individual address only), or a program
+// the catalogue does not hold (APP_PROGRAM_MISSING).
+export function missingApplication(db: Database, projectId: string, deviceId: string): ApiError {
+  return deviceHasApplication(db, projectId, deviceId)
+    ? new ApiError("APP_PROGRAM_MISSING", "application program not found in project", 404)
+    : new ApiError("DEVICE_WITHOUT_APPLICATION", "the device's product carries no application program: it takes its individual address and nothing else", 409);
+}
+
 export function buildDeviceView(state: AppState, projectId: string, deviceId: string, lang?: string): DeviceConfigView {
   const { db } = state;
   if (!getDeviceForFlash(db, projectId, deviceId)) throw new ApiError("DEVICE_NOT_FOUND", "device not found", 404);
   const app = loadApp(state, projectId, deviceId);
-  if (!app) throw new ApiError("APP_PROGRAM_MISSING", "application program not found in project", 404);
+  if (!app) throw missingApplication(db, projectId, deviceId);
   const view = buildDeviceConfig(app, getDeviceParams(db, projectId, deviceId), lang, getDeviceModules(db, projectId, deviceId));
   // Offer a native DCA-replacement module if one matches this app program.
   const module = resolveDcaModule(app.id, app.appVersion);

@@ -18,12 +18,18 @@ import { cemiLDataGroup, apduUnnumbered, parseApdu, numToIa, iaToNum, APCI, BROA
 import { KnxError } from "./errors.ts";
 
 // The device object's programming-mode property (PID_PROGMODE). Writing 0 switches the mode
-// off, which is what ETS does once the address is assigned: leaving it on would make the
-// device answer the NEXT assignment too.
+// off: leaving it on would make the device answer the NEXT assignment too.
 const OBJ_DEVICE = 0;
 const PID_PROGMODE = 54;
 
+// How programming mode ends once the address is assigned: by writing PID_PROGMODE 0, or by
+// A_Restart, which a device without a device object (a BCU1, mask 0012) needs and which is what
+// ETS sends there after reading the descriptor at the new address.
+export type ProgModeEnd = "property" | "restart";
+
 export interface AssignIaOptions {
+  // The route for the mask the device reports at its new address ("MV-0012"). Without it, PID_PROGMODE.
+  progModeEnd?: (mask: string) => ProgModeEnd;
   // How long to listen for A_IndividualAddress_Response frames. Devices answer within
   // milliseconds; the default is generous because the window is also the only thing standing
   // between us and a missed second device in programming mode.
@@ -82,30 +88,39 @@ export async function writeIndividualAddress(tun: KnxTransport, ia: string): Pro
 // of a live line it could as well be a dead line.
 const NACK_TRIES = 3;
 async function addressAnswers(tun: KnxTransport, ia: string, lineAlive: boolean): Promise<boolean> {
+  return (await answerAt(tun, ia, lineAlive, false)) !== null;
+}
+// What answers at `ia`: null for nobody, else the mask from its descriptor ("" when a device is
+// there but did not hand its descriptor out). `keep`: a device that handed its descriptor out stays
+// connected and is returned for the caller to go on with and disconnect.
+type Answer = { mask: string; dev: KnxDevice | null };
+async function answerAt(tun: KnxTransport, ia: string, lineAlive: boolean, keep: boolean): Promise<Answer | null> {
   for (let i = 0; ; i++) {
-    try { return await addressAnswersOnce(tun, ia); }
+    try { return await answerAtOnce(tun, ia, keep); }
     catch (e) {
       if (!(lineAlive && e instanceof KnxError && e.code === "BUS_SEND_FAILED")) throw e;
-      if (i === NACK_TRIES - 1) return false; // never acknowledged: absent
+      if (i === NACK_TRIES - 1) return null; // never acknowledged: absent
     }
   }
 }
-async function addressAnswersOnce(tun: KnxTransport, ia: string): Promise<boolean> {
+async function answerAtOnce(tun: KnxTransport, ia: string, keep: boolean): Promise<Answer | null> {
   const dev = new KnxDevice(tun, ia);
+  let kept = false;
   try {
     await dev.connect();
-    await dev.deviceDescriptor();
-    return true;
+    const mask = await dev.deviceDescriptor();
+    kept = keep;
+    return { mask, dev: keep ? dev : null };
   } catch (e) {
-    if (e instanceof KnxError && e.code === "DEVICE_NOT_ANSWERING") return false; // silence: absent
+    if (e instanceof KnxError && e.code === "DEVICE_NOT_ANSWERING") return null; // silence: absent
     // A T_Disconnect answering our request: a device is there (in another tool's connection, or
     // one that missed our T_Connect), so the address is taken.
-    if (e instanceof KnxError && e.code === "DEVICE_CLOSED_CONNECTION") return true;
+    if (e instanceof KnxError && e.code === "DEVICE_CLOSED_CONNECTION") return { mask: "", dev: null };
     // A device that acknowledged and sent another service is there too.
-    if (e instanceof KnxError && e.code === "ANSWER_SERVICE_MISMATCH") return true;
+    if (e instanceof KnxError && e.code === "ANSWER_SERVICE_MISMATCH") return { mask: "", dev: null };
     throw e; // a transport failure is not evidence of a free address
   } finally {
-    try { await dev.disconnect(); } catch { /* nothing was connected */ }
+    if (!kept) { try { await dev.disconnect(); } catch { /* nothing was connected */ } }
   }
 }
 
@@ -133,7 +148,8 @@ export interface AssignIaResult {
 //      new address. "Does something answer at `ia`?" is not enough on its own, because an
 //      unrelated device already sitting at `ia` answers that just as well, which would turn a
 //      write that never landed into a green result. Then confirm it is reachable there.
-//   5. Switch programming mode off, so the device does not also answer the next assignment.
+//   5. Switch programming mode off, so the device does not also answer the next assignment, on the
+//      route `progModeEnd` names for the mask the device reported in step 4.
 export async function assignIndividualAddress(tun: KnxTransport, ia: string, opts: AssignIaOptions = {}): Promise<AssignIaResult> {
   const { probeMs = 3000, settleMs = 1000, onProgress } = opts;
 
@@ -170,8 +186,11 @@ export async function assignIndividualAddress(tun: KnxTransport, ia: string, opt
     throw new KnxError("IA_WRITE_UNVERIFIED",
       `${ia} was written but the device did not take it (${where}); it may still hold ${previous}. Read the bus before continuing.`);
   }
-  // ...and it is reachable there for real management, not just for the broadcast probe.
-  if (!(await addressAnswers(tun, ia, true))) {
+  // ...and it is reachable there for real management, not just for the broadcast probe. The
+  // connection stays open: the restart route goes on on it, as ETS sends A_Restart right behind the
+  // descriptor read.
+  const reached = await answerAt(tun, ia, true, true);
+  if (reached === null) {
     throw new KnxError("IA_WRITE_UNVERIFIED",
       `${ia} was written and the device reports it, but it does not answer management there. Read the bus before continuing.`);
   }
@@ -180,18 +199,31 @@ export async function assignIndividualAddress(tun: KnxTransport, ia: string, opt
   // assignment, so a failure here is carried out with its reason rather than swallowed, even
   // though the address itself is by now assigned and verified.
   onProgress?.("prog-mode-off");
+  const route = opts.progModeEnd?.(reached.mask) ?? "property";
   let progModeCleared = false;
   let progModeError: string | null = null;
-  const dev = new KnxDevice(tun, ia);
+  let dev = reached.dev;
   try {
-    await dev.connect();
-    await dev.propWrite(OBJ_DEVICE, PID_PROGMODE, Buffer.from([0]));
+    if (route === "restart" && dev) {
+      // The probe below decides whether the mode ended, so a restart the interface confirmed
+      // negatively (the device rebooting before its acknowledgement) is not read here.
+      await dev.sendRestart();
+      await dev.disconnect();
+      dev = null;
+      await sleep(settleMs);
+    } else {
+      if (dev) { await dev.disconnect(); dev = null; }
+      if (route === "restart") throw new KnxError("IA_PROG_MODE_UNCLEARED", "the device did not stay connected for the restart that ends its programming mode");
+      dev = new KnxDevice(tun, ia);
+      await dev.connect();
+      await dev.propWrite(OBJ_DEVICE, PID_PROGMODE, Buffer.from([0]));
+    }
     progModeCleared = (await readProgModeDevices(tun, probeMs)).length === 0;
-    if (!progModeCleared) progModeError = "the device still answers in programming mode after the write";
+    if (!progModeCleared) progModeError = `the device still answers in programming mode after the ${route === "restart" ? "restart" : "write"}`;
   } catch (e) {
     progModeError = e instanceof Error ? e.message : String(e);
   } finally {
-    try { await dev.disconnect(); } catch { /* connection may already be gone */ }
+    if (dev) { try { await dev.disconnect(); } catch { /* connection may already be gone */ } }
   }
 
   return { previous, assigned: ia, verified: true, progModeCleared, progModeError };

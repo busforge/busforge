@@ -134,8 +134,12 @@ project values are then not what it holds. For a device whose application ETS di
 `devices.ets_not_downloaded` keeps the parts ETS has still to download (address, medium, parameters,
 links: edited after the download, or never downloaded), and the device shows as **Not downloaded in ETS**, naming them, instead of **Never
 programmed**; state, gate and remedy are the same, and whatever clears the one clears the other. A
-device without an application program (a power supply) is not seeded. It shows as **Never
-programmed** and counts as "to program" until a verified full download clears it, or a read-back that
+device whose product carries no application program (`devices.has_application = 0`, its Hardware2Program
+names none) takes its address and nothing else: it is seeded from `IndividualAddressLoaded` alone, and a
+verified address assignment clears it; a new project address sets it again. A device whose
+`DeviceInstance` names no Hardware2Program at all is not seeded and stays as imported. Every other
+never-programmed device
+counts as "to program" until a verified full download clears it, or a read-back that
 shows the device holds this project's application, parameters and links: one that read parameters and
 links, left no device link unresolved, found the device reporting this application's id (PID 13 of the
 application object its mask names) with its load-state machines LOADED, and whose parameter and

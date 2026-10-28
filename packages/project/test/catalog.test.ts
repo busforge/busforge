@@ -35,7 +35,43 @@ describe("extractCatalogProducts (catalog metadata ingest)", () => {
       name: "Super Switch 4f",
       orderNumber: "SW-4F-001",
       hwVersion: "12",
+      hasApplication: true,
     });
+  });
+
+  test("a Hardware2Program without an ApplicationProgramRef is a product without an application program", () => {
+    // The Hager TH001 as ETS converts it from Hager's ETS2 database: the hardware claims
+    // HasApplicationProgram="true", the Hardware2Program names no program (private corpus
+    // internal/captures/hager-th001/TH001-Capture.knxproj).
+    const th001 = `<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/23">
+  <ManufacturerData>
+    <Manufacturer RefId="M-0009">
+      <Hardware>
+        <Hardware Id="M-0009_H-9.20.2F.2F.20TH001-1" Name="TH001 RS 232 modulaire" VersionNumber="1" HasIndividualAddress="true" HasApplicationProgram="true">
+          <Products>
+            <Product Id="M-0009_H-9.20.2F.2F.20TH001-1_P-TH001" Text="Modular RS 232" OrderNumber="TH001"/>
+          </Products>
+          <Hardware2Programs>
+            <Hardware2Program Id="M-0009_H-9.20.2F.2F.20TH001-1_HP" MediumTypes="MT-0">
+              <RegistrationInfo RegistrationStatus="Registered"/>
+            </Hardware2Program>
+          </Hardware2Programs>
+        </Hardware>
+      </Hardware>
+    </Manufacturer>
+  </ManufacturerData>
+</KNX>`;
+    expect(extractCatalogProducts(storeZip({ "M-0009/Hardware.xml": th001 }))).toEqual([{
+      appRef: "M-0009_H-9.20.2F.2F.20TH001-1_HP",
+      productRef: "M-0009_H-9.20.2F.2F.20TH001-1_P-TH001",
+      appProgramId: "",
+      manufacturer: 9,
+      name: "Modular RS 232",
+      orderNumber: "TH001",
+      hwVersion: "1",
+      hasApplication: false,
+    }]);
   });
 
   test("no Hardware.xml yields no catalog products", () => {

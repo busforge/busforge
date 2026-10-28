@@ -538,6 +538,12 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (project_id, device_id, param_ref_id)
   );
   `,
+  // Whether a device's product carries an application program (its Hardware2Program names one). A product
+  // without one (the Hager TH001 RS 232 interface) takes its individual address and nothing else.
+  `
+  ALTER TABLE devices ADD COLUMN has_application INTEGER NOT NULL DEFAULT 1;
+  ALTER TABLE catalog_products ADD COLUMN has_application INTEGER NOT NULL DEFAULT 1;
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration

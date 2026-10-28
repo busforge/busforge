@@ -60,40 +60,41 @@ export function catalogBaggageIds(db: Database, appProgramId: string): Set<strin
 export function putCatalogProduct(db: Database, p: CatalogProduct, pin = false): void {
   if (pin) {
     db.prepare(
-      "INSERT INTO catalog_products (app_ref, product_ref, app_program_id, manufacturer, name, order_number, hw_version, pinned) VALUES (?, ?, ?, ?, ?, ?, ?, 1) ON CONFLICT(app_ref, product_ref) DO UPDATE SET pinned = 1",
-    ).run(p.appRef, p.productRef, p.appProgramId, p.manufacturer, p.name, p.orderNumber, p.hwVersion);
+      "INSERT INTO catalog_products (app_ref, product_ref, app_program_id, manufacturer, name, order_number, hw_version, has_application, pinned) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1) ON CONFLICT(app_ref, product_ref) DO UPDATE SET pinned = 1",
+    ).run(p.appRef, p.productRef, p.appProgramId, p.manufacturer, p.name, p.orderNumber, p.hwVersion, p.hasApplication ? 1 : 0);
   } else {
     db.prepare(
-      "INSERT OR IGNORE INTO catalog_products (app_ref, product_ref, app_program_id, manufacturer, name, order_number, hw_version) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    ).run(p.appRef, p.productRef, p.appProgramId, p.manufacturer, p.name, p.orderNumber, p.hwVersion);
+      "INSERT OR IGNORE INTO catalog_products (app_ref, product_ref, app_program_id, manufacturer, name, order_number, hw_version, has_application) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(p.appRef, p.productRef, p.appProgramId, p.manufacturer, p.name, p.orderNumber, p.hwVersion, p.hasApplication ? 1 : 0);
   }
 }
 
+const PRODUCT_COLUMNS = "app_ref AS appRef, product_ref AS productRef, app_program_id AS appProgramId, manufacturer, name, order_number AS orderNumber, hw_version AS hwVersion, has_application AS hasApplication";
+const productOf = (r: Omit<CatalogProduct, "hasApplication"> & { hasApplication: number }): CatalogProduct => ({ ...r, hasApplication: r.hasApplication === 1 });
+
 // All placeable catalog products, ordered for the device picker.
 export function listCatalogProducts(db: Database): CatalogProduct[] {
-  return db.query(
-    "SELECT app_ref AS appRef, product_ref AS productRef, app_program_id AS appProgramId, manufacturer, name, order_number AS orderNumber, hw_version AS hwVersion FROM catalog_products ORDER BY name, order_number",
-  ).all() as CatalogProduct[];
+  return (db.query(`SELECT ${PRODUCT_COLUMNS} FROM catalog_products ORDER BY name, order_number`).all() as Parameters<typeof productOf>[0][]).map(productOf);
 }
 
 // One catalog product by its (appRef, productRef) key, or null.
 export function getCatalogProduct(db: Database, appRef: string, productRef: string): CatalogProduct | null {
-  return db.query(
-    "SELECT app_ref AS appRef, product_ref AS productRef, app_program_id AS appProgramId, manufacturer, name, order_number AS orderNumber, hw_version AS hwVersion FROM catalog_products WHERE app_ref = ? AND product_ref = ?",
-  ).get(appRef, productRef) as CatalogProduct | null;
+  const r = db.query(`SELECT ${PRODUCT_COLUMNS} FROM catalog_products WHERE app_ref = ? AND product_ref = ?`).get(appRef, productRef) as Parameters<typeof productOf>[0] | null;
+  return r ? productOf(r) : null;
 }
 
 // Derive catalog products from device rows that have none, for projects whose Hardware.xml was
 // not kept (a .busforge archive carries no catalog rows). Only the application program is at hand:
 // the name is the manufacturer's name of that program (never a device's own name, which is the
 // installer's), order number and hardware version are unknown. Only products whose application
-// program is in the catalog are added, so every entry stays placeable. Idempotent (only keys not
-// yet in the catalog). Returns the number of rows added.
+// program is in the catalog are added, so every entry stays placeable, and products without an
+// application program, which need none to be placed (they have no program to name them: the picker
+// shows their product id). Idempotent (only keys not yet in the catalog). Returns the number of rows added.
 export function backfillCatalogFromDevices(db: Database): number {
   const stored = new Set((db.query("SELECT id FROM app_programs").all() as { id: string }[]).map((r) => r.id));
   const rows = db.query(
-    "SELECT DISTINCT d.app_ref AS appRef, d.product_ref AS productRef, d.manufacturer FROM devices d LEFT JOIN catalog_products c ON c.app_ref = d.app_ref AND c.product_ref = d.product_ref WHERE c.app_ref IS NULL",
-  ).all() as { appRef: string; productRef: string; manufacturer: number }[];
+    "SELECT d.app_ref AS appRef, d.product_ref AS productRef, d.manufacturer, MIN(d.has_application) AS hasApplication FROM devices d LEFT JOIN catalog_products c ON c.app_ref = d.app_ref AND c.product_ref = d.product_ref WHERE c.app_ref IS NULL GROUP BY d.app_ref, d.product_ref, d.manufacturer",
+  ).all() as { appRef: string; productRef: string; manufacturer: number; hasApplication: number }[];
   // One parse per program (several products can share one, and a program can be tens of MB). A program
   // whose XML does not parse names nothing here; the picker then shows the product id, and the list of
   // every other product stays available.
@@ -110,6 +111,12 @@ export function backfillCatalogFromDevices(db: Database): number {
   let n = 0;
   db.transaction(() => {
     for (const r of rows) {
+      if (r.hasApplication === 0) {
+        n += db.prepare(
+          "INSERT OR IGNORE INTO catalog_products (app_ref, product_ref, app_program_id, manufacturer, name, order_number, hw_version, has_application) VALUES (?, ?, '', ?, '', '', '', 0)",
+        ).run(r.appRef, r.productRef, r.manufacturer).changes;
+        continue;
+      }
       const id = appProgramId(r.appRef);
       if (!stored.has(id)) continue; // not placeable without its program XML
       n += db.prepare(
@@ -136,6 +143,11 @@ export function gcAppPrograms(db: Database): number {
   // alongside the program (keeps the "every catalog product is placeable" invariant).
   const delProd = db.prepare("DELETE FROM catalog_products WHERE app_program_id = ?");
   let n = 0;
-  db.transaction(() => { for (const { id } of ids) if (!live.has(id)) { del.run(id); delProd.run(id); n++; } })();
+  db.transaction(() => {
+    for (const { id } of ids) if (!live.has(id)) { del.run(id); delProd.run(id); n++; }
+    // A product without an application program has no program to collect: its row goes once no
+    // device uses it, unless it was pinned.
+    n += db.prepare("DELETE FROM catalog_products WHERE has_application = 0 AND pinned = 0 AND NOT EXISTS (SELECT 1 FROM devices d WHERE d.app_ref = catalog_products.app_ref AND d.product_ref = catalog_products.product_ref)").run().changes;
+  })();
   return n;
 }

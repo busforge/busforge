@@ -163,3 +163,11 @@ export function maskInfo(mask: string): MaskInfo {
 export function isMemoryMappedLsm(mask: string): boolean {
   return maskInfo(mask).propertyMappedLsms === false;
 }
+
+// How a device of this mask leaves programming mode once its individual address is assigned. System 1
+// (BCU1) has no device object to take PID_PROGMODE, and ETS ends the mode there with A_Restart after
+// reading the descriptor at the new address (private corpus internal/captures/hager-th001). Every
+// other family takes PID_PROGMODE 0.
+export function progModeEndFor(mask: string): "property" | "restart" {
+  return maskInfo(mask).family === "system-1" ? "restart" : "property";
+}

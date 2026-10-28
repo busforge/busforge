@@ -4,13 +4,15 @@ import { buildDeviceConfig, editComObjOverride, type ComObjFlags, type ComObjOve
 import { addDevice, setDeviceAddress, renameDevice, projectExists, getGaMeta } from "../db/projects.ts";
 import { getAppProgram, getCatalogProduct } from "../db/catalog.ts";
 import { getDeviceBaggage, projectHasBaggage } from "../db/baggage.ts";
-import { getDeviceParams, setDeviceParam, deleteDeviceParam, getDeviceModules, setDeviceLink, getDeviceForFlash, getDeviceLinks, replaceDeviceProduct, revertDevice, revertDeviceParam, revertDeviceLink, getDeviceComObjOverrides, getDeviceComObjOverrideBase, setDeviceComObjOverride, revertDeviceComObjFlags } from "../db/deviceparams.ts";
+import { getDeviceParams, setDeviceParam, deleteDeviceParam, getDeviceModules, setDeviceLink, getDeviceForFlash, deviceHasApplication, getDeviceLinks, replaceDeviceProduct, revertDevice, revertDeviceParam, revertDeviceLink, getDeviceComObjOverrides, getDeviceComObjOverrideBase, setDeviceComObjOverride, revertDeviceComObjFlags } from "../db/deviceparams.ts";
 import { appProgramId } from "@busforge/project";
-import { buildDeviceView, loadApp, loadCatalogApp, mapLinksForReplace, resolveParamForEdit, deviceComObjFlags, type ReplaceMappingEntry } from "../deviceservice.ts";
+import { buildDeviceView, missingApplication, loadApp, loadCatalogApp, mapLinksForReplace, resolveParamForEdit, deviceComObjFlags, type ReplaceMappingEntry } from "../deviceservice.ts";
 import { fullRef, stripRef } from "../refids.ts";
 import { json, err, text } from "../httputil.ts";
 import type { AppState } from "../app.ts";
 import { applyLinkSecurity } from "../db/gaSecurity.ts";
+
+const CONFIG_EDITS = new Set(["params", "links", "comobject-flags", "revert-comobject-flags", "revert", "revert-param", "revert-link"]);
 
 // Device placement + configuration editing: config view, DCA baggage, parameter
 // and link edits, and the revert endpoints.
@@ -25,7 +27,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     if (!body.appRef || !body.productRef) return err("DEVICE_FIELDS_REQUIRED", "appRef and productRef required");
     const product = getCatalogProduct(db, body.appRef, body.productRef);
     if (!product) return err("CATALOG_PRODUCT_NOT_FOUND", "product not in catalog", 404);
-    if (!getAppProgram(db, product.appProgramId)) return err("APP_PROGRAM_MISSING", "application program not in catalog", 404);
+    if (product.hasApplication && !getAppProgram(db, product.appProgramId)) return err("APP_PROGRAM_MISSING", "application program not in catalog", 404);
     const device = addDevice(db, id, product, text(body.name));
     return json(device, 201);
   }
@@ -51,6 +53,11 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const ia = text(body.ia);
     if (!ia) return err("IA_REQUIRED", "an individual address is required");
     return json(setDeviceAddress(db, id, decodeURIComponent(seg[4]), ia));
+  }
+
+  // A device whose product carries no application program has no configuration to edit or revert.
+  if (seg.length === 6 && seg[3] === "devices" && CONFIG_EDITS.has(seg[5]) && !deviceHasApplication(db, id, decodeURIComponent(seg[4]))) {
+    throw missingApplication(db, id, decodeURIComponent(seg[4]));
   }
 
   if (seg.length === 6 && seg[3] === "devices" && seg[5] === "config" && req.method === "GET") {
@@ -185,6 +192,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     }
     const product = getCatalogProduct(db, body.appRef, body.productRef);
     if (!product) return err("CATALOG_PRODUCT_NOT_FOUND", "product not in catalog", 404);
+    if (!product.hasApplication) return err("DEVICE_WITHOUT_APPLICATION", "the product carries no application program; replacing a device with it is not supported, place it as a new device", 409);
     const newApp = loadCatalogApp(state, product.appProgramId);
     if (!newApp) return err("APP_PROGRAM_MISSING", "application program not in catalog", 404);
     const newLinks = mapLinksForReplace(

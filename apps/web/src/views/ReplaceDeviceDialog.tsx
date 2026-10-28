@@ -63,10 +63,12 @@ export function ReplaceDeviceDialog({ open, onOpenChange, projectId, device, vie
   const links = useMemo(() => currentLinks(view), [view]);
   const gaByRaw = useMemo(() => new Map(gaOptions.map((o) => [o.raw, o])), [gaOptions]);
 
+  // A product without an application program has no objects to map the links onto; the server refuses it.
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    if (!needle) return catalog;
-    return catalog.filter((p) => `${p.name} ${p.orderNumber} ${manuf(p.manufacturer)}`.toLowerCase().includes(needle));
+    const replaceable = catalog.filter((p) => p.hasApplication);
+    if (!needle) return replaceable;
+    return replaceable.filter((p) => `${p.name} ${p.orderNumber} ${manuf(p.manufacturer)}`.toLowerCase().includes(needle));
   }, [catalog, q]);
 
   const reset = () => { setQ(""); setProduct(null); setMapping({}); replaceProduct.reset(); };

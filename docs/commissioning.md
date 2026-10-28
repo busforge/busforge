@@ -33,7 +33,11 @@ So the write never runs blind:
 4. verify         ask AGAIN who is in programming mode: it must be exactly one device, it must
                   now answer FROM the new address, and be reachable there for management
                   -> anything else => refuse (IA_WRITE_UNVERIFIED), naming where the device still is
-5. prog-mode off  write PID_PROGMODE = 0, so the device does not also answer the NEXT assignment
+5. prog-mode off  so the device does not also answer the NEXT assignment, on the route its mask
+                  (from the descriptor read at the new address) takes:
+                  -> System 1 (BCU1, no device object): A_Restart, as ETS sends it there
+                  -> every other family: write PID_PROGMODE = 0
+                  -> then ask who is in programming mode: nobody, or progModeCleared is false
 ```
 
 An address counts as free when nothing answers there: silence, or, from an interface that
@@ -103,6 +107,16 @@ curl -s -XPOST $P/devices/<device-id>/assign-ia
 `15.15.255`). `progModeCleared` says whether programming mode could be switched back off, and
 `progModeError` says why not. If it is `false`, the address is still assigned and verified,
 but the device will answer the next assignment too, so switch it off by hand.
+
+### A product without an application program
+
+Some products carry no application program at all: their Hardware2Program names none (the Hager
+TH001 RS 232 interface, a System 1 unit). ETS places them like any product, shows nothing to load but
+the address and programs the address only. Busforge does the same: the device imports without an
+import gap, the catalogue offers the product for placing, the device page says there is nothing but
+the address, and commissioning assigns the address and stops there. A verified assignment marks such a
+device programmed, as ETS's `IndividualAddressLoaded` is all ETS records for it. Every operation on an
+application (configuration, read-back, flash, download) refuses with `DEVICE_WITHOUT_APPLICATION`.
 
 ## The full download
 

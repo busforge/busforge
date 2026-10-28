@@ -28,11 +28,14 @@ export type EtsPart = (typeof ETS_PARTS)[number];
 export interface CatalogProduct {
   appRef: string;       // Hardware2Program Id == a device's Hardware2ProgramRefId
   productRef: string;   // Product Id == a device's ProductRefId
-  appProgramId: string; // appProgramId(appRef): the app_programs catalog key
+  appProgramId: string; // appProgramId(appRef): the app_programs catalog key; "" for a product without one
   manufacturer: number; // from the M-XXXX prefix
   name: string;         // product catalogue text
   orderNumber: string;  // manufacturer order number
   hwVersion: string;    // hardware VersionNumber
+  // False where the Hardware2Program names no ApplicationProgramRef: a product that takes an
+  // individual address and nothing else (the Hager TH001 RS 232 interface).
+  hasApplication: boolean;
 }
 
 // A device's stored parameter values, keyed by the application ParameterRef id.

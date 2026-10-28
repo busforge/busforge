@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { KnxDevice, KnxUsbTransport, PID, STATE, lsmState, SecureSession, iaToNum, assignIndividualAddress, readProgModeDevices, activateSecureDevice, readSecurityMode, type SecurityModeReading, type AssignIaResult, type ActivationResult } from "@busforge/knx";
 import {
-  classify, parseAppConfig, sameMask, planForMask, resolveModuleInstances, type ComObjectLink, type ComObjInstanceOverride, programIdStamp, maskInfo, isMemoryMappedLsm,
+  classify, parseAppConfig, sameMask, planForMask, resolveModuleInstances, type ComObjectLink, type ComObjInstanceOverride, programIdStamp, maskInfo, isMemoryMappedLsm, progModeEndFor,
   buildDeviceConfig, deviceComObjOverrideRows, placeComObjOverrides, type AppConfig,
   type FlashResult, type DeviceReadback, type ParamFlashCtx, type GaFlashCtx, type FullDownloadCtx, type StructureFlashCtx, type ReadStateCtx,
   type PersistBackups, type ProgressFn, type ConstantDifference,
@@ -455,8 +455,9 @@ export async function activateDevice(
 // usable address yet, so there is no address to open a session to and no mask gate to pass.
 // It therefore drives the raw transport. All the safety lives in assignIndividualAddress
 // (@busforge/knx): exactly one device in programming mode, the target address must be free,
-// and the result is proven by talking to the device on its new address. Hardware-verified on a
-// virgin device through this endpoint (docs/status.md).
+// and the result is proven by talking to the device on its new address. Programming mode ends on
+// the route the device's mask takes (progModeEndFor). Hardware-verified on a virgin device through
+// this endpoint (docs/status.md).
 export async function assignDeviceAddress(
   connection: Connection, ia: string, onProgress?: ProgressFn,
 ): Promise<AssignIaResult> {
@@ -464,7 +465,7 @@ export async function assignDeviceAddress(
   onProgress?.("connect");
   await tun.connect();
   try {
-    return await assignIndividualAddress(tun, ia, { onProgress: (phase) => onProgress?.(phase) });
+    return await assignIndividualAddress(tun, ia, { onProgress: (phase) => onProgress?.(phase), progModeEnd: progModeEndFor });
   } finally {
     await tun.disconnect();
   }

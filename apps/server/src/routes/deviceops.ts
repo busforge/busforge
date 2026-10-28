@@ -4,7 +4,7 @@ import type { Database } from "bun:sqlite";
 import type { Connection } from "../db/connections.ts";
 import { isConnectionReady } from "../transport.ts";
 import { createSnapshot, listSnapshots } from "../db/snapshots.ts";
-import { getDeviceLinks, getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps, keepLinkBaseOnly, clearNeverProgrammed, getDeviceKnxIp, getImageStamps, setImageStamps, setDeviceParam, deleteDeviceParam, getDeviceComObjOverrides, getDeviceComObjOverrideBase, resetComObjOverrideBase, markParamAssumed, clearParamAssumed, getMemorylessAssumed, addMemorylessAssumed } from "../db/deviceparams.ts";
+import { getDeviceLinks, getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, deviceHasApplication, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps, keepLinkBaseOnly, clearNeverProgrammed, getDeviceKnxIp, getImageStamps, setImageStamps, setDeviceParam, deleteDeviceParam, getDeviceComObjOverrides, getDeviceComObjOverrideBase, resetComObjOverrideBase, markParamAssumed, clearParamAssumed, getMemorylessAssumed, addMemorylessAssumed } from "../db/deviceparams.ts";
 import { acknowledgeUntested } from "../db/untestedAcks.ts";
 import { getDeviceSecurity, putDeviceSecurity, setDeviceSequence, setToolKeySource } from "../db/deviceSecurity.ts";
 import { getDeviceCertificate, putDeviceCertificate } from "../db/deviceCertificates.ts";
@@ -12,7 +12,7 @@ import { getGroupKeys } from "../db/groupKeys.ts";
 import { sendersByGroup, nextSendSequence } from "../db/groupSenders.ts";
 import { decodeCertificate, groupValueRead, secureEncode, SCF, SECURE_APDU_OVERHEAD, numToIa, numToGa, toolSequenceNow } from "@busforge/knx";
 import { flashDeviceParameters, flashDeviceGroupAddresses, flashDeviceStructure, downloadDeviceFull, secureTablesUnsupported, readDeviceState, secureIdentify, activateDevice, classify, assignDeviceAddress, readDevicesInProgMode, type FlashResult } from "../deviceprofile.ts";
-import { untestedStatus, loadApp, resolveAppXml, resolveDeviceLinks, resolveComObjOverrides, resolveComObjOverrideBase, changedComObjNumbers, deviceConfigRefs, readbackLinkBase, unwrittenParamRefs, paramValueSame, lookupAppXml, secureCredsFor, securityTablesWithFingerprint, setSecurityBase } from "../deviceservice.ts";
+import { untestedStatus, missingApplication, loadApp, resolveAppXml, resolveDeviceLinks, resolveComObjOverrides, resolveComObjOverrideBase, changedComObjNumbers, deviceConfigRefs, readbackLinkBase, unwrittenParamRefs, paramValueSame, lookupAppXml, secureCredsFor, securityTablesWithFingerprint, setSecurityBase } from "../deviceservice.ts";
 import { ApiError } from "../errors.ts";
 import { runCollection } from "../collect.ts";
 import { CancelledError, type CommitFn, type ProgressFn, type TaskMeta } from "../taskqueue.ts";
@@ -92,7 +92,7 @@ function busOpPreamble(state: AppState, projectId: string, deviceId: string): { 
   const conn = getProjectConnection(state.db, projectId);
   if (!isConnectionReady(conn)) throw new ApiError("INTERFACE_NOT_SET", "configure a bus connection first");
   const appXml = resolveAppXml(state, projectId, dev.appRef);
-  if (!appXml) throw new ApiError("APP_PROGRAM_MISSING", "application program not found in project", 404);
+  if (!appXml) throw missingApplication(state.db, projectId, deviceId);
   return { dev, conn, appXml };
 }
 
@@ -161,7 +161,10 @@ function refuseUnacknowledgedUntested(state: AppState, meta: Omit<TaskMeta, "wri
   const op = WRITE_OPERATION[meta.kind];
   if (!op) throw new ApiError("INTERNAL", `no matrix operation for a ${meta.kind} write`, 500);
   const status = untestedStatus(state, meta.projectId, meta.deviceId, op);
-  if (!status) throw new ApiError("APP_PROGRAM_MISSING", "the device's product or application program is unknown, so whether it is tested cannot be told", 404);
+  if (!status) {
+    if (!deviceHasApplication(state.db, meta.projectId, meta.deviceId)) throw missingApplication(state.db, meta.projectId, meta.deviceId);
+    throw new ApiError("APP_PROGRAM_MISSING", "the device's product or application program is unknown, so whether it is tested cannot be told", 404);
+  }
   if (!status.acknowledged) {
     throw new ApiError("PRODUCT_UNTESTED", `${status.productRef} running ${status.appProgramId} is ${status.state} for ${op}, not tested on hardware; acknowledge it for this project first`, 409);
   }
@@ -314,7 +317,12 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const task = state.queue.submit(
       { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "assign-ia", writes: true },
       async (progress) => {
-        return assignDeviceAddress(conn, dev.ia, progress);
+        const result = await assignDeviceAddress(conn, dev.ia, progress);
+        // The address is everything a product without an application program takes, as ETS's
+        // IndividualAddressLoaded is everything it records for one.
+        // Only while the project still holds the address that was assigned.
+        if (result.verified && !deviceHasApplication(db, id, deviceId) && getDeviceForFlash(db, id, deviceId)?.ia === result.assigned) clearNeverProgrammed(db, id, deviceId);
+        return result;
       },
     );
     return json(task, 202);

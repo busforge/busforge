@@ -24,7 +24,9 @@ export type {
 // that were edited after its download, as the imported project recorded them.
 export type EtsPart = "address" | "medium" | "parameters" | "links";
 export interface DeviceChanges { params: number; links: number; flags?: number; neverProgrammed: boolean; etsNotDownloaded?: EtsPart[]; security?: "changed" | "unknown" }
-export interface Device { id: string; ia: string; name: string; productRef: string; appRef: string; manufacturer: number; comment?: string; searchText?: string; changes?: DeviceChanges; secure?: boolean; }
+// hasApplication: false where the device's product carries no application program, so only its
+// individual address is programmed.
+export interface Device { id: string; ia: string; name: string; productRef: string; appRef: string; manufacturer: number; comment?: string; searchText?: string; changes?: DeviceChanges; secure?: boolean; hasApplication?: boolean; }
 // security: the address's Data Secure mode, as ETS's "Automatisch" / "Erzwungen an" / "Erzwungen aus".
 export type GroupAddressSecurity = "auto" | "on" | "off";
 export interface GroupAddress { address: string; raw: number; name: string; dpt: string; security: GroupAddressSecurity; }
@@ -54,7 +56,8 @@ export interface ImportResult { id: string; name: string; deviceCount: number; g
 // .knxproj (the UI falls back to the picked file's last-modified date).
 export interface AnalyzeResult { kind: "knxproj" | "busforge"; name: string; deviceCount: number; gaCount: number; snapshotCount: number; buildingCount: number; floorCount: number; roomCount: number; modifiedAt: number | null; devicesWithoutProgram?: ImportGap[]; unresolvedLinks?: number; malformedDevices?: number; unresolvedSenders?: number; secureDevicesWithoutSerial?: number; baggageUnreadable?: boolean; }
 // A placeable catalog product (the device picker's list for blank projects).
-export interface CatalogProduct { appRef: string; productRef: string; appProgramId: string; manufacturer: number; name: string; orderNumber: string; hwVersion: string; }
+// hasApplication: false for a product that carries no application program (appProgramId is then "").
+export interface CatalogProduct { appRef: string; productRef: string; appProgramId: string; manufacturer: number; name: string; orderNumber: string; hwVersion: string; hasApplication: boolean; }
 // One com-object of an application program's COMPLETE declaration (not gated by
 // parameter visibility), for the replace-product link mapping. Mirrors the
 // server's ComObjUniverseEntry (@busforge/product comObjectUniverse).

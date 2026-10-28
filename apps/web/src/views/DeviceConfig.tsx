@@ -136,7 +136,10 @@ export function DeviceConfig() {
   const device = project?.devices.find((d) => d.id === deviceId);
   const gaOptions = useMemo(() => { const o: GaOption[] = []; if (project) flattenGas(project.groupRanges, o); return o; }, [project]);
 
-  const { data: view, isLoading, error } = useDeviceConfig(projectId, deviceId);
+  // A product without an application program takes its individual address and nothing else: it has no
+  // configuration to show, read or flash.
+  const addressOnly = device?.hasApplication === false;
+  const { data: view, isLoading, error } = useDeviceConfig(projectId, deviceId, !!project && !addressOnly);
   const { setParam, setLink, setFlags, revertFlags, revert, revertParam, revertLink, readBack } = useDeviceEdit(projectId, deviceId);
   const saving = setParam.isPending || setLink.isPending || setFlags.isPending || revertFlags.isPending || revert.isPending || revertParam.isPending || revertLink.isPending;
   // Which targets the flash dialog is open for (null = closed). One "Flashen" button
@@ -651,7 +654,7 @@ export function DeviceConfig() {
               </div>
             )}
             {actionBtn("device.revert", <RotateCcw className="size-4" />, () => setRevertOpen(true), { ghost: true, disabled: !hasChanges || saving, testId: "revert-device" })}
-            {actionBtn("device.readFromDevice", readBack.isPending ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />, doReadBack, { disabled: readBack.isPending || saving || (!!view?.readbackSupport && !view.readbackSupport.params && !view.readbackSupport.links), testId: "read-back" })}
+            {actionBtn("device.readFromDevice", readBack.isPending ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />, doReadBack, { disabled: addressOnly || readBack.isPending || saving || (!!view?.readbackSupport && !view.readbackSupport.params && !view.readbackSupport.links), testId: "read-back" })}
             {/* Read-only, so offered for every device, also one Busforge cannot program or has no application for. */}
             {actionBtn("diagnostic.open", <Stethoscope className="size-4" />, () => setDiagnosticOpen(true), { disabled: !device, testId: "diagnostic-open" })}
             <DropdownMenu>
@@ -802,8 +805,13 @@ export function DeviceConfig() {
       {read && device?.changes?.neverProgrammed && <NeverProgrammedKeptNote reasons={read.neverProgrammedKept} ets={!!device.changes.etsNotDownloaded?.length} />}
       <UnprovenAssumptionsNote params={assumedNow} hidden={view?.assumedHidden} />
 
-      {isLoading && <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" /> {t("device.loadingConfig")}</div>}
-      {error && <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{errMsg(t, error)}</p>}
+      {addressOnly && (
+        <Card data-testid="device-address-only"><CardContent className="text-sm text-muted-foreground">
+          {t("device.addressOnly")}
+        </CardContent></Card>
+      )}
+      {(isLoading || !project) && <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" /> {t("device.loadingConfig")}</div>}
+      {error && !addressOnly && <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{errMsg(t, error)}</p>}
       {view && !isLoading && view.blocks.length === 0 && !error && (
         <Card><CardContent className="text-sm text-muted-foreground">
           {t("device.noParams")}
