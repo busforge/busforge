@@ -166,6 +166,13 @@ The setup constraints of a USB interface behind the bridge
 carries the devices' serial numbers and the project's addresses, so it belongs in the corpus, not
 in the repository.
 
+**Every ETS session that touches a device is kept, not only the one the work was about.** An address
+assignment, a device info read or a test of the interface taken on the way to a download answers a
+later question no one has asked yet, and an ETS run is expensive to repeat (hardware, a button press, a
+unit in service). So each one goes into the corpus with everything that explains it: the proxy log,
+the ETS6.log lines of the same minutes, and the ETS project as exported right after (without a
+password), next to a short README naming the unit, the ETS action and what the frames show.
+
 ## Why the golden snapshot is not a correctness proof
 
 The golden file is generated from busforge's own output. It locks the output against accidental

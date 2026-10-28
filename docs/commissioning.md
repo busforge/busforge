@@ -34,7 +34,9 @@ So the write never runs blind:
                   now answer FROM the new address, and be reachable there for management
                   -> anything else => refuse (IA_WRITE_UNVERIFIED), naming where the device still is
 5. prog-mode off  so the device does not also answer the NEXT assignment, on the route its mask
-                  (from the descriptor read at the new address) takes:
+                  (from the descriptor read at the new address; where the device shows none, as a
+                  Data Secure unit answers a plain read with FFFF, the mask of the project's
+                  application) takes:
                   -> System 1 (BCU1, no device object): A_Restart, as ETS sends it there
                   -> every other family: write PID_PROGMODE = 0
                   -> then ask who is in programming mode: nobody, or progModeCleared is false

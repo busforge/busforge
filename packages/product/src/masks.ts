@@ -167,7 +167,12 @@ export function isMemoryMappedLsm(mask: string): boolean {
 // How a device of this mask leaves programming mode once its individual address is assigned. System 1
 // (BCU1) has no device object to take PID_PROGMODE, and ETS ends the mode there with A_Restart after
 // reading the descriptor at the new address (private corpus internal/captures/hager-th001). Every
-// other family takes PID_PROGMODE 0.
-export function progModeEndFor(mask: string): "property" | "restart" {
-  return maskInfo(mask).family === "system-1" ? "restart" : "property";
+// other family takes PID_PROGMODE 0. `mask` is what the device reported on the bus; where it reported
+// none (a Data Secure unit answers a plain descriptor read with FFFF, a device that closed the connection
+// gives nothing), Busforge takes `projectMask`, the mask of the application the project holds for the
+// device. Any mask the device does report decides, registered or not.
+export function progModeEndFor(mask: string, projectMask?: string): "property" | "restart" {
+  const { hex } = maskInfo(mask);
+  const shown = hex !== 0 && hex !== 0xffff;
+  return maskInfo(shown ? mask : projectMask ?? mask).family === "system-1" ? "restart" : "property";
 }

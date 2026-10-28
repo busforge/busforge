@@ -76,4 +76,18 @@ describe("ending programming mode after an address assignment", () => {
   test("every other family, and an unknown or unreadable mask, takes PID_PROGMODE", () => {
     for (const m of ["MV-07B0", "MV-0705", "MV-0701", "MV-0020", "MV-9999", ""]) expect(progModeEndFor(m)).toBe("property");
   });
+
+  test("a mask the bus does not show falls back to the mask of the project's application", () => {
+    // A Data Secure unit answers a plain descriptor read with FFFF (the MDT IP Interface Secure, MV-0012).
+    expect(progModeEndFor("MV-FFFF", "MV-0012")).toBe("restart");
+    expect(progModeEndFor("", "MV-0012")).toBe("restart");
+    expect(progModeEndFor("MV-FFFF", "MV-07B0")).toBe("property");
+    expect(progModeEndFor("MV-FFFF")).toBe("property");
+  });
+
+  test("a mask the bus shows wins over the project's: the device in programming mode may be another one", () => {
+    expect(progModeEndFor("MV-07B0", "MV-0012")).toBe("property");
+    expect(progModeEndFor("MV-0012", "MV-07B0")).toBe("restart");
+    expect(progModeEndFor("MV-0999", "MV-0012")).toBe("property"); // reported, though not registered
+  });
 });

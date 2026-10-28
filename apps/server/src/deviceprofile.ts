@@ -458,14 +458,16 @@ export async function activateDevice(
 // and the result is proven by talking to the device on its new address. Programming mode ends on
 // the route the device's mask takes (progModeEndFor). Hardware-verified on a virgin device through
 // this endpoint (docs/status.md).
+// `projectMask`: the mask of the application the project holds for the device, for a device that does not
+// show its own on the bus.
 export async function assignDeviceAddress(
-  connection: Connection, ia: string, onProgress?: ProgressFn,
+  connection: Connection, ia: string, onProgress?: ProgressFn, projectMask?: string,
 ): Promise<AssignIaResult> {
   const tun = makeTransport(connection);
   onProgress?.("connect");
   await tun.connect();
   try {
-    return await assignIndividualAddress(tun, ia, { onProgress: (phase) => onProgress?.(phase), progModeEnd: progModeEndFor });
+    return await assignIndividualAddress(tun, ia, { onProgress: (phase) => onProgress?.(phase), progModeEnd: (mask) => progModeEndFor(mask, projectMask) });
   } finally {
     await tun.disconnect();
   }

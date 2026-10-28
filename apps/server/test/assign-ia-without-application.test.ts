@@ -1,5 +1,5 @@
 import { test, expect, describe, mock, afterAll } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { storeZip } from "../../../packages/project/test/ziputil.ts";
@@ -74,6 +74,29 @@ describe("assigning the address of a device without an application program", () 
       return { previous: "15.15.255", assigned: ia, verified: true, progModeCleared: true, progModeError: null };
     };
     expect(await assign(state, projectId)).toBe(true);
+  });
+
+  test("the assignment gets the mask of the project's application, none for a product without one", async () => {
+    const seen: (string | undefined)[] = [];
+    assignImpl = async (_c, ia, _p, projectMask) => { seen.push(projectMask); return { previous: ia, assigned: ia, verified: true, progModeCleared: true, progModeError: null }; };
+    const { state, projectId } = await setup();
+    await assign(state, projectId);
+    const form = new FormData();
+    form.set("file", new File([readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures", "sample-config.knxproj"))], "ConfigDemo.knxproj"));
+    form.set("password", "tester12");
+    const { id } = await (await handleApi(new Request("http://x/api/projects/import", { method: "POST", body: form }), state))!.json() as { id: string };
+    const conn = await (await handleApi(new Request("http://x/api/connections", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ type: "ip", name: "GW2", host: "198.51.100.11", port: 3671 }) }), state))!.json() as { id: string };
+    await handleApi(new Request(`http://x/api/projects/${id}/connection`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ connectionId: conn.id }) }), state);
+    const task = await (await handleApi(new Request(`http://x/api/projects/${id}/devices/P-CFG-0_DI-1/assign-ia`, { method: "POST" }), state))!.json() as { id: string };
+    await state.queue.wait(task.id);
+    expect(seen).toEqual([undefined, "MV-07B0"]);
+    // An application the configuration parser refuses still names its mask, and the assignment runs.
+    state.db.run("UPDATE app_programs SET xml = ? WHERE id = 'M-TEST_A-1'", [`<KNX><ManufacturerData><Manufacturer RefId="M-TEST"><ApplicationPrograms>
+      <ApplicationProgram Id="M-TEST_A-1" MaskVersion="MV-0012"><Static><Parameters><Parameter Id="p" ByteOrder="Weird"/></Parameters></Static></ApplicationProgram>
+    </ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`]);
+    const again = await (await handleApi(new Request(`http://x/api/projects/${id}/devices/P-CFG-0_DI-1/assign-ia`, { method: "POST" }), state))!.json() as { id: string };
+    await state.queue.wait(again.id);
+    expect(seen).toEqual([undefined, "MV-07B0", "MV-0012"]);
   });
 
   test("a failed assignment leaves it never programmed", async () => {

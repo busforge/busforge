@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { extractCatalogProducts, extractAppPrograms, appProgramId, appProgramName } from "../src/index.ts";
+import { extractCatalogProducts, extractAppPrograms, appProgramId, appProgramName, appProgramMask } from "../src/index.ts";
 import { storeZip } from "./ziputil.ts";
 
 const hardwareXml = `<?xml version="1.0" encoding="utf-8"?>
@@ -156,5 +156,16 @@ describe("appProgramName", () => {
     expect(appProgramName(doc(`<ApplicationProgram Id="M-0083_A-AAAA-1-0001" Name="Switch"/>`), "M-0083_A-BBBB-1-0001")).toBe("");
     expect(appProgramName(doc(`<ApplicationProgram Id="M-0083_A-AAAA-1-0001"/>`), "M-0083_A-AAAA-1-0001")).toBe("");
     expect(appProgramName("<ApplicationProgram/>", "M-0083_A-AAAA-1-0001")).toBe("");
+  });
+});
+
+describe("appProgramMask", () => {
+  test("reads the program's MaskVersion without parsing its content", () => {
+    // Content Busforge's configuration parser refuses (an unknown byte order) does not matter here.
+    const xml = `<KNX><ManufacturerData><Manufacturer RefId="M-X"><ApplicationPrograms>
+      <ApplicationProgram Id="M-X_A-1" MaskVersion="MV-0012"><Static><Parameters><Parameter Id="p" ByteOrder="Weird"/></Parameters></Static></ApplicationProgram>
+    </ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+    expect(appProgramMask(xml, "M-X_A-1")).toBe("MV-0012");
+    expect(appProgramMask(xml, "M-X_A-2")).toBe("");
   });
 });

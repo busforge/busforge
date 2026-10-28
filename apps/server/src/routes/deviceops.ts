@@ -6,6 +6,8 @@ import { isConnectionReady } from "../transport.ts";
 import { createSnapshot, listSnapshots } from "../db/snapshots.ts";
 import { getDeviceLinks, getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, deviceHasApplication, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps, keepLinkBaseOnly, clearNeverProgrammed, getDeviceKnxIp, getImageStamps, setImageStamps, setDeviceParam, deleteDeviceParam, getDeviceComObjOverrides, getDeviceComObjOverrideBase, resetComObjOverrideBase, markParamAssumed, clearParamAssumed, getMemorylessAssumed, addMemorylessAssumed } from "../db/deviceparams.ts";
 import { acknowledgeUntested } from "../db/untestedAcks.ts";
+import { getAppProgram } from "../db/catalog.ts";
+import { appProgramId, appProgramMask } from "@busforge/project";
 import { getDeviceSecurity, putDeviceSecurity, setDeviceSequence, setToolKeySource } from "../db/deviceSecurity.ts";
 import { getDeviceCertificate, putDeviceCertificate } from "../db/deviceCertificates.ts";
 import { getGroupKeys } from "../db/groupKeys.ts";
@@ -314,10 +316,13 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     if (!dev) return err("DEVICE_NOT_FOUND", "device not found", 404);
     const conn = getProjectConnection(db, id);
     if (!isConnectionReady(conn)) return err("INTERFACE_NOT_SET", "configure a bus connection first");
+    // The mask only, never a parse of the application: an assignment does not depend on its content.
+    const programXml = getAppProgram(db, appProgramId(dev.appRef));
+    const projectMask = programXml ? appProgramMask(programXml, appProgramId(dev.appRef)) || undefined : undefined;
     const task = state.queue.submit(
       { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "assign-ia", writes: true },
       async (progress) => {
-        const result = await assignDeviceAddress(conn, dev.ia, progress);
+        const result = await assignDeviceAddress(conn, dev.ia, progress, projectMask);
         // The address is everything a product without an application program takes, as ETS's
         // IndividualAddressLoaded is everything it records for one.
         // Only while the project still holds the address that was assigned.
