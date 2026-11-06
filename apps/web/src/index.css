@@ -10,6 +10,9 @@
 */
 :root {
   --radius: 0.5rem;
+  /* Width of the address column of a list row (IdentityPill `columns`); what wraps under the name
+     on a narrow window is indented by it and the column gap. */
+  --addr-col: 4.5rem;
 
   --background: oklch(0.16 0.012 248);
   --foreground: oklch(0.93 0.005 248);
@@ -121,6 +124,11 @@
 
   --font-sans: "Archivo", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+/* Scroll margin of a section heading: just below the sticky chrome (lib/stickyChrome.ts). */
+@utility scroll-mt-chrome {
+  scroll-margin-top: calc(var(--bar-h, 0px) + var(--page-header-h, 0px) + var(--section-nav-h, 0px) + 0.75rem);
 }
 
 @layer base {

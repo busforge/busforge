@@ -42,3 +42,9 @@ export function flashFooter(s: {
   const retry = s.anyError && !unloaded && !s.anyFlashing && !s.anyChecking && !s.downloadTaken && !s.blocked;
   return { flash, retry, unloaded };
 }
+
+// Every target of the dialog failed only because the project has no bus connection: one notice and
+// the way to set one up answer it, not a retry or a full download, which would fail the same way.
+export function missingInterface(errorCodes: readonly (string | undefined)[]): boolean {
+  return errorCodes.length > 0 && errorCodes.every((c) => c === "INTERFACE_NOT_SET");
+}

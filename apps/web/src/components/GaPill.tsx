@@ -20,12 +20,14 @@ import { Input } from "@/components/ui/input";
 // flag), by the flags each device gets. Each device links to its
 // configuration. Wraps GaLabel so the resting appearance is unchanged; used
 // wherever a GA is shown standalone (group list, bus monitor).
-export function GaPill({ projectId, raw, name, address, fallback, className, onEdit }: {
+export function GaPill({ projectId, raw, name, address, fallback, columns, className, onEdit }: {
   projectId: string;
   raw: number;
   name?: string;
   address: string;
   fallback?: string;
+  // A list row's address-first layout (IdentityPill `columns`).
+  columns?: boolean;
   className?: string;
   // When set, an edit pencil appears in the overlay's top-right; clicking it
   // closes the overlay and invokes this (the caller opens the GA edit dialog).
@@ -42,7 +44,7 @@ export function GaPill({ projectId, raw, name, address, fallback, className, onE
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button type="button" className={cn("min-w-0 max-w-full cursor-pointer rounded-md text-left outline-none transition-[filter] hover:brightness-125 focus-visible:ring-[3px] focus-visible:ring-ring/50", className)}>
-          <GaLabel name={name} address={address} fallback={fallback} className="min-w-0" />
+          <GaLabel name={name} address={address} fallback={fallback} columns={columns} className="min-w-0" />
         </button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-80 p-0">

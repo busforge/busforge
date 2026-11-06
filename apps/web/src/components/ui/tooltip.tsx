@@ -12,12 +12,49 @@ function TooltipProvider({
   )
 }
 
-function Tooltip({ ...props }: React.ComponentProps<typeof TooltipPrimitive.Root>) {
-  return <TooltipPrimitive.Root data-slot="tooltip" {...props} />
+// The open state of the surrounding Tooltip, for a trigger that opens it by tap (a touch screen has
+// no hover to open it).
+const TapState = React.createContext<{ open: boolean; set: (open: boolean) => void } | null>(null)
+
+function Tooltip({ open: openProp, onOpenChange, ...props }: React.ComponentProps<typeof TooltipPrimitive.Root>) {
+  const [own, setOwn] = React.useState(false)
+  const open = openProp ?? own
+  const set = (next: boolean) => {
+    if (openProp === undefined) setOwn(next)
+    onOpenChange?.(next)
+  }
+  return (
+    <TapState.Provider value={{ open, set }}>
+      <TooltipPrimitive.Root data-slot="tooltip" open={open} onOpenChange={set} {...props} />
+    </TapState.Provider>
+  )
 }
 
-function TooltipTrigger({ ...props }: React.ComponentProps<typeof TooltipPrimitive.Trigger>) {
-  return <TooltipPrimitive.Trigger data-slot="tooltip-trigger" {...props} />
+// `tapToOpen`: on a touch screen a tap opens and closes the tooltip. Only for a trigger whose sole
+// job is the tooltip (an info mark); an action button's tap stays its action.
+function TooltipTrigger({ tapToOpen = false, onPointerDown, onClick, ...props }: React.ComponentProps<typeof TooltipPrimitive.Trigger> & { tapToOpen?: boolean }) {
+  const tap = React.useContext(TapState)
+  // Radix closes an open tooltip on the trigger's pointerdown, before the click: the click toggles
+  // from the state the tap started in.
+  const openAtPress = React.useRef(false)
+  const coarse = () => window.matchMedia("(pointer: coarse)").matches
+  return (
+    <TooltipPrimitive.Trigger
+      data-slot="tooltip-trigger"
+      onPointerDown={(e) => {
+        openAtPress.current = !!tap?.open
+        onPointerDown?.(e)
+      }}
+      onClick={(e) => {
+        onClick?.(e)
+        if (!tapToOpen || !tap || e.defaultPrevented || !coarse()) return
+        // Radix also closes the tooltip on a click of its trigger unless the click is prevented.
+        e.preventDefault()
+        tap.set(!openAtPress.current)
+      }}
+      {...props}
+    />
+  )
 }
 
 function TooltipContent({

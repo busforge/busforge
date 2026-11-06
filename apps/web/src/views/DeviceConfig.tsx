@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, ChevronDown, ChevronLeft, Cpu, Download, Info, KeyRound, Loader2, MapPin, MessageSquareWarning, MoreVertical, Puzzle, RadioTower, Repeat2, RotateCcw, Search, ShieldCheck, Stethoscope, X } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronLeft, ChevronsUpDown, Cpu, HardDriveDownload, Info, KeyRound, Loader2, MapPin, MessageSquareWarning, MoreVertical, Puzzle, RadioTower, Repeat2, RotateCcw, Search, ShieldCheck, Stethoscope, X } from "lucide-react";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -13,6 +13,10 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { IconButton } from "@/components/ui/icon-button";
 import { Card, CardContent } from "@/components/ui/card";
+import { SectionNav } from "@/components/SectionNav.tsx";
+import { BreakableText } from "@/components/BreakableText.tsx";
+import { useStickyVar } from "@/lib/stickyChrome.ts";
+import { useScrollSpy } from "@/lib/scrollSpy.ts";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -30,23 +34,18 @@ import { DiagnosticDialog } from "./DiagnosticDialog.tsx";
 import { ReportDialog } from "./ReportDialog.tsx";
 import { AddressDialog } from "./AddressDialog.tsx";
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { type GaOption } from "./GaCombobox.tsx";
 import { LinkEditor } from "./LinkEditor.tsx";
 import { FlagEditor } from "./FlagEditor.tsx";
 import { AssumeValuesPanel, NeverProgrammedKeptNote, UnprovenAssumptionsNote, UnresolvedNotes, assumeCandidates, assumeList, assumeReducer, assumedParams, initialAssumeState } from "./AssumeValues.tsx";
 import { addedLinks } from "@/lib/links.ts";
-import { DeviceLabel } from "@/components/DeviceLabel.tsx";
 import { HeaderWarning } from "@/components/HeaderWarning.tsx";
 import { DcaModuleDialog } from "../dca/DcaModuleDialog.tsx";
 import { cn } from "@/lib/utils";
 import { errMsg } from "../lib/apiError.ts";
 import { ApiError } from "../api.ts";
-
-// Shared width of the right-hand control column, so parameter inputs and the
-// group-address picker line up and none of them get cut off.
-const CONTROL_W = "w-full sm:w-72";
 
 function flattenGas(ranges: GroupRangeNode[], out: GaOption[]) {
   for (const r of ranges) { for (const g of r.addresses) out.push({ raw: g.raw, address: g.address, name: g.name }); flattenGas(r.children, out); }
@@ -287,13 +286,19 @@ export function DeviceConfig() {
     void qc.invalidateQueries({ queryKey: qk.snapshots(projectId) }); // a real flash captures an auto restore point
   };
 
-  // Section index. Only top-level group headers are tracked/scroll targets (one
-  // per channel/area), so the index stays short and the scroll-spy reliable even
-  // on devices with hundreds of rows.
-  const cardRefs = useRef<Map<string, HTMLElement>>(new Map());
+  const headerRef = useRef<HTMLElement>(null);
+  useStickyVar([headerRef], "--page-header-h");
+  // Whether the device header is on screen; once it has scrolled away (narrow windows, where it is
+  // not pinned) the pinned section jump names the device instead.
+  const [headerInView, setHeaderInView] = useState(true);
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(([e]) => setHeaderInView(e.isIntersecting));
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [activeSec, setActiveSec] = useState<string | null>(null);
-  const scrollToSec = (id: string) => cardRefs.current.get(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
 
   // Fold the flat block list into top-level groups: a level-0 block heads a
   // group, the sub-blocks that follow (level >= 1) become its sub-sections. This
@@ -373,39 +378,29 @@ export function DeviceConfig() {
     return { types: [...types.entries()], elements: [...elements.entries()] };
   }, [view]);
 
-  // Scroll-spy: the active group is the last whose header sits above a small top
-  // offset. Deterministic (always exactly one), so no flicker between sections.
-  useEffect(() => {
-    if (!view) return;
-    let raf = 0;
-    const update = () => {
-      raf = 0;
-      let active: string | null = null;
-      let bestTop = -Infinity;
-      cardRefs.current.forEach((el, id) => {
-        const top = el.getBoundingClientRect().top;
-        if (top <= 96 && top > bestTop) { bestTop = top; active = id; }
-      });
-      if (!active && filteredGroups[0]) active = `sec-${filteredGroups[0].head.id}`;
-      setActiveSec(active);
-    };
-    const onScroll = () => { if (!raf) raf = requestAnimationFrame(update); };
-    update();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => { window.removeEventListener("scroll", onScroll); if (raf) cancelAnimationFrame(raf); };
-  }, [view, filteredGroups]);
+  // Section index. Only top-level group headers are tracked/scroll targets (one
+  // per channel/area), so the index stays short and the scroll-spy reliable even
+  // on devices with hundreds of rows.
+  const { active: activeSec, registerRef, jump: scrollToSec } = useScrollSpy(filteredGroups[0] ? `sec-${filteredGroups[0].head.id}` : null, filteredGroups);
 
+  const secondary = [
+    { key: "device.revert", icon: <RotateCcw className="size-4" />, onClick: () => setRevertOpen(true), opts: { ghost: true, disabled: !hasChanges || saving, testId: "revert-device" } },
+    { key: "device.readFromDevice", icon: readBack.isPending ? <Loader2 className="size-4 animate-spin" /> : <HardDriveDownload className="size-4" />, onClick: doReadBack, opts: { disabled: addressOnly || readBack.isPending || saving || (!!view?.readbackSupport && !view.readbackSupport.params && !view.readbackSupport.links), testId: "read-back" } },
+    // Read-only, so offered for every device, also one Busforge cannot program or has no application for.
+    { key: "diagnostic.open", icon: <Stethoscope className="size-4" />, onClick: () => setDiagnosticOpen(true), opts: { disabled: !device, testId: "diagnostic-open" } },
+  ];
+  // The header's secondary actions: icon buttons with a mouse (their tooltip names them); on a touch
+  // screen, which shows no tooltip, the same actions are labelled items of the device menu.
   const actionBtn = (key: string, icon: ReactNode, onClick: () => void, opts?: { ghost?: boolean; disabled?: boolean; testId?: string }) => (
     <IconButton
       variant={opts?.ghost ? "ghost" : "outline"} label={t(key)}
-      className={cn(opts?.ghost && "text-muted-foreground")}
+      className={cn(opts?.ghost && "text-muted-foreground", "pointer-coarse:hidden xl:w-auto xl:px-3")} tooltipClassName="xl:hidden"
       disabled={opts?.disabled} onClick={onClick} data-testid={opts?.testId}
     >
-      {icon}
+      {icon}<span className="hidden xl:inline">{t(key)}</span>
     </IconButton>
   );
 
-  const registerRef = (id: string) => (el: HTMLElement | null) => { if (el) cardRefs.current.set(id, el); else cardRefs.current.delete(id); };
 
   // `compact` renders an item as a GRID CELL: no full-width row, no repeated label
   // (in an ETS grid the author labels the cells with separators, in a table with the
@@ -459,21 +454,26 @@ export function DeviceConfig() {
         <div
           key={key}
           className={cn(
-            "flex flex-col gap-1 border-l-2 py-1.5 pl-3 text-sm sm:flex-row sm:items-center sm:justify-between sm:gap-4",
+            "flex flex-col gap-1 border-l-2 py-1.5 pl-3 text-sm sm:flex-row sm:items-center sm:justify-between sm:gap-4 pointer-fine:py-1",
             co.changed || co.flagsChanged ? "border-primary bg-primary/5" : "border-transparent",
           )}
         >
           <span className="flex min-w-0 items-center gap-2 sm:flex-1">
-            {co.changed || co.flagsChanged ? <ChangedDot title={t("device.changedDot")} /> : null}
-            <span className="min-w-0">{comObjLabel(co)}</span>
+            {/* The object number, as ETS lists it: objects of one channel often share their text. */}
+            {/* The changed dot sits in the number column, so the texts of all rows stay aligned. */}
+            <span className="flex w-8 shrink-0 items-center justify-between gap-1 font-mono text-xs tabular-nums text-muted-foreground sm:w-10" data-testid={`co-number-${co.number}`}>
+              {co.changed || co.flagsChanged ? <ChangedDot title={t("device.changedDot")} /> : <span />}
+              {co.number}
+            </span>
+            <span className="min-w-0"><BreakableText text={comObjLabel(co)} /></span>
             <Tooltip>
-              <TooltipTrigger asChild>
-                <button type="button" aria-label={info} className="shrink-0 cursor-help rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"><Info className="size-3.5" /></button>
+              <TooltipTrigger asChild tapToOpen>
+                <button type="button" aria-label={info} className="shrink-0 cursor-help rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 pointer-coarse:grid pointer-coarse:size-11 pointer-coarse:place-items-center"><Info className="size-3.5" /></button>
               </TooltipTrigger>
               <TooltipContent className="whitespace-pre-line">{info}</TooltipContent>
             </Tooltip>
           </span>
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex min-w-0 items-center gap-2 pl-10 sm:shrink-0 sm:pl-0">
             {co.changed && <RevertButton title={t("device.revertRow")} disabled={saving} onClick={() => revertLink.mutate(co.refId, { onError })} />}
             {!view?.comObjFlagsRefused && (
               <FlagEditor
@@ -482,7 +482,7 @@ export function DeviceConfig() {
                 onRevert={() => revertFlags.mutate(co.refId, { onError })}
               />
             )}
-            <div className={cn("shrink-0", CONTROL_W)}><LinkEditor options={gaOptions} gaRaws={co.gaRaws ?? []} onChange={(next) => relink(co.refId, co.gaRaws ?? [], next)} disabled={saving} testId={`link-${co.number}`} levels={project?.groupAddressLevels ?? 3} /></div>
+            <div className="min-w-0 flex-1 sm:w-72 sm:flex-none"><LinkEditor options={gaOptions} gaRaws={co.gaRaws ?? []} onChange={(next) => relink(co.refId, co.gaRaws ?? [], next)} disabled={saving} testId={`link-${co.number}`} levels={project?.groupAddressLevels ?? 3} /></div>
           </div>
         </div>
       );
@@ -585,12 +585,17 @@ export function DeviceConfig() {
       {/* Two rows: who the device is and what state it is in; then what stands against it, the filter
           of its parameters, and what can be done with it, right-aligned as one group. Every mark in the
           first row has one height. */}
-      <header className="space-y-2" data-testid="device-header">
+      {/* Pinned below the project bar on wide windows, so the device, its state and its actions stay
+          in view while its parameters scroll. */}
+      <header ref={headerRef} className="space-y-2 lg:sticky lg:top-(--bar-h) lg:z-10 lg:-mx-2 lg:border-b lg:border-border/60 lg:bg-background/95 lg:px-2 lg:pt-2 lg:pb-3 lg:backdrop-blur" data-testid="device-header">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <IconButton asChild variant="ghost" size="icon-sm" label={t("device.back")} className="-ml-1 text-muted-foreground">
             <Link to="/projects/$projectId/devices" params={{ projectId }} search={{ q: search.q, changed: search.changed, b: search.b }}><ChevronLeft className="size-5" /></Link>
           </IconButton>
-          <DeviceLabel name={device?.name} ia={device?.ia ?? ""} className="h-6 min-w-0 font-semibold" />
+          <h1 className="mr-1 flex min-w-0 items-baseline gap-2" data-testid="device-title">
+            <span className={cn("truncate text-xl font-semibold tracking-tight sm:text-2xl", !device?.name && "text-muted-foreground")}>{device?.name || t("common.unnamed")}</span>
+            <span className="shrink-0 font-mono text-sm text-muted-foreground">{device?.ia}</span>
+          </h1>
           <ChangePill changes={device?.changes} size="md" targets={changeTargets} showProgrammed={!!device?.appRef} />
           <CompatibilityBadge view={view} manufacturer={device?.manufacturer} />
         </div>
@@ -629,12 +634,13 @@ export function DeviceConfig() {
               )}
             </div>
           )}
-          <div className="ml-auto flex flex-wrap items-center justify-end gap-2" data-testid="device-actions">
+          <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:ml-auto sm:w-auto" data-testid="device-actions">
             {flashTargetsAvail.length > 0 && (
-              <div className="flex">
+              // On a narrow window the flash, the page's one primary action, takes the free width.
+              <div className="flex flex-1 sm:flex-none">
                 <Button
                   onClick={() => setFlashTargets(flashTargetsAvail)} data-testid="program-device"
-                  className={cn("gap-1.5", flashTargetsAvail.length > 1 && "rounded-r-none")}
+                  className={cn("flex-1 gap-1.5 sm:flex-none", flashTargetsAvail.length > 1 && "rounded-r-none")}
                 >
                   <Cpu className="size-4" /> {t("device.flash")}
                 </Button>
@@ -653,10 +659,7 @@ export function DeviceConfig() {
                 )}
               </div>
             )}
-            {actionBtn("device.revert", <RotateCcw className="size-4" />, () => setRevertOpen(true), { ghost: true, disabled: !hasChanges || saving, testId: "revert-device" })}
-            {actionBtn("device.readFromDevice", readBack.isPending ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />, doReadBack, { disabled: addressOnly || readBack.isPending || saving || (!!view?.readbackSupport && !view.readbackSupport.params && !view.readbackSupport.links), testId: "read-back" })}
-            {/* Read-only, so offered for every device, also one Busforge cannot program or has no application for. */}
-            {actionBtn("diagnostic.open", <Stethoscope className="size-4" />, () => setDiagnosticOpen(true), { disabled: !device, testId: "diagnostic-open" })}
+            {secondary.map((a) => <span key={a.key} className="contents">{actionBtn(a.key, a.icon, a.onClick, a.opts)}</span>)}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" size="icon" aria-label={t("device.moreActions")} title={t("device.moreActions")} data-testid="device-menu">
@@ -664,6 +667,12 @@ export function DeviceConfig() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                {secondary.map((a) => (
+                  <DropdownMenuItem key={a.key} onClick={a.onClick} disabled={a.opts.disabled} className="hidden pointer-coarse:flex">
+                    {a.icon} {t(a.key)}
+                  </DropdownMenuItem>
+                ))}
+                <DropdownMenuSeparator className="hidden pointer-coarse:block" />
                 <DropdownMenuItem onClick={() => setAddressOpen(true)} disabled={!device} data-testid="change-address">
                   <MapPin className="size-4" /> {t("address.menu")}
                 </DropdownMenuItem>
@@ -825,52 +834,28 @@ export function DeviceConfig() {
           ) : (
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
           {navCount > 1 && (
-            <nav className="lg:sticky lg:top-28 lg:max-h-[calc(100vh-8rem)] lg:w-60 lg:shrink-0 lg:overflow-y-auto">
-              <ul className="flex gap-1 overflow-x-auto pb-1 lg:flex-col lg:overflow-x-visible lg:pb-0">
-                {filteredGroups.map((g) => {
-                  // Sidebar shows the group head plus its direct (level-1) blocks;
-                  // deeper sub-blocks are reached by scrolling. Active = neutral
-                  // fill + left bar; the amber dot is reserved for "has changes".
-                  const navBtn = (id: string, label: string, sub: boolean, changed: boolean) => {
-                    const active = activeSec === id;
-                    return (
-                      <button
-                        key={id} type="button" onClick={() => scrollToSec(id)}
-                        className={cn(
-                          "flex w-full items-center gap-2 whitespace-nowrap rounded-md border-l-2 py-1 pr-2 text-left text-sm transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 lg:truncate",
-                          sub ? "pl-5" : "pl-2",
-                          active ? "border-foreground/50 bg-secondary font-medium text-foreground"
-                            : sub ? "border-transparent text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
-                            : "border-transparent font-medium text-foreground/80 hover:bg-secondary/60 hover:text-foreground",
-                        )}
-                      >
-                        <span className="truncate">{label}</span>
-                        {changed && <span className="ml-auto size-1.5 shrink-0 rounded-full bg-primary" title={t("device.changedDot")} />}
-                      </button>
-                    );
-                  };
-                  return (
-                    <li key={g.head.id} className="lg:contents">
-                      {navBtn(`sec-${g.head.id}`, g.head.name || t("device.unnamedSection"), false, groupChanged(g))}
-                      {g.children.filter((c) => c.level === 1).map((c) =>
-                        navBtn(`sec-${c.id}`, c.name || t("device.unnamedSection"), true, c.items.some(isItemChanged)))}
-                    </li>
-                  );
-                })}
-              </ul>
-            </nav>
+            // The index shows each group head plus its direct (level-1) blocks; deeper sub-blocks are
+            // reached by scrolling. The amber dot is reserved for "has changes".
+            <SectionNav
+              label={t("device.jumpTo")} changedTitle={t("device.changedDot")} active={activeSec} onJump={scrollToSec}
+              context={device && !headerInView && <><span className="font-medium text-foreground">{device.name || t("common.unnamed")}</span> <span className="font-mono">{device.ia}</span></>}
+              entries={filteredGroups.flatMap((g) => [
+                { id: `sec-${g.head.id}`, label: g.head.name || t("device.unnamedSection"), changed: groupChanged(g) },
+                ...g.children.filter((c) => c.level === 1).map((c) => ({ id: `sec-${c.id}`, label: c.name || t("device.unnamedSection"), sub: true, changed: c.items.some(isItemChanged) })),
+              ])}
+            />
           )}
 
           <div ref={containerRef} className="min-w-0 flex-1 space-y-6">
             {filteredGroups.map((g) => (
               // Section heading sits ABOVE the card so each channel/group start is clear.
               <section key={g.head.id} className="space-y-2">
-                <h2 id={`sec-${g.head.id}`} ref={registerRef(`sec-${g.head.id}`)} className="flex scroll-mt-20 items-center gap-2 px-1 text-lg font-semibold text-foreground">
+                <h2 id={`sec-${g.head.id}`} ref={registerRef(`sec-${g.head.id}`)} className="flex scroll-mt-chrome items-center gap-2 px-1 text-lg font-semibold text-foreground">
                   <span className="min-w-0 truncate">{g.head.name || t("device.unnamedSection")}</span>
                   {groupChanged(g) && <span className="size-2 shrink-0 rounded-full bg-primary" title={t("device.changedDot")} />}
                 </h2>
-                <Card>
-                  <CardContent className="space-y-0.5 py-4">
+                <Card className="gap-0 py-0">
+                  <CardContent className="space-y-0.5 px-4 py-3 sm:px-6">
                   {g.head.items.length === 0 && g.children.length === 0 && (
                     <p className="text-sm text-muted-foreground">{t("device.emptySection")}</p>
                   )}
@@ -881,7 +866,7 @@ export function DeviceConfig() {
                       <section
                         key={child.id} id={`sec-${child.id}`}
                         ref={child.level === 1 ? registerRef(`sec-${child.id}`) : undefined}
-                        className={cn("scroll-mt-20 pt-3", deep && "pl-3")}
+                        className={cn("scroll-mt-chrome pt-3 first:pt-0", deep && "pl-3")}
                       >
                         {/* Channel sub-heading: the label followed by a hairline that fades out,
                             so each sub-block reads as its own section without a heavy left bar. */}
@@ -989,7 +974,8 @@ function ParamRow({ param, compact, changedTitle, revertTitle, reverting, onChan
       className={cn(
         compact
           ? "flex min-w-0 items-center gap-1.5 border-l-2 py-1 pl-1.5"
-          : "flex flex-col gap-1 border-l-2 py-1.5 pl-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4",
+          // Narrow: the label on its own line, then the revert next to the control.
+          : "flex flex-wrap items-center gap-x-2 gap-y-1 border-l-2 py-1.5 pl-3 sm:flex-nowrap sm:justify-between sm:gap-4 pointer-fine:py-1",
         param.changed ? "border-primary bg-primary/5" : "border-transparent",
       )}
     >
@@ -999,7 +985,7 @@ function ParamRow({ param, compact, changedTitle, revertTitle, reverting, onChan
           {param.assumed ? <AssumedBadge refId={param.refId} /> : null}
         </>
       ) : (
-        <span className="flex min-w-0 items-center gap-2 text-sm sm:flex-1">
+        <span className="flex min-w-0 basis-full items-center gap-2 text-sm sm:basis-auto sm:flex-1">
           {param.changed ? <ChangedDot title={changedTitle} /> : null}
           {/* pre-wrap (not pre-line) so an ETS author's leading-space faux-indent renders */}
           <span className="min-w-0 whitespace-pre-wrap">{param.name}</span>
@@ -1007,7 +993,7 @@ function ParamRow({ param, compact, changedTitle, revertTitle, reverting, onChan
         </span>
       )}
       {param.changed && <RevertButton title={revertTitle} disabled={reverting} onClick={onRevert} />}
-      <div className={cn("flex items-center gap-2", compact ? "min-w-0 flex-1" : cn("shrink-0", CONTROL_W))}>
+      <div className={cn("flex min-w-0 flex-1 items-center gap-2", !compact && "sm:w-72 sm:flex-none")}>
         {/* A type we cannot edit stays explicit even when it is read-only: rendering it
             as a plain read-only value would show an empty field and pass the gap off as
             a value. */}
@@ -1031,13 +1017,17 @@ function ParamRow({ param, compact, changedTitle, revertTitle, reverting, onChan
           // Native <select>: a device can have 500+ enums; mounting that many
           // Radix Selects is the page's main render cost. Native is browser-cheap
           // and fully functional, so the whole list stays visible without lag.
-          <select
-            value={param.value} onChange={(e) => onChange(e.target.value)} aria-label={label}
-            className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            data-testid={`param-${param.refId}`}
-          >
-            {param.options?.map((o) => <option key={o.value} value={String(o.value)}>{o.text}</option>)}
-          </select>
+          // Drawn with the comboboxes' chevron, so both kinds of choice look alike.
+          <span className="relative flex w-full">
+            <select
+              value={param.value} onChange={(e) => onChange(e.target.value)} aria-label={label}
+              className="h-9 w-full appearance-none rounded-md border border-input bg-background pr-8 pl-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 pointer-coarse:h-11 pointer-coarse:text-base"
+              data-testid={`param-${param.refId}`}
+            >
+              {param.options?.map((o) => <option key={o.value} value={String(o.value)}>{o.text}</option>)}
+            </select>
+            <ChevronsUpDown className="pointer-events-none absolute top-1/2 right-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          </span>
         ) : param.control === "number" && param.slider ? (
           // ETS UIHint="Slider": a bounded range with a live numeric readout.
           <span className="flex w-full items-center gap-2" data-testid={`param-${param.refId}`}>

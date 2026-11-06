@@ -14,11 +14,11 @@ export type ChangeTargets = { never?: ChangeTarget; changes?: ChangeTarget; secu
 function Mark({ size, explain, target, testId, children }: {
   size: "sm" | "md"; explain: string; target?: ChangeTarget; testId?: string; children: ReactNode;
 }) {
-  if (!target) return <Badge tone="primary" size={size} mono title={explain} data-testid={testId}>{children}</Badge>;
+  if (!target) return <Badge tone="primary" size={size} title={explain} data-testid={testId}>{children}</Badge>;
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <BadgeButton tone="primary" size={size} mono onClick={target.onClick} data-testid={testId}>
+        <BadgeButton tone="primary" size={size} onClick={target.onClick} data-testid={testId}>
           {children}
         </BadgeButton>
       </TooltipTrigger>
@@ -60,7 +60,7 @@ export function ChangePill({ changes, size = "sm", targets, showProgrammed = fal
   if (!n && !security) {
     if (!showProgrammed || !changes) return null;
     return (
-      <Badge tone="neutral" size={size} mono title={t("changes.programmedTitle")} data-testid="programmed">
+      <Badge tone="neutral" size={size} title={t("changes.programmedTitle")} data-testid="programmed">
         <CheckCircle2 /> {t("changes.programmed")}
       </Badge>
     );

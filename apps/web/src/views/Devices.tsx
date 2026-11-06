@@ -13,6 +13,9 @@ import { Button } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/icon-button";
 import { Chip } from "@/components/ui/chip";
 import { Card, CardContent } from "@/components/ui/card";
+import { SectionNav } from "@/components/SectionNav.tsx";
+import { RowActions } from "@/components/RowActions.tsx";
+import { useScrollSpy } from "@/lib/scrollSpy.ts";
 import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -127,24 +130,14 @@ interface SpaceActions {
   deleteLabel: string;
 }
 
-// The heading edit affordances (mirrors the group-address page). Stops propagation so it never
-// triggers a parent click.
-function IconBtn({ label, onClick, children, danger, testId }: { label: string; onClick: () => void; children: ReactNode; danger?: boolean; testId?: string }) {
-  return (
-    <IconButton
-      size="icon-sm" label={label} data-testid={testId}
-      onClick={(e) => { e.stopPropagation(); onClick(); }}
-      className={cn("text-muted-foreground", danger ? "hover:not-disabled:text-destructive" : "hover:not-disabled:text-foreground")}
-    >
-      {children}
-    </IconButton>
-  );
-}
-
 export function DevicesView() {
   const { t } = useTranslation();
   const { projectId } = useParams({ from: "/projects/$projectId" });
   const { data: project } = useProject(projectId);
+  const { data: manufacturers } = useManufacturers();
+  const manufNames = useMemo(() => new Map((manufacturers ?? []).map((m) => [m.id, m.name])), [manufacturers]);
+  // The manufacturer's name where the KNX list in Busforge knows it, else its id (M-xxxx).
+  const manufName = (n: number) => manufNames.get(manuf(n)) ?? manuf(n);
 
   // Filter state is URL-encoded so back/forward and reload restore it.
   const navigate = useNavigate({ from: "/projects/$projectId/devices" });
@@ -225,29 +218,8 @@ export function DevicesView() {
   });
 
   // Scroll-spy over the section headings, mirroring the group-address page: the
-  // active section is the last whose heading sits above a small top offset.
-  const cardRefs = useRef<Map<string, HTMLElement>>(new Map());
-  const [activeSec, setActiveSec] = useState<string | null>(null);
-  const registerRef = (id: string) => (el: HTMLElement | null) => { if (el) cardRefs.current.set(id, el); else cardRefs.current.delete(id); };
-  const scrollToSec = (id: string) => cardRefs.current.get(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
-  useEffect(() => {
-    let raf = 0;
-    const update = () => {
-      raf = 0;
-      let active: string | null = null;
-      let bestTop = -Infinity;
-      cardRefs.current.forEach((el, id) => {
-        const top = el.getBoundingClientRect().top;
-        if (top <= 112 && top > bestTop) { bestTop = top; active = id; }
-      });
-      if (!active && floors[0]) active = `sec-${floors[0].id}`;
-      setActiveSec(active);
-    };
-    const onScroll = () => { if (!raf) raf = requestAnimationFrame(update); };
-    update();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => { window.removeEventListener("scroll", onScroll); if (raf) cancelAnimationFrame(raf); };
-  }, [floors, unassigned]);
+  // active section is the last whose heading has reached the sticky chrome.
+  const { active: activeSec, registerRef, jump: scrollToSec } = useScrollSpy(floors[0] ? `sec-${floors[0].id}` : null, floors);
 
   const [addOpen, setAddOpen] = useState(false);
   // Building-structure editing dialogs. `nameDialog` serves both create (a child of
@@ -281,16 +253,22 @@ export function DevicesView() {
 
   // One device as a full-width row (readable name), mirroring the group-address rows.
   const deviceRow = (d: Device) => (
-    <div key={d.id} className="group/row flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-md px-2 py-1.5 text-sm hover:bg-secondary/50" data-testid={`device-${d.ia}`}>
-      <Link {...row(d)} className="flex min-w-48 flex-1 items-center"><DeviceLabel name={d.name} ia={d.ia} className="min-w-0" /></Link>
-      <div className="flex shrink-0 items-center gap-2">
+    // Wide: one line (address, name, manufacturer, state, room). Narrow: address and name, the marks
+    // under the name, the room button beside both, so a row stays compact without dropping a mark.
+    <div key={d.id} className="group/row grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-0.5 rounded-md border-b border-border/30 px-2 py-1.5 text-sm transition-colors last:border-b-0 hover:bg-secondary/60 sm:flex sm:justify-between" data-testid={`device-${d.ia}`}>
+      <Link {...row(d)} className="flex min-h-7 min-w-0 flex-1 items-center rounded-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 pointer-coarse:min-h-10 sm:min-w-48">
+        <DeviceLabel columns name={d.name} ia={d.ia} className="min-w-0 [&>span:last-child]:font-medium" />
+      </Link>
+      <div className="col-start-1 flex min-w-0 shrink-0 items-center gap-2 max-sm:pl-[calc(var(--addr-col)+0.75rem)]">
         {d.secure && (
           <Badge tone="warning" size="sm" title={t("devices.secure")} data-testid={`device-secure-${d.ia}`}>
             <ShieldCheck /> <span className="hidden sm:inline">{t("devices.secure")}</span>
           </Badge>
         )}
-        <Badge tone="outline" size="sm" mono className="hidden sm:inline-flex">{manuf(d.manufacturer)}</Badge>
+        <span className="hidden max-w-40 truncate text-xs text-muted-foreground sm:inline" title={manuf(d.manufacturer)}>{manufName(d.manufacturer)}</span>
         <ChangePill changes={d.changes} />
+      </div>
+      <div className="col-start-2 row-span-2 row-start-1 flex shrink-0 items-center">
         <RoomSelect
           targets={targets} value={deviceSpace.get(d.id) ?? null} deviceIa={d.ia}
           busy={spaceEdit.assignDevice.isPending}
@@ -323,7 +301,8 @@ export function DevicesView() {
           {buildings.length > 1 && selectedBuilding && (
             <BuildingCombobox buildings={buildings} value={selectedBuilding.id} onChange={setBuilding} />
           )}
-          {editable && (
+          {/* With a building shown, adding another sits with that building's own actions. */}
+          {editable && !selectedBuilding && (
             <Button variant="outline" onClick={() => setNameDialog({ parentId: null, type: "Building", initial: "" })} data-testid="add-building">
               <Building2 className="size-4" /> {t("devices.addBuilding")}
             </Button>
@@ -366,46 +345,21 @@ export function DevicesView() {
               {t("devices.noBuildingData")}
             </p>
           )}
-          {flat.length > 0 && <Card><CardContent className="space-y-1 py-4">{deviceRows(flat)}</CardContent></Card>}
+          {flat.length > 0 && <Card className="gap-0 py-0"><CardContent className="space-y-1 px-4 py-3 sm:px-6">{deviceRows(flat)}</CardContent></Card>}
         </>
       ) : (
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
           {showNav && (
-            <nav className="lg:sticky lg:top-28 lg:max-h-[calc(100vh-8rem)] lg:w-60 lg:shrink-0 lg:overflow-y-auto">
-              <ul className="flex gap-1 overflow-x-auto pb-1 lg:flex-col lg:overflow-x-visible lg:pb-0">
-                {(() => {
-                  const navBtn = (id: string, label: string, sub: boolean, changed: boolean) => {
-                    const active = activeSec === id;
-                    return (
-                      <button
-                        key={id} type="button" onClick={() => scrollToSec(id)} data-testid={`nav-${id}`}
-                        className={cn(
-                          "flex w-full items-center gap-1.5 whitespace-nowrap rounded-md border-l-2 py-1 pr-2 text-left text-sm transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 lg:truncate",
-                          sub ? "pl-5" : "pl-2",
-                          active ? "border-foreground/50 bg-secondary font-medium text-foreground"
-                            : sub ? "border-transparent text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
-                            : "border-transparent font-medium text-foreground/80 hover:bg-secondary/60 hover:text-foreground",
-                        )}
-                      >
-                        <span className="truncate">{label}</span>
-                        {changed && <span className="ml-auto size-1.5 shrink-0 rounded-full bg-primary" title={t("devices.changedDot")} />}
-                      </button>
-                    );
-                  };
-                  return (
-                    <>
-                      {floors.map((floor) => (
-                        <li key={floor.id} className="lg:contents">
-                          {navBtn(`sec-${floor.id}`, floor.name, false, subtreeChanged(floor))}
-                          {floor.children.map((room) => navBtn(`sec-${room.id}`, room.name, true, subtreeChanged(room)))}
-                        </li>
-                      ))}
-                      {unassigned.length > 0 && <li>{navBtn("sec-unassigned", t("devices.unassigned"), false, unassigned.some(isChanged))}</li>}
-                    </>
-                  );
-                })()}
-              </ul>
-            </nav>
+            <SectionNav
+              label={t("devices.jumpTo")} changedTitle={t("devices.changedDot")} active={activeSec} onJump={scrollToSec}
+              entries={[
+                ...floors.flatMap((floor) => [
+                  { id: `sec-${floor.id}`, label: floor.name, changed: subtreeChanged(floor), testId: `nav-sec-${floor.id}` },
+                  ...floor.children.map((room) => ({ id: `sec-${room.id}`, label: room.name, sub: true, changed: subtreeChanged(room), testId: `nav-sec-${room.id}` })),
+                ]),
+                ...(unassigned.length > 0 ? [{ id: "sec-unassigned", label: t("devices.unassigned"), changed: unassigned.some(isChanged), testId: "nav-sec-unassigned" }] : []),
+              ]}
+            />
           )}
 
           <div className="min-w-0 flex-1 space-y-6">
@@ -414,35 +368,36 @@ export function DevicesView() {
                 <Building2 className="size-4 shrink-0 text-muted-foreground" />
                 <span className="min-w-0 flex-1 truncate text-sm font-medium text-muted-foreground" data-testid="building-name">{selectedBuilding.name}</span>
                 {editable && (
-                  <div className="flex items-center">
-                    <IconBtn label={t("devices.addType", { type: typeName(childType(selectedBuilding.type)) })} onClick={() => openCreate(Number(selectedBuilding.id), selectedBuilding.type)} testId="add-floor"><FolderPlus className="size-4" /></IconBtn>
-                    <IconBtn label={t("devices.rename")} onClick={() => openRename(Number(selectedBuilding.id), selectedBuilding.type, selectedBuilding.name)}><Pencil className="size-3.5" /></IconBtn>
-                    <IconBtn label={t("devices.delete")} danger onClick={() => setDeleteTarget({ spaceId: Number(selectedBuilding.id), name: selectedBuilding.name, deviceCount: floors.reduce((n, f) => n + countDevices(f), 0) + buildingDevices.length })}><Trash2 className="size-3.5" /></IconBtn>
-                  </div>
+                  <RowActions shown menuLabel={t("common.moreActions")} actions={[
+                    { label: t("devices.addBuilding"), icon: <Building2 className="size-4" />, onClick: () => setNameDialog({ parentId: null, type: "Building", initial: "" }), testId: "add-building" },
+                    { label: t("devices.addType", { type: typeName(childType(selectedBuilding.type)) }), icon: <FolderPlus className="size-4" />, onClick: () => openCreate(Number(selectedBuilding.id), selectedBuilding.type), testId: "add-floor" },
+                    { label: t("devices.rename"), icon: <Pencil className="size-3.5" />, onClick: () => openRename(Number(selectedBuilding.id), selectedBuilding.type, selectedBuilding.name) },
+                    { label: t("devices.delete"), icon: <Trash2 className="size-3.5" />, danger: true, onClick: () => setDeleteTarget({ spaceId: Number(selectedBuilding.id), name: selectedBuilding.name, deviceCount: floors.reduce((n, f) => n + countDevices(f), 0) + buildingDevices.length }) },
+                  ]} />
                 )}
               </div>
             )}
 
             {buildingDevices.length > 0 && (
-              <Card><CardContent className="space-y-1 py-4">{deviceRows(buildingDevices)}</CardContent></Card>
+              <Card className="gap-0 py-0"><CardContent className="space-y-1 px-4 py-3 sm:px-6">{deviceRows(buildingDevices)}</CardContent></Card>
             )}
 
             {floors.map((floor) => (
               <section key={floor.id} className="space-y-2">
-                <h2 id={`sec-${floor.id}`} ref={registerRef(`sec-${floor.id}`)} className="group flex scroll-mt-24 items-center gap-2 px-1 text-lg font-semibold text-foreground">
+                <h2 id={`sec-${floor.id}`} ref={registerRef(`sec-${floor.id}`)} className="group flex scroll-mt-chrome items-center gap-2 px-1 text-lg font-semibold text-foreground">
                   <span className="min-w-0 truncate">{floor.name}</span>
                   {countDevices(floor) > 0 && <span className="shrink-0 font-mono text-sm font-normal text-muted-foreground">{countDevices(floor)}</span>}
                   {subtreeChanged(floor) && <span className="size-2 shrink-0 rounded-full bg-primary" title={t("devices.changedDot")} />}
                   {editable && (
-                    <div className="ml-auto flex items-center opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-                      <IconBtn label={actions.addLabel(floor.type)} onClick={() => openCreate(floor.id, floor.type)} testId={`add-child-${floor.id}`}><FolderPlus className="size-4" /></IconBtn>
-                      <IconBtn label={t("devices.rename")} onClick={() => openRename(floor.id, floor.type, floor.name)} testId={`rename-${floor.id}`}><Pencil className="size-4" /></IconBtn>
-                      <IconBtn label={t("devices.delete")} danger onClick={() => openDelete(floor)} testId={`delete-${floor.id}`}><Trash2 className="size-4" /></IconBtn>
-                    </div>
+                    <RowActions className="ml-auto" menuLabel={t("common.moreActions")} actions={[
+                      { label: actions.addLabel(floor.type), icon: <FolderPlus className="size-4" />, onClick: () => openCreate(floor.id, floor.type), testId: `add-child-${floor.id}` },
+                      { label: t("devices.rename"), icon: <Pencil className="size-4" />, onClick: () => openRename(floor.id, floor.type, floor.name), testId: `rename-${floor.id}` },
+                      { label: t("devices.delete"), icon: <Trash2 className="size-4" />, onClick: () => openDelete(floor), danger: true, testId: `delete-${floor.id}` },
+                    ]} />
                   )}
                 </h2>
-                <Card>
-                  <CardContent className="space-y-1 py-4">
+                <Card className="gap-0 py-0">
+                  <CardContent className="space-y-1 px-4 py-3 sm:px-6">
                     {floor.devices.length === 0 && floor.children.length === 0 && (
                       <p className="px-2 text-sm text-muted-foreground">{t("devices.emptyRoom")}</p>
                     )}
@@ -457,12 +412,12 @@ export function DevicesView() {
 
             {unassigned.length > 0 && (
               <section className="space-y-2">
-                <h2 id="sec-unassigned" ref={registerRef("sec-unassigned")} className="flex scroll-mt-24 items-center gap-2 px-1 text-lg font-semibold text-foreground">
+                <h2 id="sec-unassigned" ref={registerRef("sec-unassigned")} className="flex scroll-mt-chrome items-center gap-2 px-1 text-lg font-semibold text-foreground">
                   <span className="min-w-0 truncate">{t("devices.unassigned")}</span>
                   <span className="shrink-0 font-mono text-sm font-normal text-muted-foreground">{unassigned.length}</span>
                   {unassigned.some(isChanged) && <span className="size-2 shrink-0 rounded-full bg-primary" title={t("devices.changedDot")} />}
                 </h2>
-                <Card><CardContent className="space-y-1 py-4">{deviceRows(unassigned)}</CardContent></Card>
+                <Card className="gap-0 py-0"><CardContent className="space-y-1 px-4 py-3 sm:px-6">{deviceRows(unassigned)}</CardContent></Card>
               </section>
             )}
 
@@ -532,17 +487,17 @@ function SubSpace({ node, depth, registerRef, deviceRows, actions, t }: {
 }) {
   const deep = depth >= 2;
   return (
-    <section id={`sec-${node.id}`} ref={depth === 1 ? registerRef(`sec-${node.id}`) : undefined} className={cn("scroll-mt-24 pt-2", deep && "pl-3")}>
+    <section id={`sec-${node.id}`} ref={depth === 1 ? registerRef(`sec-${node.id}`) : undefined} className={cn("scroll-mt-chrome pt-2 first:pt-0", deep && "pl-3")}>
       <h4 className={cn("group mt-2 mb-1 flex items-center gap-2 border-l-2 pl-2 text-sm font-semibold", deep ? "border-foreground/15 text-muted-foreground" : "border-foreground/30 text-foreground")}>
         <span className="min-w-0 truncate">{node.name}</span>
         {countDevices(node) > 0 && <span className="shrink-0 font-mono text-xs font-normal text-muted-foreground">{countDevices(node)}</span>}
         {subtreeChanged(node) && <span className="size-1.5 shrink-0 rounded-full bg-primary" title={t("devices.changedDot")} />}
         {actions.editable && (
-          <div className="ml-auto flex items-center opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-            <IconBtn label={actions.addLabel(node.type)} onClick={() => actions.openCreate(node.id, node.type)} testId={`add-child-${node.id}`}><Plus className="size-3.5" /></IconBtn>
-            <IconBtn label={actions.renameLabel} onClick={() => actions.openRename(node.id, node.type, node.name)} testId={`rename-${node.id}`}><Pencil className="size-3.5" /></IconBtn>
-            <IconBtn label={actions.deleteLabel} danger onClick={() => actions.openDelete(node)} testId={`delete-${node.id}`}><Trash2 className="size-3.5" /></IconBtn>
-          </div>
+          <RowActions className="ml-auto" menuLabel={t("common.moreActions")} actions={[
+            { label: actions.addLabel(node.type), icon: <Plus className="size-3.5" />, onClick: () => actions.openCreate(node.id, node.type), testId: `add-child-${node.id}` },
+            { label: actions.renameLabel, icon: <Pencil className="size-3.5" />, onClick: () => actions.openRename(node.id, node.type, node.name), testId: `rename-${node.id}` },
+            { label: actions.deleteLabel, icon: <Trash2 className="size-3.5" />, onClick: () => actions.openDelete(node), danger: true, testId: `delete-${node.id}` },
+          ]} />
         )}
       </h4>
       {deviceRows(node.devices)}
@@ -600,7 +555,7 @@ function RoomSelect({ targets, value, deviceIa, busy, onChange }: {
   const trigger = (
     <Button
       variant="ghost" size="icon" role="combobox" disabled={busy} data-testid={`room-select-${deviceIa}`}
-      className={cn("size-7 text-muted-foreground", value == null && "text-primary")}
+      className={cn("size-7 text-muted-foreground pointer-coarse:size-10", value == null && "text-primary")}
       title={value == null ? t("devices.assignRoom") : t("devices.changeRoom")}
     >
       <MapPin className="size-3.5" />

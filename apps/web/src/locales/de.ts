@@ -4,6 +4,7 @@ import type { Messages } from "./en";
 // locale must be present (missing keys are a compile error).
 const de: Messages = {
   common: {
+    moreActions: "Weitere Aktionen",
     loading: "Lädt…",
     cancel: "Abbrechen",
     save: "Speichern",
@@ -34,6 +35,18 @@ const de: Messages = {
     exportProject: "Projekt exportieren",
   },
   projects: {
+    statDevices_one: "{{count}} Gerät",
+    statDevices_other: "{{count}} Geräte",
+    statGas_one: "{{count}} Gruppenadresse",
+    statGas_other: "{{count}} Gruppenadressen",
+    statSnapshots_one: "{{count}} Wiederherstellungspunkt",
+    statSnapshots_other: "{{count}} Wiederherstellungspunkte",
+    statBuildings_one: "{{count}} Gebäude",
+    statBuildings_other: "{{count}} Gebäude",
+    statFloors_one: "{{count}} Geschoss",
+    statFloors_other: "{{count}} Geschosse",
+    statRooms_one: "{{count}} Raum",
+    statRooms_other: "{{count}} Räume",
     source: "Ursprünglich importiert aus {{name}} ({{kind}}, {{bytes}} Bytes, SHA-256 {{sha256}})",
     heading: "Projekte",
     buildings: "Gebäude",
@@ -372,6 +385,7 @@ const de: Messages = {
     INTERNAL: "Etwas ist schiefgelaufen.",
   },
   devices: {
+    jumpTo: "Zu Geschoss oder Raum springen",
     searchPlaceholder: "Geräte filtern…",
     clearSearch: "Suche löschen",
     toProgram: "{{count}} zu programmieren",
@@ -413,6 +427,7 @@ const de: Messages = {
   },
   // Das Kompatibilitäts-Badge eines Geräts und sein Detail (Kompatibilitätsmatrix).
   compat: {
+    badge: "Produkt: {{summary}}",
     title: "Für dieses Produkt auf Hardware gezeigt",
     summary: { tested: "Alle unterstützten Vorgänge getestet", partial: "Teilweise getestet", derived: "An Schwesterprodukt getestet", otherVersion: "Mit anderer Version getestet", failed: "Auf Hardware fehlgeschlagen", untested: "Ungetestet", unsupported: "Nicht unterstützt" },
     state: { tested: "getestet", failed: "fehlgeschlagen", conflict: "widersprüchlich", derived: "abgeleitet", otherVersion: "andere Version getestet", eligible: "ungetestet", refused: "nicht unterstützt" },
@@ -553,6 +568,7 @@ const de: Messages = {
     doneUnverified: "Geladen, aber das Zurücklesen war nicht erfolgreich. Das Gerät gilt NICHT als in Betrieb genommen; führe den Download erneut aus.",
   },
   device: {
+    jumpTo: "Zu Abschnitt springen",
     back: "Zurück zu den Geräten",
     revert: "Zurücksetzen",
     flash: "Flashen",
@@ -967,7 +983,9 @@ const de: Messages = {
     deleteUndoHint: "Vorher wird automatisch ein Wiederherstellungspunkt erstellt, du kannst das also rückgängig machen.",
   },
   flash: {
-    titleDevice: "Gerät {{device}} programmieren",
+    noInterface: "Für dieses Projekt ist noch keine Busverbindung eingerichtet, daher kann nichts mit dem Gerät verglichen oder auf es geschrieben werden.",
+    setUpConnection: "Busverbindung einrichten",
+    titleDevice: "{{device}} flashen",
     descDevice: "Programmiert über den Bus, was sich geändert hat: Konfiguration und/oder Gruppenadressen. Nur abweichende Bereiche werden geschrieben, jeweils mit Backup und anschließender Verifikation per Rücklesen.",
     partParams: "Konfiguration",
     partGAs: "Gruppenadressen",
@@ -998,6 +1016,7 @@ const de: Messages = {
     download: "Download",
   },
   monitor: {
+    connectCta: "Busverbindung einrichten",
     telegrams: "{{count}} Telegramme",
     paused: "pausiert",
     offline: "offline (Verlauf)",
@@ -1012,7 +1031,7 @@ const de: Messages = {
     colDestination: "Ziel",
     colValue: "Wert",
     waiting: "Warte auf Busverkehr…",
-    emptyHistory: "Noch keine Telegramme aufgezeichnet. Verbinde dich über die Busanzeige oben rechts, um Live-Verkehr aufzuzeichnen.",
+    emptyHistory: "Noch keine Telegramme aufgezeichnet. Verbinde dich mit dem Bus, um Live-Verkehr aufzuzeichnen.",
     sendGa: "Gruppenadresse zum Senden",
     sendValue: "Wert als Hex",
     sendWrite: "Schreiben",
@@ -1028,6 +1047,7 @@ const de: Messages = {
     },
   },
   groups: {
+    jumpTo: "Zu Gruppe springen",
     searchPlaceholder: "Gruppenadressen filtern…",
     clearSearch: "Suche löschen",
     count: "{{shown}} / {{total}}",
@@ -1079,7 +1099,7 @@ const de: Messages = {
     usbScan: "Suchen",
     usbScanning: "Suche läuft…",
     savedPlaceholder: "Verbindung wählen",
-    noConnections: "Keine Verbindungen gespeichert. Unten eine anlegen.",
+    noConnections: "Noch keine Busverbindung gespeichert. Lege eine an, um den Bus zu erreichen.",
     manage: "Verbindungen verwalten",
   },
   conn: {

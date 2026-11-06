@@ -22,7 +22,7 @@ const badgeVariants = cva(
         danger: "border-destructive/40 bg-destructive/10 text-destructive",
       },
       size: {
-        sm: "h-5 px-1.5 text-[10px] [&>svg]:size-3",
+        sm: "h-5 px-1.5 text-[11px] [&>svg]:size-3",
         md: "h-6 px-2 text-xs [&>svg]:size-3.5",
       },
       mono: {
@@ -76,7 +76,7 @@ function BadgeButton({
       type={type}
       className={cn(
         badgeVariants({ tone, size, mono }),
-        "cursor-pointer outline-none transition-[filter,box-shadow] hover:not-disabled:brightness-125 focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50",
+        "cursor-pointer outline-none transition-[filter,box-shadow] pointer-coarse:h-8 hover:not-disabled:brightness-125 focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50",
         className
       )}
       {...props}

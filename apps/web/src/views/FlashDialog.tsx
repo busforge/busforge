@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, CheckCircle2, Cpu, Download, Loader2, RefreshCw } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Cpu, Download, Loader2, PlugZap, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { api, ApiError, taskActive, type Device, type DeviceConfigView, type FlashResult, type MatrixOperation, type Task } from "../api.ts";
 import { UntestedNotice, useRefreshOnUntested } from "@/components/UntestedNotice.tsx";
@@ -14,7 +14,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { errMsg } from "../lib/apiError.ts";
-import { offersFullDownload, leftDeviceUnloaded, etsCompletesLoad, flashFooter } from "../lib/flashRecovery.ts";
+import { offersFullDownload, leftDeviceUnloaded, etsCompletesLoad, flashFooter, missingInterface } from "../lib/flashRecovery.ts";
+import { openBusPanel } from "../lib/busPanel.ts";
 import { previewRuns, previewEffect, previewEach, type IsLive } from "../lib/previewRun.ts";
 
 export type FlashTarget = "params" | "ga";
@@ -129,6 +130,7 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
     : toFlash.map((x) => (x.p.dry?.structural ? "structuralFlash" : x.tg === "ga" ? "flashLinks" : "flashParams"));
   const awaitingAck = untestedOps(view, writeOps).length > 0;
   const canFlash = !anyFlashing && !anyDone && toFlash.length > 0;
+  const noInterface = missingInterface(errorCodes);
   const footer = flashFooter({ canFlash, downloadTaken: !!dl, anyFlashing, anyChecking, awaitingAck, blocked, errorCodes, anyError: !!firstError, fullDownloadLoads });
 
   async function flash() {
@@ -244,7 +246,13 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
               {t("flash.foreignWrite", { kind: t(`task.kind.${foreignWrite.kind}`), phase: foreignWrite.phase ? t(`task.phase.${foreignWrite.phase}`) : t("task.queued") })}
             </p>
           )}
-          {list.map(({ tg, p }) => (
+          {noInterface && (
+            // Marked as a failed target, as the per-target lines it stands in for are.
+            <p className="flex items-start gap-2 text-amber-300" data-testid="flash-part-fail">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0" /> {t("flash.noInterface")}
+            </p>
+          )}
+          {!noInterface && list.map(({ tg, p }) => (
             <div key={tg} className="flex flex-col gap-0.5">
               <span className="text-xs font-medium text-muted-foreground">{partName(tg)}</span>
               {partLine(tg, p)}
@@ -257,7 +265,7 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
             <p className="text-xs text-muted-foreground" data-testid="flash-flags-note">{t("flash.flagsPending", { count: device.changes.flags })}</p>
           )}
           {/* The hint ends in "retry", which a device left unloaded is not offered. */}
-          {isConnError && !footer.unloaded && <p className="text-xs text-muted-foreground">{t("flash.connHint")}</p>}
+          {isConnError && !noInterface && !footer.unloaded && <p className="text-xs text-muted-foreground">{t("flash.connHint")}</p>}
           {needsEts && <p className="text-xs text-muted-foreground" data-testid="flash-needs-ets">{t("flash.etsCompletesLoad")}</p>}
           {dl && (
             <div className="flex flex-col gap-0.5 border-t border-border pt-2">
@@ -274,7 +282,12 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
           <AlertDialogCancel disabled={anyFlashing || dlBusy}>{anyDone || dl?.done ? t("common.close") : t("common.cancel")}</AlertDialogCancel>
           {/* Generic target retry, only before the full-download offer is taken, not while a foreign write
               runs (the preview follows once it has finished), and not after a write left the device unloaded. */}
-          {footer.retry && (
+          {noInterface && (
+            <Button onClick={() => { onOpenChange(false); openBusPanel(); }} data-testid="flash-set-up-connection">
+              <PlugZap className="size-4" /> {t("flash.setUpConnection")}
+            </Button>
+          )}
+          {footer.retry && !noInterface && (
             <Button variant="outline" onClick={check} data-testid="flash-retry">
               <RefreshCw className="size-4" /> {t("common.retry")}
             </Button>
@@ -288,7 +301,7 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
           )}
           {/* A full download is always the user's choice where the family can commission, as ETS offers
               it next to the partial download. */}
-          {!needsDownload && canFullDownload && !blocked && list.every((x) => x.p.dry || x.p.error) && !dl && !anyDone && !anyFlashing && !anyChecking && (
+          {!needsDownload && !noInterface && canFullDownload && !blocked && list.every((x) => x.p.dry || x.p.error) && !dl && !anyDone && !anyFlashing && !anyChecking && (
             <Button variant="outline" onClick={startDownload} data-testid="flash-full-download">
               <Download className="size-4" /> {t("flash.fullDownloadCta")}
             </Button>

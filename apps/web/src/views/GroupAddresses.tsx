@@ -9,27 +9,17 @@ import { DptBadge } from "@/components/DptBadge.tsx";
 import { Button } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/icon-button";
 import { Card, CardContent } from "@/components/ui/card";
+import { SectionNav } from "@/components/SectionNav.tsx";
+import { RowActions } from "@/components/RowActions.tsx";
+import { useScrollSpy } from "@/lib/scrollSpy.ts";
 import { Input } from "@/components/ui/input";
 import { GroupEditor, type Editor, type Levels } from "./GroupEditDialogs.tsx";
 import { cn } from "@/lib/utils";
 
-// The bright orange group number shown in front of each range name. Lets you read
-// where you are in the address tree at a glance (main group, then main/middle).
+// The group number shown in front of each range name. Lets you read where you are in the address
+// tree at a glance (main group, then main/middle). Neutral, as amber marks pending work only.
 function NumTag({ value, className }: { value: string; className?: string }) {
-  return <span className={cn("shrink-0 rounded-md bg-primary/15 px-1.5 py-0.5 font-mono font-semibold text-primary", className)}>{value}</span>;
-}
-
-// The row/heading edit affordances. Stops propagation so it never triggers a parent click.
-function IconBtn({ label, onClick, children, danger }: { label: string; onClick: () => void; children: ReactNode; danger?: boolean }) {
-  return (
-    <IconButton
-      size="icon-sm" label={label}
-      onClick={(e) => { e.stopPropagation(); onClick(); }}
-      className={cn("text-muted-foreground", danger ? "hover:not-disabled:text-destructive" : "hover:not-disabled:text-foreground")}
-    >
-      {children}
-    </IconButton>
-  );
+  return <span className={cn("shrink-0 rounded-md border border-border bg-secondary px-1.5 py-0.5 font-mono font-semibold text-foreground/80", className)}>{value}</span>;
 }
 
 function firstGaAddress(node: GroupRangeNode): string | undefined {
@@ -149,10 +139,7 @@ export function GroupAddressesView() {
   };
 
   // Section index for the sidebar: main groups plus their direct middle groups.
-  const cardRefs = useRef<Map<string, HTMLElement>>(new Map());
-  const [activeSec, setActiveSec] = useState<string | null>(null);
-  const scrollToSec = (id: string) => cardRefs.current.get(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
-  const registerRef = (id: string) => (el: HTMLElement | null) => { if (el) cardRefs.current.set(id, el); else cardRefs.current.delete(id); };
+  const { active: activeSec, registerRef, jump: scrollToSec } = useScrollSpy(sections[0] ? `sec-${sections[0].id}` : null, sections);
   const navCount = sections.reduce((n, m) => n + 1 + m.children.length, 0);
 
   // Cmd/Ctrl+F focuses the group-address search instead of the browser find.
@@ -169,48 +156,30 @@ export function GroupAddressesView() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Scroll-spy: the active section is the last whose heading sits above a small
-  // top offset. Deterministic (always exactly one), so it never flickers.
-  useEffect(() => {
-    if (!project) return;
-    let raf = 0;
-    const update = () => {
-      raf = 0;
-      let active: string | null = null;
-      let bestTop = -Infinity;
-      cardRefs.current.forEach((el, id) => {
-        const top = el.getBoundingClientRect().top;
-        if (top <= 112 && top > bestTop) { bestTop = top; active = id; }
-      });
-      if (!active && sections[0]) active = `sec-${sections[0].id}`;
-      setActiveSec(active);
-    };
-    const onScroll = () => { if (!raf) raf = requestAnimationFrame(update); };
-    update();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => { window.removeEventListener("scroll", onScroll); if (raf) cancelAnimationFrame(raf); };
-  }, [project, sections]);
 
   if (!project) return null;
 
   const gaRows = (addresses: GroupAddress[]) =>
     addresses.map((g) => (
-      <div key={g.raw} className="group flex items-center justify-between gap-3 rounded-md px-2 py-1 text-sm hover:bg-secondary/50">
-        <GaPill projectId={projectId} raw={g.raw} name={g.name} address={g.address} className="min-w-0" onEdit={() => actions.editGa(g)} />
-        <div className="flex items-center gap-2">
-          <DptBadge dpt={g.dpt} />
-          <div className="flex items-center opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-            <IconBtn label={t("groupEdit.edit")} onClick={() => actions.editGa(g)}><Pencil className="size-3.5" /></IconBtn>
-            <IconBtn label={t("groupEdit.delete")} danger onClick={() => actions.deleteGa(g)}><Trash2 className="size-3.5" /></IconBtn>
-          </div>
+      <div key={g.raw} className="group flex items-center gap-2 rounded-md border-b border-border/30 px-2 py-1 text-sm last:border-b-0 hover:bg-secondary/50">
+        {/* Narrow screens put the DPT under the name, so the name keeps the row's width. */}
+        <div className="flex min-w-0 flex-1 flex-col items-start gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+          <GaPill projectId={projectId} raw={g.raw} name={g.name} address={g.address} columns className="min-w-0 hover:brightness-100 hover:[&_span]:text-foreground" onEdit={() => actions.editGa(g)} />
+          <DptBadge dpt={g.dpt} className="max-sm:ml-[calc(var(--addr-col)+0.75rem)]" />
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <RowActions menuLabel={t("common.moreActions")} actions={[
+            { label: t("groupEdit.edit"), icon: <Pencil className="size-3.5" />, onClick: () => actions.editGa(g) },
+            { label: t("groupEdit.delete"), icon: <Trash2 className="size-3.5" />, onClick: () => actions.deleteGa(g), danger: true },
+          ]} />
         </div>
       </div>
     ));
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-4">
-        <div className="relative max-w-xs flex-1">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="relative w-full sm:max-w-xs sm:flex-1">
           <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input ref={searchRef} placeholder={t("groups.searchPlaceholder")} value={q} onChange={(e) => setQ(e.target.value)} className="px-9" data-testid="group-search" />
           {q && (
@@ -222,7 +191,7 @@ export function GroupAddressesView() {
             </IconButton>
           )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="ml-auto flex items-center gap-3">
           <span className="font-mono text-xs text-muted-foreground" data-testid="group-count">{t("groups.count", { shown: matched, total: project.gaCount })}</span>
           <Button variant="outline" onClick={addMainGroup} data-testid="add-main-group">
             <Plus className="size-4" /> {t("groupEdit.addMainGroup")}
@@ -237,36 +206,19 @@ export function GroupAddressesView() {
       ) : (
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
           {navCount > 1 && (
-            <nav className="lg:sticky lg:top-28 lg:max-h-[calc(100vh-8rem)] lg:w-60 lg:shrink-0 lg:overflow-y-auto">
-              <ul className="flex gap-1 overflow-x-auto pb-1 lg:flex-col lg:overflow-x-visible lg:pb-0">
-                {sections.map((main) => {
-                  const navBtn = (id: string, num: string | undefined, label: string, sub: boolean) => {
-                    const active = activeSec === id;
-                    return (
-                      <button
-                        key={id} type="button" onClick={() => scrollToSec(id)}
-                        className={cn(
-                          "flex w-full items-center gap-1.5 whitespace-nowrap rounded-md border-l-2 py-1 pr-2 text-left text-sm transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 lg:truncate",
-                          sub ? "pl-5" : "pl-2",
-                          active ? "border-foreground/50 bg-secondary font-medium text-foreground"
-                            : sub ? "border-transparent text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
-                            : "border-transparent font-medium text-foreground/80 hover:bg-secondary/60 hover:text-foreground",
-                        )}
-                      >
-                        {num && <NumTag value={num} className="px-1 py-0 text-[10px]" />}
-                        <span className="truncate">{label || t("groups.unnamedRange")}</span>
-                      </button>
-                    );
-                  };
-                  return (
-                    <li key={main.id} className="lg:contents">
-                      {navBtn(`sec-${main.id}`, rangeNumber(main, 0), main.name, false)}
-                      {main.children.map((mid) => navBtn(`sec-${mid.id}`, rangeNumber(mid, 1), mid.name, true))}
-                    </li>
-                  );
-                })}
-              </ul>
-            </nav>
+            <SectionNav
+              label={t("groups.jumpTo")} active={activeSec} onJump={scrollToSec}
+              entries={sections.flatMap((main) => {
+                const head = rangeNumber(main, 0);
+                return [
+                  { id: `sec-${main.id}`, label: main.name || t("groups.unnamedRange"), prefix: head && <NumTag value={head} className="px-1 py-0 text-[10px]" /> },
+                  ...main.children.map((mid) => {
+                    const num = rangeNumber(mid, 1);
+                    return { id: `sec-${mid.id}`, label: mid.name || t("groups.unnamedRange"), sub: true, prefix: num && <NumTag value={num} className="px-1 py-0 text-[10px]" /> };
+                  }),
+                ];
+              })}
+            />
           )}
 
           <div className="min-w-0 flex-1 space-y-6">
@@ -274,19 +226,19 @@ export function GroupAddressesView() {
               const num = rangeNumber(main, 0);
               return (
                 <section key={main.id} className="space-y-2">
-                  <h2 id={`sec-${main.id}`} ref={registerRef(`sec-${main.id}`)} className="group flex scroll-mt-24 items-center gap-2 px-1 text-lg font-semibold text-foreground">
+                  <h2 id={`sec-${main.id}`} ref={registerRef(`sec-${main.id}`)} className="group flex scroll-mt-chrome items-center gap-2 px-1 text-lg font-semibold text-foreground">
                     {num && <NumTag value={num} className="text-sm" />}
                     <span className="min-w-0 truncate">{main.name || t("groups.unnamedRange")}</span>
-                    <div className="ml-auto flex items-center opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-                      {levels === 3
-                        ? <IconBtn label={t("groupEdit.addMiddleGroup")} onClick={() => actions.addMiddle(main)}><FolderPlus className="size-4" /></IconBtn>
-                        : <IconBtn label={t("groupEdit.addGa")} onClick={() => actions.addGa(main)}><Plus className="size-4" /></IconBtn>}
-                      <IconBtn label={t("groupEdit.rename")} onClick={() => actions.renameRange(main)}><Pencil className="size-4" /></IconBtn>
-                      <IconBtn label={t("groupEdit.delete")} danger onClick={() => actions.deleteRange(main)}><Trash2 className="size-4" /></IconBtn>
-                    </div>
+                    <RowActions className="ml-auto" menuLabel={t("common.moreActions")} actions={[
+                      levels === 3
+                        ? { label: t("groupEdit.addMiddleGroup"), icon: <FolderPlus className="size-4" />, onClick: () => actions.addMiddle(main) }
+                        : { label: t("groupEdit.addGa"), icon: <Plus className="size-4" />, onClick: () => actions.addGa(main) },
+                      { label: t("groupEdit.rename"), icon: <Pencil className="size-4" />, onClick: () => actions.renameRange(main) },
+                      { label: t("groupEdit.delete"), icon: <Trash2 className="size-4" />, danger: true, onClick: () => actions.deleteRange(main) },
+                    ]} />
                   </h2>
-                  <Card>
-                    <CardContent className="space-y-1 py-4">
+                  <Card className="gap-0 py-0">
+                    <CardContent className="space-y-1 px-4 py-3 sm:px-6">
                       {main.addresses.length === 0 && main.children.length === 0 && (
                         <p className="px-2 text-sm text-muted-foreground">{t("groups.emptyRange")}</p>
                       )}
@@ -325,16 +277,16 @@ function SubRange({ node, depth, registerRef, gaRows, actions, unnamed, t }: {
     <section
       id={`sec-${node.id}`}
       ref={depth === 1 ? registerRef(`sec-${node.id}`) : undefined}
-      className={cn("scroll-mt-24 pt-2", deep && "pl-3")}
+      className={cn("scroll-mt-chrome pt-2 first:pt-0", deep && "pl-3")}
     >
       <h4 className={cn("group mt-2 mb-1 flex items-center gap-2 border-l-2 pl-2 text-sm font-semibold", deep ? "border-foreground/15 text-muted-foreground" : "border-foreground/30 text-foreground")}>
         {num && <NumTag value={num} className="px-1 py-0 text-[10px]" />}
         <span className="min-w-0 truncate">{node.name || unnamed}</span>
-        <div className="ml-auto flex items-center opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-          <IconBtn label={t("groupEdit.addGa")} onClick={() => actions.addGa(node)}><Plus className="size-3.5" /></IconBtn>
-          <IconBtn label={t("groupEdit.rename")} onClick={() => actions.renameRange(node)}><Pencil className="size-3.5" /></IconBtn>
-          <IconBtn label={t("groupEdit.delete")} danger onClick={() => actions.deleteRange(node)}><Trash2 className="size-3.5" /></IconBtn>
-        </div>
+        <RowActions className="ml-auto" menuLabel={t("common.moreActions")} actions={[
+          { label: t("groupEdit.addGa"), icon: <Plus className="size-3.5" />, onClick: () => actions.addGa(node) },
+          { label: t("groupEdit.rename"), icon: <Pencil className="size-3.5" />, onClick: () => actions.renameRange(node) },
+          { label: t("groupEdit.delete"), icon: <Trash2 className="size-3.5" />, onClick: () => actions.deleteRange(node), danger: true },
+        ]} />
       </h4>
       {gaRows(node.addresses)}
       {node.children.map((c) => (

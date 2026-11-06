@@ -101,7 +101,8 @@ Two families, loaded from Google Fonts in `index.html`.
 ## UI conventions
 
 - **Dark, instrument-like.** Slate surfaces, hairline `border`, generous use of `muted-foreground` for secondary info.
-- **Amber is focal.** Reserve `primary` for the brand, the active/primary action, and selection. Overuse erases the signal.
+- **Amber is focal.** Reserve `primary` for the brand, the active/primary action, selection, and the user's pending work. Overuse erases the signal: devices, group addresses and range numbers are neutral slate marks, never amber.
+- **Touch screens:** controls grow to a tap target (see the sizes under [Components](#components)). The add, rename and delete actions of a row or heading (`RowActions`) are icon buttons a mouse reveals on hover; a touch screen has no hover, so there one always-visible menu button opens them with their labels. The device header's icon actions (revert, read back, diagnostic) are labelled items of the device menu there. Tooltips on info marks open on a tap.
 - **Radius:** base `0.5rem` (`--radius`); see the radius scale under [Components](#components).
 - **Tooltips** (Radix): instant, multiline; hide secondary detail (DPT/flags) there rather than inline.
 - **State in the URL:** filter/search/selection state is URL-encoded so views are shareable and reload-safe.
@@ -115,13 +116,17 @@ The primitives live in `apps/web/src/components/ui/`. Views use them instead of 
 
 | Primitive | Use | Variants |
 |---|---|---|
-| `Button` | Every action with a text label | `default` (amber, the one primary action of a view), `outline`, `secondary`, `ghost`, `destructive`, `link`; sizes `xs` 24 px, `sm` 32 px, `default` 36 px, `lg` 40 px |
-| `IconButton` | An action shown only as an icon | Same variants and sizes (`icon-xs` to `icon-lg`). Its `label` is required: the accessible name and the tooltip |
+| `Button` | Every action with a text label | `default` (amber, the one primary action of a view), `outline`, `secondary`, `ghost`, `destructive`, `link`; sizes `xs` 24 px, `sm` 32 px, `default` 36 px, `lg` 40 px (on a touch screen `xs` grows to 36 px, `sm` and `default` to 40 px) |
+| `IconButton` | An action shown only as an icon | Same variants and sizes (`icon-xs` to `icon-lg`, on a touch screen 36 to 40 px). Its `label` is required: the accessible name and the tooltip |
 | `Badge` | A status or label mark that does nothing on click | Tones `neutral`, `outline`, `primary`, `ok`, `info`, `warning`, `danger`; sizes `sm` 20 px, `md` 24 px; `mono` for bus data |
-| `BadgeButton` | The same mark when it opens a detail (popover, dialog) | As `Badge`, plus the states of a control |
+| `BadgeButton` | The same mark when it opens a detail (popover, dialog) | As `Badge`, plus the states of a control; 32 px high on a touch screen |
 | `Chip` | A filter toggle or one choice among a few (IP/USB, transport) | `active`, announced as `aria-pressed` |
 | `Dialog` | A task in a window: a form, a preview, a running read | `backdropClose`, `dismissible` |
 | `AlertDialog` | A question before an action (delete, restore, write) | `backdropClose`, `dismissible`; the cancel button takes the initial focus |
+| `Tooltip` | Secondary detail on hover and keyboard focus | `tapToOpen` on a trigger whose only job is the tooltip (an info mark): a tap opens it on a touch screen |
+| `DeviceLabel`, `GaLabel` | A device or group address named anywhere | A neutral slate mark: type icon, name, address in mono. The icon tells the kind apart, never a color. In a list row (`columns`) the address comes first in a fixed-width column, as in ETS, so the addresses line up |
+| `SectionNav` | The section index of a long page (floors and rooms, group ranges, a device's sections) | A sticky sidebar on wide windows; on narrow ones a "jump to" select pinned under the tabs that follows the scroll |
+| `RowActions` | The add, rename and delete actions of a list row or a section heading | Hover-revealed icon buttons with a mouse, one labelled menu on a touch screen; `shown` keeps the icons visible with a mouse |
 
 ### Radius scale
 
@@ -158,10 +163,10 @@ A state mark that has a remedy is a `BadgeButton` where the page offers that rem
 
 Two rows:
 
-1. **Who the device is and what state it is in:** back, the device label (name and individual address), the programming state ("never programmed" or "not downloaded in ETS"; or "N changes" and a security mark, either or both; or "programmed") and the compatibility badge. All marks `md`, one height.
+1. **Who the device is and what state it is in:** back, the device name as the page title with its individual address in mono, the programming state ("never programmed" or "not downloaded in ETS"; or "N changes" and a security mark, either or both; or "programmed") and the compatibility badge, which names what it describes ("Product: …"), since the evidence belongs to the product, not to this unit. All marks `md`, one height, one font.
 2. **What stands against it and what can be done with it:** the standing warnings on the left, the parameter filter after them, and the actions right-aligned as one group (Flash, revert, read back, diagnostic, the menu). A standing warning about the device (what the comparison with the device does not cover, what Busforge does not write, settings it does not support, links the page cannot show) is a `warning` `BadgeButton` with a short label and its count where the count is known; its popover carries the full title and the points.
 
-On a narrow window the second row wraps: warnings, then the filter at full width, then the action group, kept together on its own line and split only where the window is narrower than the group. Below the header, next to what they act on, stay what concerns single parameters or a read: values to assume, unresolved objects, why a device stays never programmed after a read, values assumed and not yet proven, and the DCA notice.
+On a wide window the header stays pinned below the project bar while the parameters scroll, so the device, its state and its actions stay in view; the section index sits below it, and a jump lands each section just under it. On a narrow window the header scrolls with the page and the second row wraps: warnings, then the filter at full width, then the action group on its own line, where Flash takes the free width. Below the header, next to what they act on, stay what concerns single parameters or a read: values to assume, unresolved objects, why a device stays never programmed after a read, values assumed and not yet proven, and the DCA notice.
 
 ### Filters
 

@@ -28,8 +28,8 @@ export function GaCombobox({ options, value, onChange, testId, placeholder, defa
   // Until then render just the light trigger button.
   const [active, setActive] = useState(defaultOpen);
   const sel = options.find((o) => o.raw === value);
-  const triggerClass = cn("h-9 w-full justify-between font-normal", !sel && "border-dashed font-mono text-xs text-muted-foreground");
-  const label = <>{sel ? <GaLabel name={sel.name} address={sel.address} className="min-w-0" /> : <span className="truncate">{placeholder ?? t("ga.assign")}</span>}<ChevronsUpDown className="size-3.5 shrink-0 opacity-50" /></>;
+  const triggerClass = cn("h-9 w-full justify-between font-normal", !sel && "text-sm text-muted-foreground");
+  const label = <>{sel ? <GaLabel name={sel.name} address={sel.address} className="min-w-0" /> : <span className="truncate">{placeholder ?? t("ga.assign")}</span>}<ChevronsUpDown className="size-3.5 shrink-0 opacity-70" /></>;
 
   if (!active) {
     return (
