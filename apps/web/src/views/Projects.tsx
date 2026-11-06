@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { FilePlus2, FolderUp, KeyRound, Loader2, Plus, Trash2, Cpu, Network, History, MoreVertical, Pencil, Download, AlertTriangle, Building2, Layers, DoorOpen } from "lucide-react";
+import { FilePlus2, FolderUp, KeyRound, Loader2, Plus, Trash2, Cpu, Network, History, MoreVertical, Pencil, Download, AlertTriangle, Building2, Layers, DoorOpen, type LucideIcon } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -10,7 +10,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher.tsx";
 import { Brandmark } from "@/components/Brandmark.tsx";
 import {
@@ -31,11 +30,14 @@ import { errMsg } from "../lib/apiError.ts";
 
 const fmtDate = (ts: number) => new Date(ts).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 
+function Stat({ icon: Icon, text }: { icon: LucideIcon; text: string }) {
+  return <span className="inline-flex items-center gap-1.5"><Icon className="size-3.5 shrink-0" />{text}</span>;
+}
+
 // The shared project card body, used on the dashboard and in the import preview so
-// the two stay identical. Two distinct axes of counts: the CONFIG axis (devices,
-// group addresses, restore points) as filled badges, and the LOCATION axis
-// (buildings, floors, rooms) as outline badges set apart by a divider. The
-// location group is hidden when the project has no building structure.
+// the two stay identical. Two lines of counts: what the project configures (devices,
+// group addresses, restore points), then where it is (buildings, floors, rooms); the
+// second line is left out when the project has no building structure.
 function ProjectCardBody({ name, deviceCount, gaCount, snapshotCount, buildingCount, floorCount, roomCount, date, source }: {
   name: string; deviceCount: number; gaCount: number; snapshotCount: number;
   buildingCount: number; floorCount: number; roomCount: number; date: number; source?: ImportSource | null;
@@ -45,21 +47,19 @@ function ProjectCardBody({ name, deviceCount, gaCount, snapshotCount, buildingCo
   return (
     <div className="min-w-0">
       <div className="truncate text-lg font-bold">{name}</div>
-      <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-2">
-        <div className="flex items-center gap-2">
-          <Badge mono title={t("nav.devices")}><Cpu className="size-3" />{deviceCount}</Badge>
-          <Badge mono title={t("nav.groups")}><Network className="size-3" />{gaCount}</Badge>
-          <Badge mono title={t("snapshot.title")}><History className="size-3" />{snapshotCount}</Badge>
+      {/* What the project holds, written out: icon-only counts cannot be read without hovering. */}
+      <div className="mt-2.5 space-y-1 text-sm text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <Stat icon={Cpu} text={t("projects.statDevices", { count: deviceCount })} />
+          <Stat icon={Network} text={t("projects.statGas", { count: gaCount })} />
+          <Stat icon={History} text={t("projects.statSnapshots", { count: snapshotCount })} />
         </div>
         {hasLocation && (
-          <>
-            <span className="h-4 w-px shrink-0 self-center bg-border" aria-hidden />
-            <div className="flex items-center gap-2">
-              <Badge tone="outline" mono title={t("projects.buildings")}><Building2 className="size-3" />{buildingCount}</Badge>
-              <Badge tone="outline" mono title={t("projects.floors")}><Layers className="size-3" />{floorCount}</Badge>
-              <Badge tone="outline" mono title={t("projects.rooms")}><DoorOpen className="size-3" />{roomCount}</Badge>
-            </div>
-          </>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <Stat icon={Building2} text={t("projects.statBuildings", { count: buildingCount })} />
+            <Stat icon={Layers} text={t("projects.statFloors", { count: floorCount })} />
+            <Stat icon={DoorOpen} text={t("projects.statRooms", { count: roomCount })} />
+          </div>
         )}
       </div>
       <div className="mt-2 flex min-w-0 gap-1.5 font-mono text-[11px] text-muted-foreground">
@@ -266,7 +266,7 @@ function ProjectCardMenu({ onRename, onExport, onDelete }: { onRename: () => voi
       <DropdownMenuTrigger asChild>
         <Button
           variant="ghost" size="icon"
-          className="shrink-0 text-muted-foreground opacity-0 transition-opacity hover:not-disabled:text-foreground group-hover:opacity-100 data-[state=open]:opacity-100"
+          className="shrink-0 text-muted-foreground transition-opacity hover:not-disabled:text-foreground focus-visible:opacity-100 pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100 data-[state=open]:opacity-100"
           onClick={(e) => e.stopPropagation()}
           aria-label={t("projects.menuAria")}
           data-testid="project-menu"

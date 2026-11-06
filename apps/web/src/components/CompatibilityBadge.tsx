@@ -36,7 +36,7 @@ export function CompatibilityBadge({ view, manufacturer }: { view: Pick<DeviceCo
     <Popover>
       <PopoverTrigger asChild>
         <BadgeButton tone={SUMMARY_TONE[summary]} data-testid="compatibility-badge">
-          <Icon /> {t(`compat.summary.${summary}`)}
+          <Icon /> {t("compat.badge", { summary: t(`compat.summary.${summary}`) })}
         </BadgeButton>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-[26rem] max-w-[calc(100vw-2rem)] space-y-3 overflow-x-auto text-xs" data-testid="compatibility-detail">

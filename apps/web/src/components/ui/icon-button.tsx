@@ -13,12 +13,15 @@ function IconButton({
   tooltip = true,
   variant = "ghost",
   size = "icon",
+  tooltipClassName,
   children,
   ...props
 }: Omit<React.ComponentProps<typeof Button>, "size" | "aria-label"> &
   Pick<VariantProps<typeof buttonVariants>, "variant"> & {
     label: string
     tooltip?: boolean
+    // Hides the tooltip where the button shows its label as text (e.g. `xl:hidden`).
+    tooltipClassName?: string
     size?: IconSize
   }) {
   const button = (
@@ -30,7 +33,7 @@ function IconButton({
   return (
     <Tooltip>
       <TooltipTrigger asChild>{button}</TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
+      <TooltipContent className={tooltipClassName}>{label}</TooltipContent>
     </Tooltip>
   )
 }

@@ -6,7 +6,8 @@ import { cn } from "@/lib/utils"
 
 // Every clickable control shares the control radius (rounded-md), a pointer cursor, a hover
 // state that a disabled control does not show, and the amber focus ring for keyboard focus
-// (docs/design-system.md, "Components").
+// (docs/design-system.md, "Components"). On a touch screen (coarse pointer) every size grows to a
+// tap target of at least 36 px, icon buttons and the default size to 40 px.
 const buttonVariants = cva(
   "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-[color,background-color,border-color,box-shadow] outline-none select-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
@@ -24,13 +25,13 @@ const buttonVariants = cva(
         link: "text-primary underline-offset-4 hover:not-disabled:underline",
       },
       size: {
-        default: "h-9 px-4 py-2 has-[>svg]:px-3",
-        xs: "h-6 gap-1 px-2 text-xs has-[>svg]:px-1.5 [&_svg:not([class*='size-'])]:size-3",
-        sm: "h-8 gap-1.5 px-3 has-[>svg]:px-2.5",
+        default: "h-9 px-4 py-2 has-[>svg]:px-3 pointer-coarse:h-10",
+        xs: "h-6 gap-1 px-2 text-xs has-[>svg]:px-1.5 [&_svg:not([class*='size-'])]:size-3 pointer-coarse:h-9",
+        sm: "h-8 gap-1.5 px-3 has-[>svg]:px-2.5 pointer-coarse:h-10",
         lg: "h-10 px-6 has-[>svg]:px-4",
-        icon: "size-9",
-        "icon-xs": "size-6 [&_svg:not([class*='size-'])]:size-3",
-        "icon-sm": "size-8",
+        icon: "size-9 pointer-coarse:size-10",
+        "icon-xs": "size-6 [&_svg:not([class*='size-'])]:size-3 pointer-coarse:size-9",
+        "icon-sm": "size-8 pointer-coarse:size-10",
         "icon-lg": "size-10",
       },
     },

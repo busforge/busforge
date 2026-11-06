@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDownUp, Lock, Pause, Play, Send, Trash2 } from "lucide-react";
+import { ArrowDownUp, Lock, Pause, Play, PlugZap, Send, Trash2 } from "lucide-react";
+import { openBusPanel } from "../lib/busPanel.ts";
 import { useParams } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { type GroupRangeNode, type Telegram } from "../api.ts";
@@ -117,10 +118,11 @@ export function MonitorView() {
           <Button variant="outline" size="sm" onClick={() => setNewestFirst((s) => !s)} title={t(newestFirst ? "monitor.newestFirst" : "monitor.oldestFirst")} data-testid="monitor-sort">
             <ArrowDownUp className="size-3.5" /> {t(newestFirst ? "monitor.newestFirst" : "monitor.oldestFirst")}
           </Button>
-          <Button variant="outline" size="sm" onClick={() => setPaused((p) => !p)} data-testid="monitor-pause">
+          {/* Pausing holds the live view; without a connection there is nothing live to hold. */}
+          <Button variant="outline" size="sm" onClick={() => setPaused((p) => !p)} disabled={status !== "connected" && !paused} data-testid="monitor-pause">
             {paused ? <><Play className="size-3.5" /> {t("monitor.resume")}</> : <><Pause className="size-3.5" /> {t("monitor.pause")}</>}
           </Button>
-          <Button variant="outline" size="sm" onClick={() => setRows([])}><Trash2 className="size-3.5" /> {t("monitor.clear")}</Button>
+          <Button variant="outline" size="sm" onClick={() => setRows([])} disabled={rows.length === 0}><Trash2 className="size-3.5" /> {t("monitor.clear")}</Button>
         </div>
       </div>
 
@@ -178,8 +180,13 @@ export function MonitorView() {
           </div>
 
           {rows.length === 0 && (
-            <div className="px-3 py-10 text-center font-mono text-xs text-muted-foreground">
+            <div className="flex flex-col items-center gap-3 px-3 py-12 text-center text-sm text-muted-foreground">
               {status === "connected" ? t("monitor.waiting") : t("monitor.emptyHistory")}
+              {status === "disconnected" && (
+                <Button size="sm" onClick={openBusPanel} data-testid="monitor-connect">
+                  <PlugZap className="size-4" /> {t("monitor.connectCta")}
+                </Button>
+              )}
             </div>
           )}
           <div ref={bottomRef} />

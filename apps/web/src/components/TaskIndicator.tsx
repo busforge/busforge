@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { onOpenBusPanel } from "../lib/busPanel.ts";
 import { AlertCircle, AlertTriangle, Ban, Boxes, CheckCircle2, Clock, Cpu, Download, FileJson, KeyRound, Loader2, Network, Plug, PlugZap, Rocket, Stethoscope, Tag, Usb, X } from "lucide-react";
 import { toast } from "sonner";
 import type { BusStatus, ConnectionType, FlashResult, Task, TaskKind } from "../api.ts";
@@ -36,6 +37,15 @@ export function TaskIndicator({ projectId }: { projectId: string }) {
   const status: BusStatus = bus?.status ?? "disconnected";
   // The collect task whose diagnostic package is open, from its row.
   const [diagnostic, setDiagnostic] = useState<Task | null>(null);
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  // Opened from elsewhere on the page: on a narrow window the project bar scrolls away, so the page
+  // returns to its top first, or the popover would open off screen beside a trigger out of view.
+  useEffect(() => onOpenBusPanel(() => {
+    const el = triggerRef.current;
+    if (el && el.getBoundingClientRect().bottom < 0) window.scrollTo({ top: 0 });
+    setOpen(true);
+  }), []);
   const cancel = useMutation({
     mutationFn: (taskId: string) => api.cancelTask(projectId, taskId),
     onError: (e) => toast.error(t("task.cancelError"), { description: errMsg(t, e) }),
@@ -49,10 +59,10 @@ export function TaskIndicator({ projectId }: { projectId: string }) {
   const interruptedWrite = tasks.some((x) => x.state === "interrupted" && x.writes);
 
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
-          variant="outline" size="sm"
+          ref={triggerRef} variant="outline" size="sm"
           className={cn(
             "text-xs",
             active.length ? "text-primary hover:not-disabled:text-primary" : status === "connected" ? "text-ok hover:not-disabled:text-ok" : "text-muted-foreground",
@@ -69,14 +79,15 @@ export function TaskIndicator({ projectId }: { projectId: string }) {
           ) : (
             <>
               <StatusDot status={status} />
-              <span className="font-mono uppercase tracking-wider">{t(`status.${status}`)}</span>
+              {/* A narrow window keeps the dot (and the full state in the popover and the accessible name). */}
+              <span className="font-mono uppercase tracking-wider max-sm:sr-only">{t(`status.${status}`)}</span>
               {interruptedWrite && <AlertTriangle className="size-3.5 shrink-0 text-destructive" aria-label={t("task.interruptedWrite")} data-testid="task-interrupted-write" />}
             </>
           )}
           {queued > 0 && <Badge tone="primary" size="sm" mono>+{queued}</Badge>}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-96 p-3">
+      <PopoverContent align="end" sideOffset={8} className="w-96 p-3">
         <ConnectionPanel projectId={projectId} status={status} />
         <div className="mb-1.5 mt-3 border-t border-border/60 px-1 pt-2.5 text-xs font-semibold text-muted-foreground">{t("task.title")}</div>
         {tasks.length === 0 ? (
@@ -111,7 +122,8 @@ function ConnectionPanel({ projectId, status }: { projectId: string; status: Bus
   const { t } = useTranslation();
   const qc = useQueryClient();
   const { data: project } = useProject(projectId);
-  const { data: saved = [] } = useConnections();
+  const { data: saved = [], isSuccess: savedLoaded } = useConnections();
+  const noneSaved = savedLoaded && saved.length === 0;
   const selectedId = project?.connectionId ?? null;
   const selected = saved.find((c) => c.id === selectedId) ?? null;
 
@@ -146,7 +158,8 @@ function ConnectionPanel({ projectId, status }: { projectId: string; status: Bus
             {t(`status.${busy && !connected ? "connecting" : status}`)}
           </span>
         </div>
-        <Button
+        {/* Without a saved connection there is nothing to connect to: the way on is to add one (below). */}
+        {!(noneSaved && editable) && <Button
           size="sm"
           onClick={() => (connected ? disconnectMut.mutate() : connectMut.mutate())}
           disabled={busy || (!connected && !selected)}
@@ -155,12 +168,12 @@ function ConnectionPanel({ projectId, status }: { projectId: string; status: Bus
         >
           {busy ? <Loader2 className="size-4 animate-spin" /> : connected ? <Plug className="size-4" /> : <PlugZap className="size-4" />}
           {busy ? "…" : connected ? t("iface.disconnect") : t("iface.connect")}
-        </Button>
+        </Button>}
       </div>
 
       {editable ? (
         <div className="space-y-2 px-1">
-          {saved.length === 0 ? (
+          {noneSaved ? (
             <p className="text-xs text-muted-foreground">{t("iface.noConnections")}</p>
           ) : (
             <Select value={selectedId ?? undefined} onValueChange={(v) => selectMut.mutate(v)}>
@@ -180,7 +193,8 @@ function ConnectionPanel({ projectId, status }: { projectId: string; status: Bus
               </SelectContent>
             </Select>
           )}
-          <div className="flex justify-end"><ConnectionManager /></div>
+          {/* One instance whichever its trigger, so its dialog stays open when the first connection is saved. */}
+          <div className="flex justify-end"><ConnectionManager trigger={noneSaved ? "add" : "manage"} /></div>
         </div>
       ) : (
         selected && (

@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { offersFullDownload, leftDeviceUnloaded, etsCompletesLoad, flashFooter } from "./flashRecovery.ts";
+import { offersFullDownload, leftDeviceUnloaded, etsCompletesLoad, flashFooter, missingInterface } from "./flashRecovery.ts";
 
 describe("offersFullDownload", () => {
   test("a refusal only a full download can answer offers it whatever the family", () => {
@@ -80,5 +80,16 @@ describe("flashFooter", () => {
     expect(flashFooter({ ...failed, downloadTaken: true }).retry).toBe(false);
     expect(flashFooter({ ...failed, blocked: true }).retry).toBe(false);
     expect(flashFooter({ ...failed, anyFlashing: true }).retry).toBe(false);
+  });
+});
+
+describe("missingInterface", () => {
+  test("holds only when every target failed for want of a bus connection", () => {
+    expect(missingInterface(["INTERFACE_NOT_SET"])).toBe(true);
+    expect(missingInterface(["INTERFACE_NOT_SET", "INTERFACE_NOT_SET"])).toBe(true);
+    expect(missingInterface(["INTERFACE_NOT_SET", undefined])).toBe(false);
+    expect(missingInterface(["INTERFACE_NOT_SET", "DEVICE_NOT_ANSWERING"])).toBe(false);
+    expect(missingInterface([undefined])).toBe(false);
+    expect(missingInterface([])).toBe(false);
   });
 });

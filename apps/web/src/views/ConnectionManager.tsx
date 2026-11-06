@@ -113,7 +113,9 @@ export const connDetail = (c: Connection) => c.type === "usb" ? (c.usbSerial ?? 
 
 // The connection-manager dialog: a library of saved connections (CRUD) with
 // network/USB discovery to populate them. Project-independent.
-export function ConnectionManager() {
+// `trigger="add"`: the trigger is the primary "Add connection" button and opens straight into a new
+// connection's editor (where none is saved yet); otherwise a quiet "Manage connections" link.
+export function ConnectionManager({ trigger = "manage" }: { trigger?: "manage" | "add" } = {}) {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const { data: conns = [] } = useConnections();
@@ -127,11 +129,13 @@ export function ConnectionManager() {
   });
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) setEditing(null); }}>
+    <Dialog open={open} onOpenChange={(o) => { setOpen(o); setEditing(o && trigger === "add" ? "new" : null); }}>
       <DialogTrigger asChild>
-        <button type="button" className="rounded-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline" data-testid="manage-connections">
+        {trigger === "add" ? (
+          <Button size="sm" data-testid="add-first-connection"><Plus className="size-4" /> {t("conn.add")}</Button>
+        ) : <button type="button" className="rounded-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline" data-testid="manage-connections">
           {t("iface.manage")}
-        </button>
+        </button>}
       </DialogTrigger>
       <DialogContent backdropClose={editing === null}>
         <DialogHeader>

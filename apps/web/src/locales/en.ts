@@ -2,6 +2,7 @@
 // translations are a compile error. Plain nested object, single i18next namespace.
 const en = {
   common: {
+    moreActions: "More actions",
     loading: "Loading…",
     cancel: "Cancel",
     save: "Save",
@@ -32,6 +33,18 @@ const en = {
     exportProject: "Export project",
   },
   projects: {
+    statDevices_one: "{{count}} device",
+    statDevices_other: "{{count}} devices",
+    statGas_one: "{{count}} group address",
+    statGas_other: "{{count}} group addresses",
+    statSnapshots_one: "{{count}} restore point",
+    statSnapshots_other: "{{count}} restore points",
+    statBuildings_one: "{{count}} building",
+    statBuildings_other: "{{count}} buildings",
+    statFloors_one: "{{count}} floor",
+    statFloors_other: "{{count}} floors",
+    statRooms_one: "{{count}} room",
+    statRooms_other: "{{count}} rooms",
     source: "First imported from {{name}} ({{kind}}, {{bytes}} bytes, SHA-256 {{sha256}})",
     heading: "Projects",
     buildings: "Buildings",
@@ -372,6 +385,7 @@ const en = {
     INTERNAL: "Something went wrong.",
   },
   devices: {
+    jumpTo: "Jump to floor or room",
     searchPlaceholder: "Filter devices…",
     clearSearch: "Clear search",
     toProgram: "{{count}} to program",
@@ -413,6 +427,7 @@ const en = {
   },
   // The device's compatibility badge and its detail (compatibility matrix).
   compat: {
+    badge: "Product: {{summary}}",
     title: "Shown on hardware for this product",
     summary: { tested: "All supported operations tested", partial: "Partly tested", derived: "Tested on a sibling", otherVersion: "Tested with another version", failed: "Failed on hardware", untested: "Untested", unsupported: "Not supported" },
     state: { tested: "tested", failed: "failed", conflict: "contradictory", derived: "derived", otherVersion: "other version tested", eligible: "untested", refused: "not supported" },
@@ -553,6 +568,7 @@ const en = {
     doneUnverified: "Downloaded, but the read-back did not verify. The device is NOT considered commissioned; run the download again.",
   },
   device: {
+    jumpTo: "Jump to section",
     back: "Back to devices",
     revert: "Revert",
     flash: "Flash",
@@ -967,7 +983,9 @@ const en = {
     deleteUndoHint: "An automatic restore point is captured first, so you can undo this.",
   },
   flash: {
-    titleDevice: "Program device {{device}}",
+    noInterface: "This project has no bus connection yet, so nothing can be compared with the device or written to it.",
+    setUpConnection: "Set up bus connection",
+    titleDevice: "Flash {{device}}",
     descDevice: "Programs over the bus whatever changed: configuration and/or group addresses. Only differing regions are written, each with a backup and a read-back verify afterwards.",
     partParams: "Configuration",
     partGAs: "Group addresses",
@@ -998,6 +1016,7 @@ const en = {
     download: "Download",
   },
   monitor: {
+    connectCta: "Set up bus connection",
     telegrams: "{{count}} telegrams",
     paused: "paused",
     offline: "offline (history)",
@@ -1012,7 +1031,7 @@ const en = {
     colDestination: "Destination",
     colValue: "Value",
     waiting: "Waiting for bus traffic…",
-    emptyHistory: "No telegrams recorded yet. Connect from the bus indicator in the top-right to capture live traffic.",
+    emptyHistory: "No telegrams recorded yet. Connect to the bus to capture live traffic.",
     sendGa: "Group address to send to",
     sendValue: "Value as hex",
     sendWrite: "Write",
@@ -1028,6 +1047,7 @@ const en = {
     },
   },
   groups: {
+    jumpTo: "Jump to group",
     searchPlaceholder: "Filter group addresses…",
     clearSearch: "Clear search",
     count: "{{shown}} / {{total}}",
@@ -1081,7 +1101,7 @@ const en = {
     usbScan: "Scan",
     usbScanning: "Scanning…",
     savedPlaceholder: "Pick a connection",
-    noConnections: "No saved connections. Add one below.",
+    noConnections: "No bus connection saved yet. Add one to reach the bus.",
     manage: "Manage connections",
   },
   conn: {

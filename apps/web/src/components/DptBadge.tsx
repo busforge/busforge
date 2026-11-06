@@ -26,7 +26,7 @@ export function DptBadge({ dpt, className }: { dpt: string; className?: string }
   if (!detail) return pill;
   return (
     <Tooltip>
-      <TooltipTrigger asChild>
+      <TooltipTrigger asChild tapToOpen>
         <button type="button" aria-label={`${name} ${dpt}: ${detail}`} className="cursor-default">{pill}</button>
       </TooltipTrigger>
       <TooltipContent>{detail}</TooltipContent>
