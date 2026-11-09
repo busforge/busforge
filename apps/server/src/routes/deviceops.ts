@@ -1,4 +1,4 @@
-import { parseAppConfig, resolveModuleInstances, buildDeviceConfig, assumableMemorylessRefs, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, CollectCancelled, comObjectTableChanges, fullDownloadRefusedForTunnelingEntries, type CollectApp, type AppConfig, type DeviceReadbackInfo, type MatrixOperation, type ModuleInstance, type WriteGate, type KnxIpDevice } from "@busforge/product";
+import { parseAppConfig, takesValue, resolveParamRef, resolveModuleInstances, buildDeviceConfig, assumableMemorylessRefs, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, CollectCancelled, comObjectTableChanges, fullDownloadRefusedForTunnelingEntries, type CollectApp, type AppConfig, type DeviceReadbackInfo, type MatrixOperation, type ModuleInstance, type WriteGate, type KnxIpDevice } from "@busforge/product";
 import { getProjectConnection, getGaMeta } from "../db/projects.ts";
 import type { Database } from "bun:sqlite";
 import type { Connection } from "../db/connections.ts";
@@ -34,15 +34,10 @@ function assumedValues(app: AppConfig, raw: unknown): Assumed[] {
     if (typeof a?.paramRefId !== "string" || typeof a.value !== "string") throw bad("each assumed value needs a paramRefId and a value, both strings");
     const refId = a.paramRefId, value = a.value;
     if (out.some((o) => o.refId === refId)) throw bad(`${refId} is assumed more than once`);
-    // A module-instance ref resolves through its ModuleDef ref, as the parameter edit does.
-    const ref = app.refs.get(refId) ?? app.refs.get(refId.replace(/_M-\d+_MI-\d+/, ""));
-    const param = ref ? app.params.get(ref.paramId) : undefined;
-    const type = param ? app.types.get(param.typeId) : undefined;
+    const { ref, param, type } = resolveParamRef(app, refId) ?? {};
     if (!ref || !param || !type) throw new ApiError("READBACK_ASSUMPTION_UNKNOWN_PARAM", `${refId} is no parameter of this application`);
     if (param.hasMemory || param.onProperty) throw new ApiError("READBACK_ASSUMPTION_HAS_MEMORY", `${refId} has a ${param.hasMemory ? "memory" : "property"} location: the device holds its value, it cannot be assumed`);
-    const ok = type.enums.length ? type.enums.some((e) => String(e.value) === value)
-      : (type.base === "Number" || type.base === "Value") && /^(0|-?[1-9]\d*)$/.test(value) && (type.min === undefined || Number(value) >= type.min) && (type.max === undefined || Number(value) <= type.max);
-    if (!ok) throw bad(`${value} is not a value ${refId} takes`);
+    if (takesValue(type, value) !== true) throw bad(`${value} is not a value ${refId} takes`);
     out.push({ refId, value, isDefault: value === (ref.value ?? param.value) });
   }
   return out;
@@ -55,9 +50,7 @@ function assumedValues(app: AppConfig, raw: unknown): Assumed[] {
 // com-object flags into the baseline, so its image check compared the table under them) flags and
 // priority tell no value apart, only the objects and their sizes. Yields between builds: it runs inside a bus job.
 export async function distinguishable(app: AppConfig, values: Map<string, string>, refId: string, modules: ModuleInstance[], flagsFromDevice: boolean): Promise<boolean> {
-  const ref = app.refs.get(refId) ?? app.refs.get(refId.replace(/_M-\d+_MI-\d+/, ""));
-  const param = ref ? app.params.get(ref.paramId) : undefined;
-  const type = param ? app.types.get(param.typeId) : undefined;
+  const { ref, param, type } = resolveParamRef(app, refId) ?? {};
   if (!type || !type.enums.length) return false;
   const written = (v: Map<string, string>): string | null => {
     try {

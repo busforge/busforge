@@ -58,6 +58,10 @@ export interface CfgParamView {
   // of the parameter (DeviceReadbackInfo.unprovenAssumptions): the baseline holds it, the device never
   // showed it. Filled in by the server, only while the project holds that value.
   assumed?: true;
+  // The baseline (the state last read from or programmed onto the device) holds this value, which is
+  // no value of the parameter's type: no option of its enumeration, or a number outside its bounds.
+  // Shown as such, never taken into the project. Filled in by the server.
+  baseOutsideType?: string;
 }
 export interface CfgComObjView {
   refId: string; number: number; name: string; functionText: string;
@@ -145,6 +149,9 @@ export interface DeviceCapabilities {
 // apps/server buildDeviceView).
 export interface DeviceConfigView {
   blocks: CfgBlock[];
+  // The answer to a whole-device revert: the parameters it left at the project's value because the
+  // baseline holds no value of their type there (CfgParamView.baseOutsideType). Absent where none.
+  revertKept?: string[];
   hasModules: boolean;
   dca?: DcaInfo;
   // Which aspects of this device can be verified against the hardware via read-back.

@@ -68,6 +68,16 @@ function AssumedBadge({ refId }: { refId: string }) {
   );
 }
 
+// The device's state holds a value that is no value of the parameter's type (CfgParamView.baseOutsideType).
+function OutsideTypeBadge({ refId, value }: { refId: string; value: string }) {
+  const { t } = useTranslation();
+  return (
+    <Badge tone="danger" title={t("device.outsideTypeTitle", { value })} data-testid={`outside-type-${refId}`}>
+      {t("device.outsideTypeBadge", { value })}
+    </Badge>
+  );
+}
+
 // Per-row revert: discard one row's drift back to the device/baseline value.
 function RevertButton({ title, disabled, onClick }: { title: string; disabled?: boolean; onClick: () => void }) {
   return (
@@ -232,7 +242,11 @@ export function DeviceConfig() {
   };
   const doRevert = () =>
     revert.mutate(undefined, {
-      onSuccess: () => { setRevertOpen(false); dispatchAssume({ type: "stale", deviceId: assumeKey }); toast.success(t("device.reverted")); },
+      onSuccess: (view) => {
+        setRevertOpen(false); dispatchAssume({ type: "stale", deviceId: assumeKey });
+        if (view.revertKept?.length) toast.warning(t("device.revertKept", { count: view.revertKept.length }));
+        else toast.success(t("device.reverted"));
+      },
       onError: (e) => { setRevertOpen(false); onError(e); },
     });
   const readBackWith = (values?: AssumedValue[]) => {
@@ -983,6 +997,7 @@ function ParamRow({ param, compact, changedTitle, revertTitle, reverting, onChan
         <>
           {param.changed ? <ChangedDot title={changedTitle} /> : null}
           {param.assumed ? <AssumedBadge refId={param.refId} /> : null}
+          {param.baseOutsideType !== undefined ? <OutsideTypeBadge refId={param.refId} value={param.baseOutsideType} /> : null}
         </>
       ) : (
         <span className="flex min-w-0 basis-full items-center gap-2 text-sm sm:basis-auto sm:flex-1">
@@ -990,9 +1005,12 @@ function ParamRow({ param, compact, changedTitle, revertTitle, reverting, onChan
           {/* pre-wrap (not pre-line) so an ETS author's leading-space faux-indent renders */}
           <span className="min-w-0 whitespace-pre-wrap">{param.name}</span>
           {param.assumed ? <AssumedBadge refId={param.refId} /> : null}
+          {param.baseOutsideType !== undefined ? <OutsideTypeBadge refId={param.refId} value={param.baseOutsideType} /> : null}
         </span>
       )}
-      {param.changed && <RevertButton title={revertTitle} disabled={reverting} onClick={onRevert} />}
+      {param.changed && (param.baseOutsideType !== undefined
+        ? <RevertButton title={t("device.outsideTypeTitle", { value: param.baseOutsideType })} disabled onClick={onRevert} />
+        : <RevertButton title={revertTitle} disabled={reverting} onClick={onRevert} />)}
       <div className={cn("flex min-w-0 flex-1 items-center gap-2", !compact && "sm:w-72 sm:flex-none")}>
         {/* A type we cannot edit stays explicit even when it is read-only: rendering it
             as a plain read-only value would show an empty field and pass the gap off as
@@ -1024,6 +1042,8 @@ function ParamRow({ param, compact, changedTitle, revertTitle, reverting, onChan
               className="h-9 w-full appearance-none rounded-md border border-input bg-background pr-8 pl-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 pointer-coarse:h-11 pointer-coarse:text-base"
               data-testid={`param-${param.refId}`}
             >
+              {/* A value outside the options would otherwise show as the first option. */}
+              {param.options?.some((o) => String(o.value) === param.value) ? null : <option value={param.value} disabled>{t("device.noOption", { value: param.value })}</option>}
               {param.options?.map((o) => <option key={o.value} value={String(o.value)}>{o.text}</option>)}
             </select>
             <ChevronsUpDown className="pointer-events-none absolute top-1/2 right-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />

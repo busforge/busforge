@@ -144,7 +144,7 @@ function memorylessDemo(state: AppState): void {
     + '<ParameterRefRef RefId="M-TEST_A-1_P-6_R-6" /><choose ParamRefId="M-TEST_A-1_P-6_R-6"><when test="1"><ParameterRefRef RefId="M-TEST_A-1_P-7_R-7" /></when></choose>');
   state.db.run("UPDATE app_programs SET xml = ? WHERE id = ?", [xml, DEMO]);
 }
-type ParamRow = { refId: string; value: string; changed?: boolean; assumed?: true };
+type ParamRow = { refId: string; value: string; changed?: boolean; assumed?: true; baseOutsideType?: string };
 const paramsOf = (view: { blocks?: { items: { kind: string; param?: ParamRow }[] }[] }) =>
   new Map((view.blocks ?? []).flatMap((b) => b.items).filter((it) => it.kind === "param").map((it) => [it.param!.refId, it.param!]));
 const config = async (state: AppState, path: string) => paramsOf((await (await handleApi(req(`${path}/config`), state))!.json()) as Parameters<typeof paramsOf>[0]);
@@ -495,5 +495,95 @@ corpusDescribe("a read-back of the Gira Tastsensor 3 Komfort, assuming the value
     const plain = await placed(xml);
     const without = await onUnit(() => readBack(plain.state, plain.path));
     expect((without.body as Body).readback?.hiddenDiffer).toBeUndefined();
+  });
+});
+
+// A device can hold a byte that is no value of its parameter's type (garbage, a value under another
+// configuration, another firmware's value). The read records what the device holds; the row says it is no
+// value of the type, and neither a revert nor an edit takes such a value into the project.
+describe("a device value that is no value of its parameter's type", () => {
+  const LEVEL = `${DEMO}_P-2_R-2`;
+  const holding = (paramBase: Map<string, string>): typeof realRead => async () =>
+    ({ mask: "MV-0705", paramsRead: true, linksRead: true, paramBase, links: [], deviceConfig: new Map<string, string>(), programIdMatches: true, loaded: true, imageMatches: false });
+  const call = async (state: AppState, path: string, op: string, body: unknown) => {
+    const res = (await handleApi(req(`${path}/${op}`, { method: op === "params" ? "PUT" : "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), state))!;
+    return { status: res.status, body: (await res.json()) as Body };
+  };
+
+  test("an enumeration byte outside its options is recorded and marked, and no revert takes it into the project", async () => {
+    const { state, pid, did, path } = await placed();
+    readImpl = holding(new Map([[MODE, "7"]]));
+    try { expect((await readBack(state, path)).state).toBe("done"); } finally { readImpl = realRead; }
+    expect(stored(state, pid, did).base).toEqual([{ r: MODE, v: "7" }]);
+    expect((await config(state, path)).get(MODE)).toMatchObject({ value: "1", changed: true, baseOutsideType: "7" });
+    const row = await call(state, path, "revert-param", { paramRefId: MODE });
+    expect([row.status, row.body.error?.code, row.body.error?.details]).toEqual([409, "REVERT_VALUE_NOT_OF_TYPE", { params: [MODE] }]);
+    expect(stored(state, pid, did).live).toEqual([]);
+    // The whole device's revert takes the rest and names the row it left at the project's value.
+    state.db.run("INSERT INTO device_param_base (project_id, device_id, param_ref_id, value) VALUES (?, ?, ?, '7')", [pid, did, LEVEL]);
+    const all = (await (await handleApi(req(`${path}/revert`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }), state))!.json()) as { revertKept?: string[] };
+    expect(all.revertKept).toEqual([MODE]);
+    expect(stored(state, pid, did).live).toEqual([{ r: LEVEL, v: "7" }]);
+  });
+
+  test("a number outside its bounds is marked the same; a value of the type is not", async () => {
+    const { state, path } = await placed();
+    readImpl = holding(new Map([[LEVEL, "200"], [MODE, "0"]]));
+    try { await readBack(state, path); } finally { readImpl = realRead; }
+    const rows = await config(state, path);
+    expect([rows.get(MODE)?.baseOutsideType, rows.get(MODE)?.changed]).toEqual([undefined, true]);
+    readImpl = holding(new Map([[LEVEL, "200"]]));
+    try { await readBack(state, path); } finally { readImpl = realRead; }
+    expect((await config(state, path)).get(LEVEL)).toMatchObject({ baseOutsideType: "200" });
+    expect((await call(state, path, "revert-param", { paramRefId: LEVEL })).body.error?.code).toBe("REVERT_VALUE_NOT_OF_TYPE");
+  });
+
+  test("the whole device's revert takes a value outside its type where the configuration after it hides the parameter, and one the project already holds", async () => {
+    const { state, pid, did, path } = await placed();
+    // "Mode" Off hides "Level": the device keeps 200 in the bytes of a setting it does not use.
+    readImpl = holding(new Map([[MODE, "0"], [LEVEL, "200"]]));
+    try { await readBack(state, path); } finally { readImpl = realRead; }
+    expect((await call(state, path, "revert", {})).status).toBe(200);
+    expect(stored(state, pid, did).live).toEqual([{ r: MODE, v: "0" }, { r: LEVEL, v: "200" }]);
+    // Shown again, the project's value is already the baseline's: nothing for a revert to change.
+    readImpl = holding(new Map([[MODE, "1"], [LEVEL, "200"]]));
+    try { await readBack(state, path); } finally { readImpl = realRead; }
+    await call(state, path, "params", { paramRefId: MODE, value: "1" });
+    expect((await config(state, path)).get(LEVEL)).toMatchObject({ baseOutsideType: "200", changed: false });
+    expect((await call(state, path, "revert", {})).status).toBe(200);
+  });
+
+  test("an edit to a value outside the type is refused and stores nothing; the default and a value of the type are taken", async () => {
+    const { state, pid, did, path } = await placed();
+    for (const [ref, value] of [[MODE, "7"], [LEVEL, "101"], [LEVEL, "-1"], [LEVEL, "4.5"]]) {
+      const r = await call(state, path, "params", { paramRefId: ref, value });
+      expect([r.status, r.body.error?.code]).toEqual([400, "PARAM_VALUE_NOT_OF_TYPE"]);
+    }
+    expect(stored(state, pid, did).live).toEqual([]);
+    expect((await call(state, path, "params", { paramRefId: MODE, value: "0" })).status).toBe(200);
+    expect((await call(state, path, "params", { paramRefId: LEVEL, value: "100" })).status).toBe(200);
+    expect(stored(state, pid, did).live).toEqual([{ r: MODE, v: "0" }, { r: LEVEL, v: "100" }]);
+  });
+
+  test("the whole device's revert keeps what the configuration after it shows, with the kept parameters at the project's values", async () => {
+    const { state, pid, did, path } = await placed();
+    // The baseline's "Mode" 7 hides "Level"; kept at the project's default 1, "Mode" shows it, so its 200 is kept too.
+    readImpl = holding(new Map([[MODE, "7"], [LEVEL, "200"]]));
+    try { await readBack(state, path); } finally { readImpl = realRead; }
+    const all = (await (await handleApi(req(`${path}/revert`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }), state))!.json()) as { revertKept?: string[] };
+    expect(all.revertKept).toEqual([MODE, LEVEL]);
+    expect(stored(state, pid, did).live).toEqual([]);
+    expect((await config(state, path)).get(LEVEL)).toMatchObject({ value: "42", changed: true, baseOutsideType: "200" });
+  });
+
+  test("a default outside its own type is taken, whether or not the configuration shows the parameter", async () => {
+    const { state, pid, did, path } = await placed();
+    const xml = demoXml(state);
+    expect(xml.split('Text="Level" Value="42"').length).toBe(2);
+    state.db.run("UPDATE app_programs SET xml = ? WHERE id = ?", [xml.replace('Text="Level" Value="42"', 'Text="Level" Value="200"'), DEMO]);
+    expect((await call(state, path, "params", { paramRefId: LEVEL, value: "50" })).status).toBe(200);
+    expect((await call(state, path, "params", { paramRefId: MODE, value: "0" })).status).toBe(200);
+    expect((await call(state, path, "params", { paramRefId: LEVEL, value: "200" })).status).toBe(200);
+    expect(stored(state, pid, did).live).toEqual([{ r: MODE, v: "0" }, { r: LEVEL, v: "200" }]);
   });
 });

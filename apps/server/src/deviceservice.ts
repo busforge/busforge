@@ -3,7 +3,7 @@ import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { iaToNum, numToGa, SENDER_ENTRY } from "@busforge/knx";
 import { appProgramId, readAppProgram, type Project } from "@busforge/project";
-import { parseAppConfig, buildDeviceConfig, buildSecurityObject, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, effectiveComObjFlags, ProductError, imageWritableType, type EffectiveComObjFlags, type ComObjInstanceOverride, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
+import { parseAppConfig, buildDeviceConfig, buildSecurityObject, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, effectiveComObjFlags, ProductError, imageWritableType, resolveParamRef, takesValue, type EffectiveComObjFlags, type ComObjInstanceOverride, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
 import { getAppProgram, putAppProgram, catalogBaggageNames, pictureType } from "./db/catalog.ts";
 import { getDeviceParams, getDeviceParamBase, getDeviceParamAssumed, type SameParamValue, getDeviceModules, getDeviceAppRef, getDeviceProductRef, getDeviceForFlash, deviceHasApplication, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps, getDeviceComObjOverrides, getDeviceComObjOverrideBase } from "./db/deviceparams.ts";
 import { deviceCompatibility } from "./compatibility.ts";
@@ -285,15 +285,54 @@ export function loadCatalogApp(state: AppState, programId: string): AppConfig | 
 // colour by its hex digits whatever their case (the read-back gives #RRGGBB, an edit may store #rrggbb).
 export function sameParamValue(app: AppConfig): SameParamValue {
   return (refId, a, b) => {
-    const ref = app.refs.get(refId) ?? app.refs.get(refId.replace(/_M-\d+_MI-\d+/, ""));
-    const param = ref ? app.params.get(ref.paramId) : undefined;
+    const { ref, param, type } = resolveParamRef(app, refId) ?? {};
     const def = ref?.value ?? param?.value ?? "";
     const x = a ?? def, y = b ?? def;
     // An empty value (a parameter without a default) is no number: Number("") would read it as 0.
-    const base = param ? app.types.get(param.typeId)?.base : undefined;
+    const base = type?.base;
     return x === y || (x !== "" && y !== "" && ((base === "Float" && Number(x) === Number(y)) || (base === "Color" && x.toUpperCase() === y.toUpperCase())));
   };
 }
+// The baseline entries that are no value of their parameter's type (takesValue), by ref: what the device
+// holds there is no setting of the application.
+export function baseOutsideType(app: AppConfig, baseline: Map<string, string>): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const [refId, v] of baseline) {
+    const type = resolveParamRef(app, refId)?.type;
+    if (type && takesValue(type, v) === false) out.set(refId, v);
+  }
+  return out;
+}
+
+// The parameters a revert leaves at the project's value because it would set them to a baseline value
+// outside their type: one parameter (`refId`, the row's revert), or, for the whole device's, each one the
+// configuration after the revert shows. That configuration is the baseline with the kept parameters at
+// the project's values, so the set is found as a fixed point; one that does not settle refuses the revert.
+// A hidden parameter holds what the device keeps in the bytes of a setting it does not use (a residue or
+// fill as ETS leaves them, docs/load-procedures.md R14, or another union branch's bits) and is taken as
+// such. A parameter whose project value is already the baseline's is not changed by a revert.
+export function revertOutsideType(state: AppState, projectId: string, deviceId: string, refId?: string): string[] {
+  const app = loadApp(state, projectId, deviceId);
+  if (!app) return [];
+  const base = getDeviceParamBase(state.db, projectId, deviceId), live = getDeviceParams(state.db, projectId, deviceId);
+  const same = sameParamValue(app);
+  const outside = [...baseOutsideType(app, base).keys()]
+    .filter((r) => (refId === undefined || r === refId) && !same(r, base.get(r) ?? null, live.get(r) ?? null));
+  if (refId !== undefined || !outside.length) return outside;
+  const modules = getDeviceModules(state.db, projectId, deviceId);
+  let kept: string[] = [];
+  for (let round = 0; round <= outside.length; round++) {
+    const after = new Map(base);
+    for (const r of kept) { const v = live.get(r); if (v === undefined) after.delete(r); else after.set(r, v); }
+    const shown = new Set<string>();
+    for (const b of buildDeviceConfig(app, after, undefined, modules).blocks) for (const it of b.items) if (it.kind === "param") shown.add(it.param.refId);
+    const next = outside.filter((r) => shown.has(r));
+    if (next.length === kept.length && next.every((r) => kept.includes(r))) return kept;
+    kept = next;
+  }
+  throw new ApiError("REVERT_VALUE_NOT_OF_TYPE", `the device's state holds values that are no values of their parameters for ${outside.join(", ")}, and which of them the configuration after a revert shows does not settle; nothing was reverted`, 409, { params: outside });
+}
+
 export function paramValueSame(state: AppState, projectId: string, deviceId: string): SameParamValue {
   const app = loadApp(state, projectId, deviceId);
   if (!app) throw new ApiError("APP_PROGRAM_MISSING", "application program not found in project", 404);
@@ -386,6 +425,7 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
   // an imported artifact is not checked against its baseline).
   const same = sameParamValue(app);
   const assumed = new Set([...getDeviceParamAssumed(db, projectId, deviceId)].filter(([ref, v]) => same(ref, baseline.get(ref) ?? null, v)).map(([ref]) => ref));
+  const outside = baseOutsideType(app, baseline);
   const shownParams = new Set<string>();
   const programId = appProgramId(getDeviceAppRef(db, projectId, deviceId)!);
   // A picture gets its url only where the catalogue holds a file the route serves; otherwise the row says
@@ -406,6 +446,7 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
       }
       it.param.changed = isChanged;
       if (!isChanged && assumed.has(it.param.refId)) it.param.assumed = true;
+      if (outside.has(it.param.refId)) it.param.baseOutsideType = outside.get(it.param.refId);
       shownParams.add(it.param.refId);
     } else if (it.kind === "comObject") {
       const key = stripRef(app.id, it.comObject.refId);
@@ -444,17 +485,9 @@ export function unflashableParamRefs(state: AppState, projectId: string, deviceI
   const stored = params ?? getDeviceParams(state.db, projectId, deviceId);
   if (!app) return new Set(stored.keys());
   for (const refId of stored.keys()) {
-    // A module-instance ref (…_MD-x_M-k_MI-n_…) resolves through its ModuleDef ref (…_MD-x_…),
-    // the inverse of the instance id the module expansion prefixes (application.ts).
-    let resolved: { base: string; colorSpace?: string; hasMemory: boolean } | undefined;
-    for (const rid of [refId, refId.replace(/_M-\d+_MI-\d+/, "")]) {
-      const ref = app.refs.get(rid);
-      const param = ref ? app.params.get(ref.paramId) : undefined;
-      const t = param ? app.types.get(param.typeId) : undefined;
-      if (param && t) { resolved = { base: t.base, colorSpace: t.colorSpace, hasMemory: param.hasMemory }; break; }
-    }
-    if (!resolved) refs.add(refId);
-    else if (resolved.hasMemory && !imageWritableType(resolved)) refs.add(refId);
+    const { param, type } = resolveParamRef(app, refId) ?? {};
+    if (!param || !type) refs.add(refId);
+    else if (param.hasMemory && !imageWritableType(type)) refs.add(refId);
   }
   return refs;
 }

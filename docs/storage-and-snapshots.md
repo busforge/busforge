@@ -124,6 +124,23 @@ refuses a mark on a parameter that is not a parameter without a memory or proper
 device's carried application: one with a memory or property location, one the application does not
 have, or one on a device whose application the artifact does not carry (`BUSFORGE_ASSUMED_NOT_MEMORYLESS`).
 
+**A baseline value outside its parameter's type is shown, never adopted.** A device can hold a byte
+that is no option of an enumeration parameter, or a number outside a `TypeNumber`'s bounds (garbage,
+a value written under another configuration or by another firmware). A read-back records it in the
+baseline as what the device holds, so the parameter shows as a change; the device page marks the row
+with the value and says it is no value of the parameter, and an enumeration whose project value is
+outside its options shows that value in its list as such instead of the first option. No revert copies
+such a value into the project: the row's revert refuses with `REVERT_VALUE_NOT_OF_TYPE` (409,
+`details.params`) and changes nothing; the whole device's reverts everything else, leaves each such
+parameter the configuration after the revert shows at the project's value, and names them
+(`revertKept`). That configuration is the baseline with the kept parameters at the project's values,
+so a kept selector can show another such parameter, which is kept as well; a set that does not settle
+refuses the revert with the same code. A parameter that configuration hides holds what the device
+keeps in the bytes of a setting it does not use (a residue or fill, as ETS leaves them, or another
+union branch's bits) and is reverted with the rest. A download writes the project's value over it.
+An edit to a value outside the type is refused with `PARAM_VALUE_NOT_OF_TYPE`; the parameter's
+default is always taken.
+
 An empty baseline says nothing about whether the device was ever written, so a device placed from
 the catalog, or whose product was replaced, carries `devices.never_programmed`. A `.knxproj` import
 seeds it from ETS's five load flags ([findings.md](findings.md#1-the-knxproj-is-self-contained)): a

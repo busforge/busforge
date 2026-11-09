@@ -249,6 +249,11 @@ where they are required; raw acquisition is not a way around access control. Wha
 - **An online product catalog** as a third ingest source, next to `.knxproj` and `.knxprod`.
 - **Refuse a database migrated by a newer version** instead of running on it unchecked
   ([deployment.md](deployment.md#backup-restore-and-upgrade)).
+- **A project value outside its parameter's type.** An edit and a revert refuse one, but an imported
+  `.knxproj` or `.busforge`, a restored snapshot, and a project stored before that refusal can still
+  hold one (no option of its enumeration, a number outside its bounds); the device page shows it as
+  such, and a download writes it as any value that fits the field's bits. What ETS does with such a project value is not captured;
+  until it is, whether the import should refuse it or the download should is open.
 
 ## Product and UI
 

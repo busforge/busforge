@@ -389,12 +389,14 @@ export function getDeviceChangedKeys(db: Database, projectId: string, deviceId: 
 
 // Discard a device's unprogrammed edits: restore the live params/links and com-object flags from
 // the programmed baseline. Inverse of resetParamBase/resetLinkBase.
-export function revertDevice(db: Database, projectId: string, deviceId: string): void {
+// `keepParams`: parameters whose project value stays as it is.
+export function revertDevice(db: Database, projectId: string, deviceId: string, keepParams: readonly string[] = []): void {
+  const notKept = keepParams.length ? ` AND param_ref_id NOT IN (${keepParams.map(() => "?").join(", ")})` : "";
   db.transaction(() => {
-    db.prepare("DELETE FROM device_parameters WHERE project_id = ? AND device_id = ?").run(projectId, deviceId);
+    db.prepare(`DELETE FROM device_parameters WHERE project_id = ? AND device_id = ?${notKept}`).run(projectId, deviceId, ...keepParams);
     db.prepare(`INSERT INTO device_parameters (project_id, device_id, param_ref_id, value)
-      SELECT project_id, device_id, param_ref_id, value FROM device_param_base WHERE project_id = ? AND device_id = ?`)
-      .run(projectId, deviceId);
+      SELECT project_id, device_id, param_ref_id, value FROM device_param_base WHERE project_id = ? AND device_id = ?${notKept}`)
+      .run(projectId, deviceId, ...keepParams);
     db.prepare("DELETE FROM device_links WHERE project_id = ? AND device_id = ?").run(projectId, deviceId);
     db.prepare(`INSERT INTO device_links (project_id, device_id, com_obj_ref_id, slot, ga_raw)
       SELECT project_id, device_id, com_obj_ref_id, slot, ga_raw FROM device_link_base WHERE project_id = ? AND device_id = ?`)

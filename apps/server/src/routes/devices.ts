@@ -1,12 +1,12 @@
 import { join } from "node:path";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { buildDeviceConfig, editComObjOverride, type ComObjFlags, type ComObjOverrideEdit } from "@busforge/product";
+import { buildDeviceConfig, editComObjOverride, resolveParamRef, takesValue, type ComObjFlags, type ComObjOverrideEdit } from "@busforge/product";
 import { addDevice, setDeviceAddress, renameDevice, projectExists, getGaMeta } from "../db/projects.ts";
 import { getAppProgram, getCatalogProduct } from "../db/catalog.ts";
 import { getDeviceBaggage, projectHasBaggage } from "../db/baggage.ts";
 import { getDeviceParams, setDeviceParam, deleteDeviceParam, getDeviceModules, setDeviceLink, getDeviceForFlash, deviceHasApplication, getDeviceLinks, replaceDeviceProduct, revertDevice, revertDeviceParam, revertDeviceLink, getDeviceComObjOverrides, getDeviceComObjOverrideBase, setDeviceComObjOverride, revertDeviceComObjFlags } from "../db/deviceparams.ts";
 import { appProgramId } from "@busforge/project";
-import { buildDeviceView, missingApplication, loadApp, loadCatalogApp, mapLinksForReplace, resolveParamForEdit, deviceComObjFlags, type ReplaceMappingEntry } from "../deviceservice.ts";
+import { buildDeviceView, missingApplication, loadApp, loadCatalogApp, mapLinksForReplace, resolveParamForEdit, revertOutsideType, deviceComObjFlags, type ReplaceMappingEntry } from "../deviceservice.ts";
 import { fullRef, stripRef } from "../refids.ts";
 import { json, err, text } from "../httputil.ts";
 import type { AppState } from "../app.ts";
@@ -95,7 +95,13 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const def = pv?.defaultValue;
     const isDefault = def !== undefined && (value === def || (pv?.float === true && Number(value) === Number(def)));
     if (isDefault) deleteDeviceParam(db, id, deviceId, body.paramRefId);
-    else setDeviceParam(db, id, deviceId, body.paramRefId, value);
+    else {
+      // The parameter's default is taken whether or not the configuration shows it (pv is shown rows only).
+      const app = loadApp(state, id, deviceId);
+      const r = app ? resolveParamRef(app, body.paramRefId) : undefined;
+      if (r?.type && value !== (r.ref.value ?? r.param?.value) && takesValue(r.type, value) === false) return err("PARAM_VALUE_NOT_OF_TYPE", `${value} is no value parameter ${body.paramRefId} takes (no option of its enumeration, or a number outside its bounds)`);
+      setDeviceParam(db, id, deviceId, body.paramRefId, value);
+    }
     return json(buildDeviceView(state, id, deviceId, body.lang));
   }
 
@@ -210,8 +216,12 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const deviceId = decodeURIComponent(seg[4]);
     if (!getDeviceForFlash(db, id, deviceId)) return err("DEVICE_NOT_FOUND", "device not found", 404);
     const body = (await req.json().catch(() => ({}))) as { lang?: string };
-    revertDevice(db, id, deviceId);
-    return json(buildDeviceView(state, id, deviceId, body.lang));
+    // A parameter shown after the revert whose baseline value is no value of its type keeps the project's
+    // value, and is named (revertOutsideType).
+    const kept = revertOutsideType(state, id, deviceId);
+    revertDevice(db, id, deviceId, kept);
+    const view = buildDeviceView(state, id, deviceId, body.lang);
+    return json(kept.length ? { ...view, revertKept: kept } : view);
   }
 
   // /api/projects/:id/devices/:deviceId/revert-param  -> discard one param's drift
@@ -220,6 +230,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     if (!getDeviceForFlash(db, id, deviceId)) return err("DEVICE_NOT_FOUND", "device not found", 404);
     const body = (await req.json().catch(() => ({}))) as { paramRefId?: string; lang?: string };
     if (!body.paramRefId) return err("PARAM_REF_REQUIRED", "paramRefId required");
+    if (revertOutsideType(state, id, deviceId, body.paramRefId).length) return err("REVERT_VALUE_NOT_OF_TYPE", `the device's state holds a value for ${body.paramRefId} that is no value of the parameter; a revert would copy it into the project, so it was not reverted`, 409, { params: [body.paramRefId] });
     revertDeviceParam(db, id, deviceId, body.paramRefId);
     return json(buildDeviceView(state, id, deviceId, body.lang));
   }

@@ -271,6 +271,23 @@ function parseParamFauxIndent(xml: string): Map<string, string> {
   return out;
 }
 
+// A parameter ref, its parameter and its type. A module-instance ref (…_M-k_MI-n…) resolves through its
+// ModuleDef ref.
+export function resolveParamRef(app: AppConfig, refId: string): { ref: CfgParamRef; param?: CfgParam; type?: CfgType } | undefined {
+  const ref = app.refs.get(refId) ?? app.refs.get(refId.replace(/_M-\d+_MI-\d+/, ""));
+  if (!ref) return undefined;
+  const param = app.params.get(ref.paramId);
+  return { ref, param, type: param ? app.types.get(param.typeId) : undefined };
+}
+
+// Whether a parameter type takes `value`: one of its enumeration's values, or a whole number within
+// its bounds. Undefined for every other type, whose values this does not judge.
+export function takesValue(type: CfgType, value: string): boolean | undefined {
+  if (type.enums.length) return type.enums.some((e) => String(e.value) === value);
+  if (type.base !== "Number" && type.base !== "Value") return undefined;
+  return /^(0|-?[1-9]\d*)$/.test(value) && (type.min === undefined || Number(value) >= type.min) && (type.max === undefined || Number(value) <= type.max);
+}
+
 export function parseAppConfig(xml: string): AppConfig {
   const p = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", attributesGroupName: ":@", preserveOrder: true });
   const root = p.parse(xml) as ONode[];
