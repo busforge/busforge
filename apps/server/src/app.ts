@@ -10,7 +10,7 @@ import { countSealedToolKeys } from "./db/deviceSecurity.ts";
 import { countSealedGroupKeys } from "./db/groupKeys.ts";
 import { countSealedCertificates } from "./db/deviceCertificates.ts";
 import { versionInfo } from "./version.ts";
-import { ApiError, errorCode } from "./errors.ts";
+import { ApiError, errorCode, errorDetails } from "./errors.ts";
 import { TaskQueue } from "./taskqueue.ts";
 import { SqliteTaskStore, closeUnfinishedTasks } from "./db/tasks.ts";
 import { getMasterKey } from "./secrets.ts";
@@ -129,6 +129,6 @@ export async function handleApi(req: Request, state: AppState): Promise<Response
     // anything else is an unexpected failure surfaced raw under INTERNAL.
     const code = errorCode(e);
     const status = e instanceof ApiError ? e.status : code ? 400 : 500;
-    return err(code ?? "INTERNAL", (e as Error).message, status, e instanceof ApiError ? e.details : undefined);
+    return err(code ?? "INTERNAL", (e as Error).message, status, errorDetails(e) ?? undefined);
   }
 }

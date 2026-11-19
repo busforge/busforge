@@ -141,7 +141,13 @@ union branch's bits) and is reverted with the rest. A download writes the projec
 An edit to a value outside the type is refused with `PARAM_VALUE_NOT_OF_TYPE`; the parameter's
 default is always taken.
 
-An empty baseline says nothing about whether the device was ever written, so a device placed from
+A device placed from the catalog, or whose product was replaced, holds the values it starts at (a text
+parameter's translated `InitialValue`,
+[device-memory-model.md](device-memory-model.md#which-parameter-types-reach-the-image-at-all)) in its
+baseline as well as in the project, as an import keeps the values ETS stored as both: they show as no
+change, and a revert returns to them.
+
+Such a baseline says nothing about whether the device was ever written, so a device placed from
 the catalog, or whose product was replaced, carries `devices.never_programmed`. A `.knxproj` import
 seeds it from ETS's five load flags ([findings.md](findings.md#1-the-knxproj-is-self-contained)): a
 `DeviceInstance` that does not carry all of them as `"true"` imports as never programmed. That is a
@@ -172,7 +178,10 @@ download). Where the application's
 declared load procedure has a step the full download cannot execute, the surgical flash is refused all
 the same, naming ETS (`NEVER_PROGRAMMED_USE_ETS`): nothing would check which application the device
 runs before the flash writes into it. A family that cannot be downloaded in full for another reason
-is programmed surgically only; there a verified surgical flash clears it. It travels in a `.busforge` export with its parts (`etsNotDownloaded`, taken only on a never-programmed
+is programmed surgically only; there a verified parameter flash clears it, and where the application
+keeps no parameters in the device a verified group-address flash as well. Until then its parameter
+flash takes the device as holding nothing of the baseline: it writes every byte it owns
+([load-procedures.md](load-procedures.md)). It travels in a `.busforge` export with its parts (`etsNotDownloaded`, taken only on a never-programmed
 device); restore points do not carry it, being device
 state. A device with no value recorded reads as programmed.
 

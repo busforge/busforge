@@ -192,14 +192,14 @@ describe("0.xml parser", () => {
     expect(Buffer.from(p.deviceSecurity[0].serialNumber, "base64")).toHaveLength(6);
   });
 
-  test("a secure device ETS never commissioned (a tool key, no serial) is counted, not imported with a key it cannot use", () => {
+  test("a secure device ETS never commissioned (a tool key, no serial) gives its key apart from the commissioned ones", () => {
     const secured = xml0.replace(
       'Hardware2ProgramRefId="M-0048_H-1_HP-1">',
       'Hardware2ProgramRefId="M-0048_H-1_HP-1"><Security ToolKey="AAECAwQFBgcICQoLDA0ODw==" />',
     );
     const p = parseProject(secured, undefined, "fallback");
     expect(p.deviceSecurity).toEqual([]);
-    expect(p.secureDevicesWithoutSerial).toBe(1);
+    expect(p.toolKeysWithoutSerial).toEqual([{ deviceId: "P-TEST-0_DI-1", toolKey: "AAECAwQFBgcICQoLDA0ODw==" }]);
   });
 
   test("leaves deviceSecurity empty for a project with no secure devices", () => {

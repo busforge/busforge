@@ -35,8 +35,9 @@ export interface Task {
   // Stable code for client localization when the failure is a coded error; null
   // for cancellations and uncoded (unexpected) failures.
   errorCode: string | null;
-  // The structured facts behind a coded refusal (ApiError.details, e.g. the objects a read-back's
-  // assumed values left unresolved), for a client acting on them; null when the failure has none.
+  // The structured facts behind a coded refusal (errors.ts errorDetails: e.g. the objects a read-back's
+  // assumed values left unresolved, the error code a load-state machine names), for a client to act on
+  // or show; null when the failure has none.
   errorDetails: Record<string, unknown> | null;
   // What the operation actually reported. Without this a finished task says "done" and nothing
   // else, so a download that wrote every byte and then FAILED ITS READ-BACK looked exactly like
@@ -261,6 +262,7 @@ export class TaskQueue {
           task.state = "error";
           task.error = `the write broke off inside its load bracket and may have left the device unloaded; ${errorCode(e) ? `${errorCode(e)}: ` : ""}${(e as Error).message}`;
           task.errorCode = "FLASH_INTERRUPTED_UNLOADED";
+          task.errorDetails = errorDetails(e);
         }
         else { task.state = "error"; task.error = (e as Error).message; task.errorCode = errorCode(e) ?? null; task.errorDetails = errorDetails(e); }
         throw e;

@@ -9,7 +9,7 @@
 // without them their devices' test is registered as skipped under a name that says so.
 import { expect, setDefaultTimeout, test } from "bun:test";
 import { appProgramId, extractCatalogProducts, loadKnxproj, type CatalogProduct } from "../packages/project/src/index.ts";
-import { bytesOf, corpusArchives, describeFailure, extensionOf, PASSWORDS_ENV, passwords } from "./corpus-archives.ts";
+import { bytesOf, corpusArchives, describeFailure, extensionOf, NOT_THIS_PASSWORD, PASSWORDS_ENV, passwords } from "./corpus-archives.ts";
 import { corpusTest } from "./corpus-test.ts";
 
 // Every project of the corpus is unpacked, the protected ones with AES (about 98 MiB); the floor of docs/testing.md applies.
@@ -51,8 +51,6 @@ function changedDevices(file: string, password: string | undefined): string[] {
 }
 const projects = () => archives().filter((f) => extensionOf(f) === "knxproj");
 const asksForPassword = (e: unknown) => (e as { code?: string }).code === "PASSWORD_REQUIRED";
-// The refusals of a password that is not the project's (tools/corpus-archives.ts).
-const NOT_THIS_PASSWORD = new Set(["WRONG_PASSWORD", "DECRYPT_FAILED", "ZIPCRYPTO_PASSWORD_ENCODING"]);
 
 corpusTest("every device of every corpus project that needs no password runs the application it ran before", () => {
   const changed: string[] = [];

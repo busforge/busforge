@@ -42,6 +42,7 @@ import {
 export const INDEX_DIRS = ["captures", "internal/captures", "collections"] as const;
 export const INDEX_MD = "internal/captures/INDEX.md";
 export const INDEX_JSON = "internal/captures/index.json";
+export const INDEX_FORMAT = "busforge-capture-index/3";
 export const KEYS_ENV = "CAPTURE_KEYS";
 // The bussard set's oracle rows name the public password of its synthetic keyrings in their header.
 export const BUSSARD_ROWS = `${BUSSARD_SYNTHETIC_DIR}/captures/rows.txt`;
@@ -95,7 +96,7 @@ export interface NotIndexed { file: string; reason: string }
 // reason, and the names of the keys from the environment.
 export interface KeySources { read: KeyLoad["read"]; notRead: KeyLoad["notRead"]; environment: string[]; deviceKeys: number; groupKeys: number }
 export interface CaptureIndex {
-  format: "busforge-capture-index/2"; dirs: readonly string[]; keys: KeySources; files: IndexedFile[]; notIndexed: NotIndexed[];
+  format: typeof INDEX_FORMAT; dirs: readonly string[]; keys: KeySources; files: IndexedFile[]; notIndexed: NotIndexed[];
 }
 
 // The name of a service inside a secured telegram: an opened S-A_Data by the service it carries, a Sync by its
@@ -208,8 +209,9 @@ class FileStats {
   readonly propertyAnswers = new Map<string, PropertyAnswer>();
   readonly undecoded: number[] = [];
   // The individual address of the tunnel, which a tool's request leaves as 0.0.0 and the interface's
-  // confirmation carries: the source a secured request was authenticated with. Such a request waits for the
-  // confirmation that follows it (`pending`, read with the line it came from) before it is opened.
+  // confirmation carries: the source a secured request was authenticated with. Such a request waits
+  // (`pending`, with the line it came from) and is opened at the next tunnel telegram or the file's end, after a
+  // confirmation has set the address.
   tunnelIa = 0;
   line = 0;
   pending: { line: number; open: () => boolean } | null = null;
@@ -493,7 +495,9 @@ function etsTelegram(st: FileStats, sent: boolean, service: string, addr: string
   const ext = rest.match(/ObjectType=(\d+) Instance=(\d+) PID=(\d+)/);
   if (ext) st.properties.add(`t${ext[1]}.${ext[2]}/${ext[3]}`);
   if ((service === "PropertyValue_Response" || service === "PropertyExtValue_Response") && (prop || ext) && IA.test(addr)) {
-    const answer = rest.match(/NumberOfElements=(\d+) StartIndex=\d+ Data=([0-9A-Fa-f ]*)/);
+    // ETS writes the data as hex octets, run together or separated by spaces, to the end of the line; anything else
+    // is not read.
+    const answer = rest.match(/NumberOfElements=(\d+) StartIndex=\d+ Data=((?:[0-9A-Fa-f]{2} ?)*)\s*$/);
     if (!answer) return false;
     const elements = Number(answer[1]);
     st.propertyAnswer(prop ? `${prop[1]}/${prop[2]}` : `t${ext![1]}.${ext![2]}/${ext![3]}`, addr, elements, elements === 0 && answer[2].trim() !== "");
@@ -670,7 +674,7 @@ export function buildIndex(root: string, input: KeyInput = { passwords: [], envi
     read: load.read, notRead: load.notRead, environment: input.environment.map((k) => k.name),
     deviceKeys: load.keys.device.length, groupKeys: groupKeyCount(load.keys),
   };
-  const index: CaptureIndex = { format: "busforge-capture-index/2", dirs: INDEX_DIRS, keys, files: [], notIndexed: [] };
+  const index: CaptureIndex = { format: INDEX_FORMAT, dirs: INDEX_DIRS, keys, files: [], notIndexed: [] };
   for (const f of files) {
     const r = indexFile(root, f, load.keys);
     if ("reason" in r) index.notIndexed.push(r); else index.files.push(r);
@@ -733,7 +737,7 @@ export function renderMarkdown(index: CaptureIndex): string {
   out.push("clear: **tool access** (security control field bit 7: a device's tool key or FDSK), **broadcast** (to 0/0/0),");
   out.push("**group** (to another group address). ETS's log shows neither the control field nor a Sync's access, so its");
   out.push("telegrams name only the destination. **(not opened)**: no key below opened it; **(not shown)**: ETS logged");
-  out.push("it encrypted.", "");
+  out.push("it encrypted; **(truncated)**: shorter than its service's layout, also counted as an undecoded line.", "");
   for (const [s, fs] of [...inside.entries()].sort(([a], [b]) => byText(a, b))) {
     out.push(`- **${s}** (${fs.length}): ${fs.map((f) => `\`${f}\``).join(", ")}`);
   }
@@ -744,8 +748,11 @@ export function renderMarkdown(index: CaptureIndex): string {
   out.push(`Every secured telegram was tried with the ${k.deviceKeys} device keys (tool keys, FDSKs) or the ${k.groupKeys} group keys loaded, held in`);
   out.push("memory only. A key is named by the first file that holds it; which keys opened a capture's telegrams is in");
   out.push("`index.json` (`secure.openedWith`).", "");
-  const added = k.read.filter((r) => r.deviceKeys + r.groupKeys > 0);
-  for (const r of added) out.push(`- \`${r.file}\`: ${r.deviceKeys} device, ${r.groupKeys} group`);
+  const added = k.read.filter((r) => r.deviceKeys + r.groupKeys > 0 || r.omitted.length > 0);
+  for (const r of added) {
+    const omitted = r.omitted.length ? `; not given: ${r.omitted.join(", ")}` : "";
+    out.push(`- \`${r.file}\`: ${r.deviceKeys} device, ${r.groupKeys} group${omitted}`);
+  }
   if (k.read.length > added.length) out.push(`- ${k.read.length - added.length} more projects and keyrings read, holding no other key`);
   out.push(k.environment.length ? `- from \`${KEYS_ENV}\`: ${k.environment.map((n) => `\`${n}\``).join(", ")}` : `- none from \`${KEYS_ENV}\``);
   out.push("");
@@ -794,12 +801,19 @@ export function renderMarkdown(index: CaptureIndex): string {
 // ── the property answer query ────────────────────────────────────────────────
 
 // One row of the query: a property's answers of one element count from one unit, with its device descriptor 0 and
-// the tool, over every file that shows them.
+// the tool, over every file that shows them. A unit is its individual address within a capture: captures of
+// different installations reuse addresses, so a row names its files, and units that share an address and
+// descriptor 0 in different captures share a row.
 export interface PropertyAnswerRow { property: string; elements: number; errorOctet: boolean; device: string; descriptor0: string; tool: string; answers: number; files: string[] }
 
-// The property answers of the index, for the properties named (`<object index>/<PID>`, `t<type>.<instance>/<PID>`)
-// or all of them. A unit's descriptor 0 is the one its file shows, "?" where the file shows none.
+// A property as the index names it: `<object index>/<PID>` or `t<object type>.<instance>/<PID>`, no leading zeros.
+const PROPERTY_NAME = /^(?:(?:0|[1-9]\d*)\/|t(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\/)(?:0|[1-9]\d*)$/;
+
+// The property answers of the index, for the properties named or all of them. A unit's descriptor 0 is the one its
+// file shows, "?" where the file shows none.
 export function propertyAnswerRows(index: CaptureIndex, properties: string[] = []): PropertyAnswerRow[] {
+  const bad = properties.filter((p) => !PROPERTY_NAME.test(p));
+  if (bad.length) throw new Error(`not a property as the index names it (<object index>/<PID>, t<type>.<instance>/<PID>): ${bad.join(", ")}`);
   const rows = new Map<string, PropertyAnswerRow>();
   for (const f of index.files) {
     for (const a of f.propertyAnswers) {
@@ -813,15 +827,35 @@ export function propertyAnswerRows(index: CaptureIndex, properties: string[] = [
       rows.set(key, row);
     }
   }
-  return [...rows.values()].sort((a, b) => propertyOrder(a.property, b.property) || a.elements - b.elements || byAddress(a.device, b.device) || byText(a.tool, b.tool));
+  return [...rows.values()].sort((a, b) => propertyOrder(a.property, b.property) || a.elements - b.elements
+    || Number(a.errorOctet) - Number(b.errorOctet) || byAddress(a.device, b.device) || byText(a.descriptor0, b.descriptor0) || byText(a.tool, b.tool));
 }
 
-export function renderPropertyAnswers(rows: PropertyAnswerRow[]): string {
-  const out = ["| Property | Elements | Error octet | Unit | Descriptor 0 | Tool | Answers | Files |", "|---|---|---|---|---|---|---|---|"];
+// What the query cannot show: answers inside secured telegrams no key opened or ETS logged encrypted, on lines
+// that did not decode, in files no reader takes, and the keys of projects and keyrings that were not read.
+export function propertyAnswersUnseen(index: CaptureIndex): string[] {
+  let unopened = 0, undecoded = 0, undecodedFiles = 0;
+  for (const f of index.files) {
+    for (const [n, c] of Object.entries(f.secure.inside)) if (/\((?:not opened|not shown)\)/.test(n)) unopened += c.sent + c.received;
+    if (f.undecoded.count) { undecoded += f.undecoded.count; undecodedFiles++; }
+  }
+  return [
+    `${unopened} secured telegrams whose service is not shown (not opened, ETS logged encrypted)`,
+    `${undecoded} undecoded lines in ${undecodedFiles} files (truncated secured telegrams among them)`,
+    `${index.notIndexed.filter((n) => !n.reason.startsWith("not a telegram log")).length} files that may hold telegrams but no reader here takes`,
+    `${index.keys.notRead.length} projects and keyrings not read, so their keys were missing`,
+  ];
+}
+
+export function renderPropertyAnswers(rows: PropertyAnswerRow[], properties: string[], unseen: string[]): string {
+  const out = ["| Property | Elements | Error octet | Unit (address in its capture) | Descriptor 0 | Tool | Answers | Files |", "|---|---|---|---|---|---|---|---|"];
   for (const r of rows) {
     const files = r.files.length > 3 ? `${r.files.slice(0, 3).map((f) => `\`${f}\``).join(", ")} and ${r.files.length - 3} more` : r.files.map((f) => `\`${f}\``).join(", ");
     out.push(`| ${r.property} | ${r.elements} | ${r.errorOctet ? "yes" : "no"} | ${r.device} | ${cell(r.descriptor0)} | ${cell(r.tool)} | ${r.answers} | ${cell(files)} |`);
   }
+  out.push("");
+  for (const p of properties.filter((p) => !rows.some((r) => r.property === p))) out.push(`No answer of ${p} in the index.`);
+  out.push(`Not in the table: ${unseen.join("; ")}.`);
   return out.join("\n") + "\n";
 }
 
@@ -829,12 +863,14 @@ if (import.meta.main) {
   try {
     const root = corpusRoot();
     if (root === null) throw new Error(`${CORPUS_ENV} is unset; the index is built from the private corpus (docs/testing.md, "The private corpus")`);
+    const args = process.argv.slice(2);
     // --properties [<property>...]: query the written index.json, write nothing.
-    const query = process.argv.indexOf("--properties");
-    if (query >= 0) {
+    if (args.length && args[0] !== "--properties") throw new Error(`unknown arguments: ${args.join(" ")} (none writes the index, --properties [<property>...] queries it)`);
+    if (args[0] === "--properties") {
       const index = JSON.parse(readFileSync(join(root, INDEX_JSON), "utf8")) as CaptureIndex;
-      if (index.format !== "busforge-capture-index/2") throw new Error(`${INDEX_JSON} is ${String(index.format)}; write the index again first`);
-      process.stdout.write(renderPropertyAnswers(propertyAnswerRows(index, process.argv.slice(query + 1))));
+      if (index.format !== INDEX_FORMAT) throw new Error(`${INDEX_JSON} is ${String(index.format)}, not ${String(INDEX_FORMAT)}; write the index again first`);
+      const properties = args.slice(1);
+      process.stdout.write(renderPropertyAnswers(propertyAnswerRows(index, properties), properties, propertyAnswersUnseen(index)));
       process.exit(0);
     }
     refuseDotenv(KEYS_ENV);

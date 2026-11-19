@@ -103,8 +103,8 @@ export type LoadPlan = LoadStep[];
 const stateName = (s: number) => Object.entries(STATE).find(([, v]) => v === s)?.[0] ?? `?${s}`;
 
 // DPT 20.011 (DPT_ErrorClass_System), the type of a load object's PID_ERROR_CODE, as the KNX master
-// data names its values.
-const ERROR_CLASS_SYSTEM = [
+// data names its values. The app's English locale names them alike (errorDetails.lsmErrorClass).
+export const ERROR_CLASS_SYSTEM: readonly string[] = [
   "no fault", "general device fault", "communication fault", "configuration fault", "hardware fault",
   "software fault", "insufficient non volatile memory", "insufficient volatile memory",
   "memory allocation command with size 0 received", "CRC error", "watchdog reset detected",
@@ -116,18 +116,25 @@ const ERROR_CLASS_SYSTEM = [
 // A load-state machine not in the state a step needs. One that went to ERROR keeps the reason in its
 // PID_ERROR_CODE (28), read once here; a memory-mapped machine has no such property. The read only adds
 // to the refusal: a device without the property, or one that does not answer it, still gets refused.
+// The refusal's details carry what the read gave, `lsmErrorCode`: the code, "none" (the device gives
+// none) or "unreadable" (it did not answer); the app names the code in the user's language.
 async function stateRefusal(dev: KnxDevice, lsm: number, s: number, what: string, memMapped?: boolean): Promise<KnxError> {
   let why = "";
+  let lsmErrorCode: number | "none" | "unreadable" | undefined;
   if (s === STATE.ERROR && !memMapped) {
     try {
       const v = await dev.propReadCounted(lsm, PID.ERROR_CODE, 1, 1);
       const code = v.value[0];
-      why = v.count === 0 || code === undefined
+      lsmErrorCode = v.count === 0 || code === undefined ? "none" : code;
+      why = lsmErrorCode === "none"
         ? "; the device gives no error code for it (PID 28)"
-        : `; its error code (PID 28) is ${code}, ${ERROR_CLASS_SYSTEM[code] ?? "a value DPT 20.011 does not define"}`;
-    } catch (e) { why = `; its error code (PID 28) could not be read: ${e instanceof Error ? e.message : String(e)}`; }
+        : `; its error code (PID 28) is ${code}, ${ERROR_CLASS_SYSTEM[lsmErrorCode] ?? "a value DPT 20.011 does not define"}`;
+    } catch (e) {
+      lsmErrorCode = "unreadable";
+      why = `; its error code (PID 28) could not be read: ${e instanceof Error ? e.message : String(e)}`;
+    }
   }
-  return new KnxError("LOAD_STATE_UNEXPECTED", `LSM ${lsm} ${what} (got ${stateName(s)})${why}`);
+  return new KnxError("LOAD_STATE_UNEXPECTED", `LSM ${lsm} ${what} (got ${stateName(s)})${why}`, lsmErrorCode === undefined ? undefined : { lsmErrorCode });
 }
 
 export interface RunOpts {

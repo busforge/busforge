@@ -6,8 +6,6 @@ import { isConnectionReady } from "../transport.ts";
 import { createSnapshot, listSnapshots } from "../db/snapshots.ts";
 import { getDeviceLinks, getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, deviceHasApplication, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps, keepLinkBaseOnly, clearNeverProgrammed, getDeviceKnxIp, getImageStamps, setImageStamps, setDeviceParam, deleteDeviceParam, getDeviceComObjOverrides, getDeviceComObjOverrideBase, resetComObjOverrideBase, markParamAssumed, clearParamAssumed, getMemorylessAssumed, addMemorylessAssumed } from "../db/deviceparams.ts";
 import { acknowledgeUntested } from "../db/untestedAcks.ts";
-import { getAppProgram } from "../db/catalog.ts";
-import { appProgramMask } from "@busforge/project";
 import { getDeviceSecurity, putDeviceSecurity, setDeviceSequence, setToolKeySource } from "../db/deviceSecurity.ts";
 import { getDeviceCertificate, putDeviceCertificate } from "../db/deviceCertificates.ts";
 import { getGroupKeys } from "../db/groupKeys.ts";
@@ -99,8 +97,13 @@ function busOpPreamble(state: AppState, projectId: string, deviceId: string): { 
 // and so is one whose hardware carries a PEI program (`peiProgram`, HARDWARE_PEI_PROGRAM_REFUSAL) or whose
 // application names an ETS download plugin (COM_OBJECT_TABLE_DOWNLOAD_PLUGIN): ETS commissions those.
 // A family that cannot be downloaded in full for another reason keeps the surgical flash, the only way
-// it is programmed; its verified result then ends the state (gaEndsNever, paramsEndNever).
+// it is programmed; its verified result then ends the state (gaEndsNever, paramsEndNever). Where the
+// application keeps parameters in the device, only the parameter flash ends it: the group-address flash
+// writes none of them, and a parameter flash on a device no longer counted never programmed would leave
+// the bytes it reads as FF to a baseline the device was never shown to hold (ParamFlashCtx.neverProgrammed).
 const canDownloadFull = (app: AppConfig | null, peiProgram: boolean) => !peiProgram && !!app && classify(app).capabilities().fullDownload;
+const keepsParams = (app: AppConfig | null) => !!app && classify(app).capabilities().flashParams
+  && [...app.params.values()].some((p) => p.codeSegment !== undefined && p.offset !== undefined);
 const onlyEtsDownloads = (app: AppConfig | null, peiProgram: boolean) => !!app && (peiProgram || classify(app).operationRefusals().fullDownload !== undefined);
 function refuseNeverProgrammed(dev: { neverProgrammed: boolean; peiProgram: boolean }, app: AppConfig | null): void {
   if (!dev.neverProgrammed) return;
@@ -312,13 +315,10 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     if (!dev) return err("DEVICE_NOT_FOUND", "device not found", 404);
     const conn = getProjectConnection(db, id);
     if (!isConnectionReady(conn)) return err("INTERFACE_NOT_SET", "configure a bus connection first");
-    // The mask only, never a parse of the application: an assignment does not depend on its content.
-    const programXml = dev.appProgramId ? getAppProgram(db, dev.appProgramId) : null;
-    const projectMask = programXml ? appProgramMask(programXml, dev.appProgramId) || undefined : undefined;
     const task = state.queue.submit(
       { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "assign-ia", writes: true },
       async (progress) => {
-        const result = await assignDeviceAddress(conn, dev.ia, progress, projectMask);
+        const result = await assignDeviceAddress(conn, dev.ia, progress);
         // The address is everything a product without an application program takes, as ETS's
         // IndividualAddressLoaded is everything it records for one.
         // Only while the project still holds the address that was assigned.
@@ -645,7 +645,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const { dev, conn, appXml: gaAppXml } = busOpPreamble(state, id, deviceId);
     const gaFamilyApp = loadApp(state, id, deviceId);
     refuseNeverProgrammed(dev, gaFamilyApp);
-    const gaEndsNever = dev.neverProgrammed && !canDownloadFull(gaFamilyApp, dev.peiProgram);
+    const gaEndsNever = dev.neverProgrammed && !canDownloadFull(gaFamilyApp, dev.peiProgram) && !keepsParams(gaFamilyApp);
     const resolved = resolveDeviceLinks(state, id, deviceId);
     const submittedLinks = getDeviceLinks(db, id, deviceId);
     if (!resolved) return err("APP_PROGRAM_MISSING", "application program not found in project", 404);
@@ -814,6 +814,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
           // Read when the job runs, so a download queued before it has left its record.
           stampRecord: getImageStamps(db, id, deviceId),
           memorylessKnown: memorylessKnown(db, id, deviceId, dev.configFromEts, flApp, flashParams, flashModules),
+          neverProgrammed: dev.neverProgrammed,
           dryRun: dryParams, onProgress: progress, ...gate,
         });
       }, commit, (result) => {

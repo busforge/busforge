@@ -848,9 +848,10 @@ export function activeColorValues(app: AppConfig, values: Map<string, string>, i
 // they are and reporting the new colour programmed:
 //  - a parameter or structural flash, when a colour in use differs from the configuration the device was
 //    last programmed with, or comes into use (`base` given);
-//  - a full download, for any colour in use (`base` absent): it knows no configuration the device holds,
-//    and would leave there either the segment's <Data> (a segment loaded afresh) or the unit's bytes (a
-//    segment written into the loaded application), neither shown to be the colour.
+//  - a full download, and a parameter flash of a device never programmed from this project, for any colour
+//    in use (`base` absent): it knows no configuration the device holds, and would leave there either the
+//    segment's <Data> (a segment loaded afresh) or the unit's bytes (a segment written into the loaded
+//    application), neither shown to be the colour.
 export function refuseColorWrites(app: AppConfig, values: Map<string, string>, instances: ModuleInstance[], rgbWritten: boolean, base?: { values: Map<string, string>; instances: ModuleInstance[] }): void {
   const model = toAppModel(app, { includeUnions: true, instances });
   // Written by the relative image: an RGB colour in no code segment or in the parameter segment (LSM 4).
@@ -865,7 +866,7 @@ export function refuseColorWrites(app: AppConfig, values: Map<string, string>, i
   if (!written.length) return;
   const what = base
     ? `this flash writes the device's parameters, and ${written.length} colour parameter(s) among them changed or came into use (e.g. ${written[0]})`
-    : `the configuration has ${written.length} colour parameter(s) in use (e.g. ${written[0]}), which a full download writes`;
+    : `the configuration has ${written.length} colour parameter(s) in use (e.g. ${written[0]}), which a full download, or the flash of a device never programmed from this project, writes`;
   throw new ProductError("PARAM_COLOR_UNSUPPORTED",
     `${what}; no ETS download shows how a colour of this kind is encoded in this device's memory (only an RGB colour on a relative segment is shown), so Busforge cannot write it. Refusing rather than leaving the device's colour unchanged; apply the colour with ETS`);
 }
@@ -883,7 +884,8 @@ export function refuseColorWrites(app: AppConfig, values: Map<string, string>, i
 //    device holds, and the other side reaches the image: a parameter with memory or in a property, or one a
 //    <choose> tests or an <Assign> reads or sets, which decides what else is written. For a parameter or
 //    structural flash that is the configuration the device was last programmed with (`base`); for a full
-//    download, and the System 1 download (`base` absent), the defaults.
+//    download, the System 1 download and the parameter flash of a device never programmed from this project
+//    (`base` absent), the defaults.
 // A parameter's value is that of its ref the configuration places, else one stored on any of its refs, in
 // each module instance.
 export function refuseCalculationWrites(app: AppConfig, values: Map<string, string>, instances: ModuleInstance[], base?: { values: Map<string, string>; instances: ModuleInstance[] }): void {

@@ -78,7 +78,10 @@ literal segments and method. There is no path-pattern library.
 thrown value, so `ApiError`, `ProductError`, `KnxprojError` and `KnxError` all reach the client as
 a stable code without the server importing those classes. The web app localises the code
 (`errors.<CODE>` in `apps/web/src/locales/{en,de}.ts`) and falls back to the English message. A new
-refusal therefore means: a new code, and a new entry in both locale files.
+refusal therefore means: a new code, and a new entry in both locale files. Facts a refusal carries beside
+its code go out as `details` (a task's `errorDetails`), from an `ApiError` or a `KnxError` alike; where
+they have a sentence of their own (`errorDetails.*` in the locale files, e.g. the error code a load-state
+machine names), the app adds it to the localized text in the user's language.
 
 `AppState` carries `{ db, bus, dataDir, masterKey, now, queue, appCache }`. `createState` **refuses
 to start** when the database holds sealed Data Secure tool keys and no master key is available,
@@ -89,7 +92,7 @@ rather than generating a fresh key that cannot open them.
 | Group | Routes |
 |---|---|
 | Version | `GET /api/version` |
-| Projects | `GET/POST /api/projects`, `POST /api/projects/import`, `GET/PATCH/DELETE /api/projects/:id`, `GET /api/projects/:id/telegrams`, `GET /api/projects/:id/dropped-links` (the com-objects whose ETS links the import did not take over in full) |
+| Projects | `GET/POST /api/projects`, `POST /api/projects/import`, `GET/PATCH/DELETE /api/projects/:id`, `GET /api/projects/:id/telegrams`, `GET /api/projects/:id/dropped-links` (the com-objects whose ETS links the import did not take over in full and that are not linked again: an object counts as linked again when the device's configuration shows it, it holds every address ETS linked it to that the project has, and it holds as many addresses in all as ETS linked, the others standing in for those the project lacks) |
 | Group addresses | `POST/PATCH/DELETE` on `/api/projects/:id/group-ranges[/:rangeId]` and `/group-addresses[/:raw]`, plus `/impact` (what a delete would drop) and `/group-addresses/:raw/devices` (senders and receivers) |
 | Building structure | `POST/PATCH/DELETE /api/projects/:id/spaces[/:spaceId]`, `/impact`, `PUT /api/projects/:id/devices/:deviceId/space` |
 | Devices (model only) | `POST /api/projects/:id/devices` (place from catalog), `PATCH /api/projects/:id/devices/:deviceId` (rename), `GET .../config`, `GET .../baggage`, `PUT .../params`, `PUT .../links`, `PUT .../address`, `POST .../replace`, `POST .../revert`, `/revert-param`, `/revert-link` |

@@ -17,6 +17,7 @@ export const thebenTheluxaP300InService: DeviceSpec = {
   id: "theben-theluxa-p300-in-service",
   device: {
     appRef: "M-0048_H-1019610-1_HP-107E-12-5B58",
+    appProgramId: "M-0048_A-107E-12-5B58",
     productRef: "M-0048_H-1019610-1_P-1019610",
     ia: "1.1.10",
     mask: "MV-0705",

@@ -261,8 +261,9 @@ What Busforge cannot compute as ETS does, it does not compute, and a write keeps
 For these, a write refuses where a parameter on one side of the calculation takes another value
 than the device holds and the other side reaches the image: one of its parameters has memory or lies
 in a property, or is one a `<choose>` tests or an `<Assign>` reads or sets. A parameter or structural
-flash compares with the configuration the device was last programmed with; a full download, and the
-System 1 download, with the defaults. A calculation whose other side reaches nothing refuses nothing.
+flash compares with the configuration the device was last programmed with; a full download, the
+System 1 download and the parameter flash of a device never programmed from this project, with the
+defaults. A calculation whose other side reaches nothing refuses nothing.
 
 Two cases of a computed calculation are refused too, since no capture shows them:
 
@@ -281,7 +282,8 @@ can edit keeps the stored value and names the computed one beside it. An input n
 its value, also where the configuration does not show the result: the Jung 400021SE's dimming time is
 entered in seconds and milliseconds that the device does not hold, and the page names the hidden
 parameter the image holds and its value. A calculation Busforge does not run marks its parameters as
-not computed, with the reason, in warning tone where a change of them is refused.
+not computed, with the reason in the user's language (a script the interpreter refuses keeps the
+interpreter's own words, in English), in warning tone where a change of them is refused.
 
 ## Ownership rules, in detail
 
@@ -372,9 +374,9 @@ encoded into the parameter image. Time-of-day, a colour in any other space, raw 
 bases write nothing and therefore own nothing. Where no capture shows how ETS encodes a colour (any space
 but RGB, and every colour on an absolute segment, System 7), a parameter or structural flash refuses
 (`PARAM_COLOR_UNSUPPORTED`) when a colour in use differs from the configuration the device was last
-programmed with, or comes into use, and a full download refuses any colour in use: it knows no
-configuration the device holds, and would leave either the segment's `<Data>` or the unit's bytes
-where the colour lies. Seven type details are easy to get wrong:
+programmed with, or comes into use, and a full download, like the parameter flash of a device never
+programmed from this project, refuses any colour in use: it knows no configuration the device holds,
+and would leave either the segment's `<Data>` or the unit's bytes where the colour lies. Seven type details are easy to get wrong:
 
 - **An RGB `TypeColor` is three bytes, red, green, blue** (System B). The type declares no
   `SizeInBit`; the value `#RRGGBB` goes into the three bytes at the parameter's offset in that order,
@@ -419,8 +421,10 @@ where the colour lies. Seven type details are easy to get wrong:
 - **A device placed in Busforge, or given another product, starts its text parameters at their
   `InitialValue`**, translated into the language the client works in, as ETS does for a device added to a project of that
   language: ETS's download of a synthetic product (bussard's) added to a German project wrote the
-  de-DE `InitialValue` "Bussardhorst Süd", not the `Value` "Buzzard nest". A device imported from
-  ETS keeps the values ETS stored. An `InitialValue` in a form no capture shows (untranslated, on a
+  de-DE `InitialValue` "Bussardhorst Süd", not the `Value` "Buzzard nest". That start value is the
+  parameter's default on the device page: the device's baseline starts at it, so the parameter shows no
+  change and a revert returns to it. A device imported from ETS keeps the values ETS stored. An
+  `InitialValue` in a form no capture shows (untranslated, on a
   `ParameterRef`, beside a `ParameterRef`'s own `Value`, on a parameter that is no text, in a module
   definition)
   refuses the placement (`PARAM_INITIAL_VALUE_UNSUPPORTED`) where it differs from the default and its
@@ -431,7 +435,8 @@ where the colour lies. Seven type details are easy to get wrong:
 - **`TypeRawData` writes nothing.** No ETS download shows its layout, so the segment's `<Data>` or
   the unit's bytes stay where it lies. A raw-data parameter in use away from its default (a full
   download) or from the configuration the device was last programmed with (a parameter or structural
-  flash) refuses the operation (`PARAM_RAW_DATA_UNSUPPORTED`).
+  flash) refuses the operation (`PARAM_RAW_DATA_UNSUPPORTED`), and on a device never programmed from
+  this project the parameter flash refuses one in use at any value: it would keep the unit's bytes there.
 
 - **`TypeTime` is a raw unsigned integer**, a count of its `Unit` (seconds, milliseconds),
   and ETS stores it exactly that way (hardware-confirmed: a 60-second duration is stored as

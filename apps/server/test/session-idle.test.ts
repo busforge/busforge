@@ -192,7 +192,7 @@ test("a read-back decodes after its session, and the checks of a never-programme
 });
 
 test("a parameter flash builds its image before the session opens", async () => {
-  const { result, unit: u } = await onUnit(() => ops.flashDeviceParameters({ ...scope, appXml, params, baseParams: params, dryRun: true }));
+  const { result, unit: u } = await onUnit(() => ops.flashDeviceParameters({ ...scope, appXml, params, baseParams: params, neverProgrammed: false, dryRun: true }));
   expect(u.closed).toEqual([]);
   expect(["dryRun", "unchanged"]).toContain(result.kind);
 });
@@ -242,7 +242,7 @@ const written = (result: FlashResult, u: IdleClosingUnit) => {
 
 describe("a write keeps no connection idle, through its restart and its verification", () => {
   test("a parameter flash", async () => {
-    const { result, unit: u } = await writeOnUnit(() => ops.flashDeviceParameters({ ...scope, appXml, params, baseParams: params, dryRun: false }));
+    const { result, unit: u } = await writeOnUnit(() => ops.flashDeviceParameters({ ...scope, appXml, params, baseParams: params, neverProgrammed: false, dryRun: false }));
     written(result, u);
   });
   test("a group-address flash", async () => {
@@ -282,7 +282,7 @@ describe("a session reaches a segment past 0xFFFF by the application's memory se
     try {
       const read = await ops.readDeviceState({ ...scope, appXml, liveParams: params, baseParams: params }).catch((e: { code?: string }) => e);
       expect((read as { code?: string }).code).toBe("USER_MEMORY_UNSUPPORTED");
-      const flash = await ops.flashDeviceParameters({ ...scope, appXml, params, baseParams: params, dryRun: true }).catch((e: { code?: string }) => e);
+      const flash = await ops.flashDeviceParameters({ ...scope, appXml, params, baseParams: params, neverProgrammed: false, dryRun: true }).catch((e: { code?: string }) => e);
       expect((flash as { code?: string }).code).toBe("USER_MEMORY_UNSUPPORTED");
       expect(u.apcis.filter((a) => a === APCI.MEMORY_READ || a === APCI.MEMORY_EXT_READ)).toEqual([]);
     } finally { unit = null; }
@@ -292,7 +292,7 @@ describe("a session reaches a segment past 0xFFFF by the application's memory se
     unit = u;
     const extended = appXml.replace("<Static>", '<Static><Options SupportsExtendedMemoryServices="true" />');
     try {
-      const flash = await ops.flashDeviceParameters({ ...scope, appXml: extended, params, baseParams: params, dryRun: true });
+      const flash = await ops.flashDeviceParameters({ ...scope, appXml: extended, params, baseParams: params, neverProgrammed: false, dryRun: true });
       expect(["dryRun", "unchanged"]).toContain(flash.kind);
       expect(u.apcis).toContain(APCI.MEMORY_EXT_READ);
     } finally { unit = null; }
@@ -300,7 +300,7 @@ describe("a session reaches a segment past 0xFFFF by the application's memory se
 });
 
 test("an operation refused before it needs the device opens no session", async () => {
-  const { result, unit: u } = await onUnit(() => ops.flashDeviceParameters({ ...scope, appXml, params: new Map([["M-NOPE_A-1_P-1_R-1", "1"]]), baseParams: params, dryRun: true }).catch((e: { code?: string }) => e));
+  const { result, unit: u } = await onUnit(() => ops.flashDeviceParameters({ ...scope, appXml, params: new Map([["M-NOPE_A-1_P-1_R-1", "1"]]), baseParams: params, neverProgrammed: false, dryRun: true }).catch((e: { code?: string }) => e));
   expect((result as { code?: string }).code).toBeDefined();
   expect(u.sessions).toBe(0);
 });
@@ -360,7 +360,7 @@ corpusDescribe("System 7: every build runs before the session opens", () => {
   };
   // memorylessKnown: the zero memory differs from <Data> in hidden bytes; as an ETS project's, the plan writes
   // them instead of refusing (ParamFlashCtx.memorylessKnown), so these tests reach the write they are about.
-  const s7Scope = { ...scope, appXml: s7Xml, params, baseParams: params, memorylessKnown: true, dryRun: true };
+  const s7Scope = { ...scope, appXml: s7Xml, params, baseParams: params, memorylessKnown: true, neverProgrammed: false, dryRun: true };
 
   test("a read-back", async () => {
     const { result, unit: u } = await on(() => ops.readDeviceState({ ...s7Scope, liveParams: params }));
