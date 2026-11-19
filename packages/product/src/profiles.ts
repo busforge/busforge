@@ -1268,12 +1268,12 @@ export class SystemBProfile extends DeviceProfile {
     }
 
     refuseColorWrites(cfg, ctx.params, instances, true);
+    refuseRawDataWrites(cfg, ctx.params, instances);
     refuseCalculationWrites(cfg, ctx.params, instances);
     // In the full form the download owns the whole segment: every byte we do not derive is the
     // allocation's fill. The partial form merges the owned bytes into the unit's segment.
     const target = buildRelativeSegmentTarget(cfg, ctx.params, LSM, { moduleInstances: instances, ownIdleUnionDefaults: true });
     if (!target || target.size === 0) throw new ProductError("EMPTY_IMAGE", "built an empty parameter image; refusing to download");
-    refuseRawDataWrites(cfg, ctx.params, instances);
 
     const view = buildDeviceConfig(cfg, ctx.params, undefined, instances);
     // A link whose com-object this configuration does not activate cannot be programmed: the
@@ -2300,6 +2300,7 @@ export class System7Profile extends DeviceProfile {
     refuseTunnelingEntries(cfg);
     const instances = cfg.hasModules ? (ctx.moduleInstances?.length ? ctx.moduleInstances : resolveModuleInstances(cfg, ctx.params)) : [];
     refuseColorWrites(cfg, ctx.params, instances, false);
+    refuseRawDataWrites(cfg, ctx.params, instances);
     refuseCalculationWrites(cfg, ctx.params, instances);
     const view = buildDeviceConfig(cfg, ctx.params, undefined, instances);
     // A link whose com-object this configuration does not activate would build an association to an
@@ -2310,7 +2311,6 @@ export class System7Profile extends DeviceProfile {
     const orphans = ctx.links.filter((l) => !active.has(l.comObjNum));
     if (orphans.length) {
       throw new ProductError("LINK_COM_OBJECT_INACTIVE",
-    refuseRawDataWrites(cfg, ctx.params, instances);
         `${orphans.length} group-address link(s) target communication objects this configuration does not activate (e.g. #${orphans[0].comObjNum}); the device would ignore them, so refusing to report them as programmed`);
     }
     // The com-object table is authored on both LSM styles where the application names its segment:
@@ -2528,6 +2528,7 @@ export class System1Profile extends DeviceProfile {
     if (!knxIp) {
       throw new ProductError("SYSTEM1_KNXIP_MISSING", "the project holds no KNXnet/IP settings for this device (IP configuration, additional addresses), which this download writes; re-import the .knxproj");
     }
+    refuseRawDataWrites(cfg, params, []);
     refuseCalculationWrites(cfg, params, []);
     return planSystem1Download(cfg, params, knxIp, heldName);
   }
@@ -2539,7 +2540,6 @@ export class System1Profile extends DeviceProfile {
   // after the security object's load completed; a unit without it is refused here), the friendly name (its
   // language is kept) and the other KNXnet/IP properties: the backup, the change count, the precondition ETS
   // reads and the settings the capture does not show. A change of the address settings (PID 55, 60-62, 53) is
-    refuseRawDataWrites(cfg, params, []);
   // refused: the capture writes the values the unit holds, and the link this download runs over may be the
   // unit's own tunnel, which such a change would move. Always written, never reported unchanged: the download
   // also writes state it does not read (the secured service families, the security object, 0x00CE-0x00DF).
