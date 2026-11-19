@@ -11,8 +11,9 @@ export const MAX_STEPS = 2_000_000;
 // How deeply statements and expressions may nest: product data stays at a handful of levels, and the bound keeps a
 // hostile `((((…` or `Not Not …` from overflowing the stack of the recursive parsers and interpreters.
 export const MAX_DEPTH = 100;
-// The longest string a script may build, in UTF-16 code units, and the most elements an array may hold: the bounds
-// keep a loop that doubles a string from exhausting memory within the step budget.
+// The longest string a script may build, in UTF-16 code units, and the most elements an array may hold. Building a
+// string and adding an array element also cost steps (a string one per 32 units), so what a run allocates in all is
+// bounded by the step budget too.
 export const MAX_TEXT = 65_536;
 export const MAX_ARRAY = 65_536;
 
@@ -47,5 +48,6 @@ export class Depth {
 // The step counter of one run.
 export class Budget {
   private n = 0;
-  tick(): void { if (++this.n > MAX_STEPS) throw unsupported("step budget exceeded"); }
+  tick(): void { this.charge(1); }
+  charge(steps: number): void { this.n += steps; if (this.n > MAX_STEPS) throw unsupported("step budget exceeded"); }
 }

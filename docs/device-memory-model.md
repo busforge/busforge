@@ -245,12 +245,14 @@ What Busforge cannot compute as ETS does, it does not compute, and a write keeps
 `PARAM_CALCULATION_UNSUPPORTED` for it:
 
 - a script outside the subset (a function, an object, `new`, a JavaScript statement that does not
-  end, a VBScript division by zero, the step budget), or one named by `LRTransformationFunc` from the
-  application's `<Script>` (the OpenKNX applications use these);
-- a script that reads one of its results before setting it, or leaves a result with memory unset:
-  that result is what ETS computed when it last ran, which the configuration does not show;
-- a result its parameter's type does not take (a fraction for an integer, a value out of range), or
-  a parameter type scripts are not run with;
+  end, a VBScript division by zero or overflow, the step budget, which also counts the array elements
+  and characters a run builds), or one named by `LRTransformationFunc` from the application's
+  `<Script>` (the OpenKNX applications use these);
+- a script that reads one of its results before setting it, declares one without a value, or leaves
+  a result with memory unset: that result is what ETS computed when it last ran, which the
+  configuration does not show;
+- a result its parameter's type does not take (a fraction for an integer, a value out of range), a
+  boolean result (no capture shows how ETS stores one), or a parameter type scripts are not run with;
 - a result that a `<choose>` tests or an `<Assign>` reads or sets, or that lies in a property: the
   com-object and property writes do not recompute it (the MDT BE-06001.02 and BE-02001.02 counters);
 - results that do not settle, and two calculations computing different values for one parameter.
@@ -261,10 +263,13 @@ in a property, or is one a `<choose>` tests or an `<Assign>` reads or sets. A pa
 flash compares with the configuration the device was last programmed with; a full download, and the
 System 1 download, with the defaults. A calculation whose other side reaches nothing refuses nothing.
 
-Two cases of a computed calculation are refused too, since no capture shows them: a result the user
-can edit, set to another value than the script computes (ETS would run the `RLTransformation` and
-change the inputs), and a result with memory that no active branch places, unless it is
-`LegacyPatchAlways` on a relative segment or the result is its default.
+Two cases of a computed calculation are refused too, since no capture shows them:
+
+- a result the user can edit, set to another value than the script computes: ETS would run the
+  `RLTransformation` and change the inputs. A flash accepts it where an input changed since the device
+  was programmed and the result is still the one stored then, the earlier computation's;
+- a result with memory that no active branch places, unless the image holds the computed value
+  (`LegacyPatchAlways` on a relative segment, as the capture shows) or the result is its default.
 
 Where the configuration hides a computed parameter on System 7, its bits keep the unit's value rather
 than the segment's `<Data>`.

@@ -5,9 +5,10 @@
 // of built-ins (the `Math` functions, `parseInt`, `parseFloat`, `Number`, `isNaN`, `Number.prototype.toFixed`).
 // Primitive values follow JavaScript's own rules, as this engine computes them. All variables are global, as in a
 // top-level script. An output is not bound before the script sets it, so a script that reads one first is refused
-// (its value would be what ETS computed last time). Functions, objects, `new`, `typeof`, every other reserved word and everything else are refused,
-// and so is source a JavaScript engine would not run: a statement not ended by `;`, `}` or a line break, a legacy
-// octal literal, a redeclared `let`/`const`, an assignment to a `const`.
+// (its value would be what ETS computed last time), and so is a boolean result. Functions, objects, `new`,
+// `typeof`, every other reserved word, a property key that is no index and everything else are refused, and so is
+// source a JavaScript engine would not run: a statement not ended by `;`, `}` or a line break, a legacy octal
+// literal, a redeclared `let`/`const`, an assignment to a `const`.
 //
 // Ported to TypeScript from bussard (https://github.com/tmbo/bussard), commit
 // 0a537ce12a821b18122f292e2c7d5fbbe2e081a4, crates/bussard-model/src/script/js.rs,
@@ -28,21 +29,32 @@ export function runJs(src: string, inputs: ReadonlyArray<readonly [string, Scrip
     const v = interp.env.get(name);
     if (v === undefined || v === null) return undefined;
     if (typeof v === "number" || typeof v === "string") return v;
-    if (typeof v === "boolean") return v ? 1 : 0;
+    // No capture shows how ETS stores a boolean in a parameter.
     throw unsupported(`output ${name} is not a number or string`);
   });
 }
 
-// Refuses a `let`/`const` that this subset's flat environment would not scope as JavaScript does: every variable is
-// global here, so a block-scoped name is accepted only when every use of it lies inside a block that declares it, no
-// other declaration of it (a `var`, a top-level `let`, a block declaring it around this one) or input or output
-// shares the name, and no implicit global of that name exists. A nested `let` used only inside its block
-// (`for (let i = 0; …)`, also in two separate loops) behaves the same either way and is accepted.
+// Refuses a `let`/`const` of a parameter's variable, which would hide the parameter from the script, and a `var` of a
+// result without a value, which binds it to undefined where ETS's engine keeps the result's earlier value; and a
+// `let`/`const` that this subset's flat environment would not scope as JavaScript does: every
+// variable is global here, so a block-scoped name is accepted only when every use of it lies inside a block that
+// declares it and after its declaration there, no other declaration of it (a `var`, a top-level `let`, a block
+// declaring it around this one) shares the name, and no implicit global of that name exists. A nested `let` used
+// only inside its block (`for (let i = 0; …)`, also in two separate loops) behaves the same either way and is
+// accepted.
 function checkBlockScoping(parser: Parser, inputs: readonly string[], outputs: readonly string[]): void {
+  for (const name of [...parser.topLexical, ...parser.lexicalRanges.map(([n]) => n)]) {
+    if (inputs.includes(name) || outputs.includes(name)) throw unsupported(`it declares ${name}, the variable of one of its parameters, block-scoped`);
+  }
+  for (const name of parser.bareVars) if (outputs.includes(name)) throw unsupported(`it declares its result ${name} without a value`);
+  // A use before a `let`/`const`'s declaration reads a binding this subset already holds (an implicit global, an
+  // earlier pass through the block), where JavaScript throws.
+  const early = (name: string) => unsupported(`block-scoped ${name} is read or set before its declaration`);
+  for (const [name, declared] of parser.topDeclared) if (parser.refs.some(([n, at]) => n === name && at < declared)) throw early(name);
   const shadows = (name: string) => unsupported(`block-scoped ${name} shadows another variable of the same name`);
-  for (const name of parser.topLexical) if (inputs.includes(name) || outputs.includes(name)) throw shadows(name);
-  parser.lexicalRanges.forEach(([name, start, end], k) => {
-    if (inputs.includes(name) || outputs.includes(name) || parser.outerDeclared.has(name)) throw shadows(name);
+  parser.lexicalRanges.forEach(([name, start, end, declared], k) => {
+    if (parser.outerDeclared.has(name)) throw shadows(name);
+    if (parser.refs.some(([n, at]) => n === name && at >= start && at < declared)) throw early(name);
     // Two blocks declaring the same name, one inside the other.
     if (parser.lexicalRanges.some(([n, s, e], j) => j !== k && n === name && s < end && start < e)) throw shadows(name);
     // A use outside every block declaring it is an implicit global.
@@ -210,15 +222,19 @@ class Parser {
   private i = 0;
   private depth = new Depth();
   // The open blocks, loops and switches: the token index each starts at and the `let`/`const` names declared
-  // directly in it.
-  private scopes: [number, string[]][] = [];
+  // directly in it, each with the token index its declaration ends at.
+  private scopes: [number, [string, number][]][] = [];
   // Every `let`/`const` declared inside a block, loop or switch, which this subset makes global, with the token range
-  // of its scope (see checkBlockScoping).
-  lexicalRanges: [string, number, number][] = [];
+  // of its scope and the token index its declaration ends at (see checkBlockScoping).
+  lexicalRanges: [string, number, number, number][] = [];
   // Names declared by `var` or by a top-level `let`/`const`, and the top-level `let`/`const` names alone.
   outerDeclared = new Set<string>();
   topLexical = new Set<string>();
+  // The token index each top-level `let`/`const` declaration ends at.
+  topDeclared = new Map<string, number>();
   private topVar = new Set<string>();
+  // The names a `var` declares without a value.
+  bareVars = new Set<string>();
   // The names a `const` declares anywhere: an assignment to one is a TypeError in JavaScript.
   constNames = new Set<string>();
   // Every use of a name, with its token index.
@@ -253,7 +269,7 @@ class Parser {
   // Closes the innermost block scope at the current token, recording the range of each `let`/`const` it declares.
   private closeScope(): void {
     const scope = this.scopes.pop();
-    if (scope) for (const n of scope[1]) this.lexicalRanges.push([n, scope[0], this.i]);
+    if (scope) for (const [n, declared] of scope[1]) this.lexicalRanges.push([n, scope[0], this.i, declared]);
   }
 
   private statementInner(): Stmt {
@@ -347,9 +363,9 @@ class Parser {
       if (t.t !== "name") throw unsupported("bad declaration");
       const name = t.v;
       const scope = this.scopes[this.scopes.length - 1];
-      if (lexical && scope) {
-        if (scope[1].includes(name)) throw unsupported(`${name} is declared twice in one block`);
-        scope[1].push(name);
+      const nested = lexical && scope ? scope[1] : undefined;
+      if (nested) {
+        if (nested.some(([n]) => n === name)) throw unsupported(`${name} is declared twice in one block`);
       } else {
         if (lexical ? this.topLexical.has(name) || this.topVar.has(name) : this.topLexical.has(name)) throw unsupported(`${name} is declared twice`);
         (lexical ? this.topLexical : this.topVar).add(name);
@@ -358,6 +374,9 @@ class Parser {
       if (kind === "const") this.constNames.add(name);
       const init = this.accept("=") ? this.assignment() : undefined;
       if (kind === "const" && init === undefined) throw unsupported(`const ${name} without a value`);
+      if (nested) nested.push([name, this.i]);
+      else if (lexical) this.topDeclared.set(name, this.i);
+      if (kind === "var" && init === undefined) this.bareVars.add(name);
       decls.push([name, init]);
       if (!this.accept(",")) return { s: "var", lexical, decls };
     }
@@ -369,7 +388,9 @@ class Parser {
     return e;
   }
 
-  private assignment(): Expr {
+  private assignment(): Expr { return this.depth.run(() => this.assignmentInner()); }
+
+  private assignmentInner(): Expr {
     const left = this.conditional();
     const t = this.peek();
     if (t.t !== "op" || !(t.v in COMPOUND)) return left;
@@ -500,80 +521,94 @@ const builtin = (name: string): Builtin => builtins.get(name) ?? builtins.set(na
 
 type Primitive = undefined | null | boolean | number | string;
 const isPrimitive = (v: Value): v is Primitive => v === null || typeof v !== "object";
-
-// JavaScript's ToPrimitive of what a script holds: an array becomes its text, a built-in its text.
-function toPrimitive(v: Value, depth = 0): Primitive {
-  if (isPrimitive(v)) return v;
-  if (Array.isArray(v)) {
-    if (depth >= MAX_DEPTH) throw unsupported("array nested too deeply (or containing itself)");
-    let out = "";
-    for (let k = 0; k < v.length; k++) {
-      if (k > 0) out += ",";
-      const item = v[k];
-      if (item !== undefined && item !== null) out += String(toPrimitive(item, depth + 1));
-      if (out.length > MAX_TEXT * 4) break;
-    }
-    return checkText(out);
-  }
-  return v instanceof MathObject ? "[object Math]" : "function";
-}
-const text = (v: Value): string => String(toPrimitive(v));
-// JavaScript's ToNumber; an array too large or too deep to print is not a number either.
-function num(v: Value): number {
-  try { return Number(toPrimitive(v)); } catch { return NaN; }
-}
 const truthy = (v: Value): boolean => (isPrimitive(v) ? Boolean(v) : true);
 
-function looseEq(a: Value, b: Value): boolean {
-  if (!isPrimitive(a) && !isPrimitive(b)) return a === b;
-  // eslint-disable-next-line eqeqeq -- the script's `==` is JavaScript's
-  return toPrimitive(a) == toPrimitive(b);
-}
+// The conversions and operators of one run. Every string they build is charged to the run's budget by its length,
+// so a loop that keeps building long strings runs out of steps before it runs out of memory.
+function runtime(budget: Budget) {
+  const charged = (s: string): string => { budget.charge(Math.ceil(s.length / 32)); return checkText(s); };
 
-function arithmetic(op: string, a: Value, b: Value): Value {
-  if (op === "+") {
-    const sum = (toPrimitive(a) as never as number) + (toPrimitive(b) as never as number);
-    return typeof sum === "string" ? checkText(sum) : sum;
-  }
-  const x = num(a), y = num(b);
-  switch (op) {
-    case "-": return x - y;
-    case "*": return x * y;
-    case "/": return x / y;
-    case "%": return x % y;
-  }
-  throw unsupported(`operator ${op}`);
-}
+  // JavaScript's ToPrimitive of what a script holds: an array becomes its text. A built-in has no value a script
+  // computes with.
+  const toPrimitive = (v: Value, depth = 0): Primitive => {
+    if (isPrimitive(v)) return v;
+    if (Array.isArray(v)) {
+      if (depth >= MAX_DEPTH) throw unsupported("array nested too deeply (or containing itself)");
+      let out = "";
+      for (let k = 0; k < v.length; k++) {
+        if (k > 0) out += ",";
+        const item = v[k];
+        if (item !== undefined && item !== null) out += String(toPrimitive(item, depth + 1));
+        if (out.length > MAX_TEXT) break;
+      }
+      return charged(out);
+    }
+    throw unsupported("a built-in function or Math used as a value");
+  };
+  const text = (v: Value): string => String(toPrimitive(v));
+  const num = (v: Value): number => Number(toPrimitive(v));
 
-function compare(op: string, a: Value, b: Value): boolean {
-  const x = toPrimitive(a) as never as number, y = toPrimitive(b) as never as number;
-  switch (op) {
-    case "<": return x < y;
-    case ">": return x > y;
-    case "<=": return x <= y;
-    default: return x >= y;
-  }
-}
+  const looseEq = (a: Value, b: Value): boolean => {
+    if (!isPrimitive(a) && !isPrimitive(b)) return a === b;
+    // eslint-disable-next-line eqeqeq -- the script's `==` is JavaScript's
+    return toPrimitive(a) == toPrimitive(b);
+  };
 
-function callBuiltin(name: string, args: Value[]): Value {
-  const arg = (k: number) => (k < args.length ? num(args[k]) : NaN);
-  switch (name) {
-    case "parseInt": return Number.parseInt(text(args[0]), args.length > 1 ? num(args[1]) : undefined);
-    case "parseFloat": return Number.parseFloat(text(args[0]));
-    case "Number": return args.length ? num(args[0]) : 0;
-    case "isNaN": return Number.isNaN(arg(0));
-    case "log": return Math.log(arg(0));
-    case "exp": return Math.exp(arg(0));
-    case "sqrt": return Math.sqrt(arg(0));
-    case "abs": return Math.abs(arg(0));
-    case "floor": return Math.floor(arg(0));
-    case "ceil": return Math.ceil(arg(0));
-    case "round": return Math.round(arg(0));
-    case "pow": return Math.pow(arg(0), arg(1));
-    case "min": return Math.min(...args.map(num));
-    case "max": return Math.max(...args.map(num));
-  }
-  throw unsupported(`${name} not supported`);
+  const arithmetic = (op: string, a: Value, b: Value): Value => {
+    if (op === "+") {
+      const sum = (toPrimitive(a) as never as number) + (toPrimitive(b) as never as number);
+      return typeof sum === "string" ? charged(sum) : sum;
+    }
+    const x = num(a), y = num(b);
+    switch (op) {
+      case "-": return x - y;
+      case "*": return x * y;
+      case "/": return x / y;
+      case "%": return x % y;
+    }
+    throw unsupported(`operator ${op}`);
+  };
+
+  const compare = (op: string, a: Value, b: Value): boolean => {
+    const x = toPrimitive(a) as never as number, y = toPrimitive(b) as never as number;
+    switch (op) {
+      case "<": return x < y;
+      case ">": return x > y;
+      case "<=": return x <= y;
+      default: return x >= y;
+    }
+  };
+
+  // An array or string index: a whole number, or a string that is one's canonical text. JavaScript reads any other
+  // key as a property name (`a["length"]`, `a[true]`), which this subset does not implement.
+  const index = (key: Value): number => {
+    const k = typeof key === "number" ? key : typeof key === "string" && String(Number(key)) === key ? Number(key) : NaN;
+    if (!(Number.isInteger(k) && k >= 0)) throw unsupported(`index ${isPrimitive(key) ? JSON.stringify(key) ?? "undefined" : "of an array or built-in"} not supported`);
+    return k;
+  };
+
+  const callBuiltin = (name: string, args: Value[]): Value => {
+    const arg = (k: number) => (k < args.length ? num(args[k]) : NaN);
+    switch (name) {
+      case "parseInt": return Number.parseInt(text(args[0]), args.length > 1 ? num(args[1]) : undefined);
+      case "parseFloat": return Number.parseFloat(text(args[0]));
+      case "Number": return args.length ? num(args[0]) : 0;
+      case "isNaN": return Number.isNaN(arg(0));
+      case "log": return Math.log(arg(0));
+      case "exp": return Math.exp(arg(0));
+      case "sqrt": return Math.sqrt(arg(0));
+      case "abs": return Math.abs(arg(0));
+      case "floor": return Math.floor(arg(0));
+      case "ceil": return Math.ceil(arg(0));
+      case "round": return Math.round(arg(0));
+      case "pow": return Math.pow(arg(0), arg(1));
+      case "min": return Math.min(...args.map(num));
+      case "max": return Math.max(...args.map(num));
+    }
+    throw unsupported(`${name} not supported`);
+  };
+
+  return { num, looseEq, arithmetic, compare, index, callBuiltin };
 }
 
 type Flow = "normal" | "break" | "continue";
@@ -581,6 +616,7 @@ type Flow = "normal" | "break" | "continue";
 class Interp {
   private budget = new Budget();
   private depth = new Depth();
+  private rt = runtime(this.budget);
   constructor(readonly env: Map<string, Value>, private readonly constNames: ReadonlySet<string>, private readonly outputs: ReadonlySet<string>) {}
 
   private lookup(name: string): Value {
@@ -653,19 +689,38 @@ class Interp {
     }
   }
 
-  private store(target: Expr, value: Value): void {
+  // The place an assignment or `++`/`--` writes: a name, or an array element whose array and index are evaluated
+  // once, before the value, as JavaScript evaluates the reference first.
+  private reference(target: Expr): { get: () => Value; set: (v: Value) => void } {
     if (target.e === "name") {
-      if (this.constNames.has(target.name)) throw unsupported(`assignment to the constant ${target.name}`);
-      this.env.set(target.name, value);
-      return;
+      return {
+        get: () => this.lookup(target.name),
+        set: (v) => {
+          if (this.constNames.has(target.name)) throw unsupported(`assignment to the constant ${target.name}`);
+          this.env.set(target.name, v);
+        },
+      };
     }
     if (target.e !== "index") throw unsupported("invalid assignment target");
-    const items = this.eval(target.array);
-    if (!Array.isArray(items)) throw unsupported("indexed assignment to a non-array");
-    const k = num(this.eval(target.index));
-    if (!(Number.isInteger(k) && k >= 0 && k < MAX_ARRAY)) throw unsupported(`bad array index ${k}`);
-    while (items.length < k) items.push(undefined);
-    items[k] = value;
+    const items = this.eval(target.array), key = this.eval(target.index);
+    return {
+      get: () => this.element(items, key),
+      set: (v) => {
+        if (!Array.isArray(items)) throw unsupported("indexed assignment to a non-array");
+        const k = this.rt.index(key);
+        if (k >= MAX_ARRAY) throw unsupported(`bad array index ${k}`);
+        // Every element the store adds is a step, so filling arrays is bounded like any other loop.
+        while (items.length < k) { this.budget.tick(); items.push(undefined); }
+        items[k] = v;
+      },
+    };
+  }
+
+  private element(array: Value, key: Value): Value {
+    if (!Array.isArray(array) && typeof array !== "string") throw unsupported("indexing a non-array");
+    // A number that is no index names no element: JavaScript gives undefined for it, as for one past the end.
+    const k = typeof key === "number" && !(Number.isInteger(key) && key >= 0) ? -1 : this.rt.index(key);
+    return k >= 0 && k < array.length ? array[k] : undefined;
   }
 
   private eval(e: Expr): Value { return this.depth.run(() => this.evalInner(e)); }
@@ -683,41 +738,41 @@ class Interp {
       case "seq": this.eval(e.a); return this.eval(e.b);
       case "assign": {
         // JavaScript reads the target of `x op= y` before it evaluates `y`.
-        const old = e.op !== undefined ? this.eval(e.target) : undefined;
+        const ref = this.reference(e.target);
+        const old = e.op !== undefined ? ref.get() : undefined;
         let value = this.eval(e.value);
-        if (e.op !== undefined) value = arithmetic(e.op, old, value);
-        this.store(e.target, value);
+        if (e.op !== undefined) value = this.rt.arithmetic(e.op, old, value);
+        ref.set(value);
         return value;
       }
       case "update": {
-        const old = num(this.eval(e.target));
+        const ref = this.reference(e.target);
+        const old = this.rt.num(ref.get());
         const next = e.increment ? old + 1 : old - 1;
-        this.store(e.target, next);
+        ref.set(next);
         return e.prefix ? next : old;
       }
       case "cond": return truthy(this.eval(e.cond)) ? this.eval(e.a) : this.eval(e.b);
       case "unary": {
         const v = this.eval(e.inner);
-        return e.op === "!" ? !truthy(v) : e.op === "-" ? -num(v) : num(v);
+        return e.op === "!" ? !truthy(v) : e.op === "-" ? -this.rt.num(v) : this.rt.num(v);
       }
       case "binary": {
         if (e.op === "&&") { const a = this.eval(e.a); return truthy(a) ? this.eval(e.b) : a; }
         if (e.op === "||") { const a = this.eval(e.a); return truthy(a) ? a : this.eval(e.b); }
         const a = this.eval(e.a), b = this.eval(e.b);
         switch (e.op) {
-          case "==": return looseEq(a, b);
-          case "!=": return !looseEq(a, b);
+          case "==": return this.rt.looseEq(a, b);
+          case "!=": return !this.rt.looseEq(a, b);
           case "===": return a === b;
           case "!==": return a !== b;
-          case "<": case ">": case "<=": case ">=": return compare(e.op, a, b);
+          case "<": case ">": case "<=": case ">=": return this.rt.compare(e.op, a, b);
         }
-        return arithmetic(e.op, a, b);
+        return this.rt.arithmetic(e.op, a, b);
       }
       case "index": {
-        const array = this.eval(e.array), k = num(this.eval(e.index));
-        if (Array.isArray(array)) return Number.isInteger(k) && k >= 0 ? array[k] : undefined;
-        if (typeof array === "string") return Number.isInteger(k) && k >= 0 && k < array.length ? array[k] : undefined;
-        throw unsupported("indexing a non-array");
+        const array = this.eval(e.array);
+        return this.element(array, this.eval(e.index));
       }
       case "member": {
         const object = this.eval(e.object);
@@ -734,9 +789,9 @@ class Interp {
       case "call": {
         const callee = this.eval(e.callee);
         const args = e.args.map((a) => this.eval(a));
-        if (callee instanceof Builtin) return callBuiltin(callee.name, args);
+        if (callee instanceof Builtin) return this.rt.callBuiltin(callee.name, args);
         if (callee instanceof ToFixed) {
-          const digits = args.length ? num(args[0]) : 0;
+          const digits = args.length ? this.rt.num(args[0]) : 0;
           const d = Number.isNaN(digits) ? 0 : Math.trunc(digits);
           if (d < 0 || d > 100) throw unsupported("toFixed digits out of range");
           return callee.x.toFixed(d);

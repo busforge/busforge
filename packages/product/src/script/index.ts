@@ -16,7 +16,8 @@ export { ScriptError, type ScriptValue } from "./common.ts";
 
 // Runs `script`, written in `language` (`JavaScript` or `VBScript`, any case), with `inputs` as its variables, and
 // returns the final value of each of `outputs`, in order: undefined for one the script leaves unset. An output is
-// unset until the script sets it, and reading it before refuses. Names follow the language: case-insensitive in VBScript, case-sensitive in JavaScript.
+// unset until the script sets it, and reading it before refuses. Names follow the language: case-insensitive in
+// VBScript, case-sensitive in JavaScript.
 export function runScript(language: string, script: string, inputs: ReadonlyArray<readonly [string, ScriptValue]>, outputs: readonly string[]): (ScriptValue | undefined)[] {
   const lang = language.toLowerCase();
   if (lang === "javascript") return runJs(script, inputs, outputs);

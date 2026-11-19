@@ -13,5 +13,7 @@ Third-party code
 packages/product/src/script/ (the interpreter of <ParameterCalculation> scripts) is ported to
 TypeScript from bussard (https://github.com/tmbo/bussard), commit
 0a537ce12a821b18122f292e2c7d5fbbe2e081a4, crates/bussard-model/src/script/,
-Copyright (c) 2026 Tom Bocklisch, MIT License. The license text is in
+Copyright (c) 2026 Tom Bocklisch, MIT License. The rule of when a calculation runs and the
+passes until its results settle in packages/product/src/calculations.ts follow the same
+project's crates/bussard-model/src/dynamic.rs. The license text is in
 packages/product/src/script/LICENSE.

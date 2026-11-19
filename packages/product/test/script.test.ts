@@ -52,7 +52,8 @@ describe("JavaScript", () => {
     expect(js("x = 7 % -3; m = -7 % 3;", [], ["x", "m"])).toEqual([1, -1]);
     expect(one(js("x = 1 / 0 === Infinity ? 1 : 0;"))).toBe(1);
     expect(one(js("x = 0.1 + 0.2;"))).toBe(0.30000000000000004);
-    expect(one(js("x = true;"))).toBe(1);
+    // No capture shows how ETS stores a boolean result.
+    refused(() => js("x = true;"));
     expect(one(js("x = undefined;"))).toBeUndefined();
   });
 
@@ -129,15 +130,44 @@ describe("JavaScript", () => {
     expect(one(js("var count = 0;\nfor (var i = 0; i < 5; i++) { var m; if (i == 0) { m = 1; } if (m === 1) { count++; } }", [], ["count"]))).toBe(5);
   });
 
-  test("the step budget stops a runaway loop", () => {
+  test("the step budget stops a runaway loop, and counts the elements and characters a run builds", () => {
     refused(() => js("for (;;) { x = 1; }"));
+    const started = Date.now();
+    refused(() => js("for (var i = 0; i < 200000; i++) { t = [0]; t[65535] = 1; }"));
+    refused(() => js("var s = 'x'; for (var i = 0; i < 16; i++) { s += s; } var a = []; for (var i = 0; i < 65536; i++) { a[i] = s + i; }"));
+    expect(Date.now() - started).toBeLessThan(20_000);
+  });
+
+  test("an assignment evaluates its target's array and index once, before the value", () => {
+    expect(js("var a = [10, 20], i = 0; a[i++] += 1; x = a + '|' + i;")).toEqual(["11,20|1"]);
+    expect(js("var a = [10, 20], i = 1; a[i--]++; x = a + '|' + i;")).toEqual(["10,21|0"]);
+  });
+
+  test("a deep chain of conditional operators is refused, not a stack overflow", () => {
+    expect(scriptRefusal("JavaScript", `x = ${"1 ? 0 : ".repeat(20_000)}0;`)).toContain("nested more than");
+  });
+
+  test("indexing takes whole numbers and their canonical text only", () => {
+    refused(() => js("var a = [10, 20]; x = a['01'];"));
+    expect(js("var a = [5, 6]; x = a['1'] + a[1] + (a[1.5] === undefined ? 1 : 0) + (a[-1] === undefined ? 1 : 0);")).toEqual([14]);
+    for (const key of ["'length'", "true", "null", "' 1 '"]) refused(() => js(`var a = [5, 6]; x = a[${key}];`));
+    refused(() => js("x = Math.floor + '';"));
+  });
+
+  test("a declaration of a parameter's variable, and a block-scoped name read before its declaration, are refused", () => {
+    refused(() => js("var x; y = (x === undefined) ? 1 : 2;", [], ["x", "y"]));
+    refused(() => js("let a = 1; x = a;", [["a", 2]]));
+    // A `var` with a value assigns the global, as JavaScript does.
+    expect(js("var a = a + 1; var x = a;", [["a", 2]])).toEqual([3]);
+    refused(() => js("for (var i = 0; i < 2; i++) { if (i > 0) { x = m; } let m = i; }", [], ["x"]));
+    refused(() => js("t = 1; let t = 2; x = t;"));
   });
 });
 
 describe("VBScript", () => {
   test("a number compares less than a string", () => {
-    const src = "If label = 2 Then\n  r = 1\nElse\n  r = 0\nEnd If\nlt = (2 < label)";
-    for (const label of ["2", "on"]) expect(vb(src, [["label", label]], ["r", "lt"])).toEqual([0, -1]);
+    const src = "If label = 2 Then\n  r = 1\nElse\n  r = 0\nEnd If\nIf 2 < label Then lt = 1 Else lt = 0";
+    for (const label of ["2", "on"]) expect(vb(src, [["label", label]], ["r", "lt"])).toEqual([0, 1]);
   });
 
   test("If, ElseIf, Else, with names in any case", () => {
@@ -169,9 +199,9 @@ describe("VBScript", () => {
     expect(one(vb("x = -(2 + 3)"))).toBe(-5);
   });
 
-  test("logic is bitwise with True = -1", () => {
-    expect(one(vb("x = (1 < 2) And (3 > 2)"))).toBe(-1);
-    expect(one(vb("x = Not True"))).toBe(0);
+  test("logic is bitwise, with True = -1", () => {
+    expect(one(vb("x = ((1 < 2) And (3 > 2)) + 0"))).toBe(-1);
+    expect(one(vb("x = (Not True) & \"\""))).toBe("False");
     expect(one(vb("x = 12 And 10"))).toBe(8);
     expect(one(vb("x = 12 Or 3"))).toBe(15);
     expect(one(vb("x = Not 0"))).toBe(-1);
@@ -185,6 +215,13 @@ describe("VBScript", () => {
     refused(() => vb("x = x + 1"));
     refused(() => js("x = x + 1;"));
     expect(one(vb("x = 1\nx = x + 1"))).toBe(2);
+  });
+
+  test("Booleans are -1 and 0 in arithmetic and True or False as text; overflow and a Dim of a parameter are refused", () => {
+    expect(vb("s = \"x\" & (a > 0) & (1 = 2)\nn = (a > 0) + 1\nb = (1 < 2) And (2 < 3)\nc = Not (1 < 2)\nd = b & c", [["a", 1]], ["s", "n", "d"])).toEqual(["xTrueFalse", 0, "TrueFalse"]);
+    refused(() => vb("x = 1E+308 * 10"));
+    refused(() => vb("Dim x\nx = x + 1"));
+    refused(() => vb("Dim a\nx = a", [["a", 1]]));
   });
 
   test("a name read before it is assigned is refused, a Dim one reads Empty", () => {

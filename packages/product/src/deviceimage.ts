@@ -775,21 +775,38 @@ export function refuseCalculationWrites(app: AppConfig, values: Map<string, stri
   const computedRuns = applied.runs.filter((r) => r.state === "computed");
   if (computedRuns.length) {
     const view = buildDeviceConfig(app, applied.values, undefined, instances);
-    const placed = new Set([...view.imageValues.keys()].flatMap((r) => paramKey(app, r) ?? []));
+    const placed = new Map<string, string[]>(); // per instance and Parameter id: the refs the configuration places
+    for (const r of view.imageValues.keys()) { const k = paramKey(app, r); if (k !== undefined) (placed.get(k) ?? placed.set(k, []).get(k)!).push(r); }
+    // A result the user can edit: a ref of it the configuration places is neither read-only nor hidden.
+    const editable = (key: string) => (placed.get(key) ?? []).some((r) => { const x = resolveParamRef(app, r)!; const access = x.ref.access ?? x.param?.access; return access !== "Read" && access !== "None"; });
     const stored = (v: Map<string, string>) => { const out = new Map<string, string>(); for (const [r, x] of v) { const k = paramKey(app, r); if (k !== undefined && !out.has(k)) out.set(k, x); } return out; };
     const storedNow = stored(values), storedBefore = base ? stored(base.values) : undefined;
+    // The relative-segment image holds `value` for a result no active branch places: the LegacyPatchAlways case of
+    // bussard's synthetic capture, where the builder writes the computed value.
+    const imageHolds = (ref: string, value: string): boolean => {
+      const { param } = resolveParamRef(app, ref)!;
+      const seg = app.segments.find((g) => g.id === param!.codeSegment);
+      if (!param!.patchAlways || !seg || param!.offset === undefined) return false;
+      const target = buildRelativeSegmentTarget(app, values, seg.lsm, { moduleInstances: instances, ownIdleUnionDefaults: true });
+      const model = toAppModel(app, { includeUnions: true, instances });
+      const p = model.params.get(param!.id), type = p && model.types.get(p.typeId);
+      if (!target || !type || !target.owned[param!.offset]) return false;
+      const expected = Buffer.from(target.bytes);
+      encode(expected, param!.offset, param!.bitOffset ?? 0, type, value);
+      return expected.equals(target.bytes);
+    };
     for (const run of computedRuns) {
+      // An input differs from the configuration the device was last programmed with: a result still stored from
+      // before that change is the earlier computation's, which the script replaces.
+      const inputChanged = !!storedBefore && run.inputs.some((r) => { const k = paramKey(app, r)!; return !same(r, storedNow.get(k) ?? null, storedBefore.get(k) ?? null); });
       for (const [ref, value] of run.outputs) {
-        const { ref: cref, param } = resolveParamRef(app, ref)!;
         const key = paramKey(app, ref)!;
-        const access = cref.access ?? param!.access;
         const set = storedNow.get(key);
-        const edited = set !== undefined && !same(ref, set, value) && (!storedBefore || !same(ref, set, storedBefore.get(key) ?? null));
-        if (edited && placed.has(key) && access !== "Read" && access !== "None") {
-          refuse(`parameter ${ref} is set to ${set} where the application's <ParameterCalculation> "${run.label}" computes ${value}, and ETS's RLTransformation would compute the calculation's inputs from it, which Busforge does not run`);
+        if (set !== undefined && !same(ref, set, value) && editable(key)) {
+          const stale = inputChanged && same(ref, set, storedBefore!.get(key) ?? null);
+          if (!stale) refuse(`parameter ${ref} is set to ${set} where the application's <ParameterCalculation> "${run.label}" computes ${value}, and ETS's RLTransformation would compute the calculation's inputs from it, which Busforge does not run`);
         }
-        const patched = param!.patchAlways && !param!.union && !instanceMarker(ref) && param!.access !== "None" && cref.access !== "None" && !!app.segments.find((g) => g.id === param!.codeSegment);
-        if (param!.hasMemory && !placed.has(key) && !patched && !same(ref, null, value)) {
+        if (resolveParamRef(app, ref)!.param!.hasMemory && !placed.has(key) && !same(ref, null, value) && !imageHolds(ref, value)) {
           refuse(`the application's <ParameterCalculation> "${run.label}" computes ${value} for parameter ${ref}, which no active branch places, and no ETS download shows whether ETS writes such a result`);
         }
       }
@@ -799,7 +816,9 @@ export function refuseCalculationWrites(app: AppConfig, values: Map<string, stri
   // or sets them too.
   const notRun = new Map<string, CalculationRun>();
   for (const r of applied.runs) if (r.state !== "computed") for (const k of r.keys) if (!notRun.has(k)) notRun.set(k, r);
-  const covered = new Set(computedRuns.flatMap((r) => r.keys).filter((k) => !notRun.has(k)));
+  // A calculation refused whatever the configuration is keyed by its Parameter ids alone (no instance).
+  const bare = (key: string) => key.replace(/^_M-\d+_MI-\d+/, "");
+  const covered = new Set(computedRuns.flatMap((r) => r.keys).filter((k) => !notRun.has(k) && !notRun.has(bare(k))));
   const paramOf = (refId: string | undefined) => (refId ? resolveParamRef(app, refId)?.param?.id : undefined);
   const steering = steeringParamIds(app);
   const reaches = (refs: string[]) => refs.some((r) => { const p = resolveParamRef(app, r)?.param; return !!p && (p.hasMemory || !!p.onProperty || steering.has(p.id)); });
@@ -825,14 +844,15 @@ export function refuseCalculationWrites(app: AppConfig, values: Map<string, stri
     take(v);
     return out;
   };
-  const now = paramValues(values, instances);
-  const before = paramValues(base?.values ?? new Map(), base?.instances ?? instances);
+  // Both configurations as the builders write them, with the results Busforge computes: a result one calculation
+  // computes can be the input of another that Busforge does not run.
+  const now = paramValues(applied.values, instances);
+  const before = paramValues(base ? applyCalculations(app, base.values, base.instances).values : new Map(), base?.instances ?? instances);
   for (const key of new Set([...now.keys(), ...before.keys()])) {
     const is = now.get(key), was = before.get(key);
     const ref = (is ?? was)!.ref;
     if (same(ref, was?.value ?? null, is?.value ?? null)) continue;
-    // A calculation refused whatever the configuration is keyed by its Parameter ids alone.
-    const run = notRun.get(key) ?? notRun.get(paramOf(ref)!);
+    const run = notRun.get(key) ?? notRun.get(bare(key));
     const why = run?.state === "refused" ? `which Busforge cannot run as ETS does: ${run.reason}`
       : run ? "which ETS runs on a change of either side and Busforge only from inputs off their defaults"
       : "which Busforge does not run in a module instance the configuration does not place";

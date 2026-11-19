@@ -10,9 +10,13 @@
 // leaves a calculation it cannot run as ETS does to the refusal in deviceimage.ts (refuseCalculationWrites): a script
 // outside the subset or named as a function of the application's <Script>, a parameter type scripts are not run with,
 // a script that reads or leaves unset a result (it would keep ETS's earlier one), a result the output's type does
-// not take, results that steer
-// the configuration or sit in a property (the com-object and property writes do not recompute them), and
-// calculations whose results do not settle.
+// not take, results that steer the configuration or sit in a property (the com-object and property writes do not
+// recompute them), and calculations whose results do not settle.
+//
+// The trigger rule, the passes until the results settle and the refusal of results that do not follow bussard's
+// evaluation of calculations (https://github.com/tmbo/bussard, commit 0a537ce12a821b18122f292e2c7d5fbbe2e081a4,
+// crates/bussard-model/src/dynamic.rs, CalcRuns), Copyright (c) 2026 Tom Bocklisch, MIT License
+// (./script/LICENSE).
 
 import { resolveParamRef, sameParamValue, takesValue, type AppConfig, type CfgCalculation, type DynNode, type ModuleInstance } from "./appconfig.ts";
 import { buildDeviceConfig, type DeviceConfigBuild } from "./config.ts";
@@ -27,6 +31,7 @@ export interface CalculationRun {
   // results. refused: `reason` says why Busforge cannot run it as ETS does.
   state: "defaults" | "computed" | "refused";
   reason?: string;
+  inputs: string[]; // the LParameter refs, scoped to the instance
   outputs: Map<string, string>; // the RParameter refs, scoped to the instance, and their computed values
   keys: string[]; // the parameters of both sides, keyed by instance and Parameter id (paramKey)
 }
@@ -84,6 +89,9 @@ function staticRefusal(app: AppConfig, c: CfgCalculation): string | null {
   const reason = ((): string | null => {
     if (c.lrFunc !== undefined) return `its LRTransformationFunc "${c.lrFunc}" names a function of the application's script, which Busforge does not run`;
     if (c.lrScript === undefined || c.lrScript.trim() === "") return "it declares no LRTransformation script";
+    // The XML parser decodes the named entities and leaves the numeric ones, so what such a reference stood for in
+    // the file (a character, or the text `&#…;` written as `&amp;#…;`) is no longer known.
+    if (/&#x?[0-9a-f]+;/i.test(c.lrScript)) return "its script holds a numeric character reference, which Busforge cannot read unambiguously after the XML parser";
     const parse = scriptRefusal(c.language ?? "", c.lrScript);
     if (parse) return `its script is outside what Busforge runs: ${parse}`;
     const names = new Map<string, string>(); // script variable -> Parameter id
@@ -110,12 +118,11 @@ function staticRefusal(app: AppConfig, c: CfgCalculation): string | null {
   return reason;
 }
 
-// The <ModuleDef> a calculation belongs to (`MD-3` for `…_MD-3_PC-1`, `MD-1_SM-2` for `…_MD-1_SM-2_PC-1`), undefined
-// for an application-level one.
+// The id of the <ModuleDef> that declares a calculation, relative to the application (its `…_MD-n_PC-k` id names
+// it); undefined for one the application declares itself.
 function calcModuleDef(app: AppConfig, calcId: string): string | undefined {
   const rel = calcId.startsWith(`${app.id}_`) ? calcId.slice(app.id.length + 1) : calcId;
-  const at = rel.lastIndexOf("_PC-");
-  return rel.startsWith("MD-") && at > 0 ? rel.slice(0, at) : undefined;
+  return /^(MD-\d+)_PC-/.exec(rel)?.[1];
 }
 
 // A module instance's refs are the ModuleDef's with the instance in their id; application-level refs stay.
@@ -163,8 +170,11 @@ function storedForm(app: AppConfig, ref: string, v: ScriptValue): string {
   }
   if (typeof v !== "number") throw new ScriptError("unsupported", `it computes the text "${v}" for the numeric parameter ${ref}`);
   if (!Number.isFinite(v)) throw new ScriptError("unsupported", `it computes ${v} for ${ref}`);
-  if (type.base === "Float") return String(v);
   const s = String(v === 0 ? 0 : v); // -0 is stored as 0
+  if (type.base === "Float") {
+    if ((type.min !== undefined && v < type.min) || (type.max !== undefined && v > type.max)) throw new ScriptError("unsupported", `it computes ${v} for ${ref}, outside its type's range`);
+    return s;
+  }
   if (takesValue(type, s) !== true) throw new ScriptError("unsupported", `it computes ${v} for ${ref}, which its type does not take`);
   return s;
 }
@@ -173,7 +183,7 @@ export function applyCalculations(app: AppConfig, values: Map<string, string>, m
   const unchanged = (runs: CalculationRun[]): AppliedCalculations => ({ values, computed: new Map(), runs });
   if (!app.calculations.length) return unchanged([]);
   const refusedRun = (calc: CfgCalculation, reason: string, instance?: ModuleInstance): CalculationRun =>
-    ({ calc, label: calc.name || calc.id, instance, state: "refused", reason, outputs: new Map(), keys: keysOf(calc, instance) });
+    ({ calc, label: calc.name || calc.id, instance, state: "refused", reason, inputs: calc.lRefs, outputs: new Map(), keys: keysOf(calc, instance) });
   const keysOf = (calc: CfgCalculation, instance?: ModuleInstance): string[] => {
     const scope = scoper(app, calcModuleDef(app, calc.id), instance);
     return [...calc.lRefs, ...calc.rRefs].flatMap((r) => paramKey(app, scope(r)) ?? []);
@@ -201,7 +211,7 @@ export function applyCalculations(app: AppConfig, values: Map<string, string>, m
   };
   const runOne = (calc: CfgCalculation, instance: ModuleInstance | undefined, valueOf: (ref: string) => string): CalculationRun => {
     const scope = scoper(app, calcModuleDef(app, calc.id), instance);
-    const run: CalculationRun = { calc, label: calc.name || calc.id, instance, state: "defaults", outputs: new Map(), keys: keysOf(calc, instance) };
+    const run: CalculationRun = { calc, label: calc.name || calc.id, instance, state: "defaults", inputs: calc.lRefs.map(scope), outputs: new Map(), keys: keysOf(calc, instance) };
     if (!calc.lRefs.some((r) => !same(scope(r), valueOf(scope(r)), defaultOf(app, r)))) return run;
     const variable = (r: string) => calc.aliases[r] ?? resolveParamRef(app, r)!.param!.name!;
     try {
@@ -209,12 +219,13 @@ export function applyCalculations(app: AppConfig, values: Map<string, string>, m
       // The outputs are not bound: a script that reads one before setting it, or leaves one with memory unset, would
       // take what ETS computed when it last ran, which Busforge does not know.
       const results = runScript(calc.language!, calc.lrScript!, inputs, calc.rRefs.map(variable));
+      const outputs = new Map<string, string>();
       calc.rRefs.forEach((r, k) => {
         const v = results[k];
-        if (v !== undefined) run.outputs.set(scope(r), storedForm(app, scope(r), v));
+        if (v !== undefined) outputs.set(scope(r), storedForm(app, scope(r), v));
         else if (resolveParamRef(app, r)!.param!.hasMemory) throw new ScriptError("unsupported", `it leaves its result ${scope(r)} unset for these inputs, which keeps what ETS computed when it last ran`);
       });
-      return { ...run, state: "computed" };
+      return { ...run, state: "computed", outputs };
     } catch (e) {
       if (e instanceof ScriptError) return { ...run, state: "refused", reason: e.message };
       throw e;

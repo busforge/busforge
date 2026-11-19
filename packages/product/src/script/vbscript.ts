@@ -2,11 +2,12 @@
 //
 // Older product data writes its calculations in VBScript: assignments, `If`/`ElseIf`/`Else`/`End If` (also the
 // single-line form), `Dim`, arithmetic (`+ - * / \ Mod`), concatenation (`&`), comparisons and the bitwise
-// `And`/`Or`/`Not`, with `True` = -1 and `False` = 0 as in VBScript. Names are case-insensitive. A variable that is
-// neither an input nor declared with `Dim` reads as Empty (0 or the empty string) in VBScript, but here reading one
-// before it is assigned is refused: it almost always means a parameter name the script expects did not resolve, and
-// 0 would be a silent wrong value. An output is not bound before the script sets it, so a script that reads one
-// first is refused too (its value would be what ETS computed last time). Everything else is refused.
+// `And`/`Or`/`Not`, with Booleans that are -1 and 0 in arithmetic and `True`/`False` as text, as in VBScript. Names
+// are case-insensitive. A variable that is neither an input nor declared with `Dim` reads as Empty (0 or the empty
+// string) in VBScript, but here reading one before it is assigned is refused: it almost always means a parameter
+// name the script expects did not resolve, and 0 would be a silent wrong value. An output is not bound before the
+// script sets it, so a script that reads one first is refused too (its value would be what ETS computed last time),
+// and so are a `Dim` of a parameter's variable, an overflow and a Boolean result. Everything else is refused.
 //
 // Ported to TypeScript from bussard (https://github.com/tmbo/bussard), commit
 // 0a537ce12a821b18122f292e2c7d5fbbe2e081a4, crates/bussard-model/src/script/vbscript.rs,
@@ -18,12 +19,16 @@ export function runVbs(src: string, inputs: ReadonlyArray<readonly [string, Scri
   const parser = new Parser(tokenize(src));
   const program = parser.program();
   if (opts.parseOnly) return [];
+  const params = new Set([...inputs.map(([n]) => n), ...outputs].map((n) => n.toLowerCase()));
+  for (const name of parser.dims) if (params.has(name)) throw unsupported(`it declares ${name}, the variable of one of its parameters`);
   const env = new Map<string, Value>(parser.dims.map((name) => [name, EMPTY]));
   for (const [name, value] of inputs) env.set(name.toLowerCase(), value);
   const interp = new Interp(env, new Set(outputs.map((n) => n.toLowerCase())));
   interp.run(program);
   return outputs.map((name) => {
     const v = env.get(name.toLowerCase());
+    // No capture shows how ETS stores a Boolean in a parameter.
+    if (typeof v === "boolean") throw unsupported(`output ${name} is a Boolean`);
     return v === undefined || v === EMPTY ? undefined : v;
   });
 }
@@ -309,8 +314,8 @@ class Parser {
     const t = this.next();
     if (t.t === "num") return { e: "lit", v: t.v };
     if (t.t === "str") return { e: "lit", v: t.v };
-    if (this.isKw("true", t)) return { e: "lit", v: TRUE };
-    if (this.isKw("false", t)) return { e: "lit", v: FALSE };
+    if (this.isKw("true", t)) return { e: "lit", v: true };
+    if (this.isKw("false", t)) return { e: "lit", v: false };
     if (t.t === "name") {
       const p = this.peek();
       if (p.t === "op" && p.v === "(") throw unsupported(`function call ${t.v}() not supported`);
@@ -327,23 +332,25 @@ class Parser {
 
 // --- runtime ------------------------------------------------------------------------------------------------------
 
-const TRUE = -1;
-const FALSE = 0;
-// VBScript's Empty: 0 next to a number, "" next to a string.
+// VBScript's Empty: 0 next to a number, "" next to a string. A Boolean is its own subtype: -1 or 0 in arithmetic,
+// "True" or "False" as text.
 const EMPTY = Symbol("Empty");
-type Value = number | string | typeof EMPTY;
+type Value = number | string | boolean | typeof EMPTY;
 
 const DECIMAL = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
 function num(v: Value): number {
   if (v === EMPTY) return 0;
   if (typeof v === "number") return v;
+  if (typeof v === "boolean") return v ? -1 : 0;
   const t = v.trim();
   const n = DECIMAL.test(t) ? Number(t) : NaN;
   if (!Number.isFinite(n)) throw unsupported(`type mismatch: ${JSON.stringify(v)}`);
   return n;
 }
 
-const text = (v: Value): string => (v === EMPTY ? "" : typeof v === "number" ? formatNumber(v) : v);
+const text = (v: Value): string => (v === EMPTY ? "" : typeof v === "number" ? formatNumber(v) : typeof v === "boolean" ? (v ? "True" : "False") : v);
+// An arithmetic result: VBScript raises an overflow where a Double does not hold it.
+const finite = (n: number): number => { if (!Number.isFinite(n)) throw unsupported("overflow"); return n; };
 const truth = (v: Value): boolean => num(v) !== 0;
 
 // VBScript's text for a number (`CStr`): rounded to 15 significant digits, so `0.1 + 0.2` reads `0.3`, and whole
@@ -364,12 +371,12 @@ function whole(v: Value): number {
   return n;
 }
 
-const boolValue = (b: boolean): number => (b ? TRUE : FALSE);
-
 class Interp {
   private budget = new Budget();
   private depth = new Depth();
   constructor(private readonly env: Map<string, Value>, private readonly outputs: ReadonlySet<string>) {}
+
+  private concat(s: string): string { this.budget.charge(Math.ceil(s.length / 32)); return checkText(s); }
 
   run(stmts: Stmt[]): void {
     for (const stmt of stmts) {
@@ -394,13 +401,14 @@ class Interp {
         if (v === undefined) throw unsupported(`${e.name} is read before it is assigned (not an input or Dim)`);
         return v;
       }
-      case "neg": return -num(this.eval(e.inner));
-      case "not": return ~whole(this.eval(e.inner));
+      case "neg": return finite(-num(this.eval(e.inner)));
+      case "not": { const v = this.eval(e.inner); return typeof v === "boolean" ? !v : ~whole(v); }
       case "cmp": {
         const a = this.eval(e.a), b = this.eval(e.b);
         // VBScript's rules for comparing Variants: a numeric operand is always less than a string one (never equal, no
         // conversion, no type mismatch); an Empty one is "" next to a string and 0 next to a number.
         let order: number;
+        if ((typeof a === "boolean" && typeof b === "string") || (typeof a === "string" && typeof b === "boolean")) throw unsupported("comparison of a Boolean with a string");
         if (typeof a === "string" && typeof b === "string") order = a < b ? -1 : a > b ? 1 : 0;
         else if (typeof a === "number" && typeof b === "string") order = -1;
         else if (typeof a === "string" && typeof b === "number") order = 1;
@@ -412,27 +420,28 @@ class Interp {
           order = x < y ? -1 : x > y ? 1 : 0;
         }
         const holds = { "=": order === 0, "<>": order !== 0, "<": order < 0, ">": order > 0, "<=": order <= 0, ">=": order >= 0 }[e.op];
-        return boolValue(holds);
+        return holds;
       }
       case "bin": {
         const a = this.eval(e.a), b = this.eval(e.b);
         switch (e.op) {
-          case "concat": return checkText(text(a) + text(b));
-          case "add": return typeof a === "string" && typeof b === "string" ? checkText(a + b) : num(a) + num(b);
-          case "sub": return num(a) - num(b);
-          case "mul": return num(a) * num(b);
+          case "concat": return this.concat(text(a) + text(b));
+          case "add": return typeof a === "string" && typeof b === "string" ? this.concat(a + b) : finite(num(a) + num(b));
+          case "sub": return finite(num(a) - num(b));
+          case "mul": return finite(num(a) * num(b));
           case "div": {
             const divisor = num(b);
             if (divisor === 0) throw unsupported("division by zero");
-            return num(a) / divisor;
+            return finite(num(a) / divisor);
           }
           case "intdiv": case "mod": {
             const x = whole(a), y = whole(b);
             if (y === 0) throw unsupported("division by zero");
             return e.op === "intdiv" ? Math.trunc(x / y) : x % y;
           }
-          case "and": return whole(a) & whole(b);
-          case "or": return whole(a) | whole(b);
+          // Two Booleans give a Boolean, anything else the bitwise number.
+          case "and": return typeof a === "boolean" && typeof b === "boolean" ? a && b : whole(a) & whole(b);
+          case "or": return typeof a === "boolean" && typeof b === "boolean" ? a || b : whole(a) | whole(b);
         }
       }
     }
