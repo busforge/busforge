@@ -281,7 +281,8 @@ can edit keeps the stored value and names the computed one beside it. An input n
 its value, also where the configuration does not show the result: the Jung 400021SE's dimming time is
 entered in seconds and milliseconds that the device does not hold, and the page names the hidden
 parameter the image holds and its value. A calculation Busforge does not run marks its parameters as
-not computed, with the reason, in warning tone where a change of them is refused.
+not computed, with the reason in the user's language (a script the interpreter refuses keeps the
+interpreter's own words, in English), in warning tone where a change of them is refused.
 
 ## Ownership rules, in detail
 
