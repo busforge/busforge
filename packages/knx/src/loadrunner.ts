@@ -60,9 +60,9 @@ export type LoadStep =
   // something else proves the bytes (the full download echo-checks every chunk as it writes it and,
   // after the restart, compares the device's own segment CRCs or reads the segment back); a write
   // nobody verifies is a write that did not happen. `echo` requires the device to be in verify mode (see the verifyMode op).
-  // `offset`: where in the segment these bytes go. A full download allocates the segment with
-  // fill, so the device has already zeroed it and only the bytes that are NOT zero need to be
-  // sent (see planSystemBFullDownload).
+  // `offset`: where in the segment these bytes go. A full download whose procedure declares the filled
+  // allocation (Mode 1) has the device pre-fill the segment, so only the bytes that differ from the fill
+  // need to be sent; an unfilled one (Mode 0) is written whole (see planSystemBFullDownload).
   | { op: "writeSegment"; lsm: number; bytes: Buffer; offset?: number; verify?: boolean; echo?: boolean }
   // A parameter download after a reallocation without fill: if the segment is still where it was
   // (`keptAt`), the device kept its bytes and only those holding an owned bit are written (`owned`,

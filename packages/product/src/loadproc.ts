@@ -153,9 +153,10 @@ function orderedSteps(lp: LoadProcedures): LdStep[] {
 
 // The byte the device is asked to pre-fill the parameter segment (LSM 4) with, from the full
 // download's LdCtrlRelSegment step. Most System B devices declare 0 (zero the segment); some declare
-// 255 (0xFF, the erased-flash state). The full download must allocate with this value AND treat it as
-// the "already there" byte when choosing the bytes it writes, or the un-written regions read back
-// wrong. 0 when the procedure declares no relative parameter allocation.
+// 255 (0xFF, the erased-flash state). The full download allocates with this value; on the filled
+// allocation (Mode 1) it also treats it as the "already there" byte when choosing the bytes it writes,
+// or the un-written regions read back wrong, where the unfilled one (Mode 0) writes every byte. 0 when
+// the procedure declares no relative parameter allocation.
 export function relParamFillByte(lp: LoadProcedures): number {
   const seg = relParamFullSegment(lp);
   return seg ? Number(seg.attrs.Fill ?? 0) & 0xff : 0;

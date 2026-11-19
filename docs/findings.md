@@ -205,10 +205,11 @@ The device pre-fills a freshly allocated segment with `fill` when the fill flag 
 survives in a region the new one does not write. A parameter-only download must not, because
 it rewrites an existing segment.
 
-ETS sends an allocation the load procedure declares unfilled (`Mode="0"`) with the fill flag 0 and
-the declared fill byte all the same (`03 0B <size> 00 A5` for `Fill="165"`). It then writes a segment
-that declares `<Data>` whole, bytes equal to the fill included, and a segment without `<Data>` only
-up to its last parameter's byte (bussard's synthetic products, ETS 6 into a device simulator).
+In a full download ETS sends an allocation the load procedure declares unfilled (`Mode="0"`) with
+the fill flag 0 and the declared fill byte all the same (`03 0B <size> 00 A5` for `Fill="165"`). It
+then writes a segment that declares `<Data>` whole, bytes equal to the fill included, and a segment
+without `<Data>` only up to its last parameter's byte (bussard's synthetic products, ETS 6 into a
+device simulator).
 
 ### Parameter download (`par`): the extra step
 
