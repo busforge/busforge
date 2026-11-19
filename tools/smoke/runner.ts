@@ -380,6 +380,12 @@ function inServiceIo(o: { client: Client; ui: UiDriver | null; pid: string; did:
 
 class Stop extends Error { constructor(readonly phase: string, readonly detail: string) { super(detail); } }
 
+// Why a project's device at the spec's address is not the spec's product running the spec's application, or null.
+const placedProblem = (spec: DeviceSpec, placed: { appRef: string; appProgramId: string; productRef: string }): string | null =>
+  placed.appRef === spec.device.appRef && placed.productRef === spec.device.productRef && placed.appProgramId === spec.device.appProgramId
+    ? null
+    : `the project file's device at ${spec.device.ia} is ${placed.productRef} with ${placed.appRef} running ${placed.appProgramId || "no application"}, not this spec's product with ${spec.device.appProgramId}`;
+
 // The capabilities checked for a guard-the-guardrail refusal when the product does NOT claim them: an
 // unclaimed write capability's endpoint must refuse with a coded error, never silently succeed. Only
 // dry-runs (read-only, pre-enqueue refusals) are used, so this touches no bus write.
@@ -432,7 +438,11 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number, opts: I
     // configuration is still the one the read-back finds on the unit.
     const secureFile = spec.provision === "in-service" && spec.inService?.dataSecure === true;
     const inServiceFile = secureFile || (spec.provision === "in-service" && spec.inService?.hiddenValuesFromProject === true);
-    if (!imported && !inServiceFile && !products.some((p) => p.appRef === spec.device.appRef && p.productRef === spec.device.productRef)) throw new Stop("preflight", `product not in catalog (${spec.device.appRef}); import the .knxprod first`);
+    if (!imported && !inServiceFile) {
+      const listed = products.find((p) => p.appRef === spec.device.appRef && p.productRef === spec.device.productRef);
+      if (!listed) throw new Stop("preflight", `product not in catalog (${spec.device.appRef}); import the .knxprod first`);
+      if (listed.appProgramId !== spec.device.appProgramId) throw new Stop("preflight", `the catalog's ${spec.device.productRef} runs ${listed.appProgramId || "no application"}, the spec names ${spec.device.appProgramId}`);
+    }
     const password = process.env.BUSFORGE_SMOKE_KNXPROJ_PASSWORD ?? "";
     if (imported && (!spec.device.knxprod || !password)) throw new Stop("preflight", "refused: import-knxproj needs device.knxprod in the spec and BUSFORGE_SMOKE_KNXPROJ_PASSWORD set");
     if (spec.provision === "in-service") { const p = optionProblems(spec, opts); if (p.length) throw new Stop("preflight", `refused: ${p.join("; ")}`); }
@@ -456,6 +466,8 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number, opts: I
       await client.attachConnection(pid, conn.id);
       const placed = (await client.projectDevices(pid)).find((d) => d.ia === spec.device.ia);
       if (!placed) throw new Stop("setup", `the imported project has no device at ${spec.device.ia}`);
+      const problem = placedProblem(spec, placed);
+      if (problem) throw new Stop("setup", problem);
       did = placed.id;
       const project = loadKnxproj(bytes, password, basename(file));
       const sec = project.deviceSecurity.find((d) => d.deviceId === placed.id);
@@ -472,7 +484,8 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number, opts: I
       await client.attachConnection(pid, conn.id);
       const placed = (await client.projectDevices(pid)).find((d) => d.ia === spec.device.ia);
       if (!placed) throw new Stop("setup", `the project file holds no device at ${spec.device.ia}`);
-      if (placed.appRef !== spec.device.appRef || placed.productRef !== spec.device.productRef) throw new Stop("setup", `the project file's device at ${spec.device.ia} is ${placed.productRef} with ${placed.appRef}, not this spec's product`);
+      const problem = placedProblem(spec, placed);
+      if (problem) throw new Stop("setup", problem);
       did = placed.id;
       const sec = loadKnxproj(bytes, password, basename(file)).deviceSecurity.find((d) => d.deviceId === placed.id);
       const keyed = inServiceFileKey(spec, sec);

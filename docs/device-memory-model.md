@@ -261,8 +261,9 @@ What Busforge cannot compute as ETS does, it does not compute, and a write keeps
 For these, a write refuses where a parameter on one side of the calculation takes another value
 than the device holds and the other side reaches the image: one of its parameters has memory or lies
 in a property, or is one a `<choose>` tests or an `<Assign>` reads or sets. A parameter or structural
-flash compares with the configuration the device was last programmed with; a full download, and the
-System 1 download, with the defaults. A calculation whose other side reaches nothing refuses nothing.
+flash compares with the configuration the device was last programmed with; a full download, the
+System 1 download and the parameter flash of a device never programmed from this project, with the
+defaults. A calculation whose other side reaches nothing refuses nothing.
 
 Two cases of a computed calculation are refused too, since no capture shows them:
 
@@ -281,7 +282,8 @@ can edit keeps the stored value and names the computed one beside it. An input n
 its value, also where the configuration does not show the result: the Jung 400021SE's dimming time is
 entered in seconds and milliseconds that the device does not hold, and the page names the hidden
 parameter the image holds and its value. A calculation Busforge does not run marks its parameters as
-not computed, with the reason, in warning tone where a change of them is refused.
+not computed, with the reason in the user's language (a script the interpreter refuses keeps the
+interpreter's own words, in English), in warning tone where a change of them is refused.
 
 ## Ownership rules, in detail
 
@@ -372,9 +374,9 @@ encoded into the parameter image. Time-of-day, a colour in any other space, raw 
 bases write nothing and therefore own nothing. Where no capture shows how ETS encodes a colour (any space
 but RGB, and every colour on an absolute segment, System 7), a parameter or structural flash refuses
 (`PARAM_COLOR_UNSUPPORTED`) when a colour in use differs from the configuration the device was last
-programmed with, or comes into use, and a full download refuses any colour in use: it knows no
-configuration the device holds, and would leave either the segment's `<Data>` or the unit's bytes
-where the colour lies. Seven type details are easy to get wrong:
+programmed with, or comes into use, and a full download, like the parameter flash of a device never
+programmed from this project, refuses any colour in use: it knows no configuration the device holds,
+and would leave either the segment's `<Data>` or the unit's bytes where the colour lies. Seven type details are easy to get wrong:
 
 - **An RGB `TypeColor` is three bytes, red, green, blue** (System B). The type declares no
   `SizeInBit`; the value `#RRGGBB` goes into the three bytes at the parameter's offset in that order,
@@ -408,14 +410,21 @@ where the colour lies. Seven type details are easy to get wrong:
   its field where the application declares `<Options TextParameterZeroTerminate="true">` and on any
   System 7 application (no System 7 capture shows a field filled), on System 7 a zero over a non-zero
   `<Data>` byte (the Meteodata's `<Data>` holds zeros behind the characters), a field that is not
-  whole bytes from bit 0, and any text parameter of a System 1 application. A read-back leaves such a
-  field out of its comparison instead of refusing the whole read.
+  whole bytes from bit 0, and any text parameter of a System 1 application. A value that begins or ends
+  with a blank is refused as well (`PARAM_TEXT_EDGE_BLANK`): XML keeps those characters, so Busforge
+  reads a value as written, blanks included and character references (`&#x9;`, `&#xA;`) decoded: a
+  `Parameter`'s and a `ParameterRef`'s `Value` and `InitialValue`, an `Assign`'s `Value`, their
+  translations, and a project's `ParameterInstanceRef` `Value` (every other attribute and text node is
+  trimmed, and a value of any other type than text compares and validates without its blanks). No ETS image shows whether ETS writes such blanks into the device or drops them. A
+  read-back leaves such a field out of its comparison instead of refusing the whole read.
 
 - **A device placed in Busforge, or given another product, starts its text parameters at their
   `InitialValue`**, translated into the language the client works in, as ETS does for a device added to a project of that
   language: ETS's download of a synthetic product (bussard's) added to a German project wrote the
-  de-DE `InitialValue` "Bussardhorst Süd", not the `Value` "Buzzard nest". A device imported from
-  ETS keeps the values ETS stored. An `InitialValue` in a form no capture shows (untranslated, on a
+  de-DE `InitialValue` "Bussardhorst Süd", not the `Value` "Buzzard nest". That start value is the
+  parameter's default on the device page: the device's baseline starts at it, so the parameter shows no
+  change and a revert returns to it. A device imported from ETS keeps the values ETS stored. An
+  `InitialValue` in a form no capture shows (untranslated, on a
   `ParameterRef`, beside a `ParameterRef`'s own `Value`, on a parameter that is no text, in a module
   definition)
   refuses the placement (`PARAM_INITIAL_VALUE_UNSUPPORTED`) where it differs from the default and its
@@ -426,7 +435,8 @@ where the colour lies. Seven type details are easy to get wrong:
 - **`TypeRawData` writes nothing.** No ETS download shows its layout, so the segment's `<Data>` or
   the unit's bytes stay where it lies. A raw-data parameter in use away from its default (a full
   download) or from the configuration the device was last programmed with (a parameter or structural
-  flash) refuses the operation (`PARAM_RAW_DATA_UNSUPPORTED`).
+  flash) refuses the operation (`PARAM_RAW_DATA_UNSUPPORTED`), and on a device never programmed from
+  this project the parameter flash refuses one in use at any value: it would keep the unit's bytes there.
 
 - **`TypeTime` is a raw unsigned integer**, a count of its `Unit` (seconds, milliseconds),
   and ETS stores it exactly that way (hardware-confirmed: a 60-second duration is stored as
@@ -538,6 +548,20 @@ was the only remaining difference). The object stays fully present, it just does
 advertise communication. The consequence for a group-address flash is in
 [findings.md](findings.md) §7: writing only L1+L2 to link an object whose L3 still says
 `comm=0` produces a link that verifies green and is functionally dead.
+
+This holds for what the captures show: applications that name **no ETS download plugin**,
+on products whose catalogue entry carries **no factory image** (`Hardware2Program/@LoadedImage`).
+Every application in the test corpus is such an application. ETS downloads an application that
+names a plugin (`<Static><Extension EtsDownloadPlugin="{GUID}">`, a non-empty value) through
+that plugin, and no capture shows what it writes into the com-object table. For such an
+application Busforge refuses the full download and every group-address flash that writes the
+table, and with them the structural flash, before anything is sent
+(`COM_OBJECT_TABLE_DOWNLOAD_PLUGIN`); the parameter flash, which leaves the table as the device
+holds it, stays offered on a device the project has programmed, and a device it never programmed
+is pointed at ETS (`NEVER_PROGRAMMED_USE_ETS`). A factory image that holds
+the com-object table is not yet detected: the catalogue attribute does not reach the write
+path, so such a product is written by the rule above ([roadmap.md](roadmap.md)). No product
+in the test corpus carries one.
 
 ### MV-0705 layout: manufacturer template plus overlay
 

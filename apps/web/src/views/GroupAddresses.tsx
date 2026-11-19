@@ -17,7 +17,8 @@ import { GroupEditor, type Editor, type Levels } from "./GroupEditDialogs.tsx";
 import { cn } from "@/lib/utils";
 
 // The group number shown in front of each range name. Lets you read where you are in the address
-// tree at a glance (main group, then main/middle). Neutral, as amber marks pending work only.
+// tree at a glance (main group, then main/middle). Neutral: amber is kept for the primary action,
+// selection and pending work.
 function NumTag({ value, className }: { value: string; className?: string }) {
   return <span className={cn("shrink-0 rounded-md border border-border bg-secondary px-1.5 py-0.5 font-mono font-semibold text-foreground/80", className)}>{value}</span>;
 }
@@ -80,7 +81,7 @@ export function GroupAddressesView() {
   const navigate = useNavigate({ from: "/projects/$projectId/groups" });
   const search = useSearch({ from: "/projects/$projectId/groups" });
   const q = search.q ?? "";
-  const setQ = (val: string) => { void navigate({ search: (p) => ({ ...p, q: val || undefined }), replace: true }); };
+  const setQ = (val: string) => { void navigate({ search: (p) => ({ ...p, q: val || undefined }), replace: true, resetScroll: false }); };
   const filter = q.trim().toLowerCase();
 
   const [editor, setEditor] = useState<Editor>(null);

@@ -41,6 +41,7 @@ export function CompatibilityBadge({ view, manufacturer }: { view: Pick<DeviceCo
       </PopoverTrigger>
       <PopoverContent align="start" className="w-[26rem] max-w-[calc(100vw-2rem)] space-y-3 overflow-x-auto text-xs" data-testid="compatibility-detail">
         <p className="text-sm font-medium">{t("compat.title")}</p>
+        {summary === "tested" && <p data-testid="compatibility-tested-detail">{t("compat.testedDetail")}</p>}
         <table className="w-full">
           <thead className="text-muted-foreground">
             <tr><th className="pb-1 text-left font-normal">{t("compat.colOperation")}</th><th className="pb-1 text-left font-normal">{t("compat.colState")}</th><th className="pb-1 text-center font-normal">{t("compat.colTransfer")}</th><th className="pb-1 text-center font-normal">{t("compat.colPersistence")}</th></tr>

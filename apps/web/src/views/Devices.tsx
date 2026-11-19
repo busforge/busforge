@@ -147,7 +147,7 @@ export function DevicesView() {
   const search = useSearch({ from: "/projects/$projectId/devices" });
   const q = search.q ?? "";
   const onlyChanged = search.changed ?? false;
-  const setQ = (val: string) => { void navigate({ search: (p) => ({ ...p, q: val || undefined }), replace: true }); };
+  const setQ = (val: string) => { void navigate({ search: (p) => ({ ...p, q: val || undefined }), replace: true, resetScroll: false }); };
   const toggleChanged = () => { void navigate({ search: (p) => ({ ...p, changed: p.changed ? undefined : true }), replace: true }); };
   const resetFilters = () => { void navigate({ search: withoutFilters, replace: true }); };
   const setBuilding = (id: string) => { void navigate({ search: (p) => ({ ...p, b: id || undefined }), replace: true }); };
@@ -264,7 +264,7 @@ export function DevicesView() {
       </Link>
       <div className="col-start-1 flex min-w-0 shrink-0 items-center gap-2 max-sm:pl-[calc(var(--addr-col)+0.75rem)]">
         {d.secure && (
-          <Badge tone="warning" size="sm" title={t("devices.secure")} data-testid={`device-secure-${d.ia}`}>
+          <Badge tone="neutral" size="sm" title={t("devices.secure")} data-testid={`device-secure-${d.ia}`}>
             <ShieldCheck /> <span className="hidden sm:inline">{t("devices.secure")}</span>
           </Badge>
         )}
@@ -317,7 +317,7 @@ export function DevicesView() {
             : !!dropped?.length && (
               <HeaderWarning
                 label={t("import.dropped.label")} title={t("import.dropped.title")} count={dropped.length} testId="project-dropped-links"
-                detail={<><p className="text-muted-foreground">{t("import.dropped.hint")}</p><DroppedLinksList links={dropped} projectId={projectId} /></>}
+                detail={<><p className="text-muted-foreground">{t("import.dropped.hint")} {t("import.dropped.open")}</p><DroppedLinksList links={dropped} projectId={projectId} /></>}
               />
             )}
           {anyChanged && (

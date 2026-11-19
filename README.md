@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/device-page.webp" alt="Busforge device page of an MDT universal interface, programmed and with every operation Busforge supports for the product tested: the parameters filtered for sending, each input's status object linked to a group address, and the Flash button." width="880">
+  <img src="docs/screenshots/device-page.webp" alt="Busforge device page of an MDT universal interface, programmed and with the transfer tested for every operation Busforge supports for the product: the parameters filtered for sending, each input's status object linked to a group address, and the Flash button." width="880">
 </p>
 
 <p align="center">

@@ -60,8 +60,6 @@ afterAll(() => { unit = null; });
 let tmps: string[] = [];
 afterEach(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); tmps = []; });
 
-// The application of a spec, as the catalogue holds it: the appRef names its hardware-program pair.
-const appOf = (spec: DeviceSpec) => spec.device.appRef.replace(/_H-.*_HP-/, "_A-");
 const IN_SERVICE = SPECS.filter((s) => s.provision === "in-service");
 
 test("every registered device-in-service spec has its unit emulated here, or is named as not emulable", () => {
@@ -217,7 +215,7 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
   type Edit = { values?: (v: Map<string, string>) => void; memory?: (m: Map<number, number>) => void };
   const run = async (spec: DeviceSpec, given = OPTS, edit: Edit = {}) => {
     const opts = optsFor(spec, given);
-    const xml = catalogueXml(`${appOf(spec)}.xml.gz`);
+    const xml = catalogueXml(`${spec.device.appProgramId}.xml.gz`);
     const values = spec.inService?.hiddenValuesFromProject ? installationValues(spec) : undefined;
     if (values) edit.values?.(values);
     const { state, pid, did } = await placed(spec, xml, values);
@@ -297,7 +295,7 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
       .toEqual({ stopped: undefined, failed: [], fullDownload: "pass", behaviours: [], persistence: "pass", restore: "pass" });
     expect(r.ok).toBe(true);
     expect(log).toEqual(writes(spec, full));
-    const allowed = await allowedDifferences(spec, dev, parseAppConfig(catalogueXml(`${appOf(spec)}.xml.gz`)), state, pid, did);
+    const allowed = await allowedDifferences(spec, dev, parseAppConfig(catalogueXml(`${spec.device.appProgramId}.xml.gz`)), state, pid, did);
     expect([...memory].filter(([a, b]) => ((dev.mem.get(a)! ^ b) & ~(allowed.get(a) ?? 0)) !== 0).map(([a, b]) => `0x${a.toString(16)}: ${b.toString(16)} -> ${dev.mem.get(a)?.toString(16)}`)).toEqual([]);
   }, 890_000);
 
@@ -330,7 +328,7 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
   // read and compared, are the bytes that differed on the unit.
   describe("theben-meteodata-140s-in-service: the parameters the unit hides take the installation project's values", () => {
     const spec = IN_SERVICE.find((s) => s.id === "theben-meteodata-140s-in-service")!;
-    const cfg = parseAppConfig(catalogueXml(`${appOf(spec)}.xml.gz`));
+    const cfg = parseAppConfig(catalogueXml(`${spec.device.appProgramId}.xml.gz`));
     const ia = iaToNum(spec.device.ia);
     const etsWrites = (f: string) => memoryImage(parseCapture(captureText(f), ia).writes);
     // The parameter segments and the com-object table, without the download marker at 0x4800 (a
@@ -388,7 +386,7 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
       expect(r.ok).toBe(true);
       expect(log).toEqual(writes(spec, opts));
       const behind = await residues(dev);
-      const allowed = await allowedDifferences(spec, dev, parseAppConfig(catalogueXml(`${appOf(spec)}.xml.gz`)), state, pid, did);
+      const allowed = await allowedDifferences(spec, dev, parseAppConfig(catalogueXml(`${spec.device.appProgramId}.xml.gz`)), state, pid, did);
       expect([...memory].filter(([a, b]) => ((dev.mem.get(a)! ^ b) & ~(allowed.get(a) ?? 0)) !== 0 && !behind.has(a)).map(([a, b]) => `0x${a.toString(16)}: ${b.toString(16)} -> ${dev.mem.get(a)?.toString(16)}`)).toEqual([]);
     }, 650_000);
   }

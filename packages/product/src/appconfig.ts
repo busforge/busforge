@@ -204,6 +204,9 @@ export interface AppConfig {
   downloadInvisibleParameters?: string;
   // ApplicationProgram MinEtsVersion as declared ("4.0", "3.0d", ...); undefined where the application declares none.
   minEtsVersion?: string;
+  // <Static><Extension EtsDownloadPlugin>: the ETS plugin (a GUID) the application has ETS download it with;
+  // undefined where the attribute is absent, empty or blank, which names no plugin.
+  etsDownloadPlugin?: string;
   // <Options TextParameterZeroTerminate="true">: a text parameter's value is stored with a closing zero,
   // so it can take at most one character less than its field.
   textParameterZeroTerminate: boolean;
@@ -250,10 +253,12 @@ export interface CfgCalculation { id: string; name?: string; lRefs: string[]; rR
 // (a segment's base64 Data, long texts) as child-element text. Read either form
 // uniformly, so a field authored as an element instead of an attribute still resolves
 // (this is what the legacy merged parser did implicitly).
-// Only text nodes contribute. An element child has no "#text" and is not text; joining it would
-// have produced "[object Object]" inside the very string a segment's base64 Data is read from.
+// Only text nodes and CDATA sections contribute, a CDATA section with every character it holds. An element
+// child has no "#text" and is not text; joining it would have produced "[object Object]" inside the very
+// string a segment's base64 Data is read from.
+const CDATA = "#cdata";
 const concatText = (n: ONode): string =>
-  kidsOf(n).map((k) => k["#text"]).filter((t): t is string | number => typeof t === "string" || typeof t === "number").join("");
+  kidsOf(n).map((k) => (tagOf(k) === CDATA ? concatText(k) : k["#text"])).filter((t): t is string | number => typeof t === "string" || typeof t === "number").join("");
 function attrOrText(n: ONode, name: string): string | undefined {
   const a = attrsOf(n)[name];
   if (a !== undefined) return a;
@@ -301,28 +306,52 @@ export function resolveParamRef(app: AppConfig, refId: string): { ref: CfgParamR
 // Two stored values of a parameter are one value where they decode the same: no value is the parameter's
 // default, a float compares by number (ETS stores it in scientific notation, the UI as a decimal), and a
 // colour by its hex digits whatever their case (the read-back gives #RRGGBB, an edit may store #rrggbb).
+// The blanks at a value's edge count only for a text parameter: the catalogue and the project keep them
+// (parseAppConfig, the project's parse), and every other type reads its value without them.
 export type SameParamValue = (refId: string, a: string | null, b: string | null) => boolean;
 export function sameParamValue(app: AppConfig): SameParamValue {
   return (refId, a, b) => {
     const { ref, param, type } = resolveParamRef(app, refId) ?? {};
-    const def = ref?.value ?? param?.value ?? "";
-    const x = a ?? def, y = b ?? def;
-    // An empty value (a parameter without a default) is no number: Number("") would read it as 0.
     const base = type?.base;
+    const read = (v: string) => (base === "Text" ? v : v.trim());
+    const def = ref?.value ?? param?.value ?? "";
+    const x = read(a ?? def), y = read(b ?? def);
+    // An empty value (a parameter without a default) is no number: Number("") would read it as 0.
     return x === y || (x !== "" && y !== "" && ((base === "Float" && Number(x) === Number(y)) || (base === "Color" && x.toUpperCase() === y.toUpperCase())));
   };
 }
 
 // Whether a parameter type takes `value`: one of its enumeration's values, or a whole number within
-// its bounds. Undefined for every other type, whose values this does not judge.
-export function takesValue(type: CfgType, value: string): boolean | undefined {
+// its bounds, read without the blanks at its edges. Undefined for every other type, whose values this
+// does not judge.
+export function takesValue(type: CfgType, raw: string): boolean | undefined {
+  const value = raw.trim();
   if (type.enums.length) return type.enums.some((e) => String(e.value) === value);
   if (type.base !== "Number" && type.base !== "Value") return undefined;
   return /^(0|-?[1-9]\d*)$/.test(value) && (type.min === undefined || Number(value) >= type.min) && (type.max === undefined || Number(value) <= type.max);
 }
 
+// The attributes whose characters are a parameter's value, kept as the file writes them, blanks at either
+// end included: XML keeps them, and a text parameter writes them into the device (image.ts refuses such a
+// value, as no ETS capture shows its bytes). A <Translation>'s Text is one where it translates a Value or
+// an InitialValue (parseTranslations). Every other attribute and text node is trimmed; a CDATA section keeps
+// every character (concatText). Character references
+// (ETS writes a tab, CR or LF in an attribute as &#x9;, &#xD;, &#xA;) are decoded.
+const TRANSLATED_VALUES: ReadonlySet<string> = new Set(["Value", "InitialValue"]);
+const VALUE_ATTRS: Record<string, ReadonlySet<string>> = {
+  Parameter: TRANSLATED_VALUES,
+  ParameterRef: TRANSLATED_VALUES,
+  Assign: new Set(["Value"]),
+  Translation: new Set(["Text"]),
+};
+const keepsBlanks = (attr: string, jPath: string): boolean => VALUE_ATTRS[jPath.slice(jPath.lastIndexOf(".") + 1)]?.has(attr) === true;
+
 export function parseAppConfig(xml: string): AppConfig {
-  const p = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", attributesGroupName: ":@", preserveOrder: true });
+  const p = new XMLParser({
+    ignoreAttributes: false, attributeNamePrefix: "", attributesGroupName: ":@", preserveOrder: true, trimValues: false, htmlEntities: true, cdataPropName: CDATA,
+    attributeValueProcessor: (name, v, jPath) => (keepsBlanks(name, String(jPath)) ? v : v.trim()),
+    tagValueProcessor: (_tag, v) => v.trim(),
+  });
   const root = p.parse(xml) as ONode[];
   const app = deepFirst(root, "ApplicationProgram");
   if (!app) throw new ProductError("APP_PROGRAM_MISSING", "no ApplicationProgram in the parsed file");
@@ -390,6 +419,8 @@ export function parseAppConfig(xml: string): AppConfig {
   const desc = appAttrs.VisibleDescription ?? "";
   const dca = /\bDCA\b/i.test(appAttrs.Name ?? "") || /\bDCA\b/i.test(desc) ? { hint: desc.trim() } : undefined;
   const calculations = calculationsOf(appKids);
+  const extensionNode = firstByTag(staticKids, "Extension");
+  const etsDownloadPlugin = extensionNode ? attrsOf(extensionNode).EtsDownloadPlugin?.trim() : undefined;
 
   return {
     id: appAttrs.Id,
@@ -406,6 +437,7 @@ export function parseAppConfig(xml: string): AppConfig {
     ...(optionsNode && attrsOf(optionsNode).TextParameterEncoding !== undefined ? { textParameterEncoding: attrsOf(optionsNode).TextParameterEncoding } : {}),
     ...(optionsNode && attrsOf(optionsNode).DownloadInvisibleParameters !== undefined ? { downloadInvisibleParameters: attrsOf(optionsNode).DownloadInvisibleParameters } : {}),
     ...(appAttrs.MinEtsVersion !== undefined ? { minEtsVersion: appAttrs.MinEtsVersion } : {}),
+    ...(etsDownloadPlugin ? { etsDownloadPlugin } : {}),
     defaultLanguage: appAttrs.DefaultLanguage ?? "en-US",
     languages,
     loadProcedures: loadProceduresOf(root),
@@ -676,7 +708,8 @@ function parseTranslations(langNodes: ONode[]): Translations {
         const attrMap = new Map<string, string>();
         for (const tr of childrenByTag(kidsOf(el), "Translation")) {
           const ta = attrsOf(tr);
-          attrMap.set(ta.AttributeName, ta.Text ?? "");
+          const t = ta.Text ?? "";
+          attrMap.set(ta.AttributeName, TRANSLATED_VALUES.has(ta.AttributeName) ? t : t.trim());
         }
         elemMap.set(refId, attrMap);
       }

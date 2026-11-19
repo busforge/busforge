@@ -143,6 +143,13 @@ describe("ETS 4/5 <Connectors> links", () => {
     expect(p.droppedLinks).toEqual([{ deviceId: "P-0001-0_DI-1", comObjRefId: "O-3_R-3", reason: "addressNotInProject", gas: [{ etsId: "GA-1", raw: 10 }, { etsId: "GA-9" }] }]);
   });
 
+  test("the entry of a com-object two refs share carries the ETS addresses of both, the counts stay per ref", () => {
+    const refs = `<ComObjectInstanceRefs><ComObjectInstanceRef RefId="O-3_R-3" Links="GA-1 GA-9"/><ComObjectInstanceRef RefId="O-3_R-3" Links="GA-2 GA-1"/></ComObjectInstanceRefs>`;
+    const p = parseProject(doc(`<Installation Name=""><Topology><Area Address="1"><Line Address="1">${device("P-0001-0_DI-1", 5, refs)}</Line></Area></Topology>${gas("P-0001-0", 10, 20)}</Installation>`), undefined, "x");
+    expect(p.unresolvedLinks).toBe(1);
+    expect(p.droppedLinks).toEqual([{ deviceId: "P-0001-0_DI-1", comObjRefId: "O-3_R-3", reason: "addressNotInProject", gas: [{ etsId: "GA-1", raw: 10 }, { etsId: "GA-9" }, { etsId: "GA-2", raw: 20 }] }]);
+  });
+
   test("a com-object whose links all imported is not listed as dropped", () => {
     expect(project(`<Send GroupAddressRefId="P-0001-0_GA-1"/><Receive GroupAddressRefId="P-0001-0_GA-2"/>`).droppedLinks).toEqual([]);
   });

@@ -400,7 +400,8 @@ implementation keeps the device's com-object table (L3) untouched: a link change
 removes no objects, so why rewrite L3?
 
 Because **L3 carries a per-object Communication flag, and ETS clears it on every object
-without a link** (byte-verified against an ETS-programmed device). So an object that was
+without a link** (byte-verified against an ETS-programmed device; shown for applications without an
+ETS download plugin on products without a factory image, see [device-memory-model.md](device-memory-model.md#the-communication-flag-on-unlinked-objects)). So an object that was
 **unlinked at the last full download holds `comm=0`** in the device's L3. Writing only L1+L2
 to link it then points a group address at an object whose L3 still says "does not
 communicate". The device happily **acknowledges telegrams** to that group address (the
@@ -726,9 +727,12 @@ for its content.
 - **Switching security mode on takes three octets**, reserved, service 0 and mode 1, exactly as ETS
   sends them. Two octets are refused with return code `0xF2`.
 
-A master reset over the bus (A_Restart, erase codes 0x02 and 0x07, secured) is neither answered nor
-carried out by this device; its only way back to the factory key is physical: bus voltage on with the
-programming button held (slow blinking), release, hold again for 5 s (fast blinking).
+Busforge's master reset over the bus (A_Restart, erase codes 0x02 and 0x07, secured) is neither
+answered nor carried out by this device. ETS's secured confirmed restart with erase code 0x07, which it
+sends when the project switches the unit's Data Secure off, is answered without error and restarts the
+unit, which then still opens under its tool key; ETS switches the security mode off itself afterwards.
+The only way back to the factory key shown is physical: bus voltage on with the programming button held
+(slow blinking), release, hold again for 5 s (fast blinking).
 
 ## 20. A secure device answers no secured group read from a sender it does not list
 

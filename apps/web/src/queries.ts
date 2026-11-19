@@ -175,8 +175,9 @@ export function useSpaceEdit(projectId: string) {
   };
 }
 
-// The com-objects whose ETS links the project's import did not take over in full. Their texts follow the
-// device's configuration, so a device edit refetches them.
+// The com-objects whose ETS links the project's import did not take over in full and that are not linked
+// again. Their texts and whether an object counts as linked again follow the device's links and
+// configuration, so a device edit refetches them.
 export const useDroppedLinks = (id: string) => {
   const { i18n } = useTranslation();
   const lang = i18n.language;
@@ -223,6 +224,7 @@ export function useDeviceEdit(projectId: string, deviceId: string) {
   const after = () => {
     void qc.invalidateQueries({ queryKey: ["deviceConfig", projectId, deviceId] });
     void qc.invalidateQueries({ queryKey: qk.project(projectId) });
+    void qc.invalidateQueries({ queryKey: ["droppedLinks", projectId] });
   };
   const onSuccess = (view: Awaited<ReturnType<typeof api.deviceConfig>>) => {
     // Apply the returned (current-language) view instantly, and mark the other

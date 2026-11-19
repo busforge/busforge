@@ -141,6 +141,7 @@ export interface DeviceSpec {
   id: string; // report key, e.g. "gvs-amma"
   device: {
     appRef: string;      // as listed by GET /api/catalog/products (copy verbatim, never reconstruct)
+    appProgramId: string; // the application program the device runs, as the same listing (and the project's device) names it; the runner refuses a product or device that runs another
     productRef: string;  // ditto
     ia: string;          // target individual address on the bench bus
     mask: string;        // expected mask, asserted against FlashResult.mask

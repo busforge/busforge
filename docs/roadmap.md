@@ -181,6 +181,15 @@ depends on is hardware-proven.
   that disagree, `Delay`, `MapError`, `InvokeFunctionProp`, `MasterReset`, `TaskPtr`, `TaskCtrl2`,
   property writes inside the load, `DeclarePropDesc`, `CompareRelMem`, `<choose>` in a procedure: what is
   shown of each and what settles it is in [load-procedures.md](load-procedures.md#steps-refused-until-a-capture-shows-them).
+- **The com-object table of an application with an ETS download plugin, or a product with a factory
+  image.** The communication flag of an object without a group address is shown cleared only for
+  applications without a download plugin on products without a factory image
+  ([device-memory-model.md](device-memory-model.md#the-communication-flag-on-unlinked-objects)). An
+  application that names a plugin is refused the writes of the table (`COM_OBJECT_TABLE_DOWNLOAD_PLUGIN`).
+  A factory image is not yet detected: `Hardware2Program/@LoadedImage` has to be taken from the catalogue
+  at import and reach the write path, as the PEI program does, so that a product whose factory image
+  holds the com-object table is refused the same writes. An ETS capture of a download of either kind
+  settles what the table holds; no product in the test corpus is of either kind.
 - **Prove a non-TP device.** One read-back on real powerline, RF or IP hardware promotes that row
   from extrapolation to proof. Hardware verification help is welcome.
 - **OpenKNX surgical flashes under an automated run.** The device-in-service spec
@@ -295,7 +304,7 @@ depends on is hardware-proven.
   everything including the address, one that changes only the device-object version keeps the address and
   leaves every table unloaded. A unit found unloaded after a firmware update is then the firmware's doing,
   not a failed flash. A com-object table loaded with no entries is an error on that stack, and a rejected load step
-  leaves its reason in PID 28 of the table object, which Busforge does not read. Needs a bench check on
+  leaves its reason in PID 28 of the table object, which Busforge reads and names in the refusal. Needs a bench check on
   the RaumController of which build behaves which way.
 - **Specification notes.** Reported from a reading of the specification, unproven here: a device's verify
   mode is not meant for a tool's use; ETS enables it before a download, and so does Busforge on the System B
@@ -326,23 +335,37 @@ where they are required; raw acquisition is not a way around access control. Wha
 
 - **The security object on System 7.** Only System B loads it; the others refuse a secure device's
   GA flash and full download.
-- **Individual-address assignment of a secure device in Data Secure.** Busforge assigns it plain. ETS
-  sends the serial-number write as a secured broadcast after a broadcast Sync to `0/0/0`; captured for a
-  reset device under its FDSK ([knx-secure.md](knx-secure.md#individual-address-assignment)), not for a
-  device in secure mode under its tool key, which a bench capture has to show before it is built.
+- **Individual-address assignment of a secure device as ETS does it.** Busforge assigns it plain, and a
+  unit in Data Secure mode ignores the plain `A_Restart` that ends programming mode, so it stays in it.
+  ETS finds the unit by its serial (`A_SystemNetworkParameter_Read` of PID 11 while it is in programming
+  mode, `A_IndividualAddressSerialNumber_Read` without), Syncs to `0/0/0` and sends the serial-number
+  write as a secured broadcast, under the FDSK on a reset unit
+  ([knx-secure.md](knx-secure.md#individual-address-assignment)) and under its tool key otherwise, with
+  Data Secure on or off in the project (captured on the Jung 400021SE with it on and off, on the GVS AMMA
+  with it on). On the secured
+  connection that follows it switches the security mode on, writes the tool key and the sending sequence
+  (PID 59) where the project has Data Secure on, reads the security mode where it is off, reads the serial
+  number and ends with a secured confirmed restart ([commissioning.md](commissioning.md)).
 - **Repeat a secured write that fails at the long size at 40 octets,** as ETS does ("switching to
   shorter frames"), and then size secured writes up to the interface's full length as ETS does. Until
   then a secured write uses the interface's announced length only on the interface's own line and
   within the 55 octets shown answered, and a path that carries less than its interface announces fails
   the write.
-- **What makes ETS set a device's sending sequence (PID 59).** Its one capture with the write was both a
-  re-activation of a reset device and an address assignment by serial; Busforge writes it on a
-  re-activation. An ETS download that re-activates a reset device whose address was assigned by its
-  programming button separates the two.
+- **The sending sequence (PID 59) at an address assignment.** ETS writes it at every address assignment
+  of a unit the project runs in Data Secure, also where nothing is re-activated (the Jung 400021SE and the
+  GVS AMMA). Busforge writes it on a re-activation only; its address assignment is plain (above).
 - **A master reset before downloading a secure-capable application over another one.** Reported for
-  ETS (erase code 7 on such a device, none on a fresh one or one holding the same application); not in
-  Busforge's captures, and the Jung 400021SE ignores a secured master reset. Needs an ETS capture of
-  such a download before anything is built.
+  ETS (erase code 7 on such a device, none on a fresh one or one holding the same application); not
+  captured, as the bench's secure units have one application each. ETS sends a secured confirmed restart
+  with erase code 7 when the project switches a secured unit's Data Secure off, then switches the security
+  mode off itself and writes the FDSK as the tool key; the Jung 400021SE answers that restart without error
+  and restarts, and still opens under its tool key afterwards. Needs an ETS capture of such a download
+  before anything is built.
+- **Busforge's secured master reset is not answered where ETS's is.** On the Jung 400021SE Busforge's
+  secured A_Restart with erase code 7 gets no answer and resets nothing, ETS's secured confirmed restart
+  with erase code 7 is answered without error and restarts the unit ([findings.md](findings.md) §19). What
+  differs between the two frames is not explained; Busforge's frame held against ETS's from its ETS6.log
+  settles it.
 - **A smoke behaviour on a fresh address Busforge secures,** to show the device acting on a
   Busforge-generated key, not only holding it.
 - **Sending:** read the interface's L_Data.con over UDP, extended frames for values longer than
@@ -401,5 +424,17 @@ where they are required; raw acquisition is not a way around access control. Wha
   differential decides such a byte against the programmed baseline), but the preview's and the result's
   count of changed bytes and their list of bytes read as `FF` leave it out. Needs: count those bytes
   against the baseline's image, as the write set does.
+- **The com-object table of a never-programmed device that keeps a surgical flash.** Such a device (an
+  application that declares tunnelling entries, a System 7 application without group-table segments) is
+  programmed by the parameter and the group-address flash. The parameter flash keeps the com-object table
+  the unit holds, and whether that table fits the project's configuration is decided against the
+  programmed baseline, which for such a device holds its defaults and start values, not what the unit
+  holds; its verified result still ends the never-programmed state. On System 7 the group-address flash
+  keeps the table's configuration bytes as well. Needs: the table read or written before that state ends.
+- **The System B parameter flash counts the bytes that differ, not the bytes it writes.** Where it takes
+  every owned byte (no stamp record, stamps other than the record, an application not `LOADED`, a device
+  never programmed from this project) its preview and its result name the bytes that differ from its read
+  ("0 bytes written" where the read shows none), though every owned byte goes out. Needs: the result to
+  count the written set, and the preview to say that the write goes out whole.
 - **DCA-replacement plugins, phase 2:** writing a device-specific configuration back.
 - Remaining parity gaps in the configuration view are tracked in [ets-coverage.md](ets-coverage.md).

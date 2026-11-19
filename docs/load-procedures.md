@@ -36,7 +36,8 @@ both download kinds (parameters and group tables). It asserts the LSM state afte
 `load`/`loadCompleted`, so a refused or desynced transition stops before the next write. A
 property-mapped LSM found in ERROR is asked once for its `PID_ERROR_CODE` (28, DPT 20.011, e.g. 13
 "maximal table length exceeded", 14 "undefined load command received"), and the refusal names the
-code, or says that the device gives none or did not answer.
+code, or says that the device gives none or did not answer. The app shows the code and its meaning in
+the user's language, also where the refusal reaches it as a write that left the device unloaded.
 Memory writes verify by read-back, unless a step opts into the device's verify-mode echo
 instead (only the System B full download does, and it proves its segments after the restart by the
 device's own CRCs, [below](#full-download-coverage)). `writeSegment` resolves the segment address at execution
@@ -564,7 +565,13 @@ owned byte ("Differential Image Stamp does not match, falling back"; Theben MIX 
 its download marker after the restart, so its stamps never match). A region with another control byte is
 written whole and its stamp does not count (the DALI-Gateway's com-object table, control 1, changed by
 the group-address download between). `checkedStamps` and `relativeParWriteSet` decide so;
-`tools/etsdiff.test.ts` replays each captured pair of downloads, the decision and the bytes.
+`tools/etsdiff.test.ts` replays each captured pair of downloads, the decision and the bytes. A device
+never programmed from this project (one whose family keeps the parameter flash because it offers no
+full download, such as an application that declares tunnelling entries) holds nothing its baseline
+describes, so its parameter flash writes every owned byte whatever its stamps and its read, a byte it
+reads as `FF` included, also where the read shows no difference; it judges a colour and a calculation
+against the application's defaults, as the full download does, and refuses a raw-data parameter in use,
+whose bytes it would keep as the unit holds them (`PARAM_RAW_DATA_UNSUPPORTED`).
 
 **A stamp's CRC is the unit's own.** No tool writes the CRC of a PID 27 element (the region's size
 and control byte may come from the application's load procedure); the unit computes it. On the MDT IP
@@ -1099,6 +1106,7 @@ where it cannot do that faithfully:
 | one object set twice, differently | `COM_OBJECT_OVERRIDE_CONFLICT` |
 | System 7: read-on-init set differently from the application (the config byte has no read-on-init bit), or any override where the full download writes the application's own table (memory-mapped, no `<ComObjectTable CodeSegment>`) | `COM_OBJECT_OVERRIDE_UNWRITABLE` |
 | System 7, not an override: an object with a group address whose application itself sets communication off, in every write that authors the com-object table (no capture shows what ETS writes for it) | `COM_OBJECT_APP_COMM_OFF_LINKED` |
+| Not an override: an application that names an ETS download plugin, in the full download, every group-address flash that writes the table, and so the structural flash (no capture shows what ETS's plugin writes into the table) | `COM_OBJECT_TABLE_DOWNLOAD_PLUGIN` |
 
 The device page edits them per object (`PUT .../devices/:id/comobject-flags`): a flag or the priority
 set otherwise than the application is stored as the attribute ETS stores, set back to the

@@ -21,6 +21,7 @@ export const thebenMeteodata140sInService: DeviceSpec = {
   id: "theben-meteodata-140s-in-service",
   device: {
     appRef: "M-0048_H-1409208-1_HP-140C-14-EB70",
+    appProgramId: "M-0048_A-140C-14-EB70",
     productRef: "M-0048_H-1409208-1_P-1409201",
     ia: "1.1.24",
     mask: "MV-0701",
