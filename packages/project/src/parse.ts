@@ -99,7 +99,7 @@ export function parseProject(xml0: string, projectXml: string | undefined, fallb
   buildGaIdMap(scope, gaIdToRaw);
   const linkResults = devices.map((d) => ({ deviceId: d.id, ...parseDeviceLinks(scope, d, gaIdToRaw) }));
   const deviceLinks = linkResults.map(({ deviceId, links }) => ({ deviceId, links }));
-  const droppedLinks = linkResults.flatMap((r) => r.dropped);
+  const droppedLinks = linkResults.flatMap((r) => r.listed);
   const deviceComObjOverrides = devices.map((d) => ({ deviceId: d.id, overrides: parseDeviceComObjOverrides(scope, d) })).filter((o) => o.overrides.length > 0);
   const securities = devices.map((d) => parseDeviceSecurity(scope, d.id)).filter((x): x is DeviceSecurity => x !== undefined);
   const deviceSecurity = securities.filter((s) => s.serialNumber !== "");
@@ -110,7 +110,7 @@ export function parseProject(xml0: string, projectXml: string | undefined, fallb
 
   return {
     name: parseName(projectInfo, installation, fallbackName), groupAddressLevels, topology, locations, devices, groupRanges, groupAddresses, deviceParams, deviceModules, deviceLinks, deviceComObjOverrides, deviceSecurity, deviceKnxIp, groupKeys, secureSenders, unresolvedSenders, toolKeysWithoutSerial, secretsNotImported,
-    malformedDevices, skippedInstallations, unassignedDevices, ...droppedLinkCounts(droppedLinks), droppedLinks,
+    malformedDevices, skippedInstallations, unassignedDevices, ...droppedLinkCounts(linkResults.flatMap((r) => r.dropped)), droppedLinks,
   };
 }
 
@@ -338,8 +338,11 @@ function moduleInstanceIds(n: unknown, out = new Set<string>()): Set<string> {
 // the tokens of an assignment whose sending address is not known (connectors without a single <Send>,
 // or a sending address not in the tree). Lists as well the com-objects whose module instance the device
 // no longer has (ETS leaves such refs behind when a module goes away): their links are stored, but no
-// com-object of the device carries them, so they are never programmed.
-function parseDeviceLinks(scope: XmlNode, d: Device, gaIdToRaw: Map<string, number>): { links: { comObjRefId: string; gaRaws: number[] }[]; dropped: DroppedLink[] } {
+// com-object of the device carries them, so they are never programmed. `dropped` is per ref, the counts'
+// source; `listed` is the list of them, where the entry of a com-object that two refs share carries the
+// ETS addresses of both, as the object's links are those of both (an address of the other ref is not
+// one an entry linked again by hand could count as a stand-in).
+function parseDeviceLinks(scope: XmlNode, d: Device, gaIdToRaw: Map<string, number>): { links: { comObjRefId: string; gaRaws: number[] }[]; dropped: DroppedLink[]; listed: DroppedLink[] } {
   const dev = findDeviceInstance(scope, d.id);
   // Merge by RefId: two ComObjectInstanceRefs on one device can share a RefId (synthetic
   // module-instance ids, or a malformed export). Stored per (refId, slot), two separate
@@ -349,12 +352,15 @@ function parseDeviceLinks(scope: XmlNode, d: Device, gaIdToRaw: Map<string, numb
   const byRef = new Map<string, number[]>();
   const instances = moduleInstanceIds(dev?.ModuleInstances);
   const dropped: DroppedLink[] = [];
+  const etsIdsByKey = new Map<string, string[]>();
   const gasOf = (ids: string[]) => ids.map((etsId) => { const raw = gaIdToRaw.get(etsId); return raw === undefined ? { etsId } : { etsId, raw }; });
   for (const c of kids(node(dev?.ComObjectInstanceRefs)?.ComObjectInstanceRef)) {
     const key = comObjKey(d, text(c.RefId));
     const tokens = linkTokens(c);
+    const ids = tokens ?? connectorIds(node(c.Connectors));
+    etsIdsByKey.set(key, [...(etsIdsByKey.get(key) ?? []), ...ids]);
     if (tokens === undefined) {
-      dropped.push({ deviceId: d.id, comObjRefId: key, reason: "noSingleSender", gas: gasOf(connectorIds(node(c.Connectors))) });
+      dropped.push({ deviceId: d.id, comObjRefId: key, reason: "noSingleSender", gas: gasOf(ids) });
       continue;
     }
     if (!tokens.length) continue;
@@ -373,7 +379,12 @@ function parseDeviceLinks(scope: XmlNode, d: Device, gaIdToRaw: Map<string, numb
     if (existing) existing.push(...gaRaws);
     else byRef.set(key, gaRaws);
   }
-  return { links: [...byRef].map(([comObjRefId, gaRaws]) => ({ comObjRefId, gaRaws })), dropped };
+  const listed = dropped.map((l) => {
+    const own = new Set(l.gas.map((g) => g.etsId));
+    const others = [...new Set(etsIdsByKey.get(l.comObjRefId)!.filter((id) => !own.has(id)))];
+    return others.length ? { ...l, gas: [...l.gas, ...gasOf(others)] } : l;
+  });
+  return { links: [...byRef].map(([comObjRefId, gaRaws]) => ({ comObjRefId, gaRaws })), dropped, listed };
 }
 
 // A device's com-object flags and priority set in the project (COM_OBJ_INSTANCE_ATTRS), per
