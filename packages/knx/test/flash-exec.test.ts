@@ -41,6 +41,12 @@ class RecDev {
     }
     return Buffer.from(data); // a device echoes the value it stored
   }
+  errorCode = new Map<number, number>(); // PID 28 per object; an object without one answers no element
+  async propReadCounted(obj: number, pid: number, start: number, count: number) {
+    this.calls.push(["propReadCounted", obj, pid]);
+    const code = pid === 28 ? this.errorCode.get(obj) : undefined;
+    return { objectIndex: obj, pid, start, count: code === undefined ? 0 : count, value: Buffer.from(code === undefined ? [] : [code]) };
+  }
   async propRead(obj: number, pid: number) {
     this.calls.push(["propRead", obj, pid]);
     const q = this.lsmQueue.get(obj);
@@ -110,7 +116,9 @@ describe("the System B par bracket, engine-driven (planRelativeParFlash + runLoa
   test("a non-LOADED state after load-completed aborts before restart", async () => {
     const dev = new RecDev();
     dev.lsmQueue.set(4, [STATE.LOADING, STATE.ERROR]); // Load ok, completion refused (e.g. app-id mismatch)
-    expect(runLoadPlan(asDev(dev), relativePlan(4, Buffer.alloc(4), appId(1, 2, 3)))).rejects.toThrow(/not LOADED/);
+    const err = await runLoadPlan(asDev(dev), relativePlan(4, Buffer.alloc(4), appId(1, 2, 3))).then(() => null, (e: Error) => e);
+    expect(err?.message).toMatch(/not LOADED after LOAD_COMPLETED \(got ERROR\); the device gives no error code for it \(PID 28\)$/);
+    expect(dev.calls.filter((c) => c[0] === "propReadCounted")).toEqual([["propReadCounted", 4, 28]]); // asked once
     expect(dev.calls.some((c) => c[0] === "restart")).toBe(false); // no restart into a broken load
   });
 
@@ -218,7 +226,9 @@ describe("the System B GA bracket, engine-driven (planSystemBGaFlash + runLoadPl
   test("one LSM reading non-LOADED at the batch check rejects and skips restart", async () => {
     const dev = new RecDev();
     dev.lsmQueue.set(2, [STATE.ERROR]); // association-table LSM refuses at the batch assertLoaded
-    expect(runLoadPlan(asDev(dev), planSystemBGaFlash(tables))).rejects.toThrow(/not LOADED/);
+    dev.errorCode.set(2, 13);
+    const err = await runLoadPlan(asDev(dev), planSystemBGaFlash(tables)).then(() => null, (e: Error) => e);
+    expect(err?.message).toMatch(/LSM 2 not LOADED \(got ERROR\); its error code \(PID 28\) is 13, maximal table length exceeded$/);
     expect(dev.calls.some((c) => c[0] === "restart")).toBe(false);
   });
 });

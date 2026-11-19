@@ -16,6 +16,7 @@ export const PID = {
   TABLE_REFERENCE: 7,    // the table/segment base address of a load object
   PROGRAM_ID: 13,        // manufacturer+app+version stamp validated by LoadCompleted
   MCB_TABLE: 27,         // memory control block (per-segment CRC bookkeeping)
+  ERROR_CODE: 28,        // why a load object went to ERROR (DPT 20.011)
 } as const;
 // PID_DEVICE_CONTROL bit 2. With it set, the device answers EVERY A_Memory_Write with an
 // A_Memory_Response for the written address. This is what a load procedure's `LdCtrlWriteRelMem

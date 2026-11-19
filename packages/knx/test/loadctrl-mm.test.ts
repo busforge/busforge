@@ -118,7 +118,7 @@ class PropDev {
   elements = 15;
   async propReadCounted(obj: number, pid: number, start: number, count = 1) {
     this.props.push(`read ${obj}/${pid}#${start}${count > 1 ? `n${count}` : ""}`);
-    const n = this.stamp.length ? Math.min(count, this.elements) : 0;
+    const n = this.stamp.length && pid !== 28 ? Math.min(count, this.elements) : 0; // no error code (PID 28)
     return { objectIndex: obj, pid, count: n, start, value: Buffer.concat(Array.from({ length: n }, () => this.stamp)) };
   }
 }
@@ -188,7 +188,7 @@ describe("property-mapped LSM controls (MV-0705)", () => {
     d.propWrite = async (obj: number, pid: number, data: Buffer) => { const r = await write(obj, pid, data); if (data[0] === 3 && data[1] === 4) d.state.set(obj, STATE.ERROR); return r; };
     expect(await runLoadPlan(d as unknown as KnxDevice, [{ op: "load", lsm: 3 }, { op: "taskCtrl1", lsm: 3, address: 0, count: 0 }, { op: "loadCompleted", lsm: 3 }]).catch((e: unknown) => e))
       .toMatchObject({ code: "LOAD_STATE_UNEXPECTED" });
-    expect(d.props).toEqual(["3/5=01000000000000000000", "3/5=03040000000000000000"]);
+    expect(d.props).toEqual(["3/5=01000000000000000000", "3/5=03040000000000000000", "read 3/28#1"]);
   });
   test("a taskCtrl1 a memory-mapped LSM does not answer LOADING stops the plan there", async () => {
     const d = new MMDev();

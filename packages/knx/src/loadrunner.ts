@@ -102,6 +102,34 @@ export type LoadPlan = LoadStep[];
 
 const stateName = (s: number) => Object.entries(STATE).find(([, v]) => v === s)?.[0] ?? `?${s}`;
 
+// DPT 20.011 (DPT_ErrorClass_System), the type of a load object's PID_ERROR_CODE, as the KNX master
+// data names its values.
+const ERROR_CLASS_SYSTEM = [
+  "no fault", "general device fault", "communication fault", "configuration fault", "hardware fault",
+  "software fault", "insufficient non volatile memory", "insufficient volatile memory",
+  "memory allocation command with size 0 received", "CRC error", "watchdog reset detected",
+  "invalid opcode detected", "general protection fault", "maximal table length exceeded",
+  "undefined load command received", "group address table is not sorted", "invalid connection number (TSAP)",
+  "invalid group object number (ASAP)", "group object type exceeds PID_MAX_APDU_LENGTH - 2",
+];
+
+// A load-state machine not in the state a step needs. One that went to ERROR keeps the reason in its
+// PID_ERROR_CODE (28), read once here; a memory-mapped machine has no such property. The read only adds
+// to the refusal: a device without the property, or one that does not answer it, still gets refused.
+async function stateRefusal(dev: KnxDevice, lsm: number, s: number, what: string, memMapped?: boolean): Promise<KnxError> {
+  let why = "";
+  if (s === STATE.ERROR && !memMapped) {
+    try {
+      const v = await dev.propReadCounted(lsm, PID.ERROR_CODE, 1, 1);
+      const code = v.value[0];
+      why = v.count === 0 || code === undefined
+        ? "; the device gives no error code for it (PID 28)"
+        : `; its error code (PID 28) is ${code}, ${ERROR_CLASS_SYSTEM[code] ?? "a value DPT 20.011 does not define"}`;
+    } catch (e) { why = `; its error code (PID 28) could not be read: ${e instanceof Error ? e.message : String(e)}`; }
+  }
+  return new KnxError("LOAD_STATE_UNEXPECTED", `LSM ${lsm} ${what} (got ${stateName(s)})${why}`);
+}
+
 export interface RunOpts {
   onStep?: (i: number, step: LoadStep, total: number) => void;
   // Byte progress within a writeSegment step (a relative segment is one large write,
@@ -206,7 +234,7 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
         await lsmEvent(dev, step.lsm, LSM.LOAD, opts.memMappedLsms);
         if (step.assert !== false) {
           const s = await lsmState(dev, step.lsm, opts.memMappedLsms);
-          if (s !== STATE.LOADING) throw new KnxError("LOAD_STATE_UNEXPECTED", `LSM ${step.lsm} not LOADING after LOAD (got ${stateName(s)})`);
+          if (s !== STATE.LOADING) throw await stateRefusal(dev, step.lsm, s, "not LOADING after LOAD", opts.memMappedLsms);
         }
         break;
       }
@@ -218,7 +246,7 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
         if (step.viaProperty && opts.memMappedLsms) throw new Error(`LSM ${step.lsm}: an AbsSegment declared as a property write on a device whose LSMs are memory-mapped`);
         await (step.viaProperty ? declareAbsSegmentProp : declareAbsSegmentMM)(dev, step.lsm, step.segType, step.address, step.size, step.access, step.memType, step.segFlags);
         const s = await lsmState(dev, step.lsm, opts.memMappedLsms);
-        if (s !== STATE.LOADING) throw new KnxError("LOAD_STATE_UNEXPECTED", `LSM ${step.lsm} not LOADING after AbsSegment @${step.address} (got ${stateName(s)})`);
+        if (s !== STATE.LOADING) throw await stateRefusal(dev, step.lsm, s, `not LOADING after AbsSegment @${step.address}`, opts.memMappedLsms);
         break;
       }
       case "taskSegment":
@@ -228,7 +256,7 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
       case "taskCtrl1": {
         await (opts.memMappedLsms ? taskCtrl1MM : taskCtrl1Prop)(dev, step.lsm, step.address, step.count);
         const s = await lsmState(dev, step.lsm, opts.memMappedLsms);
-        if (s !== STATE.LOADING) throw new KnxError("LOAD_STATE_UNEXPECTED", `LSM ${step.lsm} not LOADING after TaskCtrl1 (got ${stateName(s)})`);
+        if (s !== STATE.LOADING) throw await stateRefusal(dev, step.lsm, s, "not LOADING after TaskCtrl1", opts.memMappedLsms);
         break;
       }
       case "readProp": {
@@ -337,14 +365,14 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
         await lsmEvent(dev, step.lsm, LSM.LOAD_COMPLETED, opts.memMappedLsms);
         if (step.assert !== false) {
           const s = await lsmState(dev, step.lsm, opts.memMappedLsms);
-          if (s !== STATE.LOADED) throw new KnxError("LOAD_STATE_UNEXPECTED", `LSM ${step.lsm} not LOADED after LOAD_COMPLETED (got ${stateName(s)})`);
+          if (s !== STATE.LOADED) throw await stateRefusal(dev, step.lsm, s, "not LOADED after LOAD_COMPLETED", opts.memMappedLsms);
           open.delete(step.lsm);
         }
         break;
       }
       case "assertLoaded": {
         const s = await lsmState(dev, step.lsm, opts.memMappedLsms);
-        if (s !== STATE.LOADED) throw new KnxError("LOAD_STATE_UNEXPECTED", `LSM ${step.lsm} not LOADED (got ${stateName(s)})`);
+        if (s !== STATE.LOADED) throw await stateRefusal(dev, step.lsm, s, "not LOADED", opts.memMappedLsms);
         open.delete(step.lsm);
         break;
       }
