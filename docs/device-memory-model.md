@@ -413,7 +413,7 @@ where the colour lies. Seven type details are easy to get wrong:
   reads a value as written, blanks included and character references (`&#x9;`, `&#xA;`) decoded: a
   `Parameter`'s and a `ParameterRef`'s `Value` and `InitialValue`, an `Assign`'s `Value`, their
   translations, and a project's `ParameterInstanceRef` `Value` (every other attribute and text node is
-  trimmed). No ETS image shows whether ETS writes such blanks into the device or drops them. A
+  trimmed, and a value of any other type than text compares and validates without its blanks). No ETS image shows whether ETS writes such blanks into the device or drops them. A
   read-back leaves such a field out of its comparison instead of refusing the whole read.
 
 - **A device placed in Busforge, or given another product, starts its text parameters at their

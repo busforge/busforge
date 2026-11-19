@@ -252,10 +252,12 @@ export interface CfgCalculation { id: string; name?: string; lRefs: string[]; rR
 // (a segment's base64 Data, long texts) as child-element text. Read either form
 // uniformly, so a field authored as an element instead of an attribute still resolves
 // (this is what the legacy merged parser did implicitly).
-// Only text nodes contribute. An element child has no "#text" and is not text; joining it would
-// have produced "[object Object]" inside the very string a segment's base64 Data is read from.
+// Only text nodes and CDATA sections contribute, a CDATA section with every character it holds. An element
+// child has no "#text" and is not text; joining it would have produced "[object Object]" inside the very
+// string a segment's base64 Data is read from.
+const CDATA = "#cdata";
 const concatText = (n: ONode): string =>
-  kidsOf(n).map((k) => k["#text"]).filter((t): t is string | number => typeof t === "string" || typeof t === "number").join("");
+  kidsOf(n).map((k) => (tagOf(k) === CDATA ? concatText(k) : k["#text"])).filter((t): t is string | number => typeof t === "string" || typeof t === "number").join("");
 function attrOrText(n: ONode, name: string): string | undefined {
   const a = attrsOf(n)[name];
   if (a !== undefined) return a;
@@ -303,21 +305,26 @@ export function resolveParamRef(app: AppConfig, refId: string): { ref: CfgParamR
 // Two stored values of a parameter are one value where they decode the same: no value is the parameter's
 // default, a float compares by number (ETS stores it in scientific notation, the UI as a decimal), and a
 // colour by its hex digits whatever their case (the read-back gives #RRGGBB, an edit may store #rrggbb).
+// The blanks at a value's edge count only for a text parameter: the catalogue and the project keep them
+// (parseAppConfig, the project's parse), and every other type reads its value without them.
 export type SameParamValue = (refId: string, a: string | null, b: string | null) => boolean;
 export function sameParamValue(app: AppConfig): SameParamValue {
   return (refId, a, b) => {
     const { ref, param, type } = resolveParamRef(app, refId) ?? {};
-    const def = ref?.value ?? param?.value ?? "";
-    const x = a ?? def, y = b ?? def;
-    // An empty value (a parameter without a default) is no number: Number("") would read it as 0.
     const base = type?.base;
+    const read = (v: string) => (base === "Text" ? v : v.trim());
+    const def = ref?.value ?? param?.value ?? "";
+    const x = read(a ?? def), y = read(b ?? def);
+    // An empty value (a parameter without a default) is no number: Number("") would read it as 0.
     return x === y || (x !== "" && y !== "" && ((base === "Float" && Number(x) === Number(y)) || (base === "Color" && x.toUpperCase() === y.toUpperCase())));
   };
 }
 
 // Whether a parameter type takes `value`: one of its enumeration's values, or a whole number within
-// its bounds. Undefined for every other type, whose values this does not judge.
-export function takesValue(type: CfgType, value: string): boolean | undefined {
+// its bounds, read without the blanks at its edges. Undefined for every other type, whose values this
+// does not judge.
+export function takesValue(type: CfgType, raw: string): boolean | undefined {
+  const value = raw.trim();
   if (type.enums.length) return type.enums.some((e) => String(e.value) === value);
   if (type.base !== "Number" && type.base !== "Value") return undefined;
   return /^(0|-?[1-9]\d*)$/.test(value) && (type.min === undefined || Number(value) >= type.min) && (type.max === undefined || Number(value) <= type.max);
@@ -326,7 +333,8 @@ export function takesValue(type: CfgType, value: string): boolean | undefined {
 // The attributes whose characters are a parameter's value, kept as the file writes them, blanks at either
 // end included: XML keeps them, and a text parameter writes them into the device (image.ts refuses such a
 // value, as no ETS capture shows its bytes). A <Translation>'s Text is one where it translates a Value or
-// an InitialValue (parseTranslations). Every other attribute and text node is trimmed. Character references
+// an InitialValue (parseTranslations). Every other attribute and text node is trimmed; a CDATA section keeps
+// every character (concatText). Character references
 // (ETS writes a tab, CR or LF in an attribute as &#x9;, &#xD;, &#xA;) are decoded.
 const TRANSLATED_VALUES: ReadonlySet<string> = new Set(["Value", "InitialValue"]);
 const VALUE_ATTRS: Record<string, ReadonlySet<string>> = {
@@ -339,7 +347,7 @@ const keepsBlanks = (attr: string, jPath: string): boolean => VALUE_ATTRS[jPath.
 
 export function parseAppConfig(xml: string): AppConfig {
   const p = new XMLParser({
-    ignoreAttributes: false, attributeNamePrefix: "", attributesGroupName: ":@", preserveOrder: true, trimValues: false, htmlEntities: true,
+    ignoreAttributes: false, attributeNamePrefix: "", attributesGroupName: ":@", preserveOrder: true, trimValues: false, htmlEntities: true, cdataPropName: CDATA,
     attributeValueProcessor: (name, v, jPath) => (keepsBlanks(name, String(jPath)) ? v : v.trim()),
     tagValueProcessor: (_tag, v) => v.trim(),
   });

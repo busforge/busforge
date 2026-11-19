@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { parseAppConfig } from "../src/appconfig.ts";
+import { parseAppConfig, sameParamValue, takesValue } from "../src/appconfig.ts";
 import { parseApplication } from "../src/application.ts";
 import { buildParameterImage, decodeParameterImage } from "../src/image.ts";
 
@@ -109,5 +109,32 @@ describe("blanks at the edge of a value", () => {
     expect(app.refs.get("P_R")?.text).toBe("Ref text");
     expect(app.translations.get("de-DE")?.get("P")?.get("Text")).toBe("Beschriftung");
     expect(app.segments[0].data.toString("hex")).toBe("0000000000000000");
+  });
+});
+
+describe("a value's blanks count only for a text parameter, and a CDATA section keeps every character", () => {
+  const app = parseAppConfig(wrap(`<ApplicationProgram Id="M-1_A-1" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-1"><Static>
+    <ParameterTypes>
+      <ParameterType Id="TN"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="9"/></ParameterType>
+      <ParameterType Id="TT"><TypeText SizeInBit="64"/></ParameterType>
+    </ParameterTypes>
+    <Parameters><Parameter Id="N" ParameterType="TN" Value=" 1 "/><Parameter Id="T" ParameterType="TT" Value=" a"/></Parameters>
+    <ParameterRefs><ParameterRef Id="N_R" RefId="N"/><ParameterRef Id="T_R" RefId="T"/></ParameterRefs>
+    <ParameterCalculations><ParameterCalculation Id="C" Language="JavaScript"><LParameters/><RParameters/>
+      <LRTransformation><![CDATA[b = a; // note
+]]><![CDATA[b = a + 1;]]></LRTransformation>
+    </ParameterCalculation></ParameterCalculations>
+  </Static></ApplicationProgram>`));
+
+  test("a number compares and validates without them, a text with them", () => {
+    const same = sameParamValue(app);
+    expect(same("N_R", "1", null)).toBe(true);
+    expect(takesValue(app.types.get("TN")!, " 1 ")).toBe(true);
+    expect(same("T_R", "a", null)).toBe(false);
+    expect(same("T_R", " a", null)).toBe(true);
+  });
+
+  test("a script split into CDATA sections is read with its line ends", () => {
+    expect(app.calculations[0]?.lrScript).toBe("b = a; // note\nb = a + 1;");
   });
 });
