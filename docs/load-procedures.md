@@ -36,7 +36,8 @@ both download kinds (parameters and group tables). It asserts the LSM state afte
 `load`/`loadCompleted`, so a refused or desynced transition stops before the next write. A
 property-mapped LSM found in ERROR is asked once for its `PID_ERROR_CODE` (28, DPT 20.011, e.g. 13
 "maximal table length exceeded", 14 "undefined load command received"), and the refusal names the
-code, or says that the device gives none or did not answer.
+code, or says that the device gives none or did not answer. The app shows the code and its meaning in
+the user's language, also where the refusal reaches it as a write that left the device unloaded.
 Memory writes verify by read-back, unless a step opts into the device's verify-mode echo
 instead (only the System B full download does, and it proves its segments after the restart by the
 device's own CRCs, [below](#full-download-coverage)). `writeSegment` resolves the segment address at execution

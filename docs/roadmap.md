@@ -303,7 +303,7 @@ depends on is hardware-proven.
   everything including the address, one that changes only the device-object version keeps the address and
   leaves every table unloaded. A unit found unloaded after a firmware update is then the firmware's doing,
   not a failed flash. A com-object table loaded with no entries is an error on that stack, and a rejected load step
-  leaves its reason in PID 28 of the table object, which Busforge does not read. Needs a bench check on
+  leaves its reason in PID 28 of the table object, which Busforge reads and names in the refusal. Needs a bench check on
   the RaumController of which build behaves which way.
 - **Specification notes.** Reported from a reading of the specification, unproven here: a device's verify
   mode is not meant for a tool's use; ETS enables it before a download, and so does Busforge on the System B
