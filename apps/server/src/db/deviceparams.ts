@@ -201,8 +201,9 @@ export function setDeviceLink(db: Database, projectId: string, deviceId: string,
 // values and module instances are meaningless under the new program, and the new
 // hardware was never programmed, so keeping any param/link baseline (or the old
 // tool key) would fake a programmed state that does not exist. The caller passes
-// the already-validated new link rows (stored ref key -> GA raws); they become the
-// device's only config, all of it unprogrammed drift until the first flash.
+// the already-validated new link rows (stored ref key -> GA raws), the device's only
+// links, all of them unprogrammed drift until the first flash, and then seeds the new
+// application's start values (startDeviceParams).
 export function replaceDeviceProduct(db: Database, projectId: string, deviceId: string, product: CatalogProduct, links: Map<string, number[]>): void {
   db.transaction(() => {
     const updated = db.prepare("UPDATE devices SET product_ref = ?, app_ref = ?, app_program_id = ?, manufacturer = ?, has_application = ?, pei_program = ?, link_base_gaps = 0, never_programmed = 1, ets_not_downloaded = NULL, security_base = NULL, image_stamps = NULL, config_from_ets = 0 WHERE project_id = ? AND instance_id = ?")
@@ -432,6 +433,16 @@ export function replaceParamBase(db: Database, projectId: string, deviceId: stri
       if (marks === "move") markParamAssumed(db, projectId, deviceId, refId, now);
       else clearParamAssumed(db, projectId, deviceId, refId);
     }
+  })();
+}
+
+// A device placed, or given another product, holds its start values (initialValues of @busforge/product) in the
+// project and in its baseline, as a .knxproj import keeps the values ETS stored as both: they are its defaults,
+// so they show as no change and a revert returns to them. The device stays never programmed.
+export function startDeviceParams(db: Database, projectId: string, deviceId: string, values: Map<string, string>): void {
+  db.transaction(() => {
+    for (const [refId, value] of values) setDeviceParam(db, projectId, deviceId, refId, value);
+    replaceParamBase(db, projectId, deviceId, values);
   })();
 }
 
