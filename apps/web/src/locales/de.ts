@@ -784,7 +784,7 @@ const de: Messages = {
     searchEmpty: "Keine Parameter oder Objekte passen zur Suche.",
     searchCount_one: "{{count}} Zeile gezeigt",
     searchCount_other: "{{count}} Zeilen gezeigt",
-    unnamedSection: "Geräteweite Objekte",
+    channelIndependent: "Kanalunabhängig",
     emptySection: "Keine Parameter in diesem Bereich für die aktuelle Konfiguration.",
     dcaTitle: "Konfiguration über eine ETS DCA-App",
     gapsTitle: "Dieses Gerät nutzt Einstellungen, die busforge noch nicht vollständig unterstützt:",

@@ -53,7 +53,7 @@ export function CompatibilityBadge({ view, manufacturer }: { view: Pick<DeviceCo
                 <tr key={op} className="border-t border-border/60 align-top">
                   <td className="py-1 pr-2">{t(`untested.op.${op}`)}</td>
                   <td className="py-1 pr-2">
-                    <span className={cn("inline-flex items-center gap-1", v.state === "tested" && "text-emerald-700 dark:text-emerald-300", (v.state === "failed" || v.state === "conflict") && "text-destructive", v.state === "refused" && "text-muted-foreground")}>
+                    <span className={cn("inline-flex items-center gap-1", v.state === "tested" && "text-ok", (v.state === "failed" || v.state === "conflict") && "text-destructive", v.state === "refused" && "text-muted-foreground")}>
                       {v.state === "tested" ? <CheckCircle2 className="size-3" /> : <CircleDashed className="size-3" />} {t(`compat.state.${v.state}`)}
                     </span>
                     {v.derivedFrom && <div className="text-muted-foreground">{t("compat.derivedFrom", { product: orderOf(v.derivedFrom) })}</div>}
