@@ -229,6 +229,16 @@ decodes only their empty form (address table count 1, association table count 0,
 Interface Secure holds); tables with entries are later work. The raw bytes are what the package
 carries. **No BCU1 vector exists yet.**
 
+**Reported layout of a table with entries, unproven.** No capture of ours and no device shows it, so the
+read-back decodes none of it. The association table is reported to start with one reserved slot per
+group object, in object order: slot *i* is the pair (address-table index, object number *i*) of the
+address object *i* **sends** on, or (`FE`, *i*) where it sends on none. The object's further, receiving links fill unused slots first and
+then follow the slots. The reported consequence is that "the first link of an object in table order is
+its sender" is wrong on these devices: the unit sends on the link in its own slot, and a table packed in
+another order left a System 2 unit silent although every byte was loaded. The same slot layout is reported for the
+non-easy-mode System 2 table. What would settle it: a read of a System 1 unit with links that ETS
+programmed, together with its project, and a group monitor check of which address each object sends on.
+
 ### System 2, BCU2 (MV-0020, MV-0021, MV-0025)
 
 No device or capture backs this plan. MV-0020 and MV-0021 give each table both ways: as memory (`0x0111`/`0x0112` pointers
@@ -237,6 +247,48 @@ to 3, PID 7, 2 bytes); MV-0025 only as properties. All three: application id obj
 load states PID 5, serial and order info on object 0, `AuthorizeLevels` 4, and a declared EEPROM
 segment `0x0100` + 880 bytes (to `0x046F`). Plan: the generic stage, each table from its property
 pointer, then the declared EEPROM segment.
+
+**Reported, unproven.** Several descriptions of a System 2 download agree on its sequence and none is
+backed by an ETS capture of a System 2 device of ours. They are leads for a later read or download path,
+not a description of what Busforge does; System 2 stays refused (`DEVICE_FAMILY_UNSUPPORTED`).
+
+- **Load controls** go as 10-octet writes to PID 5 of objects 1 to 3 (the load state machines are
+  property-mapped there, not at `0x0104`): unload `04`, load `01`, load completed `02`, each followed by
+  nine `00`. An absolute data segment is `03 00 <address:2> <length:2> <access> <memory type> <flags> 00`,
+  a task segment `03 02 <start:2> <PEI type> <manufacturer:2> <application:2> <version>`, and a second task
+  control `03 05 <callback:2> <address:2> <segment 0:2> <segment 1:2>` (the form
+  [load-procedures.md](load-procedures.md#steps-refused-until-a-capture-shows-them) lists as refused). The
+  data itself is plain `A_Memory_Write`, every octet literal (`FE` is no "keep" marker). The four
+  allocations of one reported download all use access `0x33`, memory type 3 and no checksum flag; a
+  synthetic ETS capture of a System 2 product shows access `0x32` with a checksum flag instead.
+- **Task segments** are reported to carry the full application identity (PEI type, manufacturer,
+  application number, version) on every load state machine of the download, the table ones included, as
+  System 7 does.
+- **A task segment on LSM 5** whose address is the com-object table (and the second task control's
+  pointer) is old tool metadata for the com-object segment and is not sent on the bus; it appears in
+  procedures of the BCU2 masks and of memory-mapped (MV-0701) applications converted from them, in some
+  after the final disconnect. Where Busforge refuses a step on LSM 5 is in
+  [load-procedures.md](load-procedures.md#steps-refused-until-a-capture-shows-them).
+- **Table formats:** the com-object table has a two-octet header (count, RAM-flags pointer) and then
+  three-octet descriptors (value pointer, configuration, type); configuration bit 7 is "update enable" on
+  System 2 and always 1 on System 1. The association table is the indexed form of the paragraph above, behind
+  a count octet; the address table is the usual length, own address and sorted big-endian addresses. The
+  address table sits at the fixed `0x0116`; where the application manages its tables dynamically, the
+  association table follows it, one octet further when the segment is checksummed, and its pointer follows
+  (two applications are reported to keep their declared tables despite it). The count octet of the com-object table may be larger than
+  the application's number of objects, and a group-address partial download is reported to write the object
+  count, a full download the product's.
+- **PID 7** (table reference) of a load object is reported to answer one element of **two** octets on a System 2
+  unit, where the specification defines four; a reader that takes only four fails there.
+- **A download marker** is reported to be cleared by the firmware after the load (a hidden parameter written
+  `01` and read `00`), the pattern already seen on System B units.
+- **Master-data recipe:** the mask's declared procedures come in three forms, chosen by the access of the
+  load (`remote local2`, `local1`, `remote local1` for the parameter-and-links partial download); the last is
+  step for step what Busforge runs for System 1 today. The byte at `0x0115` says which management style the
+  unit has. MV-0025 declares only the unload; its load comes from the product.
+
+What would settle it: a System 2 unit, an ETS capture of its full, parameter and links downloads, and a
+read of the unit after ETS programmed it with links.
 
 ### System 300 (MV-0300)
 
@@ -270,6 +322,15 @@ object index.
 
 Whether `A_Memory_Read` reaches `LcFilterMemory` is not shown anywhere, so on those masks the
 filter table is **not attempted** until a capture shows how a tool reads it.
+
+**Reported, unproven** (see [roadmap.md](roadmap.md#device-coverage) for what settles it): the table is a
+bit field over the 16-bit group-address space, 8192 octets, octet `address / 8` and bit
+`address mod 8`; the use of the table is switched by a property of its own (0 = not used until a tool writes
+it); the router object's route-table control is a function property with four commands (clear all, set all,
+clear a range, set a range, the range as two 2-octet bounds) that is refused outside the loading state. The
+memory-configured masks keep the table where the master data above says, 3584 octets from `0x0200`; a tool
+that writes 8192 octets from `0x0100` would run over their configuration bytes (`0x0119` to `0x011C`) and
+past the table.
 
 ### Interfaces, RF-only and the rest (MV-0310, MV-0311, MV-1310, MV-1311, MV-2311, MV-2010, MV-2110, MV-0810, MV-0811, MV-0001, MV-0AFD, MV-0AFE, unknown)
 

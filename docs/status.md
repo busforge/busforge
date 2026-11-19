@@ -463,8 +463,9 @@ What each row does not show:
 - **MDT IP interfaces.** The IP Interface/Router application is System B and Data Secure, so the
   group-address flash plans it with its security object when the project holds its tool key, and
   plain without one; with the tool key it ran on one, for a plain address (device notes above). No System B path writes its tunnelling addresses
-  (`AdditionalAddresses`), and what a download without them does to the interface's tunnels is not
-  established, so the full download of a System B or System 7 application declaring tunnelling
+  (`AdditionalAddresses`); ETS's own full download of the IP Interface/Router application writes none either, and its
+  project instance holds none ([device-support.md](device-support.md#known-gaps)), but no run of
+  Busforge's shows what such a download does to the interface's tunnels, so the full download of a System B or System 7 application declaring tunnelling
   entries is refused before any bus traffic (`FULL_DOWNLOAD_TUNNELING_ENTRIES`, unit- and route-tested)
   and not offered ([device-support.md](device-support.md#known-gaps)). The IP Interface Secure (System
   1) writes them as ETS does, in the KNXnet/IP parameter object. Its download, ETS's and Busforge's,

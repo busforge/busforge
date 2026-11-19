@@ -217,9 +217,13 @@ depends on is hardware-proven.
   needs two.
 - **Devices that answer an opaque device descriptor** (IP interfaces) need a different read path or
   secure support; which one is not decided.
-- **KNX IP interfaces as targets.** Evaluate the captured ETS full download of the MDT IP
-  Interface/Router for what it writes for the tunnelling entries, model it, then lift
-  `FULL_DOWNLOAD_TUNNELING_ENTRIES` against that capture.
+- **KNX IP interfaces as targets.** ETS's captured full download of the MDT IP Interface/Router writes
+  no property of the KNXnet/IP parameter object, and its project instance holds no tunnelling addresses
+  (the box's other application holds them, [device-support.md](device-support.md#known-gaps)).
+  `FULL_DOWNLOAD_TUNNELING_ENTRIES` still refuses that application on its attribute alone. Open decision:
+  let the gate look at the instance's own addresses, so that an application declaring entries whose instance
+  has none is offered the full download once its other refusals are lifted; an instance with addresses keeps
+  waiting for an ETS capture of its download.
 - **Should the group-address flash run the application's checks?** A declared `CompareProp` (the ABB
   US/U 4.2's application-id check, for example) runs in the parameter flash and the full download, not
   in the group-address flash ([load-procedures.md](load-procedures.md#coverage-across-the-catalogue)).
@@ -232,6 +236,58 @@ depends on is hardware-proven.
   their segments (a parameter segment without `<Data>`, a `<Mask>` of a form no capture shows); each
   needs an ETS full-download capture before it is lifted
   ([load-procedures.md](load-procedures.md#coverage-across-the-catalogue)).
+- **System 2 (BCU2, MV-0020, MV-0021, MV-0025).** Recognised and refused, and no System 2 device is on the
+  bench or planned. What is reported about its download (property-mapped 10-octet load controls, a second
+  task control, task segments with the full application identity, the indexed association table, 3-octet
+  com-object descriptors, a two-octet table reference, a task segment on LSM 5 that is tool metadata and
+  never sent, three master-data procedure styles) is collected, unproven, in
+  [raw-acquisition.md](raw-acquisition.md#system-2-bcu2-mv-0020-mv-0021-mv-0025). It becomes work only with
+  a System 2 unit and an ETS capture of its downloads; nothing of it is implemented.
+- **The association table of System 1 and System 2 with entries.** Reported as one reserved slot per group
+  object (the sending link, or `FE`), further links in the unused slots first
+  ([raw-acquisition.md](raw-acquisition.md#system-1-bcu1-mv-0010-to-mv-0013-mv-1011-to-mv-1013-mv-3012-mv-4012)).
+  Needs a System 1 unit with links that ETS programmed, read back, to decode the read-back and close the
+  "tables with entries are not read" gap; a write needs an ETS capture of such a download.
+- **Coupler and router filter tables (MV-0900 to MV-091A, MV-1900, MV-2920).** Open: which memory or
+  property holds the table per mask beyond what the master data gives, the bit order, how the use of the table is switched on, which router object
+  of the media coupler MV-2920 carries it (reported: the secondary), the route-table control commands, and
+  which group addresses ETS lets through. Reported, unproven, in
+  [raw-acquisition.md](raw-acquisition.md#couplers-and-routers-mv-0900-mv-0910-mv-0911-mv-0912-mv-091a-mv-1900-mv-2920).
+  Needs an ETS capture of a filter-table download on one memory-configured and one property-configured
+  coupler, and a coupler.
+- **Domain address of powerline and RF devices.** Busforge has no step for it. Reported, unproven: the
+  domain address is a 2-octet property of the device object on System B powerline (PID 70), memory
+  `0x0102` on powerline BCU1, a 6-octet property (PID 82) on RF System B and RF 7.5; it is set and read
+  with `A_DomainAddressSerialNumber_Write` and `_Read`; an RF S-mode device has no fast
+  acknowledgement, so a group write can be lost and management relies on the transport acknowledgement.
+  Needs a powerline or RF device and an ETS capture; every device Busforge has met is twisted pair.
+- **Reported device behaviours, none seen on our hardware.** Protocol shapes other tools report for
+  products we do not hold, each a lead for those products only (the products and sources are in the
+  private corpus), none of them a rule: a unit that merges its declared memory-control-block regions
+  after `LoadCompleted`, so the read of the declared count gets fewer entries; a unit that answers
+  `LOADED` right after the load event; a unit that refuses memory reads of its own loaded tables; a unit
+  that answers a read starting in the middle of a table with nothing, so each table has to be read from
+  its own table reference; a table base that differs from the application's declared address by a few octets, so
+  a base always comes from the table reference or the product; a unit that takes fewer than the
+  APDU allows per memory service (12 octets reported for one presence-detector family); a unit
+  that sets or changes a bit or byte of an active parameter itself after every download (the
+  download-marker rule covers only parameters with `Access="None"`); a master reset or restart that is not confirmed; a
+  unit whose firmware ignores a serial-number address write; a unit that identifies as a newer mask
+  than its product data names (`DownwardCompatibleMasks` in the master data); a unit behind a plug-in
+  download whose standard procedure would overwrite the plug-in's configuration. Each is looked at when
+  such a product is met, with its own capture.
+- **Firmware behaviour of the OpenKNX stack** (the stack of the owned RaumController). Reported: an unload
+  is volatile until a restart on older builds, because the stack writes its metadata to flash only on a
+  restart; a firmware update that changes the stack's API version, manufacturer or hardware type discards
+  everything including the address, one that changes only the device-object version keeps the address and
+  leaves every table unloaded. A unit found unloaded after a firmware update is then the firmware's doing,
+  not a failed flash. A com-object table loaded with no entries is an error on that stack, and a rejected load step
+  leaves its reason in PID 28 of the table object, which Busforge does not read. Needs a bench check on
+  the RaumController of which build behaves which way.
+- **Specification notes.** Reported from a reading of the specification, unproven here: a device's verify
+  mode is not meant for a tool's use; ETS enables it before a download, and so does Busforge on the System B
+  full download ([commissioning.md](commissioning.md)). The restart's erase codes run from 1 to 8 as the
+  specification is read; Busforge names the codes up to 7, and no capture of ours shows 8.
 
 ## Raw acquisition
 

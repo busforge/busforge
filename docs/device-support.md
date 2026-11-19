@@ -184,15 +184,25 @@ application is refused (`SYSTEM1_LOAD_UNCAPTURED`), see [Known gaps](#known-gaps
   MDT IP Interface/Router, MV-07B0) is routed to that mask's profile: read-back, parameter and
   group-address flash are offered, but the full download of an application that declares tunnelling
   entries (`MaxTunnelingUserEntries`) is refused (`FULL_DOWNLOAD_TUNNELING_ENTRIES`), because no
-  Busforge path writes the interface's tunnelling addresses. The gate reads only that attribute: an
+  System B or System 7 path of Busforge writes the interface's tunnelling addresses and no run of
+  Busforge's shows what such a download does to the tunnels. The gate reads only that attribute: an
   interface application that omits it is not recognised as one and keeps the full download.
   The tunnelling addresses are device-instance data in the project (`AdditionalAddresses`), not part
   of the load procedure or the parameter image; Busforge reads them only to resolve secured senders.
-  What ETS writes for them, and whether a download without them changes the tunnels the interface
-  serves, is not established: the one ETS full download captured onto such an interface (the MDT IP
-  Interface/Router) is not evaluated for them yet. Since the full
+  What ETS writes for them is shown by two ETS captures of the MDT box, which runs two applications
+  on one interface. The tunnelling addresses and the IP settings belong to the box's System 1
+  application (the IP Interface Secure): ETS writes them as properties of its KNXnet/IP parameter object
+  (PID 53 for the four additional addresses; the full set of properties is in
+  [load-procedures.md](load-procedures.md#system-1-the-mv-0012-download)). The IP Interface/Router
+  application (`M-0083_A-0137`, System B) is the other one: its project instance holds no additional
+  addresses and no IP settings, and ETS's full download of it accesses no property of the KNXnet/IP
+  parameter object at all (it writes the load state machines, the security object, the stamp and memory).
+  ETS's writes to the System 1 application leave out PIDs 52 (own address) and 56 (IP capabilities). A
+  device stack is reported to accept those two, and 201 and 202 for reserved tunnels; no capture of ours
+  shows ETS writing any of them, so they stay unproven. Since the full
   download unloads and reallocates every load object, it is refused before any bus traffic, on the
-  System B and the System 7 path (unit-tested on `M-0083_A-0137` and on a System 7 application with
+  System B and the System 7 path, for an application that declares tunnelling entries, whether or not
+  its instance holds any (unit-tested on `M-0083_A-0137` and on a System 7 application with
   the attribute added, since no System 7 application in the catalogue declares it). The System 1
   download of the MV-0012 IP Interface Secure writes its tunnelling addresses itself (the KNXnet/IP
   object's PID 53, as ETS does), so it is not refused for them. The capability
@@ -205,8 +215,8 @@ application is refused (`SYSTEM1_LOAD_UNCAPTURED`), see [Known gaps](#known-gaps
   to verify ([knx-secure.md](knx-secure.md)). The product data gives
   the interface a System B parameter model (the IP settings are parameters), while it answered
   `0xFFFF` when read plainly; whether a secured read returns its parameter segment is not shown.
-  Its parameter image equals ETS's image of that full download, byte for byte. Writing the
-  entries waits for such a capture ([roadmap.md](roadmap.md#device-coverage)).
+  Its parameter image equals ETS's image of that full download, byte for byte. Whether the refusal
+  should look at the instance's own addresses is open ([roadmap.md](roadmap.md#device-coverage)).
 - **Parameters located in a property instead of memory** are not part of the image model, and no
   Busforge path reads or writes them. Typically this is the hardware type (object 0, PID 78; for
   example on the Gira M-0008, Theben MIX 2, MDT IP Interface/Router, MEAN WELL power supply and Jung
