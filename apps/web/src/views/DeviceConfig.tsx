@@ -144,7 +144,8 @@ export function DeviceConfig() {
   const qc = useQueryClient();
   const { data: project } = useProject(projectId);
   const device = project?.devices.find((d) => d.id === deviceId);
-  const dropped = useDroppedLinks(projectId).data?.filter((l) => l.deviceId === deviceId) ?? [];
+  const droppedQuery = useDroppedLinks(projectId);
+  const dropped = droppedQuery.data?.filter((l) => l.deviceId === deviceId) ?? [];
   const gaOptions = useMemo(() => { const o: GaOption[] = []; if (project) flattenGas(project.groupRanges, o); return o; }, [project]);
 
   // A product without an application program takes its individual address and nothing else: it has no
@@ -624,6 +625,9 @@ export function DeviceConfig() {
             label={t("device.warnGaps")} title={t("device.gapsTitle")} testId="device-gaps"
             items={[...gaps.types.map(([label, n]) => t("device.gapType", { type: label, count: n })), ...gaps.elements.map(([label, n]) => t("device.gapElement", { tag: label, count: n }))]}
           />
+          {droppedQuery.error && (
+            <HeaderWarning label={t("import.dropped.label")} title={t("import.dropped.title")} count={null} testId="device-dropped-links" items={[t("import.dropped.error", { reason: errMsg(t, droppedQuery.error) })]} />
+          )}
           {dropped.length > 0 && (
             <HeaderWarning
               label={t("import.dropped.label")} title={t("import.dropped.title")} count={dropped.length} testId="device-dropped-links"

@@ -136,7 +136,7 @@ export function DevicesView() {
   const { t } = useTranslation();
   const { projectId } = useParams({ from: "/projects/$projectId" });
   const { data: project } = useProject(projectId);
-  const { data: dropped } = useDroppedLinks(projectId);
+  const { data: dropped, error: droppedError } = useDroppedLinks(projectId);
   const { data: manufacturers } = useManufacturers();
   const manufNames = useMemo(() => new Map((manufacturers ?? []).map((m) => [m.id, m.name])), [manufacturers]);
   // The manufacturer's name where the KNX list in Busforge knows it, else its id (M-xxxx).
@@ -312,12 +312,14 @@ export function DevicesView() {
           )}
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          {!!dropped?.length && (
-            <HeaderWarning
-              label={t("import.dropped.label")} title={t("import.dropped.title")} count={dropped.length} testId="project-dropped-links"
-              detail={<><p className="text-muted-foreground">{t("import.dropped.hint")}</p><DroppedLinksList links={dropped} projectId={projectId} /></>}
-            />
-          )}
+          {droppedError
+            ? <HeaderWarning label={t("import.dropped.label")} title={t("import.dropped.title")} count={null} testId="project-dropped-links" items={[t("import.dropped.error", { reason: errMsg(t, droppedError) })]} />
+            : !!dropped?.length && (
+              <HeaderWarning
+                label={t("import.dropped.label")} title={t("import.dropped.title")} count={dropped.length} testId="project-dropped-links"
+                detail={<><p className="text-muted-foreground">{t("import.dropped.hint")}</p><DroppedLinksList links={dropped} projectId={projectId} /></>}
+              />
+            )}
           {anyChanged && (
             <Chip
               active={onlyChanged}

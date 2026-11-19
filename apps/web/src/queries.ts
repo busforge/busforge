@@ -114,6 +114,7 @@ export function useSnapshotActions(projectId: string) {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.project(projectId) });
       void qc.invalidateQueries({ queryKey: ["deviceConfig", projectId] });
+      void qc.invalidateQueries({ queryKey: ["droppedLinks", projectId] });
       refreshList(); // restore inserts an auto undo-point
     },
   });
@@ -141,6 +142,7 @@ export function useGroupEdit(projectId: string) {
     qc.setQueryData(qk.project(projectId), project);
     void qc.invalidateQueries({ queryKey: ["deviceConfig", projectId] });
     void qc.invalidateQueries({ queryKey: ["gaDevices", projectId] });
+    void qc.invalidateQueries({ queryKey: ["droppedLinks", projectId] });
     void qc.invalidateQueries({ queryKey: qk.projects });
     void qc.invalidateQueries({ queryKey: qk.snapshots(projectId) });
   };

@@ -48,7 +48,7 @@ export function maxSub(levels: Levels): number {
 
 interface RangeRow { id: number; parentId: number | null; rangeStart: number; rangeEnd: number; }
 
-function projectLevels(db: Database, projectId: string): Levels {
+export function projectLevels(db: Database, projectId: string): Levels {
   const row = db.query("SELECT ga_levels AS levels FROM projects WHERE id = ?").get(projectId) as { levels: Levels } | null;
   return row?.levels === 2 ? 2 : 3;
 }

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
-import { iaToNum, numToGa, SENDER_ENTRY } from "@busforge/knx";
+import { iaToNum, numToGa, formatGa, SENDER_ENTRY } from "@busforge/knx";
 import { appProgramId, readAppProgram, type Project, type DroppedLink, type DroppedLinkReason } from "@busforge/project";
 import { parseAppConfig, buildDeviceConfig, buildSecurityObject, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, effectiveComObjFlags, ProductError, imageWritableType, resolveParamRef, sameParamValue, type SameParamValue, takesValue, type EffectiveComObjFlags, type ComObjInstanceOverride, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
 import { getAppProgram, putAppProgram, catalogBaggageNames, pictureType } from "./db/catalog.ts";
@@ -10,6 +10,7 @@ import { deviceCompatibility } from "./compatibility.ts";
 import { isUntestedAcknowledged } from "./db/untestedAcks.ts";
 import { projectExists, getGaMeta } from "./db/projects.ts";
 import { listDroppedLinks } from "./db/droppedLinks.ts";
+import { projectLevels } from "./db/groupedit.ts";
 import { getDeviceSecurity, isSecureDevice, setDeviceSequence } from "./db/deviceSecurity.ts";
 import { sendersByGroup, listGroupSenders, type SenderSource } from "./db/groupSenders.ts";
 import { getGroupKeys } from "./db/groupKeys.ts";
@@ -600,65 +601,94 @@ export function buildGaDevicesView(state: AppState, projectId: string, raw: numb
 }
 
 // One com-object whose ETS links an import did not take over in full, as the import preview and the
-// project show it: the device, the object's number and texts where the device's configuration or its
-// application's declaration has the object, null where neither has it (an object of a module instance
-// the device no longer has, or of no application in the file), and its ETS addresses, each with its
-// address and name where the project holds it.
+// project show it: the device, the object's number and texts where the device's configuration places it,
+// and else why not (`unresolved`): the file or project has no application program for the device, the
+// configuration refuses the application (`refusal`, its code), or the object is not among those the
+// configuration shows (an object of a module instance the device no longer has, or one its current
+// parameters hide). Each ETS address carries its address where its raw value is known, its name and
+// `inProject` where the project holds it now.
 export interface DroppedLinkView {
   deviceId: string; ia: string; deviceName: string; comObjRefId: string;
   comObjNumber: number | null; comObjName: string | null; functionText: string | null;
+  unresolved: "noApplication" | "refused" | "notInConfiguration" | null; refusal: string | null;
   reason: DroppedLinkReason;
-  gas: { etsId: string; address: string | null; name: string | null }[];
+  gas: { etsId: string; address: string | null; name: string | null; inProject: boolean }[];
 }
-interface DroppedLinkDevice { ia: string; name: string; app: AppConfig | null; params: StoredParams; modules: StoredModules }
+interface DroppedLinkDevice { ia: string; name: string; app: () => AppConfig | null; params: StoredParams; modules: StoredModules }
+type DeviceObjects = { objs: ReturnType<typeof comObjsByKey> } | { unresolved: "noApplication" } | { unresolved: "refused"; refusal: string };
 
-function droppedLinkViews(links: DroppedLink[], deviceOf: (deviceId: string) => DroppedLinkDevice, gaOf: (raw: number) => { address: string; name: string } | undefined, lang?: string): DroppedLinkView[] {
-  const devices = new Map<string, { dev: DroppedLinkDevice; objs: ReturnType<typeof comObjsByKey> | null }>();
+// A refused application is shown on its device's objects, never fails the list of the others.
+function deviceObjects(dev: DroppedLinkDevice, lang?: string): DeviceObjects {
+  try {
+    const app = dev.app();
+    return app ? { objs: comObjsByKey(app, buildDeviceConfig(app, dev.params, lang, dev.modules), lang) } : { unresolved: "noApplication" };
+  } catch (e) {
+    if (e instanceof ProductError) return { unresolved: "refused", refusal: e.code };
+    throw e;
+  }
+}
+
+function droppedLinkViews(links: DroppedLink[], deviceOf: (deviceId: string) => DroppedLinkDevice, gaOf: (raw: number) => { address: string; name: string | null; inProject: boolean }, lang?: string): DroppedLinkView[] {
+  const devices = new Map<string, { dev: DroppedLinkDevice; objects: DeviceObjects }>();
   return links.map((l) => {
     let d = devices.get(l.deviceId);
     if (!d) {
       const dev = deviceOf(l.deviceId);
-      d = { dev, objs: dev.app ? comObjsByKey(dev.app, buildDeviceConfig(dev.app, dev.params, lang, dev.modules), lang) : null };
+      d = { dev, objects: deviceObjects(dev, lang) };
       devices.set(l.deviceId, d);
     }
-    const co = d.objs?.get(l.comObjRefId);
+    const co = "objs" in d.objects ? d.objects.objs.get(l.comObjRefId) : undefined;
     return {
       deviceId: l.deviceId, ia: d.dev.ia, deviceName: d.dev.name, comObjRefId: l.comObjRefId,
       comObjNumber: co?.number ?? null, comObjName: co?.name ?? null, functionText: co?.functionText ?? null,
+      unresolved: co ? null : "objs" in d.objects ? "notInConfiguration" : d.objects.unresolved,
+      refusal: "refusal" in d.objects ? d.objects.refusal : null,
       reason: l.reason,
-      gas: l.gas.map(({ etsId, raw }) => {
-        const ga = raw === undefined ? undefined : gaOf(raw);
-        return { etsId, address: ga?.address ?? null, name: ga?.name ?? null };
-      }),
+      gas: l.gas.map(({ etsId, raw }) => (raw === undefined ? { etsId, address: null, name: null, inProject: false } : { etsId, ...gaOf(raw) })),
     };
   });
 }
 
 // The dropped links of a parsed project file, for the import preview: each device's application from the
-// file's programs, its values and module instances from the file.
+// file's programs (each parsed once), its values and module instances from the file.
 export function previewDroppedLinks(state: AppState, project: Project, programs: Map<string, string>, lang?: string): DroppedLinkView[] {
   const gas = new Map(project.groupAddresses.map((g) => [g.raw, g]));
+  const apps = new Map<string, AppConfig | null>();
+  const appOf = (pid: string): AppConfig | null => {
+    let app = apps.get(pid);
+    if (app === undefined) {
+      const xml = programs.get(pid);
+      app = state.appCache.get(pid) ?? (xml ? parseAppConfig(xml) : null);
+      apps.set(pid, app);
+    }
+    return app;
+  };
   return droppedLinkViews(project.droppedLinks, (deviceId) => {
     const d = project.devices.find((x) => x.id === deviceId)!; // the parser lists links of its own devices only
-    const pid = appProgramId(d.appRef);
-    const xml = programs.get(pid);
-    const app = state.appCache.get(pid) ?? (xml ? parseAppConfig(xml) : null);
     return {
-      ia: d.ia, name: d.name, app,
+      ia: d.ia, name: d.name, app: () => appOf(appProgramId(d.appRef)),
       params: new Map((project.deviceParams.find((p) => p.deviceId === deviceId)?.values ?? []).map((v) => [v.refId, v.value])),
       modules: project.deviceModules.find((m) => m.deviceId === deviceId)?.instances ?? [],
     };
-  }, (raw) => gas.get(raw), lang);
+  }, (raw) => {
+    const ga = gas.get(raw);
+    return { address: ga?.address ?? formatGa(raw, project.groupAddressLevels), name: ga?.name ?? null, inProject: !!ga };
+  }, lang);
 }
 
-// The dropped links an imported project keeps, resolved against the project as it is now.
+// The dropped links an imported project keeps, resolved against the project as it is now: an address
+// deleted since the import is shown by its value, as not in the project.
 export function projectDroppedLinks(state: AppState, projectId: string, lang?: string): DroppedLinkView[] {
   const { db } = state;
   if (!projectExists(db, projectId)) throw new ApiError("PROJECT_NOT_FOUND", "project not found", 404);
+  const levels = projectLevels(db, projectId);
   return droppedLinkViews(listDroppedLinks(db, projectId), (deviceId) => {
     const d = getDeviceForFlash(db, projectId, deviceId)!; // listDroppedLinks keeps the project's devices only
-    return { ia: d.ia, name: d.name, app: loadApp(state, projectId, deviceId), params: getDeviceParams(db, projectId, deviceId), modules: getDeviceModules(db, projectId, deviceId) };
-  }, (raw) => getGaMeta(db, projectId, raw) ?? undefined, lang);
+    return { ia: d.ia, name: d.name, app: () => loadApp(state, projectId, deviceId), params: getDeviceParams(db, projectId, deviceId), modules: getDeviceModules(db, projectId, deviceId) };
+  }, (raw) => {
+    const ga = getGaMeta(db, projectId, raw);
+    return { address: ga?.address ?? formatGa(raw, levels), name: ga?.name ?? null, inProject: !!ga };
+  }, lang);
 }
 
 // Choose which stored com-object links to program into the device's association

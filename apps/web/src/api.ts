@@ -51,14 +51,16 @@ export interface ProjectSummary { id: string; name: string; deviceCount: number;
 export interface Project { id: string; name: string; connectionId: string | null; groupAddressLevels: 2 | 3; devices: Device[]; groupRanges: GroupRangeNode[]; locations: SpaceNode[]; gaCount: number; secureDeviceCount: number; groupKeyCount: number; }
 export interface ImportGap { ia: string; name: string }
 // A com-object whose ETS links an import did not take over in full (server DroppedLinkView): the object's
-// number and texts are null where the device's configuration does not have the object; an address is null
-// where the project does not hold it, and only ETS's id names it.
+// number and texts are null where the device's configuration does not place it, `unresolved` saying why
+// (`refusal`: the code of the configuration's refusal). An address is null where its value is not known
+// and only ETS's id names it; `inProject` says whether the project holds it now.
 export type DroppedLinkReason = "addressNotInProject" | "senderNotInProject" | "noSingleSender" | "moduleInstanceGone";
 export interface DroppedLink {
   deviceId: string; ia: string; deviceName: string; comObjRefId: string;
   comObjNumber: number | null; comObjName: string | null; functionText: string | null;
+  unresolved: "noApplication" | "refused" | "notInConfiguration" | null; refusal: string | null;
   reason: DroppedLinkReason;
-  gas: { etsId: string; address: string | null; name: string | null }[];
+  gas: { etsId: string; address: string | null; name: string | null; inProject: boolean }[];
 }
 export interface ImportResult { id: string; name: string; deviceCount: number; gaCount: number; devicesWithoutProgram?: ImportGap[]; unresolvedLinks?: number; malformedDevices?: number; unresolvedSenders?: number; secureDevicesWithoutSerial?: number; skippedInstallations?: number; unassignedDevices?: number; linksWithoutSender?: number; staleModuleLinks?: number; baggageUnreadable?: boolean; }
 // Metadata from analyzing an import file without persisting it (the preview step).

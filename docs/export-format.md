@@ -104,8 +104,8 @@ node decrypt-busforge.mjs project.busforge "my-password" | jq .project.name
 | KNX Data Secure tool keys | |
 
 Several fields are optional in the schema (building structure, catalogue pictures, restore points, bus log, tool keys,
-source, `configFromEts`, `deviceMemorylessAssumed`, `droppedLinks`), and an artifact without them imports: without the last
-two, a device counts as holding the values of its parameters without memory only where its configuration
+source, `configFromEts`, `deviceMemorylessAssumed`, `droppedLinks`), and an artifact without them imports: without
+`configFromEts` and `deviceMemorylessAssumed`, a device counts as holding the values of its parameters without memory only where its configuration
 shows none a read-back could assume (a System 7 flash otherwise refuses to overwrite a hidden byte the unit
 holds otherwise than `<Data>`). The marks on assumed baseline values
 (`deviceParamAssumed`) are required, as the baselines are: an artifact without them is refused, and
