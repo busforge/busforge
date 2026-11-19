@@ -1,6 +1,6 @@
 import { resolveParamRef, sameParamValue, type AppConfig, type CfgParamRef, type DynNode, type ModuleInstance } from "./appconfig.ts";
 import { toAppModel, type Param, type ParamType } from "./application.ts";
-import { buildDeviceConfig, decodeTextEntities, readingsOf, unsettledDefaultRefusal, type DeviceConfigBuild } from "./config.ts";
+import { buildDeviceConfig, decodeTextEntities, readingsOf, refuseUnreachedInstances, unsettledDefaultRefusal, type DeviceConfigBuild } from "./config.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { byteWidth, MAX_INT_BYTES, encode, textLength } from "./image.ts";
 import { ProductError } from "./errors.ts";
@@ -252,7 +252,7 @@ export const absoluteBuildInstances = (app: AppConfig, values: Map<string, strin
 
 // Where a configuration has two readings (buildDeviceConfig), a segment is built from each, and refused unless
 // both write the same bytes the same way. A calculation runs on the first reading's values only, so an application
-// that computes one is refused outright there.
+// that declares one is refused outright there.
 // `prior`: the configuration's build from the first pass, which the second reads its other reading from.
 type Reading = { prior?: undefined } | { prior: DeviceConfigBuild };
 const sameWrites = <T>(a: T, b: T, fields: (keyof T)[]): boolean => fields.every((f) => JSON.stringify(a[f]) === JSON.stringify(b[f]));
@@ -288,8 +288,10 @@ function absoluteSegmentTargets(
   // ParameterRef id. This includes Access="None" internal parameters that ETS writes
   // to memory but hides from the UI, so it is the right source for the image (the
   // visible blocks alone would miss them).
-  if (reading.prior && calc.runs.some((r) => r.state === "computed")) throw unsettledDefaultRefusal(reading.prior.unsettledChooses);
+  // The calculations ran on the first reading's values; which of them the other reading would run is not known.
+  if (reading.prior && app.calculations.length) throw unsettledDefaultRefusal(reading.prior.unsettledChooses);
   const taken = reading.prior ?? buildDeviceConfig(app, calculated, opts.lang, instances);
+  if (!opts.moduleInstances?.length) refuseUnreachedInstances(app, taken, instances);
   const view = reading.prior ? reading.prior.otherReading! : taken;
   const active = view.imageValues;
   const treeOrder = treeOrderOf(app, active);
@@ -581,8 +583,10 @@ function relativeSegmentTarget(app: AppConfig, values: Map<string, string>, lsm:
   // The results of the <ParameterCalculation>s Busforge runs, stored on their parameters as ETS stores them.
   const calc = applyCalculations(app, values, instances);
   const calculated = calc.values;
-  if (reading.prior && calc.runs.some((r) => r.state === "computed")) throw unsettledDefaultRefusal(reading.prior.unsettledChooses);
+  // The calculations ran on the first reading's values; which of them the other reading would run is not known.
+  if (reading.prior && app.calculations.length) throw unsettledDefaultRefusal(reading.prior.unsettledChooses);
   const taken = reading.prior ?? buildDeviceConfig(app, calculated, opts.lang, instances);
+  if (!opts.moduleInstances?.length) refuseUnreachedInstances(app, taken, instances);
   const built = reading.prior ? reading.prior.otherReading! : taken;
   const active = built.imageValues;
   // The parameters an active ref places: another ref of theirs is not a hidden parameter.

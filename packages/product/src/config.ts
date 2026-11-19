@@ -268,6 +268,8 @@ export interface DeviceConfigBuild extends DeviceConfigView {
   // builders build both and refuse where their bytes differ (buildDeviceConfig).
   otherReading?: DeviceConfigBuild;
   unsettledChooses?: string[];
+  // The Module nodes (by id) the image pass reached.
+  modulesReached: Set<string>;
 }
 
 interface Scope {
@@ -456,6 +458,16 @@ export function defaultBranchOf(app: AppConfig, defRefId: string, placed: boolea
   const param = app.params.get(ref.paramId);
   if (heads) return param && holdsValue(param) ? "open" : "take";
   return (ref.access ?? param?.access) === "None" ? "open" : "skip";
+}
+
+// Module instances the allocators were re-run for (resolveModuleInstances) are refused where one belongs to a Module
+// node the configuration does not reach: the allocator evaluates the chooses on its own, and an instance it placed in
+// a branch the configuration does not take has advanced the allocators the instances after it start from.
+export function refuseUnreachedInstances(app: AppConfig, build: DeviceConfigBuild, instances: ModuleInstance[]): void {
+  const off = instances.filter((mi) => !build.modulesReached.has(`${app.id}_${mi.refId}`));
+  if (off.length) {
+    throw new ProductError("MODULE_INSTANCES_UNREACHED", `the module instances re-run for this configuration include ${off.length} the configuration does not reach (e.g. ${off[0].id}), so where the instances after them lie in memory is not known; a device imported from an ETS project carries ETS's own instances`);
+  }
 }
 
 // Every reading of a configuration: the build, and the other reading where it has one (buildDeviceConfig).
@@ -989,6 +1001,7 @@ function buildDeviceConfigReading(
   // UI env (which would mis-select branches controlled by a later Assign).
   const imageValues = new Map<string, string>();
   const imageComObjects = new Map<number, CfgComObjImage>();
+  const modulesReached = new Set<string>();
   const imgEnv = new Map(overrides);
   const imgCollect = (nodes: DynNode[], scope: Scope) => {
     for (const n of nodes) {
@@ -1032,7 +1045,7 @@ function buildDeviceConfigReading(
         // paramRef/comObjRef children walked here, exactly as in a list block.
         case "button": break;
         case "container": case "block": imgCollect(n.children, scope); break;
-        case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) imgCollect(def.dynamic, makeScope(n.refId, def, inst)); break; }
+        case "module": { modulesReached.add(n.id); const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) imgCollect(def.dynamic, makeScope(n.refId, def, inst)); break; }
         // Neither owns a byte of the parameter image: a separator is a caption, and an unsupported
         // node is one the config layer already refuses to render. Listed rather than defaulted, so
         // a node kind added later cannot silently drop out of the image the device is programmed
@@ -1111,7 +1124,9 @@ function buildDeviceConfigReading(
     throw new ProductError("CONFIG_VIEW_INCOMPLETE", `the configuration view does not match the active communication objects (not listed: ${unlisted.slice(0, 10).join(", ") || "none"}; listed but inactive: ${inactive.slice(0, 10).join(", ") || "none"}); their links would be lost`);
   }
 
-  return { build: { blocks, hasModules: app.hasModules, dca: app.dca, imageValues, rejectedRefs, imageComObjects, maxComObjectNumber, paramValue: (refId) => resolve(refId, TOP) }, unsettled };
+  const build: DeviceConfigBuild = { blocks, hasModules: app.hasModules, dca: app.dca, imageValues, rejectedRefs, imageComObjects, maxComObjectNumber, modulesReached, paramValue: (refId) => resolve(refId, TOP) };
+  if (!moduleInstances.length) refuseUnreachedInstances(app, build, instances);
+  return { build, unsettled };
 }
 
 // One com-object of an application program's full declaration, resolved the way the

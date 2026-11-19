@@ -504,7 +504,11 @@ That per-instance base comes from one of two interchangeable sources:
   `<Allocators>` to compute the identical value. The counter is `Start + cumulative
   Allocates`, walked over the visibility-resolved active tree, with `<Repeat Count="k">`
   instantiating k copies. The re-run was validated against real multi-channel devices,
-  reproducing all 67 of their project-pinned module instances exactly.
+  reproducing all 67 of their project-pinned module instances exactly. Its walk evaluates the
+  chooses on its own, with each default branch decided as the configuration decides it; a re-run
+  set holding an instance of a `<Module>` the configuration does not reach is refused
+  (`MODULE_INSTANCES_UNREACHED`), because that instance has moved the allocators every later one
+  starts from.
 
 Both memory models resolve module offsets, and both have been exercised on hardware
 ([status.md](status.md)).

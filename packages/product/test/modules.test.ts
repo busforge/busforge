@@ -263,3 +263,17 @@ test("a module in the default branch of a choose on a ParameterRef nothing place
   expect(resolveModuleInstances(gated({ place: true, access: "None" }), new Map())).toHaveLength(4);
   expect(() => resolveModuleInstances(gated({ access: "None" }), new Map())).toThrow(expect.objectContaining({ code: "CHOOSE_DEFAULT_UNSETTLED" }));
 });
+
+// The allocator evaluates a choose on its own: it reads a Merker nothing places (an Access="None" memoryless
+// parameter) at its static default, where the configuration reads it as unset. An instance it allocates in a
+// branch the configuration does not take is refused once the configuration is built, not placed in memory.
+test("re-run instances the configuration does not reach are refused", () => {
+  const base = readFileSync(join(import.meta.dir, "fixtures", "sample-module-app.xml"), "utf8");
+  const app = parseAppConfig(base
+    .replace("<Parameters />", '<Parameters><Parameter Id="M-TEST_A-2_P-M" Name="Merker" ParameterType="M-TEST_A-2_PT-OnOff" Text="Merker" Access="None" Value="1" /></Parameters>')
+    .replace("<ParameterRefs />", '<ParameterRefs><ParameterRef Id="M-TEST_A-2_P-M_R-1" RefId="M-TEST_A-2_P-M" /></ParameterRefs>')
+    .replace('<Module Id="M-TEST_A-2_MD-1_M-1" RefId="M-TEST_A-2_MD-1" Name="C" />', '<Module Id="M-TEST_A-2_MD-1_M-1" RefId="M-TEST_A-2_MD-1" Name="C"><NumericArg RefId="M-TEST_A-2_MD-1_A-2" Value="10" /></Module>')
+    .replace(/(<Repeat Id="M-TEST_A-2_X-1"[\s\S]*?<\/Repeat>)/, '<choose ParamRefId="M-TEST_A-2_P-M_R-1"><when test="1">$1</when></choose>'));
+  expect(resolveModuleInstances(app, new Map())).toHaveLength(4);
+  expect(() => buildDeviceConfig(app, new Map())).toThrow(expect.objectContaining({ code: "MODULE_INSTANCES_UNREACHED" }));
+});
