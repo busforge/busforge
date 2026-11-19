@@ -97,18 +97,20 @@ describe("buildDeviceConfig visibility", () => {
   });
 
   // OpenKNX and Jung applications declare TypeNumber 0..1 with UIHint="CheckBox"; ETS stores 1 for a ticked
-  // box over the default 0. A range of other or more than two values names no ticked and unticked value.
+  // box over the default 0. A range of other or more than two values names no ticked and unticked value, and a TypeFloat is no TypeNumber.
   test("TypeNumber UIHint=CheckBox becomes a checkbox only for the range 0..1", () => {
-    const types: [string, string][] = [["8", 'minInclusive="0" maxInclusive="1"'], ["1", 'minInclusive="0" maxInclusive="1"'], ["8", 'minInclusive="0" maxInclusive="2"'], ["8", 'minInclusive="1" maxInclusive="2"'], ["8", ""]];
+    const num = (size: string, range: string) => `<TypeNumber SizeInBit="${size}" Type="unsignedInt" ${range} UIHint="CheckBox" />`;
+    const types = [num("8", 'minInclusive="0" maxInclusive="1"'), num("1", 'minInclusive="0" maxInclusive="1"'), num("8", 'minInclusive="0" maxInclusive="2"'), num("8", 'minInclusive="1" maxInclusive="2"'), num("8", ""),
+      '<TypeFloat Encoding="DPT 9" minInclusive="0" maxInclusive="1" UIHint="CheckBox" />'];
     const xml = `<KNX><ApplicationProgram Id="M-TEST_A-14" DefaultLanguage="en-US"><Static>
       <Parameters>${types.map((_, i) => `<Parameter Id="M-TEST_A-14_P-${i}" ParameterType="M-TEST_A-14_PT-${i}" Text="P${i}" Value="1" />`).join("")}</Parameters>
       <ParameterRefs>${types.map((_, i) => `<ParameterRef Id="M-TEST_A-14_P-${i}_R-1" RefId="M-TEST_A-14_P-${i}" />`).join("")}</ParameterRefs>
-      <ParameterTypes>${types.map(([size, range], i) => `<ParameterType Id="M-TEST_A-14_PT-${i}"><TypeNumber SizeInBit="${size}" Type="unsignedInt" ${range} UIHint="CheckBox" /></ParameterType>`).join("")}</ParameterTypes>
+      <ParameterTypes>${types.map((type, i) => `<ParameterType Id="M-TEST_A-14_PT-${i}">${type}</ParameterType>`).join("")}</ParameterTypes>
       </Static><Dynamic><ChannelIndependentBlock><ParameterBlock Id="M-TEST_A-14_PB-1" Text="Page">
         ${types.map((_, i) => `<ParameterRefRef RefId="M-TEST_A-14_P-${i}_R-1" />`).join("")}
       </ParameterBlock></ChannelIndependentBlock></Dynamic></ApplicationProgram></KNX>`;
     const shown = params(buildDeviceConfig(parseAppConfig(xml), new Map()));
-    expect(shown.map((p) => [p.param.control, p.param.checkbox])).toEqual([["number", true], ["number", true], ["number", undefined], ["number", undefined], ["number", undefined]]);
+    expect(shown.map((p) => [p.param.control, p.param.checkbox])).toEqual([["number", true], ["number", true], ["number", undefined], ["number", undefined], ["number", undefined], ["number", undefined]]);
     expect(params(buildDeviceConfig(app, new Map()))[1].param.checkbox).toBeUndefined();
   });
 

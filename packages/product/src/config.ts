@@ -592,7 +592,7 @@ export function buildDeviceConfig(
     const slider = control === "number" && type?.uiHint === "Slider" && type.min !== undefined && type.max !== undefined;
     // A checkbox has two states, and ETS stores 1 for a ticked box over the default 0: only the range 0..1
     // names them. Any other range keeps the number input, which shows every value of it.
-    const checkbox = (control === "number" && type?.uiHint === "CheckBox" && type.min === 0 && type.max === 1) || undefined;
+    const checkbox = (control === "number" && type?.base === "Number" && type.uiHint === "CheckBox" && type.min === 0 && type.max === 1) || undefined;
     const unit = control === "time" ? type?.unit : undefined;
     // A float number accepts decimals; the frontend uses step="any" so the browser does
     // not reject a fractional value against an integer step grid.
