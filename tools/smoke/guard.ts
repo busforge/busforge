@@ -16,6 +16,7 @@
 //
 // The reads are a snapshot before a write: the station is silent through the whole write (a full
 // download takes minutes) and its restart, and nothing is read in between.
+import { parseGa } from "../../packages/knx/src/frame.ts";
 import { decodeDpt9 } from "../../packages/product/src/index.ts";
 
 // A wind reading at or above this share of the alarm threshold stops the run: the station may cross
@@ -31,11 +32,7 @@ export interface WeatherGuard {
   bits: { name: string; ga: string }[];
 }
 
-// Three levels, main 0-31, middle 0-7, sub 0-255.
-const isGa = (ga: string): boolean => {
-  const m = /^(\d+)\/(\d+)\/(\d+)$/.exec(ga);
-  return !!m && Number(m[1]) <= 31 && Number(m[2]) <= 7 && Number(m[3]) <= 255;
-};
+const isGa = (ga: string): boolean => parseGa(ga) !== null;
 
 // The operator's --weather-guard value, or the reason it is refused.
 export function parseWeatherGuard(arg: string): WeatherGuard | { refused: string } {
