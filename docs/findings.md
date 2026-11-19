@@ -848,10 +848,10 @@ instead of passing `ECONNREFUSED` on as the cause.
 
 **The connection-state heartbeat runs on TCP.** KNXnet/IP v2 does not drop the procedure on TCP:
 ETS 6 sends a CONNECTIONSTATE_REQUEST over its TCP tunnel
-(`06 10 02 07 00 10 01 00 08 02 00 00 00 00 00 00`), and Calimero's `ClientConnection` starts the
-60 s heartbeat regardless of transport. Without it, a TCP client whose FIN never arrives keeps its
-channel on the server indefinitely (ESTABLISHED connections with no process behind them, every new
-tunnel refused with status `0x24`), and a monitor over TCP keeps showing "connected" over a dead link.
+(`06 10 02 07 00 10 01 00 08 02 00 00 00 00 00 00`) every 30 s, half the 60 s the specification
+names, and Calimero's `ClientConnection` starts its 60 s heartbeat regardless of transport. Without
+it, a TCP client whose FIN never arrives keeps its channel on the server indefinitely (ESTABLISHED
+connections with no process behind them, every new tunnel refused with status `0x24`), and a monitor over TCP keeps showing "connected" over a dead link.
 Busforge's client and bridge both run the procedure on TCP exactly as on UDP.
 
 Shown on hardware: a raw TCP client that opens a channel and sends nothing is dropped by Busforge's

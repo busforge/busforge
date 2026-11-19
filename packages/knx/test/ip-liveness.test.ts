@@ -90,7 +90,7 @@ describe("KNXnet/IP tunnel liveness against the real server", () => {
     // Move past the reap window, then send one heartbeat. The server answers it AND records it as
     // activity, so the reap that follows must NOT drop the channel.
     clock.t += HEARTBEAT_TIMEOUT_MS + 1_000;
-    await tunnel["heartbeat"](); // drive one round directly; the 60 s interval never fires in a test
+    await tunnel["heartbeat"](); // drive one round directly; the 30 s interval never fires in a test
     server["reap"]();
 
     expect(server.channels.size).toBe(1); // survived, because the heartbeat was heard

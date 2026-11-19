@@ -253,7 +253,7 @@ describe("KnxIpTunnel", () => {
     const closed: string[] = [];
     tunnel.onClosed = (r) => { closed.push(r); };
 
-    const hb = tunnel["heartbeat"](); // drive one round directly; the 60 s interval never fires in a test
+    const hb = tunnel["heartbeat"](); // drive one round directly; the 30 s interval never fires in a test
     await tick();
 
     // CONNECTIONSTATE_REQUEST, 16 bytes:

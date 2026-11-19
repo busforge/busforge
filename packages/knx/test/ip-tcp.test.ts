@@ -185,7 +185,7 @@ describe("KnxIpTunnel over TCP", () => {
     expect(KnxIpTunnel.tcp("192.0.2.10")["tcpConnectTimeoutMs"]).toBe(10_000);
   });
 
-  // ETS 6 and Calimero both run the 60 s CONNECTIONSTATE heartbeat over TCP. A TCP socket whose peer
+  // ETS 6 (every 30 s) and Calimero (every 60 s) both run the CONNECTIONSTATE heartbeat over TCP. A TCP socket whose peer
   // vanished without a FIN (a network change, a sleeping laptop) stays open on both ends, so the
   // socket alone cannot tell a quiet channel from a dead one.
   test("a heartbeat timer is armed in TCP mode, as ETS and Calimero do", async () => {

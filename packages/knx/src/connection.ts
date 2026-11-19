@@ -5,14 +5,15 @@ import { parseCemiLData, type KnxTransport } from "./transport.ts";
 import { extendedDeviceMaxApdu, descriptionDeviceInfo } from "./discover.ts";
 import { KnxError } from "./errors.ts";
 
-// 3/8/2 §5.4: a tunnelling client sends a CONNECTIONSTATE_REQUEST every 60 s and expects a
-// CONNECTIONSTATE_RESPONSE within 10 s, repeating up to three times before it must consider the
-// connection dead. Without this, a read-only monitor on a quiet bus (nothing to tunnel for
-// minutes) is reaped by a spec-strict gateway (busforge's own bridge drops a channel it has not
-// heard from for 120 s), and from then on every "connected" is a lie while the telegram log
-// silently records nothing. This holds over TCP as well: ETS 6 and Calimero send the heartbeat on
-// the stream, and a TCP peer that vanished without a FIN leaves a socket that looks open.
-const HEARTBEAT_INTERVAL_MS = 60_000;
+// 3/8/2 §5.4: a tunnelling client sends a CONNECTIONSTATE_REQUEST regularly (the specification names
+// 60 s) and expects a CONNECTIONSTATE_RESPONSE within 10 s, repeating up to three times before it
+// must consider the connection dead. ETS 6 sends it every 30 s, and so does this client. Without
+// this, a read-only monitor on a quiet bus (nothing to tunnel for minutes) is reaped by a spec-strict
+// gateway (busforge's own bridge drops a channel it has not heard from for 120 s), and from then on
+// every "connected" is a lie while the telegram log silently records nothing. This holds over TCP as
+// well: ETS 6 and Calimero send the heartbeat on the stream, and a TCP peer that vanished without a
+// FIN leaves a socket that looks open.
+const HEARTBEAT_INTERVAL_MS = 30_000;
 const CONNECTIONSTATE_TIMEOUT_MS = 10_000;
 const CONNECTIONSTATE_TRIES = 3;
 
@@ -256,7 +257,7 @@ export class KnxIpTunnel implements KnxTransport {
     const res = await done;
     this.applyConnectRes(res);
 
-    // Prove the channel is still alive every 60 s. Unreffed so it never keeps the process alive on
+    // Prove the channel is still alive every 30 s. Unreffed so it never keeps the process alive on
     // its own (the HTTP server does that in production; tests must be free to exit).
     this.heartbeatTimer = setInterval(() => { void this.heartbeat(); }, HEARTBEAT_INTERVAL_MS);
     this.heartbeatTimer.unref?.();

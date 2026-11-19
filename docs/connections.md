@@ -124,8 +124,9 @@ spec-strict gateway reaps a channel it has not heard from. A read-only bus monit
 because on a quiet bus there is nothing to tunnel and therefore no failing send to reveal the dead
 channel. The telegram log would simply, silently, stop while the status stayed green.
 
-- On **UDP and TCP** alike, the client sends a CONNECTIONSTATE_REQUEST every 60 s and waits up to
-  10 s for the response, retrying three times. Three unanswered requests mean the tunnel is dead.
+- On **UDP and TCP** alike, the client sends a CONNECTIONSTATE_REQUEST every 30 s, as ETS 6 does
+  (the specification names 60 s), and waits up to 10 s for the response,
+  retrying three times. Three unanswered requests mean the tunnel is dead.
   Over TCP the request carries the zero IPV4_TCP HPAI, byte-equal to what ETS 6 sends (seen
   in an ETS capture); Calimero runs the same heartbeat on TCP. The socket alone is not a liveness signal: a
   peer that vanished without a FIN leaves it looking open.
