@@ -172,7 +172,9 @@ download). Where the application's
 declared load procedure has a step the full download cannot execute, the surgical flash is refused all
 the same, naming ETS (`NEVER_PROGRAMMED_USE_ETS`): nothing would check which application the device
 runs before the flash writes into it. A family that cannot be downloaded in full for another reason
-is programmed surgically only; there a verified surgical flash clears it. It travels in a `.busforge` export with its parts (`etsNotDownloaded`, taken only on a never-programmed
+is programmed surgically only; there a verified surgical flash clears it, and its parameter flash takes
+the device as holding nothing of the baseline: it writes every byte it owns
+([load-procedures.md](load-procedures.md)). It travels in a `.busforge` export with its parts (`etsNotDownloaded`, taken only on a never-programmed
 device); restore points do not carry it, being device
 state. A device with no value recorded reads as programmed.
 

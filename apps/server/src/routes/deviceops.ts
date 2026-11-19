@@ -814,6 +814,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
           // Read when the job runs, so a download queued before it has left its record.
           stampRecord: getImageStamps(db, id, deviceId),
           memorylessKnown: memorylessKnown(db, id, deviceId, dev.configFromEts, flApp, flashParams, flashModules),
+          neverProgrammed: dev.neverProgrammed,
           dryRun: dryParams, onProgress: progress, ...gate,
         });
       }, commit, (result) => {

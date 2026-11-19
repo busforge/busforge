@@ -221,8 +221,10 @@ type ProjectComObjOverrides = { comObjectOverrides: NonNullable<FullDownloadCtx[
 // it (deviceservice.ts resolveComObjOverrideBase), required for the same reason.
 type BaselineComObjOverrides = ProjectComObjOverrides & { comObjectOverrideBase: NonNullable<GaFlashCtx["comObjectOverrideBase"]> };
 
-// Program a device\'s parameter segment from its stored configuration.
-export function flashDeviceParameters(opts: Omit<ParamFlashCtx, "persistBackups"> & ServerScope): Promise<FlashResult> {
+// Program a device\'s parameter segment from its stored configuration. Whether the device is never programmed
+// (ParamFlashCtx.neverProgrammed) is required here, where the product layer lets it be absent, so no route
+// flashes such a device as if it held its baseline.
+export function flashDeviceParameters(opts: Omit<ParamFlashCtx, "persistBackups" | "neverProgrammed"> & ServerScope & { neverProgrammed: boolean }): Promise<FlashResult> {
   const cfg = parseAppConfig(opts.appXml);
   const profile = classify(cfg);
   const ctx: ParamFlashCtx = { ...opts, persistBackups: backupPersister(opts.dataDir, opts.projectId) };

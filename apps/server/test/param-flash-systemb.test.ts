@@ -484,6 +484,24 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
       if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
       expect([res.verified, res.leftFF, dev.written.has(BASE + k), dev.mem.get(BASE + k)]).toEqual([true, [{ address: BASE + k, length: 1 }], false, 0xff]);
     }, 70_000);
+    // A device never programmed from this project holds nothing the baseline describes, the bytes it reads as FF
+    // included: the flash writes every owned byte, with the unit's stamps equal to a record as without one, and
+    // leaves none alone.
+    test("a never-programmed device takes every owned byte, the one read as FF the baseline holds included", async () => {
+      const k = kChanged;
+      const owned = target.owned.filter((m) => m !== 0).length;
+      for (const record of [undefined, [{ obj: 4, element: 1, hex: STAMP }]]) {
+        const dev = seeded();
+        dev.mem.set(BASE + k, 0xff);
+        dev.mem.set(BASE, unlike(target.bytes[0]));
+        const dry = await classify(cfg).flashParameters(asDev(dev), "07B0", { ...ctx, stampRecord: record, neverProgrammed: true, dryRun: true });
+        expect(dry).toMatchObject({ kind: "dryRun", diffBytes: 2, readsFF: [{ address: BASE + k, length: 1 }] });
+        expect("leftFF" in dry).toBe(false);
+        const res = await classify(cfg).flashParameters(asDev(dev), "07B0", { ...ctx, stampRecord: record, neverProgrammed: true });
+        if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
+        expect([res.verified, "leftFF" in res, dev.written.size, dev.mem.get(BASE + k)]).toEqual([true, false, owned, target.bytes[k]]);
+      }
+    }, 130_000);
     // An application left not LOADED takes every owned byte, the byte read as FF with the project's value.
     test("an application not LOADED takes the byte read as FF as well", async () => {
       const k = kChanged;
