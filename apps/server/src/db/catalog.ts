@@ -1,8 +1,8 @@
 import type { Database } from "bun:sqlite";
-import { appProgramId, appProgramName, type CatalogProduct } from "@busforge/project";
+import { appProgramName, type CatalogProduct } from "@busforge/project";
 
 // Catalog layer: manufacturer application programs, keyed by application-program
-// id (the value of appProgramId(appRef)). Global and shared across projects; a
+// id (a device's devices.app_program_id). Global and shared across projects; a
 // re-import or a second project using the same product reuses the stored entry.
 // We keep the decrypted XML and parse it at runtime, so the parser stays the
 // single source of truth (see docs/storage-and-snapshots.md, milestone 1).
@@ -95,8 +95,8 @@ export function getCatalogProduct(db: Database, appRef: string, productRef: stri
 export function backfillCatalogFromDevices(db: Database): number {
   const stored = new Set((db.query("SELECT id FROM app_programs").all() as { id: string }[]).map((r) => r.id));
   const rows = db.query(
-    "SELECT d.app_ref AS appRef, d.product_ref AS productRef, d.manufacturer, MIN(d.has_application) AS hasApplication, MAX(d.pei_program) AS peiProgram FROM devices d LEFT JOIN catalog_products c ON c.app_ref = d.app_ref AND c.product_ref = d.product_ref WHERE c.app_ref IS NULL GROUP BY d.app_ref, d.product_ref, d.manufacturer",
-  ).all() as { appRef: string; productRef: string; manufacturer: number; hasApplication: number; peiProgram: number }[];
+    "SELECT d.app_ref AS appRef, d.product_ref AS productRef, d.manufacturer, d.app_program_id AS appProgramId, MIN(d.has_application) AS hasApplication, MAX(d.pei_program) AS peiProgram FROM devices d LEFT JOIN catalog_products c ON c.app_ref = d.app_ref AND c.product_ref = d.product_ref WHERE c.app_ref IS NULL GROUP BY d.app_ref, d.product_ref, d.manufacturer, d.app_program_id",
+  ).all() as { appRef: string; productRef: string; manufacturer: number; appProgramId: string; hasApplication: number; peiProgram: number }[];
   // One parse per program (several products can share one, and a program can be tens of MB). A program
   // whose XML does not parse names nothing here; the picker then shows the product id, and the list of
   // every other product stays available.
@@ -120,8 +120,11 @@ export function backfillCatalogFromDevices(db: Database): number {
         ).run(r.appRef, r.productRef, r.manufacturer, r.peiProgram).changes;
         continue;
       }
-      const id = appProgramId(r.appRef);
-      if (!stored.has(id)) continue; // not placeable without its program XML
+      // Devices of one product can name different programs: a row stored before the program was resolved
+      // from the Hardware2Program holds the program its id names, which on two-program hardware is none.
+      // Only a program the catalog holds makes the product placeable.
+      const id = r.appProgramId;
+      if (!stored.has(id)) continue;
       n += db.prepare(
         "INSERT OR IGNORE INTO catalog_products (app_ref, product_ref, app_program_id, manufacturer, name, order_number, hw_version, pei_program) VALUES (?, ?, ?, ?, ?, '', '', ?)",
       ).run(r.appRef, r.productRef, id, r.manufacturer, nameOf(id), r.peiProgram).changes;
@@ -131,14 +134,12 @@ export function backfillCatalogFromDevices(db: Database): number {
 }
 
 // Drop catalog entries no longer referenced by any device (ref-counting GC, run
-// after a project is deleted). The reference key is appProgramId(appRef), which is
-// a code mapping, so the live set is computed in JS rather than SQL. Pinned catalog
+// after a project is deleted). The reference key is a device's app_program_id. Pinned catalog
 // products (ingested from an official .knxprod) are independent GC roots, so their
 // program and row survive even with no device using them. Returns the number of
 // removed entries.
 export function gcAppPrograms(db: Database): number {
-  const refs = db.query("SELECT DISTINCT app_ref AS appRef FROM devices").all() as { appRef: string }[];
-  const live = new Set(refs.map((r) => appProgramId(r.appRef)));
+  const live = new Set((db.query("SELECT DISTINCT app_program_id AS id FROM devices WHERE app_program_id != ''").all() as { id: string }[]).map((r) => r.id));
   for (const r of db.query("SELECT DISTINCT app_program_id AS id FROM catalog_products WHERE pinned = 1").all() as { id: string }[]) live.add(r.id);
   const ids = db.query("SELECT id FROM app_programs").all() as { id: string }[];
   const del = db.prepare("DELETE FROM app_programs WHERE id = ?");

@@ -20,7 +20,6 @@ import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { parseAppConfig, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget } from "../packages/product/src/index.ts";
 import type { ModuleInstance } from "../packages/product/src/index.ts";
-import { appProgramId } from "../packages/project/src/index.ts";
 import { resolveDataDir } from "../apps/server/src/app.ts";
 import { openServerDb, pickProject, refusing, takeProjectFlag } from "./serverdb.ts";
 
@@ -41,9 +40,9 @@ const fails: any[] = [];
 
 for (const m of manifest.devices) {
   if (!m.segments?.length) continue;
-  const dev = db.query("SELECT app_ref, instance_id FROM devices WHERE ia=? AND project_id=?").get(m.ia, projectId) as any;
+  const dev = db.query("SELECT app_program_id, instance_id FROM devices WHERE ia=? AND project_id=?").get(m.ia, projectId) as any;
   if (!dev) continue;
-  const appId = appProgramId(dev.app_ref);
+  const appId = dev.app_program_id;
   const row = db.query("SELECT xml FROM app_programs WHERE id=?").get(appId) as any;
   if (!row) continue;
   const values = new Map<string, string>();

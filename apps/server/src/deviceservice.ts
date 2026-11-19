@@ -2,10 +2,10 @@ import { existsSync, readFileSync } from "node:fs";
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { iaToNum, numToGa, formatGa, SENDER_ENTRY } from "@busforge/knx";
-import { appProgramId, readAppProgram, type Project, type DroppedLink, type DroppedLinkReason } from "@busforge/project";
+import { extractAppPrograms, type Project, type DroppedLink, type DroppedLinkReason } from "@busforge/project";
 import { parseAppConfig, buildDeviceConfig, annotateCalculations, buildSecurityObject, hardwareRefusals, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, effectiveComObjFlags, ProductError, imageWritableType, resolveParamRef, sameParamValue, type SameParamValue, takesValue, type EffectiveComObjFlags, type ComObjInstanceOverride, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
 import { getAppProgram, putAppProgram, catalogBaggageNames, pictureType } from "./db/catalog.ts";
-import { getDeviceParams, getDeviceParamBase, getDeviceParamAssumed, getDeviceModules, getDeviceAppRef, getDeviceProductRef, getDeviceForFlash, deviceHasApplication, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps, getDeviceComObjOverrides, getDeviceComObjOverrideBase } from "./db/deviceparams.ts";
+import { getDeviceParams, getDeviceParamBase, getDeviceParamAssumed, getDeviceModules, getDeviceAppProgramId, getDeviceProductRef, getDeviceForFlash, deviceHasApplication, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps, getDeviceComObjOverrides, getDeviceComObjOverrideBase } from "./db/deviceparams.ts";
 import { deviceCompatibility } from "./compatibility.ts";
 import { isUntestedAcknowledged } from "./db/untestedAcks.ts";
 import { projectExists, getGaMeta } from "./db/projects.ts";
@@ -219,18 +219,20 @@ export function classifyOtherLink(cur: OtherDevice, d: OtherDeviceModel, link: {
 // back to the stored .knxproj for projects imported before the catalog existed
 // (and backfilling the catalog so the next read hits the DB). The catalog is
 // keyed by application-program id, so this is shared across devices and projects.
-export function resolveAppXml(state: AppState, projectId: string, appRef: string): string | null {
-  const found = lookupAppXml(state, projectId, appRef);
-  if (found && !found.cached) putAppProgram(state.db, appProgramId(appRef), found.xml);
+export function resolveAppXml(state: AppState, projectId: string, appProgramId: string): string | null {
+  const found = lookupAppXml(state, projectId, appProgramId);
+  if (found && !found.cached) putAppProgram(state.db, appProgramId, found.xml);
   return found?.xml ?? null;
 }
 // The same lookup without backfilling the catalog, for an operation that must not write the database.
-export function lookupAppXml(state: AppState, projectId: string, appRef: string): { xml: string; cached: boolean } | null {
-  const cached = getAppProgram(state.db, appProgramId(appRef));
+// A device without an application program Busforge knows (app_program_id '') has none to look up.
+export function lookupAppXml(state: AppState, projectId: string, appProgramId: string): { xml: string; cached: boolean } | null {
+  if (!appProgramId) return null;
+  const cached = getAppProgram(state.db, appProgramId);
   if (cached) return { xml: cached, cached: true };
   const sourceFile = getSourceFile(state.db, projectId);
   if (!sourceFile || !existsSync(sourceFile)) return null;
-  const xml = readAppProgram(readFileSync(sourceFile), appRef);
+  const xml = extractAppPrograms(readFileSync(sourceFile), [appProgramId]).get(appProgramId);
   return xml ? { xml, cached: false } : null;
 }
 
@@ -247,7 +249,7 @@ export function lookupAppXml(state: AppState, projectId: string, appRef: string)
 // lacks nothing.
 export function importGaps(project: Project, programs: Map<string, string>, withoutApplication: ReadonlySet<string> = new Set()): { devicesWithoutProgram: { ia: string; name: string }[]; unresolvedLinks: number; malformedDevices: number; unresolvedSenders: number; secureDevicesWithoutSerial: number; skippedInstallations: number; unassignedDevices: number; linksWithoutSender: number; staleModuleLinks: number } {
   const devicesWithoutProgram = project.devices
-    .filter((d) => !programs.has(appProgramId(d.appRef)) && !withoutApplication.has(d.appRef))
+    .filter((d) => !programs.has(d.appProgramId) && !withoutApplication.has(d.appRef))
     .map((d) => ({ ia: d.ia, name: d.name }));
   const { unresolvedLinks, malformedDevices, unresolvedSenders, secureDevicesWithoutSerial, skippedInstallations, unassignedDevices, linksWithoutSender, staleModuleLinks } = project;
   return { devicesWithoutProgram, unresolvedLinks, malformedDevices, unresolvedSenders, secureDevicesWithoutSerial, skippedInstallations, unassignedDevices, linksWithoutSender, staleModuleLinks };
@@ -255,12 +257,11 @@ export function importGaps(project: Project, programs: Map<string, string>, with
 
 // Load and cache a device's parsed application program from the catalog.
 export function loadApp(state: AppState, projectId: string, deviceId: string): AppConfig | null {
-  const appRef = getDeviceAppRef(state.db, projectId, deviceId);
-  if (!appRef) return null;
-  const cacheKey = appProgramId(appRef); // catalog is global, immutable once stored
+  const cacheKey = getDeviceAppProgramId(state.db, projectId, deviceId); // catalog is global, immutable once stored
+  if (!cacheKey) return null;
   let app = state.appCache.get(cacheKey);
   if (!app) {
-    const xml = resolveAppXml(state, projectId, appRef);
+    const xml = resolveAppXml(state, projectId, cacheKey);
     if (!xml) return null;
     app = parseAppConfig(xml);
     state.appCache.set(cacheKey, app);
@@ -427,7 +428,7 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
   const assumed = new Set([...getDeviceParamAssumed(db, projectId, deviceId)].filter(([ref, v]) => same(ref, baseline.get(ref) ?? null, v)).map(([ref]) => ref));
   const outside = baseOutsideType(app, baseline);
   const shownParams = new Set<string>();
-  const programId = appProgramId(getDeviceAppRef(db, projectId, deviceId)!);
+  const programId = getDeviceAppProgramId(db, projectId, deviceId)!;
   // A picture gets its url only where the catalogue holds a file the route serves; otherwise the row says
   // the image is not in the catalogue.
   const pictures = catalogBaggageNames(db, programId);
@@ -681,7 +682,7 @@ export function previewDroppedLinks(state: AppState, project: Project, programs:
   return droppedLinkViews(project.droppedLinks, (deviceId) => {
     const d = project.devices.find((x) => x.id === deviceId)!; // the parser lists links of its own devices only
     return {
-      ia: d.ia, name: d.name, app: () => appOf(appProgramId(d.appRef)),
+      ia: d.ia, name: d.name, app: () => appOf(d.appProgramId),
       params: new Map((project.deviceParams.find((p) => p.deviceId === deviceId)?.values ?? []).map((v) => [v.refId, v.value])),
       modules: project.deviceModules.find((m) => m.deviceId === deviceId)?.instances ?? [],
     };

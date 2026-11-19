@@ -18,7 +18,7 @@
 // --prior-busforge-writes the records claim neither transfer nor reference.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadKnxproj, readXml0, readAppProgram, appProgramId, deviceParamValues } from "../packages/project/src/index.ts";
+import { loadKnxproj, readXml0, readAppProgram, deviceParamValues } from "../packages/project/src/index.ts";
 import { parseApplication, buildParameterImage, parseLoadProcedures } from "../packages/product/src/index.ts";
 import { KnxIpTunnel, KnxDevice, assocFormOf, ASSOC_TABLE_DESCRIPTION } from "../packages/knx/src/index.ts";
 import type { EvidenceRecord, Firmware } from "../packages/product/src/index.ts";
@@ -101,7 +101,7 @@ const params: any[] = [], tables: any[] = [];
 const evidence: EvidenceRecord[] = [];
 
 for (const d of proj.devices) {
-  const app = appProgramId(d.appRef);
+  const app = d.appProgramId;
   const dev = new KnxDevice(tun, d.ia);
   try {
     await withTimeout((async () => {
@@ -124,7 +124,7 @@ for (const d of proj.devices) {
           writeFileSync(join(outDir, `${slug}.built.bin`), built);
           writeFileSync(join(outDir, `${slug}.device.bin`), onDevice);
           let diff = 0; for (let i = 0; i < Math.min(built.length, onDevice.length); i++) if (built[i] !== onDevice[i]) diff++;
-          comparison = { ia: d.ia, productRef: d.productRef, hardware2Program: d.appRef, mask, match: built.equals(onDevice), diffBytes: diff, length: built.length, artifact: join(outDir, `${slug}.device.bin`), sha256: sha256(onDevice) };
+          comparison = { ia: d.ia, productRef: d.productRef, appProgramId: app, mask, match: built.equals(onDevice), diffBytes: diff, length: built.length, artifact: join(outDir, `${slug}.device.bin`), sha256: sha256(onDevice) };
           const unmapped = [...values.keys()].filter((k) => !model.refs.has(k)).length;
           params.push({ ia: d.ia, app, len: built.length, deviceLen: onDevice.length, match: built.equals(onDevice), diffBytes: diff, unmappedRefs: unmapped });
           console.log(`${d.ia} ${mask} param ${built.equals(onDevice) ? "BYTE-MATCH" : `diff ${diff}/${built.length}`}${unmapped ? ` (module +${unmapped})` : ""}`);

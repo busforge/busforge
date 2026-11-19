@@ -2,7 +2,7 @@ import { test, expect, describe, afterAll } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readZip, appProgramId } from "@busforge/project";
+import { readZip, readXml0, appProgramId } from "@busforge/project";
 import { createState, handleApi, type AppState } from "../src/app.ts";
 import { exportProject } from "../src/db/exportProject.ts";
 import { importProjectExport, validateExport } from "../src/db/importProject.ts";
@@ -17,7 +17,9 @@ import { corpusTest } from "../../../tools/corpus-test.ts";
 // schema allows two ApplicationProgramRefs). No full download of Busforge loads a PEI program, the System B
 // one unloads it first (rule R9), so the import records the hardware's PEI program and the full download
 // is refused before anything is queued. No product of the private corpus has one: the hardware here is
-// synthetic, laid over the public sample project, its device keeping its own Hardware2Program id.
+// synthetic, laid over the public sample project. Its Hardware2Program id takes the form such hardware has,
+// carrying both programs' parts, so it names neither: the application is found from the
+// ApplicationProgramRef whose program declares ProgramType="ApplicationProgram".
 
 const sample = readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures", "sample-config.knxproj"));
 const PASSWORD = "tester12";
@@ -36,7 +38,7 @@ async function call(state: AppState, path: string, init?: RequestInit): Promise<
   return { status: r.status, body: text ? JSON.parse(text) : null };
 }
 const json = (method: string, body: unknown): RequestInit => ({ method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-async function imported(state: AppState, bytes: Buffer): Promise<{ projectId: string; device: { id: string; appRef: string; productRef: string } }> {
+async function imported(state: AppState, bytes: Buffer): Promise<{ projectId: string; device: { id: string; appRef: string; appProgramId: string; productRef: string } }> {
   const form = new FormData();
   form.set("file", new File([bytes], "Sample.knxproj"));
   form.set("password", PASSWORD);
@@ -45,30 +47,55 @@ async function imported(state: AppState, bytes: Buffer): Promise<{ projectId: st
   const project = await call(state, `/api/projects/${r.body.id}`);
   return { projectId: r.body.id, device: project.body.devices[0] };
 }
-// The sample with a Hardware.xml for its device's product, its Hardware2Program naming `programs`.
-function withHardware(appRef: string, productRef: string, programs: string[]): Buffer {
-  const manufacturer = appRef.split("_")[0];
+// The sample's application, its PEI program, and the Hardware2Program ids of its hardware with one program
+// and with both.
+const APP = "M-TEST_A-1";
+const PEI = "M-TEST_A-PEI-1";
+const ONE = "M-TEST_H-1_HP-1";
+const TWO = "M-TEST_H-1_HP-1-PEI-1";
+const PRODUCT = "M-TEST_H-1_P-1";
+// The sample with a Hardware.xml for its device's product, the device on the Hardware2Program naming
+// `programs` of [APP, PEI], and both programs declaring their ProgramType. The inner archive is stored
+// unencrypted (the import then needs no password).
+function withHardware(programs: number): Buffer {
+  const appRef = programs === 2 ? TWO : ONE;
+  const outer = readZip(sample);
   const hardware = `<?xml version="1.0" encoding="utf-8"?>
-<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="${manufacturer}"><Hardware>
-  <Hardware Id="${appRef.split("_HP-")[0]}" Name="Two programs" VersionNumber="1" HasIndividualAddress="true" HasApplicationProgram="true">
-    <Products><Product Id="${productRef}" Text="Two-application unit" OrderNumber="TWO-1"/></Products>
-    <Hardware2Programs><Hardware2Program Id="${appRef}" MediumTypes="MT-0">${programs.map((p) => `<ApplicationProgramRef RefId="${p}"/>`).join("")}</Hardware2Program></Hardware2Programs>
+<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-TEST"><Hardware>
+  <Hardware Id="M-TEST_H-1" Name="Two programs" VersionNumber="1" HasIndividualAddress="true" HasApplicationProgram="true">
+    <Products><Product Id="${PRODUCT}" Text="Two-application unit" OrderNumber="TWO-1"/></Products>
+    <Hardware2Programs><Hardware2Program Id="${appRef}" MediumTypes="MT-0">${[APP, PEI].slice(0, programs).map((p) => `<ApplicationProgramRef RefId="${p}"/>`).join("")}</Hardware2Program></Hardware2Programs>
   </Hardware>
 </Hardware></Manufacturer></ManufacturerData></KNX>`;
-  return storeZip({ ...Object.fromEntries(readZip(sample)), [`${manufacturer}/Hardware.xml`]: hardware });
+  const app = outer.get(`M-TEST/${APP}.xml`)!.toString("utf8");
+  const typed = app.replace(`<ApplicationProgram Id="${APP}"`, `<ApplicationProgram Id="${APP}" ProgramType="ApplicationProgram"`);
+  const pei = typed.replaceAll(APP, PEI).replace('ProgramType="ApplicationProgram"', 'ProgramType="PeiProgram"');
+  const xml0 = readXml0(sample, PASSWORD).replace(`Hardware2ProgramRefId="${ONE}"`, `Hardware2ProgramRefId="${appRef}"`);
+  expect([typed, pei, xml0]).not.toContain(app);
+  return storeZip({
+    ...Object.fromEntries(outer), "P-CFG.zip": storeZip({ "0.xml": xml0 }),
+    "M-TEST/Hardware.xml": hardware, [`M-TEST/${APP}.xml`]: typed, [`M-TEST/${PEI}.xml`]: pei,
+  });
 }
 const peiColumn = (state: AppState, deviceId: string) =>
   (state.db.query("SELECT pei_program AS p FROM devices WHERE instance_id = ?").get(deviceId) as { p: number }).p;
 
-// The sample imported once without a Hardware.xml, for its device's ids; then with the hardware.
 async function pei(state: AppState, programs = 2) {
-  const probe = await imported(fresh(), sample);
-  const { appRef, productRef } = probe.device;
-  const refs = [appProgramId(appRef), `${appRef.split("_")[0]}_A-PEI-1-0000`].slice(0, programs);
-  return { ...(await imported(state, withHardware(appRef, productRef, refs))), appRef, productRef };
+  return { ...(await imported(state, withHardware(programs))), appRef: programs === 2 ? TWO : ONE, productRef: PRODUCT };
 }
 
 describe("hardware that carries a PEI program", () => {
+  test("the device runs the application its Hardware2Program names, not the program the id's form would name", async () => {
+    const state = fresh();
+    const { projectId, device } = await pei(state);
+    expect(device).toMatchObject({ appRef: TWO, appProgramId: APP });
+    expect(appProgramId(TWO)).not.toBe(APP);
+    expect((await call(state, `/api/projects/${projectId}/devices/${encodeURIComponent(device.id)}/config`)).status).toBe(200);
+    expect(getCatalogProduct(state.db, TWO, PRODUCT)).toMatchObject({ appProgramId: APP, peiProgram: true });
+    // The PEI program is no application of the device: the catalogue keeps the application only.
+    expect(state.db.query("SELECT id FROM app_programs ORDER BY id").all()).toEqual([{ id: APP }]);
+  });
+
   test("the import records it from the Hardware2Program, and only where it names a second program", async () => {
     const state = fresh();
     const two = await pei(state);
@@ -154,7 +181,7 @@ describe("hardware that carries a PEI program, with a System B application that 
   const mix2 = () => catalogueXml("M-0085_A-0072-30-69AA.xml.gz");
   async function withApp(state: AppState, programs: number, xml = mix2()) {
     const r = await pei(state, programs);
-    state.db.run("UPDATE app_programs SET xml = ? WHERE id = ?", [xml, appProgramId(r.appRef)]);
+    state.db.run("UPDATE app_programs SET xml = ? WHERE id = ?", [xml, APP]);
     return r;
   }
   const connect = async (state: AppState, projectId: string) => {

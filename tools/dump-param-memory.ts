@@ -18,7 +18,6 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { resolveDataDir } from "../apps/server/src/app.ts";
 import { parseAppConfig, toAppModel } from "../packages/product/src/index.ts";
-import { appProgramId } from "../packages/project/src/index.ts";
 import { KnxIpTunnel, KnxDevice } from "../packages/knx/src/index.ts";
 import { openServerDb, pickProject, refusing, takeProjectFlag } from "./serverdb.ts";
 
@@ -37,7 +36,7 @@ const PER_DEVICE_TIMEOUT_MS = 120_000;
 const withTimeout = <T>(p: Promise<T>): Promise<T> =>
   Promise.race([p, new Promise<T>((_, r) => setTimeout(() => r(new Error(`timeout ${PER_DEVICE_TIMEOUT_MS / 1000}s`)), PER_DEVICE_TIMEOUT_MS))]);
 
-const devices = db.query("SELECT ia, app_ref FROM devices WHERE project_id=? ORDER BY ia").all(projectId) as any[];
+const devices = db.query("SELECT ia, app_program_id FROM devices WHERE project_id=? ORDER BY ia").all(projectId) as any[];
 
 const tun = new KnxIpTunnel(ip);
 await tun.connect();
@@ -45,7 +44,7 @@ console.log(`tunnel ${ip} up; ${devices.length} devices`);
 const manifest: any[] = [];
 
 for (const d of devices) {
-  const appId = appProgramId(d.app_ref);
+  const appId = d.app_program_id;
   const row = db.query("SELECT xml FROM app_programs WHERE id=?").get(appId) as any;
   if (!row) { console.log(`${d.ia} no app xml (${appId})`); continue; }
   const app = parseAppConfig(row.xml);

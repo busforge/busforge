@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { loadKnxproj, extractAppPrograms, extractCatalogProducts, extractPictureBaggage, type CatalogProduct } from "@busforge/project";
-import { insertProject, createProject, listProjects, getProject, deleteProject, renameProject, projectExists, setProjectConnection, countSpacesByType, listDeviceAppRefs, importSourceOf, setProjectSource } from "../db/projects.ts";
+import { insertProject, createProject, listProjects, getProject, deleteProject, renameProject, projectExists, setProjectConnection, countSpacesByType, listDeviceAppProgramIds, importSourceOf, setProjectSource } from "../db/projects.ts";
 import { getConnection } from "../db/connections.ts";
 import { listSnapshots, createSnapshot, restoreSnapshot, deleteSnapshot } from "../db/snapshots.ts";
 import { putAppProgram, putCatalogProduct, putCatalogBaggage, gcAppPrograms } from "../db/catalog.ts";
@@ -53,7 +53,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const project = loadKnxproj(bytes, password, name);
     // Extract the referenced application programs up front (pure, reads the zip),
     // so a bad archive fails before anything is written to disk or the DB.
-    const programs = extractAppPrograms(bytes, project.devices.map((d) => d.appRef));
+    const programs = extractAppPrograms(bytes, project.devices.map((d) => d.appProgramId));
     // Catalog product metadata for browsing/placing devices later. Keep only the
     // products whose program we actually stored, so every catalog entry is placeable,
     // and the products that carry no application program at all.
@@ -126,7 +126,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
       const project = loadKnxproj(bytes, password, name);
       // Run the same program/link resolution the real import does, so the preview's
       // gaps match what import will actually produce (no clean-looking false promise).
-      const programs = extractAppPrograms(bytes, project.devices.map((d) => d.appRef));
+      const programs = extractAppPrograms(bytes, project.devices.map((d) => d.appProgramId));
       const { baggageUnreadable } = readCheckedBaggage(bytes, password);
       // Each com-object behind the link counts, for the preview to list (`lang`: the catalogue texts' language).
       const droppedLinks = previewDroppedLinks(state, project, programs, text(form.get("lang")) || undefined);
@@ -220,7 +220,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // its from the file) so the export carries what it can. A husk device (or a legacy
     // project whose source file is gone) still exports WITHOUT its program; that loss is
     // not hidden: analyze/import-busforge report it as devicesWithoutProgram on re-import.
-    for (const appRef of listDeviceAppRefs(db, id)) resolveAppXml(state, id, appRef);
+    for (const pid of listDeviceAppProgramIds(db, id)) resolveAppXml(state, id, pid);
     const data = exportProject(db, id, state.now(), state.masterKey);
     if (!data) return err("PROJECT_NOT_FOUND", "project not found", 404);
     const safe = data.project.name.replace(/[^\w.-]+/g, "_") || "project";

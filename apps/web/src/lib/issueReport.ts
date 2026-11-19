@@ -41,13 +41,7 @@ export interface ReportSubject {
 }
 
 // The device fields a report is built from. Device names, addresses and rooms are not among them.
-export type ReportDevice = { productRef: string; appRef: string; manufacturer: number };
-
-// "M-0083_H-…_HP-00B6-32-9642" -> "M-0083_A-00B6-32-9642", as @busforge/project's appProgramId.
-export const appProgramIdOf = (appRef: string) => {
-  const hp = appRef.split("_HP-")[1];
-  return hp ? `${appRef.split("_")[0]}_A-${hp}` : appRef;
-};
+export type ReportDevice = { productRef: string; appRef: string; appProgramId: string; manufacturer: number };
 
 // What a report says about a device. From the catalogue only the order number, and only when the
 // catalogue has one: the backfill of db/catalog.ts writes the user's device name as product text and
@@ -64,7 +58,7 @@ export function subjectOf(
     manufacturerName: manufacturers?.find((m) => m.id === mid)?.name,
     orderNumber: product?.orderNumber || orderOf(device.productRef),
     productRef: device.productRef,
-    appProgramId: appProgramIdOf(device.appRef),
+    appProgramId: device.appProgramId,
   };
 }
 

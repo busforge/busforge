@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { parseProject } from "@busforge/project";
-import { openDb, SCHEMA_VERSION } from "../src/db/schema.ts";
+import { openDb, SCHEMA_VERSION, MIGRATIONS } from "../src/db/schema.ts";
 import { insertProject, listProjects, getProject, deleteProject, setProjectConnection, getProjectConnection } from "../src/db/projects.ts";
 import { listConnections, getConnection, createConnection, updateConnection, deleteConnection, type ConnectionInput } from "../src/db/connections.ts";
 import { insertTelegram, recentTelegrams, pruneTelegrams } from "../src/db/telegrams.ts";
@@ -32,6 +32,20 @@ afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true 
 const tempDir = (prefix: string) => { const dir = mkdtempSync(join(tmpdir(), prefix)); tmps.push(dir); return dir; };
 
 describe("schema/migrations", () => {
+  test("a device row stored before its program id was kept takes the program its Hardware2Program id names", () => {
+    const db = openDb(":memory:");
+    createProject(db, "p", "P", 1);
+    const refs = ["M-0048_H-4930240-2_HP-493B-21-B471", "M-0083_H-1_HP-0138-21-F18E-O0072", "M-TEST_H-1_HP-1", "M-0048_H-1_HP-", "M-0048_H-1_HP-1_HP-2", "_HP-1", "M-0009_H-1_HP", "noHP", ""];
+    const ins = db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, has_application) VALUES ('p', ?, ?, '', '', ?, 0, ?)");
+    refs.forEach((r, i) => ins.run(`d${i}`, `1.1.${i}`, r, 1));
+    ins.run("without", "1.1.99", "M-0009_H-1_HP-1", 0);
+    db.exec("ALTER TABLE devices DROP COLUMN app_program_id");
+    db.exec(MIGRATIONS.find((m) => m.includes("ADD COLUMN app_program_id"))!);
+    const got = db.query("SELECT app_ref AS r, app_program_id AS id FROM devices ORDER BY ia").all() as { r: string; id: string }[];
+    expect(got).toEqual([...refs.map((r) => ({ r, id: appProgramId(r) })), { r: "M-0009_H-1_HP-1", id: "" }]);
+    db.close();
+  });
+
   test("openDb is idempotent and sets user_version", () => {
     const db = fresh();
     const v = (db.query("PRAGMA user_version").get() as { user_version: number }).user_version;
@@ -150,7 +164,7 @@ describe("projects", () => {
     const { deviceComObjOverrides: _, ...without } = data;
     expect(() => validateExport(without)).toThrow(expect.objectContaining({ code: "BUSFORGE_INVALID" }));
     expect(() => validateExport({ ...data, deviceComObjOverrides: [{ deviceId: "d", seq: 0, comObjRefId: "r", attrs: { ReadFlag: 1 } }] })).toThrow(expect.objectContaining({ code: "BUSFORGE_INVALID" }));
-    replaceDeviceProduct(db, "p1", dev.deviceId, { productRef: "M-1_H-1_HP-1", appRef: "M-1_A-1-1-0", manufacturer: 1 } as Parameters<typeof replaceDeviceProduct>[3], new Map());
+    replaceDeviceProduct(db, "p1", dev.deviceId, { productRef: "M-1_H-1_HP-1", appRef: "M-1_A-1-1-0", appProgramId: "M-1_A-1-1-0", manufacturer: 1 } as Parameters<typeof replaceDeviceProduct>[3], new Map());
     expect(getDeviceComObjOverrides(db, "p1", dev.deviceId)).toEqual([]);
   });
 
@@ -161,7 +175,7 @@ describe("projects", () => {
     insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     const dev = getProject(db, "p1")!.devices[0];
     expect(getDeviceForFlash(db, "p1", dev.id)!.configFromEts).toBe(true);
-    db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer) VALUES ('p1','placed','1.1.99','Placed','M-9_P-1','M-9_H-1_HP-1',9)").run();
+    db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, app_program_id, manufacturer) VALUES ('p1','placed','1.1.99','Placed','M-9_P-1','M-9_H-1_HP-1','M-9_A-1',9)").run();
     expect(getDeviceForFlash(db, "p1", "placed")!.configFromEts).toBe(false);
     addMemorylessAssumed(db, "p1", "placed", [{ refId: "M-9_A-1_P-1_R-1", value: "1" }, { refId: "M-9_A-1_P-1_R-1", value: "2" }, { refId: "M-9_A-1_P-2_R-2", value: null }]);
     const MK = Buffer.alloc(32, 7);
@@ -175,8 +189,8 @@ describe("projects", () => {
     importProjectExport(db, data, "p2", 6, MK);
     expect([getDeviceForFlash(db, "p2", dev.id)!.configFromEts, getDeviceForFlash(db, "p2", "placed")!.configFromEts]).toEqual([true, false]);
     expect([...getMemorylessAssumed(db, "p2", "placed")]).toEqual([["M-9_A-1_P-1_R-1", "2"], ["M-9_A-1_P-2_R-2", null]]);
-    replaceDeviceProduct(db, "p1", dev.id, { productRef: "M-1_H-1_HP-1", appRef: "M-1_A-1-1-0", manufacturer: 1 } as Parameters<typeof replaceDeviceProduct>[3], new Map());
-    replaceDeviceProduct(db, "p1", "placed", { productRef: "M-1_H-1_HP-1", appRef: "M-1_A-1-1-0", manufacturer: 1 } as Parameters<typeof replaceDeviceProduct>[3], new Map());
+    replaceDeviceProduct(db, "p1", dev.id, { productRef: "M-1_H-1_HP-1", appRef: "M-1_A-1-1-0", appProgramId: "M-1_A-1-1-0", manufacturer: 1 } as Parameters<typeof replaceDeviceProduct>[3], new Map());
+    replaceDeviceProduct(db, "p1", "placed", { productRef: "M-1_H-1_HP-1", appRef: "M-1_A-1-1-0", appProgramId: "M-1_A-1-1-0", manufacturer: 1 } as Parameters<typeof replaceDeviceProduct>[3], new Map());
     expect([getDeviceForFlash(db, "p1", dev.id)!.configFromEts, getMemorylessAssumed(db, "p1", "placed").size]).toEqual([false, 0]);
   });
 
@@ -221,7 +235,7 @@ describe("projects", () => {
     expect(getDeviceComObjOverrideBase(db, "p2", dev.deviceId)).toEqual(submitted);
     const { deviceComObjOverrideBase: _, ...without } = data;
     expect(() => validateExport(without)).toThrow(expect.objectContaining({ code: "BUSFORGE_INVALID" }));
-    replaceDeviceProduct(db, "p1", dev.deviceId, { productRef: "M-1_H-1_HP-1", appRef: "M-1_A-1-1-0", manufacturer: 1 } as Parameters<typeof replaceDeviceProduct>[3], new Map());
+    replaceDeviceProduct(db, "p1", dev.deviceId, { productRef: "M-1_H-1_HP-1", appRef: "M-1_A-1-1-0", appProgramId: "M-1_A-1-1-0", manufacturer: 1 } as Parameters<typeof replaceDeviceProduct>[3], new Map());
     expect(getDeviceComObjOverrideBase(db, "p1", dev.deviceId)).toEqual([]);
   });
 
@@ -381,7 +395,7 @@ describe("projects", () => {
     clearNeverProgrammed(db, "p1", "P-TEST-0_DI-1");
     expect(changes("p1")["P-TEST-0_DI-1"]).toEqual({ params: 0, links: 0, flags: 0, neverProgrammed: false });
     // A product replacement makes the device never programmed again, with nothing ETS downloaded to name.
-    const product = { productRef: "M-0048_H-1_P-1", appRef: "M-0048_H-1_HP-1", manufacturer: 0x48 } as Parameters<typeof replaceDeviceProduct>[3];
+    const product = { productRef: "M-0048_H-1_P-1", appRef: "M-0048_H-1_HP-1", appProgramId: "M-0048_A-1", manufacturer: 0x48 } as Parameters<typeof replaceDeviceProduct>[3];
     replaceDeviceProduct(db, "p2", "P-TEST-0_DI-1", product, new Map());
     expect(changes("p2")["P-TEST-0_DI-1"]).not.toHaveProperty("etsNotDownloaded");
     expect(changes("p2")["P-TEST-0_DI-1"].neverProgrammed).toBe(true);
@@ -899,8 +913,8 @@ describe("catalog (products + placement)", () => {
     const db = fresh();
     createProject(db, "p1", "Blank", 1000);
     // Two device rows; only one has a stored program.
-    db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer) VALUES ('p1','d1','1.1.1','Switch','M-9_P-1','M-9_H-1_HP-1',9)").run();
-    db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer) VALUES ('p1','d2','1.1.2','Dim','M-9_P-2','M-9_H-2_HP-2',9)").run();
+    db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, app_program_id, manufacturer) VALUES ('p1','d1','1.1.1','Switch','M-9_P-1','M-9_H-1_HP-1','M-9_A-1',9)").run();
+    db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, app_program_id, manufacturer) VALUES ('p1','d2','1.1.2','Dim','M-9_P-2','M-9_H-2_HP-2','M-9_A-2',9)").run();
     putAppProgram(db, "M-9_A-1", "<ApplicationProgram/>"); // only HP-1's program
 
     expect(backfillCatalogFromDevices(db)).toBe(1);
@@ -910,13 +924,26 @@ describe("catalog (products + placement)", () => {
     expect(backfillCatalogFromDevices(db)).toBe(0); // idempotent
   });
 
+  test("backfill places a product by the program the catalog holds, where its devices name different ones", () => {
+    const db = fresh();
+    createProject(db, "p1", "Blank", 1000);
+    // Two-program hardware: one row holds the program its Hardware2Program id names (no such program),
+    // the other the application resolved from the Hardware2Program, whichever sorts higher.
+    const ins = db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, app_program_id, manufacturer) VALUES ('p1', ?, ?, '', 'M-9_P-1', 'M-9_H-1_HP-1-2', ?, 9)");
+    ins.run("old", "1.1.1", "M-9_A-1-2");
+    ins.run("new", "1.1.2", "M-9_A-1");
+    putAppProgram(db, "M-9_A-1", "<ApplicationProgram/>");
+    expect(backfillCatalogFromDevices(db)).toBe(1);
+    expect(listCatalogProducts(db)).toEqual([expect.objectContaining({ appRef: "M-9_H-1_HP-1-2", appProgramId: "M-9_A-1" })]);
+  });
+
   // The device's name is the installer's ("Kitchen light"), never the product's. Without the
   // Hardware data only the application program names the product, in the manufacturer's words.
   test("backfill names a product by its application program, never by a device's name", () => {
     const db = fresh();
     createProject(db, "p1", "Blank", 1000);
-    db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer) VALUES ('p1','d1','1.1.1','Kitchen light','M-9_P-1','M-9_H-1_HP-1',9)").run();
-    db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer) VALUES ('p1','d2','1.1.2','Hall dimmer','M-9_P-2','M-9_H-2_HP-2',9)").run();
+    db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, app_program_id, manufacturer) VALUES ('p1','d1','1.1.1','Kitchen light','M-9_P-1','M-9_H-1_HP-1','M-9_A-1',9)").run();
+    db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, app_program_id, manufacturer) VALUES ('p1','d2','1.1.2','Hall dimmer','M-9_P-2','M-9_H-2_HP-2','M-9_A-2',9)").run();
     putAppProgram(db, "M-9_A-1", `<KNX><ManufacturerData><Manufacturer RefId="M-9"><ApplicationPrograms><ApplicationProgram Id="M-9_A-1" Name="Switch actuator 4-fold"/></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`);
     putAppProgram(db, "M-9_A-2", "<ApplicationProgram/>");
 
@@ -929,8 +956,8 @@ describe("catalog (products + placement)", () => {
   test("backfill lists a product whose program does not parse without a name, and the others with theirs", () => {
     const db = fresh();
     createProject(db, "p1", "Blank", 1000);
-    db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer) VALUES ('p1','d1','1.1.1','A','M-9_P-1','M-9_H-1_HP-1',9)").run();
-    db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer) VALUES ('p1','d2','1.1.2','B','M-9_P-2','M-9_H-2_HP-2',9)").run();
+    db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, app_program_id, manufacturer) VALUES ('p1','d1','1.1.1','A','M-9_P-1','M-9_H-1_HP-1','M-9_A-1',9)").run();
+    db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, app_program_id, manufacturer) VALUES ('p1','d2','1.1.2','B','M-9_P-2','M-9_H-2_HP-2','M-9_A-2',9)").run();
     putAppProgram(db, "M-9_A-1", `<KNX><ManufacturerData><Manufacturer RefId="M-9"><ApplicationPrograms><ApplicationProgram Id="M-9_A-1" Name="Broken">`);
     putAppProgram(db, "M-9_A-2", `<KNX><ManufacturerData><Manufacturer RefId="M-9"><ApplicationPrograms><ApplicationProgram Id="M-9_A-2" Name="Dimmer"/></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`);
     expect(backfillCatalogFromDevices(db)).toBe(2);
@@ -1358,7 +1385,7 @@ describe("parameter values assumed, not proven", () => {
     // A carried application that does not parse is a malformed artifact, refused with its code.
     const malformed = { ...data, deviceParamAssumed: [{ deviceId: dev, paramRefId: HELD, value: null }], catalog: { ...data.catalog, [APP]: "<KNX><ApplicationProgram" } };
     expect(() => validateExport(malformed)).toThrow(expect.objectContaining({ code: "BUSFORGE_INVALID", status: 400, message: expect.stringContaining("does not parse") }));
-    replaceDeviceProduct(db, "p1", dev, { productRef: "M-1_H-1_HP-1", appRef: "M-1_A-1-1-0", manufacturer: 1 } as Parameters<typeof replaceDeviceProduct>[3], new Map());
+    replaceDeviceProduct(db, "p1", dev, { productRef: "M-1_H-1_HP-1", appRef: "M-1_A-1-1-0", appProgramId: "M-1_A-1-1-0", manufacturer: 1 } as Parameters<typeof replaceDeviceProduct>[3], new Map());
     expect(getDeviceParamAssumed(db, "p1", dev)).toEqual(new Map());
   });
 });

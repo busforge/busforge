@@ -144,7 +144,8 @@ test("metadata alone always fits; a value too long for the link is left out, nev
 });
 
 test("a device's report subject takes only the order number from the catalogue, never its product text", () => {
-  const device = { productRef: subject.productRef, appRef: "M-0083_H-0123-01_HP-00B6-32-9642", manufacturer: 0x83 };
+  // The device's own application program, not what its Hardware2Program id's form names.
+  const device = { productRef: subject.productRef, appRef: "M-0083_H-0123-01_HP-00B6-32-9642-00B7-01-0000", appProgramId: "M-0083_A-00B6-32-9642", manufacturer: 0x83 };
   const manufacturers = [{ id: "M-0083", name: "MDT technologies" }];
   // A row backfilled from a project's devices: the user's device name as product text, no order number.
   const backfilled = [{ ...device, name: "Kitchen dimmer", orderNumber: "" }];

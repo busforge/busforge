@@ -53,8 +53,13 @@ export const manufacturerOf = (ref: string): number => {
   return m ? parseInt(m[1], 16) : 0;
 };
 
-// Hardware2ProgramRefId -> ApplicationProgram id.
-// "M-0048_H-4930240-2_HP-493B-21-B471" -> "M-0048_A-493B-21-B471".
+// The ApplicationProgram id the form of a Hardware2Program id names:
+// "M-0048_H-4930240-2_HP-493B-21-B471" -> "M-0048_A-493B-21-B471". That is the application only where the
+// hardware runs one program: the id of two-program hardware carries both ("_HP-7002-01-0000-7003-02-0000")
+// and so names none. The application is read from the Hardware2Program's ApplicationProgramRefs
+// (knxproj.ts, hardwareApplications); this form stands in only for a Hardware2Program no Hardware.xml at
+// hand describes. A program of that id the archive does not carry leaves the device without its
+// application, listed as an import gap.
 export function appProgramId(appRef: string): string {
   const manufacturer = appRef.split("_")[0];
   const hp = appRef.split("_HP-")[1];
@@ -64,7 +69,10 @@ export function appProgramId(appRef: string): string {
 // An xs:boolean attribute: "true" or "1" (ETS 4 writes the digits, later versions the words).
 const xsBool = (v: unknown): boolean => { const t = text(v); return t === "true" || t === "1"; };
 
-export function parseProject(xml0: string, projectXml: string | undefined, fallbackName: string, productNames: Map<string, string> = new Map(), busInterfaceIndex: ReadonlyMap<string, number> = new Map(), productTranslations: ReadonlyMap<string, string[]> = new Map()): Project {
+// `applications`: the application program of each Hardware2Program the archive's Hardware.xml describes
+// ("" where it names none, or none Busforge can tell apart from a PEI program); a device whose
+// Hardware2Program it lacks takes the program its id names (appProgramId).
+export function parseProject(xml0: string, projectXml: string | undefined, fallbackName: string, productNames: Map<string, string> = new Map(), busInterfaceIndex: ReadonlyMap<string, number> = new Map(), productTranslations: ReadonlyMap<string, string[]> = new Map(), applications: ReadonlyMap<string, string> = new Map()): Project {
   const p = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", isArray: () => false });
   const doc = p.parse(xml0) as XmlNode;
 
@@ -79,7 +87,7 @@ export function parseProject(xml0: string, projectXml: string | undefined, fallb
   // style come from it (falling back to the 0.xml Installation).
   const projectInfo = projectXml ? firstByKey(p.parse(projectXml), "ProjectInformation") : undefined;
   const groupAddressLevels = parseGroupAddressLevels(projectInfo, installation);
-  const { topology, malformedDevices } = parseTopology(installation?.Topology, productNames);
+  const { topology, malformedDevices } = parseTopology(installation?.Topology, productNames, applications);
   const unassignedDevices = kids(node(node(installation?.Topology)?.UnassignedDevices)?.DeviceInstance).length;
   // ETS 4 keeps the building structure in <Buildings>, as <BuildingPart>s; later versions in <Locations>, as <Space>s.
   const locations = installation?.Locations !== undefined ? parseLocations(installation.Locations, "Space") : parseLocations(installation?.Buildings, "BuildingPart");
@@ -242,7 +250,7 @@ export const stripAppPrefix = (appId: string, id: string): string => (id.startsW
 // A ComObjectInstanceRef's RefId as the key the project stores: without the application program's
 // prefix. ETS 5.7 and later write it so ("O-40_R-1433"); ETS 4 and ETS 5 before 5.7 prefix it with the
 // program id ("M-0083_A-0013-11-A9D6_O-0_R-10000").
-const comObjKey = (d: Pick<Device, "appRef">, refId: string): string => stripAppPrefix(appProgramId(d.appRef), refId);
+const comObjKey = (d: Pick<Device, "appProgramId">, refId: string): string => (d.appProgramId ? stripAppPrefix(d.appProgramId, refId) : refId);
 
 // The group-address ids a ComObjectInstanceRef links, the sending one first. ETS 5.7 and later
 // write them in the Links attribute ("GA-1 GA-3", the first is the address the object sends on);
@@ -402,7 +410,7 @@ function parseName(projectInfo: XmlNode | undefined, installation: XmlNode | und
   return attr(projectInfo?.Name) || attr(installation?.Name) || fallbackName;
 }
 
-function parseTopology(topo: unknown, productNames: Map<string, string>): { topology: Topology; malformedDevices: number } {
+function parseTopology(topo: unknown, productNames: Map<string, string>, applications: ReadonlyMap<string, string>): { topology: Topology; malformedDevices: number } {
   const areas: TopologyArea[] = [];
   let malformedDevices = 0;
   for (const area of kids(node(topo)?.Area)) {
@@ -420,6 +428,7 @@ function parseTopology(topo: unknown, productNames: Map<string, string>): { topo
         // rather than guess a default (see the no-silent-skip rule); the count is surfaced
         // to the user alongside unresolvedLinks.
         if (!id || ia.includes("NaN")) { malformedDevices++; continue; }
+        const appRef = text(d.Hardware2ProgramRefId);
         devices.push({
           id,
           ia,
@@ -427,7 +436,8 @@ function parseTopology(topo: unknown, productNames: Map<string, string>): { topo
           // user-given instance name.
           name: attr(d.Name) || productNames.get(text(d.ProductRefId)) || "",
           productRef: text(d.ProductRefId),
-          appRef: text(d.Hardware2ProgramRefId),
+          appRef,
+          appProgramId: applications.get(appRef) ?? appProgramId(appRef),
           manufacturer: manufacturerOf(text(d.ProductRefId)),
           comment: [d.Comment, d.Description].map((x) => text(x).trim()).filter(Boolean).join(" "),
           etsLoaded: {

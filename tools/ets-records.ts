@@ -67,7 +67,10 @@ function recordProject(path: string, password: string | undefined, apps: Record<
     const rec: DeviceRecord = { ia: d.ia, appRef: d.appRef, etsLoaded: d.etsLoaded, declaresLoadImageProp: d.appRef ? declares.get(d.appRef)! : false };
     if (d.etsLoadedImage === undefined && d.etsCheckSums === undefined) return rec;
     if (d.etsLoadedImage === undefined || d.etsCheckSums === undefined) throw new Error(`${path}: ${d.ia} carries one of LoadedImage and CheckSums without the other`);
+    // A record names its device's application by the Hardware2Program id (DeviceRecord.appRef), which
+    // names the application on one-program hardware only.
     const id = appProgramId(d.appRef);
+    if (d.appProgramId !== id) throw new Error(`${path}: ${d.ia} runs ${d.appProgramId || "no application Busforge can tell"}, which its Hardware2Program id ${d.appRef} does not name; a record keys the application by that id, so it cannot record this device`);
     if (!catalogue.has(`${id}.xml.gz`) && !apps[id]) {
       const xml = readAppProgram(bytes, d.appRef);
       if (xml === null) throw new Error(`${path}: ${d.ia} has a download record, but the project does not carry ${id}`);

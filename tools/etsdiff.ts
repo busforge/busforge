@@ -484,7 +484,7 @@ async function main(): Promise<number> {
       if (partial && n === 0 && !idx.some(gap)) return [];
       return [etsdiffEvidence(
         {
-          ia: subject.ia, productRef: subject.productRef, hardware2Program: subject.appRef, mask: cfg.mask, configuration: subject.configuration,
+          ia: subject.ia, productRef: subject.productRef, appProgramId: cfg.id, mask: cfg.mask, configuration: subject.configuration,
           compared: n, divergent: rs.reduce((k, r) => k + r.divergences.length, 0),
           etsOutside: rs.reduce((k, r) => k + r.etsOnly.length, 0) + diff.unattributed.length,
           busforgeOnly: rs.reduce((k, r) => k + r.busforgeOnly.length, 0),

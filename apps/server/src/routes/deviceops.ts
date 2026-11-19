@@ -7,7 +7,7 @@ import { createSnapshot, listSnapshots } from "../db/snapshots.ts";
 import { getDeviceLinks, getDeviceParams, getDeviceParamBase, getDeviceModules, getDeviceForFlash, deviceHasApplication, replaceParamBase, replaceLinkBase, resetParamBase, resetLinkBase, setLinkBaseGaps, getLinkBaseGaps, keepLinkBaseOnly, clearNeverProgrammed, getDeviceKnxIp, getImageStamps, setImageStamps, setDeviceParam, deleteDeviceParam, getDeviceComObjOverrides, getDeviceComObjOverrideBase, resetComObjOverrideBase, markParamAssumed, clearParamAssumed, getMemorylessAssumed, addMemorylessAssumed } from "../db/deviceparams.ts";
 import { acknowledgeUntested } from "../db/untestedAcks.ts";
 import { getAppProgram } from "../db/catalog.ts";
-import { appProgramId, appProgramMask } from "@busforge/project";
+import { appProgramMask } from "@busforge/project";
 import { getDeviceSecurity, putDeviceSecurity, setDeviceSequence, setToolKeySource } from "../db/deviceSecurity.ts";
 import { getDeviceCertificate, putDeviceCertificate } from "../db/deviceCertificates.ts";
 import { getGroupKeys } from "../db/groupKeys.ts";
@@ -86,7 +86,7 @@ function busOpPreamble(state: AppState, projectId: string, deviceId: string): { 
   if (!dev) throw new ApiError("DEVICE_NOT_FOUND", "device not found", 404);
   const conn = getProjectConnection(state.db, projectId);
   if (!isConnectionReady(conn)) throw new ApiError("INTERFACE_NOT_SET", "configure a bus connection first");
-  const appXml = resolveAppXml(state, projectId, dev.appRef);
+  const appXml = resolveAppXml(state, projectId, dev.appProgramId);
   if (!appXml) throw missingApplication(state.db, projectId, deviceId);
   return { dev, conn, appXml };
 }
@@ -312,8 +312,8 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const conn = getProjectConnection(db, id);
     if (!isConnectionReady(conn)) return err("INTERFACE_NOT_SET", "configure a bus connection first");
     // The mask only, never a parse of the application: an assignment does not depend on its content.
-    const programXml = getAppProgram(db, appProgramId(dev.appRef));
-    const projectMask = programXml ? appProgramMask(programXml, appProgramId(dev.appRef)) || undefined : undefined;
+    const programXml = dev.appProgramId ? getAppProgram(db, dev.appProgramId) : null;
+    const projectMask = programXml ? appProgramMask(programXml, dev.appProgramId) || undefined : undefined;
     const task = state.queue.submit(
       { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "assign-ia", writes: true },
       async (progress) => {
@@ -459,7 +459,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // The project's application program places the M112 parameter segments and decides how memory past
     // 0xFFFF is reached. Looked up without writing the catalog; one Busforge cannot parse is a reason in
     // the package, not a refusal of the collection.
-    const appXml = dev.appRef ? lookupAppXml(state, id, dev.appRef)?.xml ?? null : null;
+    const appXml = lookupAppXml(state, id, dev.appProgramId)?.xml ?? null;
     let app: CollectApp | null = null;
     if (appXml) {
       try { app = collectApp(parseAppConfig(appXml)); }

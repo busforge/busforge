@@ -7,6 +7,10 @@ export interface Device {
   name: string;
   productRef: string;   // M-0048_H-...-P-...
   appRef: string;       // Hardware2ProgramRefId
+  // The application program the device runs: the ApplicationProgramRef of its Hardware2Program that is
+  // the application, not the PEI program (hardwareApplications); "" where the Hardware2Program names
+  // none, or two Busforge cannot tell apart. The program its id names where no Hardware.xml describes it.
+  appProgramId: string;
   manufacturer: number; // from the M-XXXX prefix
   comment: string;      // ETS "Beschreibung" (Comment/Description), for search
   // What ETS last downloaded into the device, from its per-device load flags. ETS 5 and 6 set each to
@@ -31,7 +35,9 @@ export type EtsPart = (typeof ETS_PARTS)[number];
 export interface CatalogProduct {
   appRef: string;       // Hardware2Program Id == a device's Hardware2ProgramRefId
   productRef: string;   // Product Id == a device's ProductRefId
-  appProgramId: string; // appProgramId(appRef): the app_programs catalog key; "" for a product without one
+  // The app_programs catalog key: the ApplicationProgramRef that is the application (hardwareApplications);
+  // "" for a product without one, or with two Busforge cannot tell apart.
+  appProgramId: string;
   manufacturer: number; // from the M-XXXX prefix
   name: string;         // product catalogue text
   orderNumber: string;  // manufacturer order number

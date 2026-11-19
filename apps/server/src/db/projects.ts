@@ -116,7 +116,7 @@ export function readSpaces(db: Database, projectId: string): SpaceNode[] {
 // those whose hardware carries a PEI program next to its application.
 export function insertProject(db: Database, id: string, project: Project, sourceFile: string, now: number, withoutApplication: ReadonlySet<string>, withPeiProgram: ReadonlySet<string>): void {
   const insProject = db.prepare("INSERT INTO projects (id, name, imported_at, source_file, ga_levels) VALUES (?, ?, ?, ?, ?)");
-  const insDevice = db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment, never_programmed, ets_not_downloaded, config_from_ets, has_application, pei_program) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)");
+  const insDevice = db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, app_program_id, manufacturer, comment, never_programmed, ets_not_downloaded, config_from_ets, has_application, pei_program) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)");
   const insRange = db.prepare("INSERT INTO group_ranges (project_id, parent_id, name, range_start, range_end) VALUES (?, ?, ?, ?, ?)");
   const insGa = db.prepare("INSERT INTO group_addresses (project_id, range_id, raw, address, name, dpt, security) VALUES (?, ?, ?, ?, ?, ?, ?)");
   const insParam = db.prepare("INSERT OR REPLACE INTO device_parameters (project_id, device_id, param_ref_id, value) VALUES (?, ?, ?, ?)");
@@ -151,7 +151,7 @@ export function insertProject(db: Database, id: string, project: Project, source
       const hasApplication = !withoutApplication.has(d.appRef);
       const never = hasApplication ? !etsLoadedCompletely(d) && !!d.appRef : !d.etsLoaded.individualAddress;
       const parts = never && hasApplication ? etsNotDownloaded(d) : null;
-      insDevice.run(id, d.id, d.ia, d.name, d.productRef, d.appRef, d.manufacturer, d.comment, never ? 1 : 0, parts?.length ? parts.join(",") : null, hasApplication ? 1 : 0, withPeiProgram.has(d.appRef) ? 1 : 0);
+      insDevice.run(id, d.id, d.ia, d.name, d.productRef, d.appRef, hasApplication ? d.appProgramId : "", d.manufacturer, d.comment, never ? 1 : 0, parts?.length ? parts.join(",") : null, hasApplication ? 1 : 0, withPeiProgram.has(d.appRef) ? 1 : 0);
     }
     for (const r of project.groupRanges) insertRange(r, null);
     for (const dp of project.deviceParams) for (const v of dp.values) { insParam.run(id, dp.deviceId, v.refId, v.value); insParamBase.run(id, dp.deviceId, v.refId, v.value); }
@@ -191,8 +191,8 @@ export function addDevice(db: Database, projectId: string, product: CatalogProdu
   if (!ia) throw new ApiError("NO_FREE_IA", "no free individual address in area 1");
   const instanceId = `BF-${randomUUID()}`;
   db.prepare(
-    "INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment, never_programmed, has_application, pei_program) VALUES (?, ?, ?, ?, ?, ?, ?, '', 1, ?, ?)",
-  ).run(projectId, instanceId, ia, name || product.name, product.productRef, product.appRef, product.manufacturer, product.hasApplication ? 1 : 0, product.peiProgram ? 1 : 0);
+    "INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, app_program_id, manufacturer, comment, never_programmed, has_application, pei_program) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', 1, ?, ?)",
+  ).run(projectId, instanceId, ia, name || product.name, product.productRef, product.appRef, product.appProgramId, product.manufacturer, product.hasApplication ? 1 : 0, product.peiProgram ? 1 : 0);
   return { id: instanceId, ia };
 }
 
@@ -220,7 +220,7 @@ export function getProject(db: Database, id: string, security?: ReadonlyMap<stri
     | { id: string; name: string; connectionId: string | null; groupAddressLevels: Levels } | null;
   if (!p) return null;
 
-  const baseDevices = db.query("SELECT instance_id AS id, ia, name, product_ref AS productRef, app_ref AS appRef, manufacturer, comment, has_application AS ha FROM devices WHERE project_id = ? ORDER BY id").all(id) as (Omit<Device, "etsLoaded"> & { ha: number })[];
+  const baseDevices = db.query("SELECT instance_id AS id, ia, name, product_ref AS productRef, app_ref AS appRef, app_program_id AS appProgramId, manufacturer, comment, has_application AS ha FROM devices WHERE project_id = ? ORDER BY id").all(id) as (Omit<Device, "etsLoaded"> & { ha: number })[];
   const changes = getProjectChanges(db, id);
 
   // Per-device deep-search text: the user-entered text parameter values (channel
@@ -300,11 +300,10 @@ export function getGaMeta(db: Database, projectId: string, raw: number): GaMeta 
   return { address: ga.address, name: ga.name, dpt: ga.dpt, path: path.reverse() };
 }
 
-// The distinct application-program refs of a project's devices (used to make an
-// export self-contained by resolving each program into the catalog first).
-export function listDeviceAppRefs(db: Database, projectId: string): string[] {
-  const rows = db.query("SELECT DISTINCT app_ref AS appRef FROM devices WHERE project_id = ?").all(projectId) as { appRef: string }[];
-  return rows.map((r) => r.appRef);
+// The distinct application programs of a project's devices (used to make an export self-contained by
+// resolving each program into the catalog first).
+export function listDeviceAppProgramIds(db: Database, projectId: string): string[] {
+  return (db.query("SELECT DISTINCT app_program_id AS id FROM devices WHERE project_id = ? AND app_program_id != ''").all(projectId) as { id: string }[]).map((r) => r.id);
 }
 
 // Does the project exist? (cheap existence check used by route guards.)

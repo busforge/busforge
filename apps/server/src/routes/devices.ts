@@ -5,7 +5,6 @@ import { addDevice, setDeviceAddress, renameDevice, projectExists, getGaMeta } f
 import { getCatalogProduct } from "../db/catalog.ts";
 import { getDeviceBaggage, projectHasBaggage } from "../db/baggage.ts";
 import { getDeviceParams, setDeviceParam, deleteDeviceParam, getDeviceModules, setDeviceLink, getDeviceForFlash, deviceHasApplication, getDeviceLinks, replaceDeviceProduct, revertDevice, revertDeviceParam, revertDeviceLink, getDeviceComObjOverrides, getDeviceComObjOverrideBase, setDeviceComObjOverride, revertDeviceComObjFlags } from "../db/deviceparams.ts";
-import { appProgramId } from "@busforge/project";
 import { buildDeviceView, missingApplication, loadApp, loadCatalogApp, mapLinksForReplace, resolveParamForEdit, revertOutsideType, deviceComObjFlags, type ReplaceMappingEntry } from "../deviceservice.ts";
 import { fullRef, stripRef } from "../refids.ts";
 import { json, err, text } from "../httputil.ts";
@@ -213,7 +212,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const newApp = loadCatalogApp(state, product.appProgramId);
     if (!newApp) return err("APP_PROGRAM_MISSING", "application program not in catalog", 404);
     const newLinks = mapLinksForReplace(
-      appProgramId(current.appRef), // the stored link keys are stripped against the OLD program id
+      current.appProgramId, // the stored link keys are stripped against the OLD program id
       newApp,
       getDeviceLinks(db, id, deviceId),
       body.mapping as ReplaceMappingEntry[],

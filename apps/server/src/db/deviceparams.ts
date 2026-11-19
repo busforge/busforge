@@ -59,10 +59,11 @@ export function getDeviceModules(db: Database, projectId: string, deviceId: stri
   return parsed;
 }
 
-export function getDeviceAppRef(db: Database, projectId: string, deviceId: string): string | null {
-  const r = db.query("SELECT app_ref AS appRef FROM devices WHERE project_id = ? AND instance_id = ?")
-    .get(projectId, deviceId) as { appRef: string } | null;
-  return r?.appRef ?? null;
+// The application program a device runs (devices.app_program_id; '' where it has none Busforge knows),
+// null for a device not in the project.
+export function getDeviceAppProgramId(db: Database, projectId: string, deviceId: string): string | null {
+  const r = db.query("SELECT app_program_id AS id FROM devices WHERE project_id = ? AND instance_id = ?").get(projectId, deviceId) as { id: string } | null;
+  return r?.id ?? null;
 }
 
 export function getDeviceProductRef(db: Database, projectId: string, deviceId: string): string | null {
@@ -204,8 +205,8 @@ export function setDeviceLink(db: Database, projectId: string, deviceId: string,
 // device's only config, all of it unprogrammed drift until the first flash.
 export function replaceDeviceProduct(db: Database, projectId: string, deviceId: string, product: CatalogProduct, links: Map<string, number[]>): void {
   db.transaction(() => {
-    const updated = db.prepare("UPDATE devices SET product_ref = ?, app_ref = ?, manufacturer = ?, has_application = ?, pei_program = ?, link_base_gaps = 0, never_programmed = 1, ets_not_downloaded = NULL, security_base = NULL, image_stamps = NULL, config_from_ets = 0 WHERE project_id = ? AND instance_id = ?")
-      .run(product.productRef, product.appRef, product.manufacturer, product.hasApplication ? 1 : 0, product.peiProgram ? 1 : 0, projectId, deviceId).changes;
+    const updated = db.prepare("UPDATE devices SET product_ref = ?, app_ref = ?, app_program_id = ?, manufacturer = ?, has_application = ?, pei_program = ?, link_base_gaps = 0, never_programmed = 1, ets_not_downloaded = NULL, security_base = NULL, image_stamps = NULL, config_from_ets = 0 WHERE project_id = ? AND instance_id = ?")
+      .run(product.productRef, product.appRef, product.appProgramId, product.manufacturer, product.hasApplication ? 1 : 0, product.peiProgram ? 1 : 0, projectId, deviceId).changes;
     // The route checked existence before parsing the body; if the device vanished in
     // that gap, a 0-row UPDATE would silently commit orphan device_links rows below
     // (device_links has no FK on the device row). Throwing rolls the transaction back.
@@ -233,9 +234,9 @@ export function deviceHasApplication(db: Database, projectId: string, deviceId: 
 
 // `configFromEts`: the device's parameter values came from an ETS project (devices.config_from_ets).
 // `peiProgram`: the device's hardware carries a PEI program next to its application (devices.pei_program).
-export function getDeviceForFlash(db: Database, projectId: string, deviceId: string): { ia: string; appRef: string; name: string; programmingToken: string; neverProgrammed: boolean; configFromEts: boolean; peiProgram: boolean } | null {
-  const r = db.query("SELECT ia, app_ref AS appRef, name, programming_token AS programmingToken, never_programmed AS np, config_from_ets AS ets, pei_program AS pei FROM devices WHERE project_id = ? AND instance_id = ?")
-    .get(projectId, deviceId) as { ia: string; appRef: string; name: string; programmingToken: string; np: number; ets: number; pei: number } | null;
+export function getDeviceForFlash(db: Database, projectId: string, deviceId: string): { ia: string; appRef: string; appProgramId: string; name: string; programmingToken: string; neverProgrammed: boolean; configFromEts: boolean; peiProgram: boolean } | null {
+  const r = db.query("SELECT ia, app_ref AS appRef, app_program_id AS appProgramId, name, programming_token AS programmingToken, never_programmed AS np, config_from_ets AS ets, pei_program AS pei FROM devices WHERE project_id = ? AND instance_id = ?")
+    .get(projectId, deviceId) as { ia: string; appRef: string; appProgramId: string; name: string; programmingToken: string; np: number; ets: number; pei: number } | null;
   if (!r) return null;
   const { np, ets, pei, ...d } = r;
   return { ...d, neverProgrammed: np === 1, configFromEts: ets === 1, peiProgram: pei === 1 };

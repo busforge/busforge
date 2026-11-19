@@ -86,7 +86,7 @@ and writes no programmed baseline.
 | `device_param_assumed` | baseline parameter values a read-back took as **assumed, not proven**, with the value each mark is about |
 | `device_memoryless_assumed` | the parameters without memory a read-back assumed on a device, **proven or not**; with `config_from_ets`, what lets a System 7 flash overwrite a hidden byte ([device-memory-model.md](device-memory-model.md#owned-bytes-and-left-alone-bytes)) |
 | `snapshots` | configuration restore points, one JSON payload per row |
-| `app_programs` | the global catalog of decrypted application-program XML |
+| `app_programs` | the global catalog of decrypted application-program XML, by program id; a device names the program it runs in `devices.app_program_id` (the ApplicationProgramRef of its Hardware2Program that is the application, empty where it has none Busforge knows) |
 | `catalog_products` | browsable product metadata, with the `pinned` flag |
 | `catalog_baggage` | the images an application program's `TypePicture` parameters show, from its product baggage, by program and baggage id; dropped with its program |
 | `device_baggage` | DCA blobs (`BinaryData/`, `UserFiles/`) per project |

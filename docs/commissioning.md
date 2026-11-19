@@ -141,7 +141,10 @@ application (configuration, read-back, flash, download) refuses with `DEVICE_WIT
 ### Hardware with a PEI program
 
 Some hardware runs a second program next to its application, the PEI program on load-state machine 5:
-its product's Hardware2Program names both. Busforge's full download loads the application only, and on
+its product's Hardware2Program names both. Which of the two is the application only the programs say,
+by their `ProgramType`: Busforge runs the one that declares itself the application, so the imported
+file has to carry both, and where it does not or they do not tell, the device imports without its
+application (`APP_PROGRAM_MISSING`). Busforge's full download loads the application only, and on
 System B unloads the PEI program first and never loads it again
 ([load-procedures.md](load-procedures.md#the-rules-by-level), R9). The import records such hardware, the
 device page withholds the full download, and the download is refused before anything is sent

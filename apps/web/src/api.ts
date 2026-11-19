@@ -25,8 +25,9 @@ export type {
 export type EtsPart = "address" | "medium" | "parameters" | "links";
 export interface DeviceChanges { params: number; links: number; flags?: number; neverProgrammed: boolean; etsNotDownloaded?: EtsPart[]; security?: "changed" | "unknown" }
 // hasApplication: false where the device's product carries no application program, so only its
-// individual address is programmed.
-export interface Device { id: string; ia: string; name: string; productRef: string; appRef: string; manufacturer: number; comment?: string; searchText?: string; changes?: DeviceChanges; secure?: boolean; hasApplication?: boolean; }
+// individual address is programmed. appProgramId: the application program the device runs ("" where
+// Busforge knows none).
+export interface Device { id: string; ia: string; name: string; productRef: string; appRef: string; appProgramId: string; manufacturer: number; comment?: string; searchText?: string; changes?: DeviceChanges; secure?: boolean; hasApplication?: boolean; }
 // security: the address's Data Secure mode, as ETS's "Automatisch" / "Erzwungen an" / "Erzwungen aus".
 export type GroupAddressSecurity = "auto" | "on" | "off";
 export interface GroupAddress { address: string; raw: number; name: string; dpt: string; security: GroupAddressSecurity; }

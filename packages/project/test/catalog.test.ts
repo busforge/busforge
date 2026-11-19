@@ -146,7 +146,7 @@ describe("a plain manufacturer XML (no zip): the OpenKNX shape", () => {
   test("the application program is the document itself, so the product is placeable", () => {
     const bytes = plainProductDb(["M-00FA_A-A012-55-0000"]);
     const products = extractCatalogProducts(bytes);
-    const programs = extractAppPrograms(bytes, products.map((p) => p.appRef));
+    const programs = extractAppPrograms(bytes, products.map((p) => p.appProgramId));
     expect([...programs.keys()]).toEqual(["M-00FA_A-A012-55-0000"]);
     expect(programs.get("M-00FA_A-A012-55-0000")).toContain("<ApplicationProgram");
   });
@@ -156,7 +156,7 @@ describe("a plain manufacturer XML (no zip): the OpenKNX shape", () => {
     // every product would silently give them all the same (wrong) application.
     const bytes = plainProductDb(["M-00FA_A-A012-55-0000", "M-00FA_A-B013-01-0000"]);
     const products = extractCatalogProducts(bytes);
-    expect(() => extractAppPrograms(bytes, products.map((p) => p.appRef))).toThrow(/several|application programs/i);
+    expect(() => extractAppPrograms(bytes, products.map((p) => p.appProgramId))).toThrow(/several|application programs/i);
   });
 });
 

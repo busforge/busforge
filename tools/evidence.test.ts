@@ -4,7 +4,7 @@ import { runEvidence } from "./smoke/evidence.ts";
 import { jung400021se } from "./smoke/specs/jung-400021se.ts";
 
 const cmp: ImageComparison = {
-  ia: "1.1.5", firmware: { state: "unknown" }, productRef: "M-0162_H-EX_P-EX", hardware2Program: "M-0162_H-EX_HP-0004-11-F245",
+  ia: "1.1.5", firmware: { state: "unknown" }, productRef: "M-0162_H-EX_P-EX", appProgramId: "M-0162_A-0004-11-F245",
   mask: "MV-07B0", match: true, diffBytes: 0, length: 120,
 };
 const run = { recordedAt: "2000-01-01T12:00:00.000Z", runnerRevision: "abc1234", transport: { kind: "ip-udp" as const, via: "direct" as const }, artifact: "out/1.1.5.device.bin", sha256: "b".repeat(64) };
@@ -38,7 +38,7 @@ describe("readback evidence", () => {
 
 describe("etsdiff evidence", () => {
   const c = {
-    ia: "1.1.56", productRef: "M-0083_H-182-0_P-BE.2D02001.2E02", hardware2Program: "M-0083_A-00B6-32-9642", mask: "MV-0705",
+    ia: "1.1.56", productRef: "M-0083_H-182-0_P-BE.2D02001.2E02", appProgramId: "M-0083_A-00B6-32-9642", mask: "MV-0705",
     configuration: "application defaults, no links", compared: 274, divergent: 0, etsOutside: 0, busforgeOnly: 0, uncomparedSegments: 0,
     segments: ["AS-4000 0/1", "AS-4468 0/168"], exclusions: [],
   };

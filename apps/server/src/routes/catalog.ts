@@ -57,7 +57,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     let products: ReturnType<typeof extractCatalogProducts> = [];
     try { products = extractCatalogProducts(bytes); } catch { products = []; }
     if (products.length === 0) return err("CATALOG_IMPORT_EMPTY", "no manufacturer products found in the archive");
-    const programs = extractAppPrograms(bytes, products.map((p) => p.appRef));
+    const programs = extractAppPrograms(bytes, products.map((p) => p.appProgramId));
     // Only keep products whose application program is present, so every catalog
     // entry stays placeable, and the products that carry no application program.
     const placeable = products.filter((p) => programs.has(p.appProgramId) || !p.hasApplication);

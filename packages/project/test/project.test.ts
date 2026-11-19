@@ -301,18 +301,19 @@ describe("loadKnxproj (integration)", () => {
 });
 
 describe("extractAppPrograms (catalog ingest)", () => {
-  test("maps each device app ref to its application-program XML, deduped", () => {
+  test("maps each device's application program to its XML, deduped", () => {
     const bytes = fix("sample-config.knxproj");
     const proj = loadKnxproj(bytes, "tester12", "x");
-    const refs = proj.devices.map((d) => d.appRef);
-    expect(refs).toEqual(["M-TEST_H-1_HP-1"]);
+    expect(proj.devices.map((d) => d.appRef)).toEqual(["M-TEST_H-1_HP-1"]);
+    // The sample carries no Hardware.xml: the device takes the program its Hardware2Program id names.
+    const ids = proj.devices.map((d) => d.appProgramId);
+    expect(ids).toEqual([appProgramId("M-TEST_H-1_HP-1")]); // "M-TEST_A-1"
 
-    const programs = extractAppPrograms(bytes, refs);
-    // keyed by application-program id, not the hardware app ref
-    expect([...programs.keys()]).toEqual([appProgramId("M-TEST_H-1_HP-1")]); // "M-TEST_A-1"
+    const programs = extractAppPrograms(bytes, ids);
+    expect([...programs.keys()]).toEqual(["M-TEST_A-1"]);
     expect(programs.get("M-TEST_A-1")).toContain("<ApplicationProgram");
 
-    // repeating a ref does not duplicate the entry (reads the zip once)
-    expect(extractAppPrograms(bytes, [...refs, ...refs]).size).toBe(1);
+    // repeating an id does not duplicate the entry (reads the zip once)
+    expect(extractAppPrograms(bytes, [...ids, ...ids]).size).toBe(1);
   });
 });

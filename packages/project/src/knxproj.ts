@@ -38,7 +38,7 @@ export function loadKnxproj(bytes: Buffer, password: string | undefined, fallbac
   const projectXml = (inner && tryTextOf(inner, "project.xml", true)) ?? tryTextOf(outer, "project.xml", true);
 
   const programs = [...outer].filter(([k]) => /\/M-[^/]+_A-[^/]+\.xml$/.test(k)).map(([, b]) => dec.decode(b));
-  return parseProject(xml0, projectXml, fallbackName, parseProductNames(outer), busInterfaceIndexes(programs), parseProductTranslations(outer));
+  return parseProject(xml0, projectXml, fallbackName, parseProductNames(outer), busInterfaceIndexes(programs), parseProductTranslations(outer), hardwareApplicationsOf(zipProducts(outer)));
 }
 
 // Encrypted/normal export keeps 0.xml in the inner archive; an unencrypted
@@ -126,14 +126,21 @@ export function readBaggage(bytes: Buffer, password: string | undefined): Map<st
 }
 
 
-// Read a manufacturer application program XML from the outer zip. These sit
-// plaintext in the outer archive, so no password is needed.
+// Read the application program a device of Hardware2Program `appRef` runs from the outer zip
+// (hardwareApplications; the program its id names where no Hardware.xml of the archive describes it).
+// These sit plaintext in the outer archive, so no password is needed.
 export function readAppProgram(bytes: Buffer, appRef: string): string | null {
-  const id = appProgramId(appRef);
   const outer = readZip(bytes);
-  const key = [...outer.keys()].find((n) => n.endsWith(`${id}.xml`));
-  return key ? new TextDecoder("utf-8").decode(outer.get(key)!) : null;
+  const products = zipProducts(outer);
+  const id = hardwareApplicationsOf(products).get(appRef) ?? appProgramId(appRef);
+  return (id && products.program(id)) || null;
 }
+
+// The archive entry of application program `id`: "<id>.xml", at the root or in a folder (M-XXXX/).
+const programEntry = (outer: Map<string, Buffer>, id: string): Buffer | undefined => {
+  const key = [...outer.keys()].find((n) => n === `${id}.xml` || n.endsWith(`/${id}.xml`));
+  return key ? outer.get(key) : undefined;
+};
 
 
 // A product database reaches us in one of two shapes, and both must work.
@@ -158,18 +165,16 @@ const isZip = (b: Buffer): boolean => b.length > 1 && b[0] === 0x50 && b[1] === 
 function parsePlainDoc(xml: string): XmlNode {
   return new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", isArray: () => false, stopNodes: ["*.ApplicationProgram"] }).parse(xml) as XmlNode;
 }
-const plainAppProgramIds = (xml: string): string[] =>
-  kids(node(node(parsePlainDoc(xml).KNX)?.ManufacturerData)?.Manufacturer)
-    .flatMap((m) => kids(node(m.ApplicationPrograms)?.ApplicationProgram))
-    .map((a) => text(a.Id))
-    .filter(Boolean);
+const programsOf = (doc: XmlNode): XmlNode[] =>
+  kids(node(node(doc.KNX)?.ManufacturerData)?.Manufacturer).flatMap((m) => kids(node(m.ApplicationPrograms)?.ApplicationProgram));
+const plainAppProgramIds = (doc: XmlNode): string[] => programsOf(doc).map((a) => text(a.Id)).filter(Boolean);
+// Application program `id` of a stored program document, its attributes only.
+const programOf = (xml: string, id: string): XmlNode | undefined => programsOf(parsePlainDoc(xml)).find((a) => text(a.Id) === id);
 
 // The Name the manufacturer gives application program `id` in a stored program document, or "" where
 // the document holds no such program or the program no name.
 export function appProgramName(xml: string, id: string): string {
-  const program = kids(node(node(parsePlainDoc(xml).KNX)?.ManufacturerData)?.Manufacturer)
-    .flatMap((m) => kids(node(m.ApplicationPrograms)?.ApplicationProgram))
-    .find((a) => text(a.Id) === id);
+  const program = programOf(xml, id);
   return program ? text(program.Name) : "";
 }
 
@@ -177,41 +182,86 @@ export function appProgramName(xml: string, id: string): string {
 // document holds no such program or the program no mask. Reads the program's attributes only, never its
 // parameters or objects.
 export function appProgramMask(xml: string, id: string): string {
-  const program = kids(node(node(parsePlainDoc(xml).KNX)?.ManufacturerData)?.Manufacturer)
-    .flatMap((m) => kids(node(m.ApplicationPrograms)?.ApplicationProgram))
-    .find((a) => text(a.Id) === id);
+  const program = programOf(xml, id);
   return program ? text(program.MaskVersion) : "";
 }
 
-// Extract every distinct application program referenced by the given device app
-// refs, keyed by application-program id. Reads the outer zip once (unlike calling
-// readAppProgram per device), for populating the catalog at import. App programs
-// sit plaintext in the outer archive, so no password is needed.
-export function extractAppPrograms(bytes: Buffer, appRefs: Iterable<string>): Map<string, string> {
+// A product source (a .knxproj, a .knxprod or a plain manufacturer XML): its Hardware.xml documents and
+// the program documents it carries, by application-program id (undefined where it carries none).
+interface ProductSource { hardware: XmlNode[]; program: (id: string) => string | undefined }
+
+function zipProducts(outer: Map<string, Buffer>): ProductSource {
+  const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", isArray: () => false });
+  // In a zip only Hardware.xml carries the products, and the (huge) application-program entries are
+  // read only where a program is asked for.
+  const hardware = [...outer].filter(([key]) => key.endsWith("Hardware.xml")).map(([, buf]) => parser.parse(dec.decode(buf)) as XmlNode);
+  return { hardware, program: (id) => { const b = programEntry(outer, id); return b ? dec.decode(b) : undefined; } };
+}
+
+// One document, one application program: the whole file IS that program's XML, parsed with its body
+// stopped out (parsePlainDoc). The ids come from a real parse, never from a regex over the text: a regex
+// matches inside comments and CDATA (refusing a legitimate file with a false reason) and misses
+// single-quoted or namespace-prefixed elements (silently dropping a product).
+function plainProducts(xml: string): ProductSource & { ids: string[] } {
+  const doc = parsePlainDoc(xml);
+  const ids = plainAppProgramIds(doc);
+  return { hardware: [doc], ids, program: (id) => (ids.includes(id) ? xml : undefined) };
+}
+
+const productsOf = (bytes: Buffer): ProductSource => (isZip(bytes) ? zipProducts(readZip(bytes)) : plainProducts(dec.decode(bytes)));
+
+const hardwareOf = (doc: XmlNode): XmlNode[] =>
+  kids(node(node(doc.KNX)?.ManufacturerData)?.Manufacturer).flatMap((manu) => kids(node(manu.Hardware)?.Hardware));
+
+// The application program a Hardware2Program names, or "" where it names none. One ApplicationProgramRef
+// is the application. The schema allows a second: two-application hardware, an application and a PEI
+// program. Which is which neither the order nor the Hardware2Program id says (the id carries both
+// programs' parts); the programs do, by their ProgramType, which the schema requires. So with two, both
+// have to be in the source, one the ApplicationProgram and the other the PeiProgram; any other case is
+// "" as well, and the device is listed as without its program instead of being given a guessed one.
+function applicationOf(h2p: XmlNode, source: ProductSource): string {
+  const refs = kids(h2p.ApplicationProgramRef).map((r) => text(r.RefId));
+  if (refs.length < 2) return refs[0] ?? "";
+  const types = refs.map((id) => { const xml = id ? source.program(id) : undefined; return xml === undefined ? "" : text(programOf(xml, id)?.ProgramType); });
+  const application = refs.filter((_, i) => types[i] === "ApplicationProgram");
+  return application.length === 1 && types.filter((t) => t === "PeiProgram").length === refs.length - 1 ? application[0] : "";
+}
+
+// The application program of every Hardware2Program a product source describes, by Hardware2Program id
+// ("" where it names none, or none Busforge can tell apart from a PEI program: applicationOf).
+function hardwareApplicationsOf(source: ProductSource): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const doc of source.hardware) {
+    for (const h2p of hardwareOf(doc).flatMap((hw) => kids(node(hw.Hardware2Programs)?.Hardware2Program))) {
+      const appRef = text(h2p.Id);
+      if (appRef && !out.has(appRef)) out.set(appRef, applicationOf(h2p, source));
+    }
+  }
+  return out;
+}
+export const hardwareApplications = (bytes: Buffer): Map<string, string> => hardwareApplicationsOf(productsOf(bytes));
+
+// Extract the given application programs (ids, as hardwareApplications resolves them), keyed by id; an id
+// the source carries no program of is left out. Reads the outer zip once (unlike calling readAppProgram
+// per device), for populating the catalog at import. App programs sit plaintext in the outer archive, so
+// no password is needed.
+export function extractAppPrograms(bytes: Buffer, ids: Iterable<string>): Map<string, string> {
   const out = new Map<string, string>();
   if (!isZip(bytes)) {
-    // One document, one application program: the whole file IS that program's XML. The ids come
-    // from a real parse, never from a regex over the text: a regex matches inside comments and
-    // CDATA (refusing a legitimate file with a false reason) and misses single-quoted or
-    // namespace-prefixed elements (silently dropping a product).
     const xml = dec.decode(bytes);
-    const ids = plainAppProgramIds(xml);
-    if (ids.length > 1) {
+    const plain = plainProducts(xml);
+    if (plain.ids.length > 1) {
       throw new KnxprojError("CATALOG_MULTI_APP_XML",
-        `this product database holds ${ids.length} application programs in one XML document; Busforge can only place a single-program document, so it refuses rather than give every product the same application`);
+        `this product database holds ${plain.ids.length} application programs in one XML document; Busforge can only place a single-program document, so it refuses rather than give every product the same application`);
     }
-    for (const appRef of appRefs) {
-      const id = appProgramId(appRef);
-      if (ids.includes(id)) out.set(id, xml);
-    }
+    for (const id of ids) if (plain.ids.includes(id)) out.set(id, xml);
     return out;
   }
   const outer = readZip(bytes);
-  for (const appRef of appRefs) {
-    const id = appProgramId(appRef);
-    if (out.has(id)) continue;
-    const key = [...outer.keys()].find((n) => n.endsWith(`${id}.xml`));
-    if (key) out.set(id, dec.decode(outer.get(key)!));
+  for (const id of ids) {
+    if (!id || out.has(id)) continue;
+    const b = programEntry(outer, id);
+    if (b) out.set(id, dec.decode(b));
   }
   return out;
 }
@@ -269,43 +319,30 @@ export function extractPictureBaggage(bytes: Buffer, programs: Map<string, strin
 // a .knxprod shares the same Manufacturer/Hardware structure, so this extractor
 // generalizes to it for the official-catalog ingest (milestone 5).
 export function extractCatalogProducts(bytes: Buffer): CatalogProduct[] {
-  const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", isArray: () => false });
+  const source = productsOf(bytes);
   const out: CatalogProduct[] = [];
-  // In a zip only Hardware.xml carries the products, and the (huge) application-program entries
-  // are never touched. A plain document carries everything inline, so it is parsed with the
-  // application program's body stopped out (parsePlainDoc), for the same reason.
-  const docs: XmlNode[] = isZip(bytes)
-    ? [...readZip(bytes)].filter(([key]) => key.endsWith("Hardware.xml")).map(([, buf]) => parser.parse(dec.decode(buf)) as XmlNode)
-    : [parsePlainDoc(dec.decode(bytes))];
-  for (const doc of docs) {
-    for (const manu of kids(node(node(doc.KNX)?.ManufacturerData)?.Manufacturer)) {
-      for (const hw of kids(node(manu.Hardware)?.Hardware)) {
-        const hwVersion = text(hw.VersionNumber);
-        const products = kids(node(hw.Products)?.Product);
-        const programs = kids(node(hw.Hardware2Programs)?.Hardware2Program);
-        // A hardware groups its product variants and the application programs it
-        // runs; a device picks one of each. Pair them so any valid device combo
-        // is offered (typically one product to one program).
-        for (const p of products) {
-          const productRef = text(p.Id);
-          if (!productRef) continue;
-          for (const h2p of programs) {
-            const appRef = text(h2p.Id);
-            if (!appRef) continue;
-            // The Hardware2Program, not the hardware's HasApplicationProgram flag, says whether a
-            // program belongs to the product: ETS's conversion of Hager's ETS2 data sets the flag on
-            // a Hardware2Program that names none.
-            const hasApplication = h2p.ApplicationProgramRef !== undefined;
-            out.push({
-              appRef, productRef, hasApplication,
-              peiProgram: kids(h2p.ApplicationProgramRef).length > 1,
-              appProgramId: hasApplication ? appProgramId(appRef) : "",
-              manufacturer: manufacturerOf(productRef),
-              name: text(p.Text),
-              orderNumber: text(p.OrderNumber),
-              hwVersion,
-            });
-          }
+  for (const doc of source.hardware) {
+    for (const hw of hardwareOf(doc)) {
+      // The Hardware2Program, not the hardware's HasApplicationProgram flag, says whether a
+      // program belongs to the product: ETS's conversion of Hager's ETS2 data sets the flag on
+      // a Hardware2Program that names none.
+      const programs = kids(node(hw.Hardware2Programs)?.Hardware2Program).filter((h2p) => text(h2p.Id)).map((h2p) => {
+        const hasApplication = h2p.ApplicationProgramRef !== undefined;
+        return { appRef: text(h2p.Id), hasApplication, peiProgram: kids(h2p.ApplicationProgramRef).length > 1, appProgramId: hasApplication ? applicationOf(h2p, source) : "" };
+      });
+      // A hardware groups its product variants and the application programs it runs; a device picks
+      // one of each. Pair them so any valid device combo is offered (typically one product to one program).
+      for (const p of kids(node(hw.Products)?.Product)) {
+        const productRef = text(p.Id);
+        if (!productRef) continue;
+        for (const program of programs) {
+          out.push({
+            ...program, productRef,
+            manufacturer: manufacturerOf(productRef),
+            name: text(p.Text),
+            orderNumber: text(p.OrderNumber),
+            hwVersion: text(hw.VersionNumber),
+          });
         }
       }
     }

@@ -64,7 +64,12 @@ Key relations in `0.xml`:
   of `<Locations>` with `<Space>`s, and writes its boolean attributes as `1` and `0`.
 - One project can hold several `<Installation>`s; with the prefix stripped, their group-address ids
   collide (`P-XXXX-0_GA-1`, `P-XXXX-1_GA-1`), so links resolve only inside their own installation.
-- Device to application via `Hardware2ProgramRefId` to `M-XXXX_A-….xml`.
+- Device to application: its `Hardware2ProgramRefId` names a `Hardware2Program` in the manufacturer's
+  `Hardware.xml`, whose `ApplicationProgramRef` is the application (`M-XXXX_A-….xml`). The schema
+  allows a second one, the PEI program of two-application hardware; the programs tell the two apart
+  by their required `ProgramType` (`ApplicationProgram`, `PeiProgram`), their order does not. The
+  Hardware2Program id (`…_HP-<application>`) repeats the application's id on one-program hardware
+  only: two-program hardware is reported to carry both programs' parts in it.
 
 **What ETS last downloaded, per device.** A `DeviceInstance` carries five load flags:
 `IndividualAddressLoaded`, `MediumConfigLoaded`, `ApplicationProgramLoaded`, `ParametersLoaded` and

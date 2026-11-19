@@ -4,7 +4,6 @@
 import { createHash } from "node:crypto";
 import { execSync } from "node:child_process";
 import { parseEvidenceRecord, type AxisResult, type EvidenceRecord, type Firmware } from "../packages/product/src/index.ts";
-import { appProgramId } from "../packages/project/src/index.ts";
 
 export const sha256 = (s: string | Uint8Array): string => createHash("sha256").update(s).digest("hex");
 
@@ -51,7 +50,7 @@ export interface ImageComparison {
   ia: string;
   firmware: Firmware;
   productRef: string;
-  hardware2Program: string;
+  appProgramId: string; // the application program the device runs (Device.appProgramId)
   mask: string;
   match: boolean;
   diffBytes: number;
@@ -76,7 +75,7 @@ export function readbackEvidence(
   c: ImageComparison, origin: DeclaredOrigin,
   run: { recordedAt: string; runnerRevision: string | null; transport: EvidenceRecord["transport"]; artifact: string; sha256: string },
 ): EvidenceRecord {
-  const app = appProgramId(c.hardware2Program);
+  const app = c.appProgramId;
   const outcome = c.match
     ? { method: "device parameter memory byte-equal to the image Busforge builds from the project", detail: `${c.length} bytes` }
     : { detail: `${c.diffBytes} of ${c.length} bytes differ; a difference can also be project-versus-device drift` };
@@ -108,7 +107,7 @@ export function readbackEvidence(
 // Bytes Busforge writes that ETS does not are not contradicted by the capture, but not proven by it
 // either, so the detail names them.
 export interface EtsDiffSummary {
-  ia: string; productRef: string | null; hardware2Program: string; mask: string;
+  ia: string; productRef: string | null; appProgramId: string; mask: string;
   configuration: string;       // the configuration both sides were built from, in words
   compared: number;            // bytes compared (ETS-written or ETS-filled, and in Busforge's image)
   divergent: number;           // of those, bytes that differ
@@ -131,7 +130,7 @@ export function etsdiffEvidence(
   const image = partial ? "image for the same configuration" : "full-download image";
   // Nothing compared is nothing shown.
   if (c.compared === 0 && !c.uncomparedSegments) throw new Error(`no ETS write to ${c.ia} fell inside Busforge's ${image}; nothing to record`);
-  const app = appProgramId(c.hardware2Program);
+  const app = c.appProgramId;
   const scope = [
     `${c.compared} bytes compared (${c.segments.join(", ")})`,
     ...(c.exclusions.length ? [`excluded by rule: ${c.exclusions.join("; ")}`] : []),

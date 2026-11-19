@@ -16,6 +16,12 @@ import { isDroppedLink, putDroppedLinks } from "./droppedLinks.ts";
 import { putDeviceCertificate } from "./deviceCertificates.ts";
 import { TELEGRAM_SECURITY, type TelegramSecurity } from "../telegram.ts";
 
+// The application program a device of an artifact runs, the catalog key: as the artifact carries it, or
+// for an artifact from before it was carried, the program the device's Hardware2Program id names; "" for
+// a device without an application program.
+const programOf = (dev: { appRef: string; appProgramId?: string; withoutApplication?: boolean }): string =>
+  dev.withoutApplication ? "" : dev.appProgramId ?? appProgramId(dev.appRef);
+
 // Re-import a .busforge project artifact (the inverse of exportProject): recreate
 // the whole project under a fresh id, restore its referenced catalog application
 // programs and DCA baggage. The catalog programs are restored as ordinary (unpinned)
@@ -83,7 +89,7 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
     }
   }
   // Validate each device's identity/reference fields so a crafted artifact fails as a clean
-  // 400 rather than crashing later: busforgeGaps calls appProgramId(appRef).split(...) and
+  // 400 rather than crashing later: programOf reads appRef for an artifact without appProgramId, and
   // importProjectExport binds these into insDev, both of which throw a generic 500 on a
   // missing field. Everything dereferenced downstream is a string.
   const seenDeviceIds = new Set<string>();
@@ -95,6 +101,7 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
     if (dev.configFromEts !== undefined && dev.configFromEts !== true) throw new ApiError("BUSFORGE_INVALID", "malformed device entry");
     if (dev.withoutApplication !== undefined && dev.withoutApplication !== true) throw new ApiError("BUSFORGE_INVALID", "malformed device entry");
     if (dev.peiProgram !== undefined && dev.peiProgram !== true) throw new ApiError("BUSFORGE_INVALID", "malformed device entry");
+    if (dev.appProgramId !== undefined && (typeof dev.appProgramId !== "string" || dev.withoutApplication)) throw new ApiError("BUSFORGE_INVALID", "malformed device entry");
     // The parts ETS has still to download explain a never-programmed device and nothing else: known parts,
     // each once, at least one.
     if (dev.etsNotDownloaded !== undefined) {
@@ -201,7 +208,7 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
   // Only a parameter without a memory or property location can be assumed (the read-back's `assume`), so a
   // mark must name one of its device's carried application.
   const catalog = d.catalog as Record<string, unknown>;
-  const appOf = new Map((d.devices as { id: string; appRef: string }[]).map((dev) => [dev.id, appProgramId(dev.appRef)]));
+  const appOf = new Map((d.devices as { id: string; appRef: string; appProgramId?: string; withoutApplication?: boolean }[]).map((dev) => [dev.id, programOf(dev)]));
   const apps = new Map<string, AppConfig>();
   for (const a of d.deviceParamAssumed as { deviceId: string; paramRefId: string }[]) {
     const appId = appOf.get(a.deviceId)!;
@@ -221,11 +228,11 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
 // whose application program is not in the carried catalog. They re-import as un-configurable
 // husks, e.g. because the source project already had husk devices, or a legacy project's
 // source_file was gone when it was exported so exportProject could not backfill the catalog.
-// Derived from the artifact itself (device appRef vs catalog keys), so it needs no
+// Derived from the artifact itself (each device's application program vs catalog keys), so it needs no
 // export-format change and stays in sync with what importProjectExport actually stores.
 export function busforgeGaps(data: ProjectExport): { devicesWithoutProgram: { ia: string; name: string }[] } {
   const devicesWithoutProgram = data.devices
-    .filter((d) => !d.withoutApplication && !Object.hasOwn(data.catalog, appProgramId(d.appRef))) // hasOwn, not `in`: catalog is stored by own keys (Object.entries), so a prototype key like "toString" is NOT a match
+    .filter((d) => !d.withoutApplication && !Object.hasOwn(data.catalog, programOf(d))) // hasOwn, not `in`: catalog is stored by own keys (Object.entries), so a prototype key like "toString" is NOT a match
     .map((d) => ({ ia: d.ia, name: d.name }));
   return { devicesWithoutProgram };
 }
@@ -243,11 +250,11 @@ export function importProjectExport(db: Database, data: ProjectExport, id: strin
     const source = data.source ?? artifact;
     if (source) setProjectSource(db, id, source);
 
-    const insDev = db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment, link_base_gaps, never_programmed, ets_not_downloaded, security_base, config_from_ets, has_application, pei_program) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    const insDev = db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, app_program_id, manufacturer, comment, link_base_gaps, never_programmed, ets_not_downloaded, security_base, config_from_ets, has_application, pei_program) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
     // An artifact from before the gap count carries a link baseline whose gaps were never
     // counted: unknown (-1) until the device is read again, as the schema migration does.
     const withLinkBase = new Set(data.deviceLinkBase.map((l) => l.deviceId));
-    for (const d of data.devices) insDev.run(id, d.id, d.ia, d.name, d.productRef, d.appRef, d.manufacturer, d.comment, d.linkBaseGaps ?? (withLinkBase.has(d.id) ? -1 : 0), d.neverProgrammed ? 1 : 0, d.etsNotDownloaded?.join(",") ?? null, d.securityBase ?? null, d.configFromEts ? 1 : 0, d.withoutApplication ? 0 : 1, d.peiProgram ? 1 : 0);
+    for (const d of data.devices) insDev.run(id, d.id, d.ia, d.name, d.productRef, d.appRef, programOf(d), d.manufacturer, d.comment, d.linkBaseGaps ?? (withLinkBase.has(d.id) ? -1 : 0), d.neverProgrammed ? 1 : 0, d.etsNotDownloaded?.join(",") ?? null, d.securityBase ?? null, d.configFromEts ? 1 : 0, d.withoutApplication ? 0 : 1, d.peiProgram ? 1 : 0);
 
     const insRange = db.prepare("INSERT INTO group_ranges (project_id, parent_id, name, range_start, range_end) VALUES (?, ?, ?, ?, ?)");
     const idMap = new Map<number, number>(); // exported range id -> new row id

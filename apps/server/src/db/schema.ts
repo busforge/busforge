@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 
 // Forward-only SQL migrations, versioned on SQLite's user_version pragma.
 // Append a new string to extend the schema; never edit an existing entry.
-const MIGRATIONS: string[] = [
+export const MIGRATIONS: string[] = [
   `
   CREATE TABLE projects (
     id             TEXT PRIMARY KEY,
@@ -563,6 +563,17 @@ const MIGRATIONS: string[] = [
   `
   ALTER TABLE devices ADD COLUMN pei_program INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE catalog_products ADD COLUMN pei_program INTEGER NOT NULL DEFAULT 0;
+  `,
+  // The application program a device runs (app_programs id): the ApplicationProgramRef of its
+  // Hardware2Program that is the application, not the PEI program (@busforge/project Device.appProgramId);
+  // '' where it has none, or none Busforge could tell apart. A row stored before takes the program its
+  // Hardware2Program id names (@busforge/project appProgramId, spelled out in SQL: the part between the
+  // first "_HP-" and the next, behind the manufacturer and "_A-"; the id itself where that part is empty).
+  `
+  ALTER TABLE devices ADD COLUMN app_program_id TEXT NOT NULL DEFAULT '';
+  UPDATE devices SET app_program_id = CASE WHEN instr(app_ref, '_HP-') = 0 OR (CASE WHEN instr(substr(app_ref, instr(app_ref, '_HP-') + 4), '_HP-') > 0 THEN substr(substr(app_ref, instr(app_ref, '_HP-') + 4), 1, instr(substr(app_ref, instr(app_ref, '_HP-') + 4), '_HP-') - 1) ELSE substr(app_ref, instr(app_ref, '_HP-') + 4) END) = '' THEN app_ref
+    ELSE substr(app_ref, 1, instr(app_ref, '_') - 1) || '_A-' || (CASE WHEN instr(substr(app_ref, instr(app_ref, '_HP-') + 4), '_HP-') > 0 THEN substr(substr(app_ref, instr(app_ref, '_HP-') + 4), 1, instr(substr(app_ref, instr(app_ref, '_HP-') + 4), '_HP-') - 1) ELSE substr(app_ref, instr(app_ref, '_HP-') + 4) END) END
+  WHERE has_application = 1;
   `,
 ];
 
