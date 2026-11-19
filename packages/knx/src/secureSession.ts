@@ -61,10 +61,17 @@ export class SecureSession {
   // Set by rebind until a Sync under the new address is answered: no tool-access frame goes out
   // under an address the device has not synced with this session.
   private unsynced = false;
+  // Tool access by broadcast (destination 0/0/0, group address type): how ETS gives a Data Secure device its
+  // address by serial (private corpus internal/captures/progmode-end-2026-11-19, README runs b1, c1, i1). Its
+  // frames are unnumbered (outer TPCI 0x03), the MAC binds the destination as a group address, and the device
+  // answers from whatever address it holds, which the caller names in unwrap/applySyncResponse.
+  readonly broadcast: boolean;
 
-  constructor(opts: { toolKey: Buffer; src: number; dst: number; serial?: Buffer; seq?: bigint }) {
+  constructor(opts: { toolKey: Buffer; src: number; dst: number; serial?: Buffer; seq?: bigint; broadcast?: boolean }) {
     this.toolKey = opts.toolKey;
     this.source = opts.src;
+    this.broadcast = opts.broadcast === true;
+    if (this.broadcast && opts.dst !== 0) throw new KnxError("SECURE_BROADCAST_DESTINATION", "a broadcast tool-access session goes to 0/0/0");
     this.dst = opts.dst;
     this.serial = opts.serial ?? Buffer.alloc(6);
     this.seq = opts.seq ?? toolSequenceNow();
@@ -101,14 +108,23 @@ export class SecureSession {
   setSequence(n: bigint): void { if (n > this.seq) this.seq = n; }
 
   private take(): Buffer { const s = seq6(this.seq); this.seq += 1n; return s; }
+  // The outer TPCI of a secured TPDU: numbered T_Data_Connected point to point, unnumbered by broadcast.
+  private outerTpci(tSeq: number): number { return this.broadcast ? 0x03 : 0x40 | ((tSeq & 0x0f) << 2) | 0x03; }
+  // The device's address for the MAC of a frame it sent: point to point the session's destination; by
+  // broadcast the frame's source, which the caller passes.
+  private peer(from: number | undefined): number {
+    if (!this.broadcast) return this.dst;
+    if (from === undefined) throw new KnxError("SECURE_BROADCAST_SOURCE", "a frame answering a broadcast tool access is opened with the address it came from");
+    return from;
+  }
 
-  // Frame a plain management service APDU (APCI + data, inner TPCI bits 0) as a
-  // numbered T_Data_Connected secure TPDU, tSeq = the T_Data_Connected sequence.
+  // Frame a plain management service APDU (APCI + data, inner TPCI bits 0) as a secure TPDU: numbered
+  // T_Data_Connected with tSeq as its sequence, or unnumbered for a broadcast session (tSeq unused).
   wrapManagement(service: Buffer, tSeq: number): Buffer {
     if (this.unsynced) throw new KnxError("SECURE_NOT_SYNCED", "the secured session moved to another source address and has not synced under it");
-    const outerTpci = 0x40 | ((tSeq & 0x0f) << 2) | 0x03; // numbered + SecureService APCI-hi
+    const outerTpci = this.outerTpci(tSeq);
     const body = secureEncode({
-      key: this.toolKey, src: this.src, dst: this.dst, dstIsGroup: false,
+      key: this.toolKey, src: this.src, dst: this.dst, dstIsGroup: this.broadcast,
       seq: this.take(), scf: SCF_TOOL_DATA, tpci: outerTpci,
       aad: Buffer.from([SCF_TOOL_DATA]), plaintext: service,
     });
@@ -122,12 +138,12 @@ export class SecureSession {
   //               retransmission (our T_ACK was lost). The caller must still T_ACK it so
   //               the device stops retransmitting, but must NOT re-deliver it.
   //  - "invalid": MAC failed or malformed; drop entirely (no ACK, no deliver).
-  // src/dst are swapped: the device is the source.
-  unwrap(secureTpdu: Buffer): SecureInbound {
+  // src/dst are swapped: the device is the source (`from`, for a broadcast session).
+  unwrap(secureTpdu: Buffer, from?: number): SecureInbound {
     if (secureTpdu.length < 2) return { status: "invalid" };
     const outerTpci = secureTpdu[0];
     const res = secureDecode(secureTpdu.subarray(2), {
-      key: this.toolKey, src: this.dst, dst: this.src, dstIsGroup: false,
+      key: this.toolKey, src: this.peer(from), dst: this.broadcast ? 0 : this.src, dstIsGroup: this.broadcast,
       tpci: outerTpci, aadFor: (scf) => Buffer.from([scf]),
     });
     if (!res) return { status: "invalid" };
@@ -144,11 +160,11 @@ export class SecureSession {
   // carried in clear (and in the AAD), the sequence slot = our current sequence.
   buildSyncRequest(serial: Buffer, challenge: Buffer, tSeq: number): Buffer {
     if (serial.length !== SERIAL_LEN) throw new Error("serial must be 6 bytes");
-    const outerTpci = 0x40 | ((tSeq & 0x0f) << 2) | 0x03;
+    const outerTpci = this.outerTpci(tSeq);
     const scf = SCF.TOOL | SCF.AUTH_CONF | SCF.S_A_SYNC_REQ; // 0x92
     const seq = this.take();
     const body = secureEncode({
-      key: this.toolKey, src: this.src, dst: this.dst, dstIsGroup: false,
+      key: this.toolKey, src: this.src, dst: this.dst, dstIsGroup: this.broadcast,
       seq, scf, tpci: outerTpci, aad: Buffer.concat([Buffer.from([scf]), serial]), plaintext: challenge,
     });
     // body = [SCF, seq(6), payloadCt, MAC]; the serial rides in clear after the seq.
@@ -158,7 +174,8 @@ export class SecureSession {
   // Parse a Sync.res TPDU. Its sequence slot is random XOR challenge (recover random,
   // which is the CCM seq input); the 12-byte plaintext is deviceNextSeq(6) || ourNextSeq(6).
   // Adopts ourNextSeq and returns both. Returns null if the MAC does not verify.
-  applySyncResponse(secureTpdu: Buffer, challenge: Buffer): { deviceSeq: bigint; ourSeq: bigint } | null {
+  // A broadcast Sync is answered to 0/0/0 from the device's address (`from`).
+  applySyncResponse(secureTpdu: Buffer, challenge: Buffer, from?: number): { deviceSeq: bigint; ourSeq: bigint } | null {
     if (secureTpdu.length < 9) return null;
     const outerTpci = secureTpdu[0];
     const body = secureTpdu.subarray(2); // [SCF, seqOrRandXorChallenge(6), payload, MAC]
@@ -169,7 +186,7 @@ export class SecureSession {
     // builds B0/Ctr0 from it (that is what the responder used).
     const decBody = Buffer.concat([body.subarray(0, 1), random, body.subarray(7)]);
     const res = secureDecode(decBody, {
-      key: this.toolKey, src: this.dst, dst: this.src, dstIsGroup: false,
+      key: this.toolKey, src: this.peer(from), dst: this.broadcast ? 0 : this.src, dstIsGroup: this.broadcast,
       tpci: outerTpci, aadFor: (scf) => Buffer.from([scf]),
     });
     if (!res || res.plaintext.length < 12) return null;

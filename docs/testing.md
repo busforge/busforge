@@ -277,7 +277,9 @@ holds Busforge's `A_UserMemory_Write` requests against ETS's, frame by frame. Th
 the commit it was taken from and carries bussard's licence.
 `tools/bussard-text.test.ts` holds the bytes of two products' text parameters beyond ASCII against ETS's.
 `tools/bussard-unfilled-allocation.test.ts` holds the full download's request and segment bytes of an
-unfilled parameter-segment allocation against ETS's.
+unfilled parameter-segment allocation against ETS's. `tools/bussard-com-object-zero.test.ts` holds
+the System B com-object table of the products that number an object 0 (on two of them its count and
+object 1 only, see the test), and the three tables of one with group addresses on it, against ETS's.
 
 ### The capture index
 

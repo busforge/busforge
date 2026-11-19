@@ -150,7 +150,8 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
   // /api/projects/:id/devices/:deviceId/comobject-flags  -> set a com-object's flags and priority over
   // the application's, per device, as ETS stores them (ComObjectInstanceRef). `flags`: per flag true,
   // false, or null for the application's value; `priority` likewise. Only the bits the device's full
-  // download writes are accepted (DeviceConfigView.comObjFlagsEditable).
+  // download writes are accepted (DeviceConfigView.comObjFlagsEditable), and none on an object the
+  // family's table holds no entry for (comObjFlagsUneditable).
   if (seg.length === 6 && seg[3] === "devices" && seg[5] === "comobject-flags" && req.method === "PUT") {
     const deviceId = decodeURIComponent(seg[4]);
     const body = (await req.json().catch(() => ({}))) as { comObjRefId?: unknown; flags?: unknown; priority?: unknown; lang?: string };
@@ -164,7 +165,8 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     if (!obj || obj.kind !== "comObject") return err("COMOBJ_NOT_FOUND", "no such communication object on this device");
     const placed = deviceComObjFlags(state, id, deviceId, app, view);
     if (placed.refused) return err(placed.refused, "the flags this project sets on the device's communication objects cannot be placed; refusing to edit them", 409);
-    const editable = new Set<string>(buildDeviceView(state, id, deviceId).comObjFlagsEditable ?? []);
+    const device = buildDeviceView(state, id, deviceId);
+    const editable = new Set<string>(device.comObjFlagsUneditable?.includes(obj.comObject.number) ? [] : device.comObjFlagsEditable ?? []);
     const asked = [...Object.keys(edit.flags ?? {}), ...(edit.priority !== undefined ? ["priority"] : [])];
     const refused = asked.filter((k) => !editable.has(k));
     if (refused.length) return err("COM_OBJECT_FLAG_NOT_EDITABLE", `this device's downloads cannot write ${refused.join(", ")} of a communication object as the project sets it`);

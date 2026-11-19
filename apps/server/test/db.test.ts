@@ -340,7 +340,7 @@ describe("projects", () => {
     );
     const db = fresh();
     expect(() => insertProject(db, "pdup", parseProject(dup, undefined, "x"), "/tmp/pdup", 1000, new Set(), new Set())).not.toThrow();
-    expect(getDeviceLinks(db, "pdup", "P-TEST-0_DI-1").get("O-1_R-1")).toEqual([1, 2, 2]);
+    expect(getDeviceLinks(db, "pdup", "P-TEST-0_DI-1").get("O-1_R-1")).toEqual([1, 2]);
   });
 
   test("device links round-trip and re-point replaces", () => {

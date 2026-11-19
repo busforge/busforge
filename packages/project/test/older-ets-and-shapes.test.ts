@@ -150,6 +150,16 @@ describe("ETS 4/5 <Connectors> links", () => {
     expect(p.droppedLinks).toEqual([{ deviceId: "P-0001-0_DI-1", comObjRefId: "O-3_R-3", reason: "addressNotInProject", gas: [{ etsId: "GA-1", raw: 10 }, { etsId: "GA-9" }, { etsId: "GA-2", raw: 20 }] }]);
   });
 
+  test("two refs on one com-object merge their links in ETS order without a duplicate", () => {
+    const p = (refs: string) => parseProject(doc(`<Installation Name=""><Topology><Area Address="1"><Line Address="1">${device("P-0001-0_DI-1", 5, `<ComObjectInstanceRefs>${refs}</ComObjectInstanceRefs>`)}</Line></Area></Topology>${gas("P-0001-0", 10, 20, 30)}</Installation>`), undefined, "x");
+    const ref = (links: string) => `<ComObjectInstanceRef RefId="O-3_R-3" Links="${links}"/>`;
+    expect(p(ref("GA-1 GA-9") + ref("GA-2 GA-1")).deviceLinks[0].links).toEqual([{ comObjRefId: "O-3_R-3", gaRaws: [10, 20] }]);
+    expect(p(ref("GA-1 GA-2") + ref("GA-2 GA-1 GA-3")).deviceLinks[0].links).toEqual([{ comObjRefId: "O-3_R-3", gaRaws: [10, 20, 30] }]);
+    expect(p(ref("GA-3 GA-1") + ref("GA-1 GA-2")).deviceLinks[0].links).toEqual([{ comObjRefId: "O-3_R-3", gaRaws: [30, 10, 20] }]);
+    // a duplicate inside one ref's own Links
+    expect(p(ref("GA-1 GA-2 GA-1")).deviceLinks[0].links).toEqual([{ comObjRefId: "O-3_R-3", gaRaws: [10, 20] }]);
+  });
+
   test("a com-object whose links all imported is not listed as dropped", () => {
     expect(project(`<Send GroupAddressRefId="P-0001-0_GA-1"/><Receive GroupAddressRefId="P-0001-0_GA-2"/>`).droppedLinks).toEqual([]);
   });

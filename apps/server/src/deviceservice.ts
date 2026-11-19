@@ -466,8 +466,9 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
   // The bits an edit may set: those the family's full download writes (the group-address flash writes
   // the same), none where the device's full download is withheld or its overrides cannot be placed.
   const comObjFlagsEditable = view.capabilities.fullDownload && !flags.refused ? [...classify(app).comObjOverridableBits()] : [];
+  const comObjFlagsUneditable = comObjFlagsEditable.length ? [...classify(app).comObjNumbersWithoutEntry()] : [];
   const assumedHidden = [...assumed].filter((ref) => !shownParams.has(ref)).length;
-  const wire: DeviceConfigView = { ...(assumedHidden ? { assumedHidden } : {}), blocks: view.blocks, comObjFlagsEditable, hasModules: view.hasModules, dca: view.dca, readbackSupport: view.readbackSupport, capabilities: view.capabilities, refusals: view.refusals, compatibility: view.compatibility, untestedAcknowledged: view.untestedAcknowledged, linkBaseGaps: getLinkBaseGaps(db, projectId, deviceId), ...(flags.refused ? { comObjFlagsRefused: flags.refused } : {}) };
+  const wire: DeviceConfigView = { ...(assumedHidden ? { assumedHidden } : {}), blocks: view.blocks, comObjFlagsEditable, ...(comObjFlagsUneditable.length ? { comObjFlagsUneditable } : {}), hasModules: view.hasModules, dca: view.dca, readbackSupport: view.readbackSupport, capabilities: view.capabilities, refusals: view.refusals, compatibility: view.compatibility, untestedAcknowledged: view.untestedAcknowledged, linkBaseGaps: getLinkBaseGaps(db, projectId, deviceId), ...(flags.refused ? { comObjFlagsRefused: flags.refused } : {}) };
   return wire;
 }
 
