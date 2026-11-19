@@ -172,9 +172,9 @@ export function createProject(db: Database, id: string, name: string, now: numbe
 
 // Place a catalog product into a project as a new device instance: allocate the
 // next free individual address (area 1, scanning lines then device addresses) and
-// a stable instance id, and insert the device row referencing the catalog. No
-// parameter rows are seeded (absent == application defaults) and no baseline is
-// written (the device is unprogrammed). Returns the new device's instance id + IA.
+// a stable instance id, and insert the device row referencing the catalog, never
+// programmed. The caller seeds its start values (startDeviceParams); every other
+// parameter is at its default. Returns the new device's instance id + IA.
 export function addDevice(db: Database, projectId: string, product: CatalogProduct, name: string): { id: string; ia: string } {
   const used = new Set(
     (db.query("SELECT ia FROM devices WHERE project_id = ?").all(projectId) as { ia: string }[])

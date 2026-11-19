@@ -448,6 +448,7 @@ describe("the general device-in-service spec", () => {
     expect(r.stopped?.detail).toContain("--test-ga");
     expect(s.calls).toEqual([]);
     expect(() => planInService(spec, { fullDownload: false, testGa: "1/2" })).toThrow("is not a group address");
+    expect(() => planInService(spec, { fullDownload: false, testGa: "99/9/999" })).toThrow("is not a group address");
   });
 
   test("no spec is registered twice, and no two specs share an id", () => {

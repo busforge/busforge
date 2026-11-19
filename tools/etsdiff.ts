@@ -51,7 +51,7 @@
 // capture") and do a full download. Lines consumed: `... ETS->BRIDGE ... TUNNELLING_REQ ... | <frame-hex>`
 // (ETS's requests) and `... BRIDGE->ETS ... TUNNELLING_REQ ... | <frame-hex>` (the device's answers).
 import { gunzipSync } from "node:zlib";
-import { iaToNum, OBJ } from "../packages/knx/src/index.ts";
+import { gaFromLevels, iaToNum, OBJ } from "../packages/knx/src/index.ts";
 import { loadKnxproj, readAppProgram, readZip, type Project, type DeviceParam, type ModuleInstanceData, type DeviceLink, type ComObjInstanceAttrs } from "../packages/project/src/index.ts";
 import {
   parseAppConfig, classify, parseLoadProcedures, isMemoryMappedLsm, buildDeviceConfig, placeComObjOverrides,
@@ -277,7 +277,8 @@ const hexByte = (n: number) => n.toString(16).padStart(2, "0");
 export function parseGa(s: string): number {
   const p = s.split("/").map(Number);
   if (p.some((x) => !Number.isInteger(x) || x < 0)) throw new Error(`not a group address: ${s}`);
-  if (p.length === 3 && p[0] < 32 && p[1] < 8 && p[2] < 256) return (p[0] << 11) | (p[1] << 8) | p[2];
+  const threeLevel = p.length === 3 ? gaFromLevels(p[0], p[1], p[2]) : null;
+  if (threeLevel !== null) return threeLevel;
   if (p.length === 2 && p[0] < 32 && p[1] < 2048) return (p[0] << 11) | p[1];
   if (p.length === 1 && p[0] < 65536) return p[0];
   throw new Error(`not a group address: ${s}`);
