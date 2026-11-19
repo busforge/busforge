@@ -123,6 +123,7 @@ The primitives live in `apps/web/src/components/ui/`. Views use them instead of 
 | `Badge` | A status or label mark that does nothing on click | Tones `neutral`, `outline`, `primary`, `ok`, `info`, `warning`, `danger`; sizes `sm` 20 px, `md` 24 px; `mono` for bus data; `tapHeight` where it sits among `BadgeButton`s, so it grows with them on a touch screen |
 | `BadgeButton` | The same mark when it opens a detail (popover, dialog) | As `Badge`, plus the states of a control; 32 px high on a touch screen |
 | `Notice` | A boxed note in a dialog or on a page: a warning (what is left out, unproven or about to be exposed), or with `tone="info"` a derived state that is no warning (the DCA notice) | The `warning` (default) or `info` tone as a block; the caller lays out its icon and text |
+| `Checkbox` | Every tick box: a flag, a confirmation, a parameter drawn as a checkbox | A native input with the control border; amber box with a dark tick when checked, a dash when `indeterminate` (a value that is neither checked nor unchecked, kept after a click), 16 px (20 px on a touch screen). The pointer, an `accent` hover and the focus ring as every control, 50 % opacity when disabled. Label it with a wrapping `<label>` or `aria-label` |
 | `Chip` | A filter toggle or one choice among a few (IP/USB, transport) | `active`, announced as `aria-pressed` |
 | `Dialog` | A task in a window: a form, a preview, a running read | `backdropClose`, `dismissible` |
 | `AlertDialog` | A question before an action (delete, restore, write) | `backdropClose`, `dismissible`; the cancel button takes the initial focus |
@@ -137,7 +138,7 @@ One radius per role, so neighbours line up:
 
 | Radius | Where |
 |---|---|
-| `rounded-sm` (4 px) | Inside a control: segments of a segmented control, menu items, swatches |
+| `rounded-sm` (4 px) | Inside a control: segments of a segmented control, menu items, swatches, the box of a checkbox |
 | `rounded-md` (6 px) | **Every control and mark**: buttons, icon buttons, inputs, selects, badges, tags, chips, list rows, tooltips, popovers and menus |
 | `rounded-lg` (8 px) | Dialogs |
 | `rounded-xl` (12 px) | Cards and page containers |
