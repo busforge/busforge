@@ -49,15 +49,49 @@ const xml0 = `<?xml version="1.0"?><KNX xmlns="http://knx.org/xml/project/21"><P
 const knxprojWith = (app: string, project = xml0) => storeZip({ [`${M}/Hardware.xml`]: hardware, [`${M}/${A}.xml`]: app, "P-0001/0.xml": project });
 const knxproj = knxprojWith(appXml());
 
+// A channel device: a module per channel, as many as its parameter P-1 says (1 or 2), the allocator giving
+// each channel's object its number. The device stores no module instances, so they follow its values. Channel 2's
+// object links an address the project does not have besides 0/0/1.
+const MA = `${M}_A-2`;
+const moduleAppXml = `<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="${M}"><ApplicationPrograms>
+<ApplicationProgram Id="${MA}" ApplicationNumber="2" ApplicationVersion="1" MaskVersion="MV-07B0" Name="Channel App" DefaultLanguage="en-US">
+<Static>
+<ParameterTypes><ParameterType Id="${MA}_PT-1" Name="Channels"><TypeRestriction Base="Value" SizeInBit="8"><Enumeration Text="1" Value="1" Id="${MA}_PT-1_EN-1"/><Enumeration Text="2" Value="2" Id="${MA}_PT-1_EN-2"/></TypeRestriction></ParameterType></ParameterTypes>
+<Parameters><Parameter Id="${MA}_P-1" Name="Channels" ParameterType="${MA}_PT-1" Text="Channels" Value="2"/></Parameters>
+<ParameterRefs><ParameterRef Id="${MA}_P-1_R-1" RefId="${MA}_P-1"/></ParameterRefs>
+<ComObjectTable/><ComObjectRefs/>
+<Allocators><Allocator Id="${MA}_L-1" Name="Objects" Start="1" maxInclusive="10"/></Allocators>
+</Static>
+<ModuleDefs><ModuleDef Id="${MA}_MD-1" Name="Channel">
+  <Arguments><Argument Id="${MA}_MD-1_A-1" Name="Base" Allocates="1"/></Arguments>
+  <Static>
+    <ComObjects><ComObject Id="${MA}_MD-1_O-1" Number="0" Name="Switch" Text="Switch" FunctionText="On/off" ObjectSize="1 Bit" DatapointType="DPST-1-1" ReadFlag="Disabled" WriteFlag="Enabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" BaseNumber="${MA}_MD-1_A-1"/></ComObjects>
+    <ComObjectRefs><ComObjectRef Id="${MA}_MD-1_O-1_R-1" RefId="${MA}_MD-1_O-1"/></ComObjectRefs>
+  </Static>
+  <Dynamic><ParameterBlock Id="${MA}_MD-1_PB-1" Name="ch" Text="Channel"><ComObjectRefRef RefId="${MA}_MD-1_O-1_R-1"/></ParameterBlock></Dynamic>
+</ModuleDef></ModuleDefs>
+<Dynamic><ChannelIndependentBlock><ParameterBlock Id="${MA}_PB-1" Name="Main" Text="Main"><ParameterRefRef RefId="${MA}_P-1_R-1"/></ParameterBlock></ChannelIndependentBlock>
+<choose ParamRefId="${MA}_P-1_R-1">
+  <when test="1"><Module Id="${MA}_MD-1_M-1" RefId="${MA}_MD-1" Name="C"><NumericArg RefId="${MA}_MD-1_A-1" AllocatorRefId="${MA}_L-1"/></Module></when>
+  <when test="2"><Repeat Id="${MA}_X-1" Name="C" Count="2"><Module Id="${MA}_MD-1_M-1" RefId="${MA}_MD-1" Name="C"><NumericArg RefId="${MA}_MD-1_A-1" AllocatorRefId="${MA}_L-1"/></Module></Repeat></when>
+</choose></Dynamic>
+</ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+const moduleHardware = hardware.replace(`<ApplicationProgramRef RefId="${A}"/>`, `<ApplicationProgramRef RefId="${MA}"/>`);
+const moduleKnxproj = storeZip({
+  [`${M}/Hardware.xml`]: moduleHardware, [`${M}/${MA}.xml`]: moduleAppXml,
+  "P-0001/0.xml": xml0.replace(/<ComObjectInstanceRefs>[\s\S]*<\/ComObjectInstanceRefs>/, `<ComObjectInstanceRefs><ComObjectInstanceRef RefId="MD-1_M-1_MI-2_O-1_R-1" Links="GA-1 GA-9"/></ComObjectInstanceRefs>`),
+});
+
 const expected = [
   {
     deviceId: "P-0001-0_DI-1", ia: "1.1.5", deviceName: "Kitchen actuator", comObjRefId: "O-1_R-1",
-    comObjNumber: 1, comObjName: "Switch", functionText: "On/off", unresolved: null, refusal: null, reason: "addressNotInProject",
+    comObjNumber: 1, comObjName: "Switch", functionText: "On/off", unresolved: null, refusal: null, unrecoverable: false, reason: "addressNotInProject",
     gas: [{ etsId: "GA-1", address: "0/0/1", name: "Kitchen light", inProject: true }, { etsId: "GA-9", address: null, name: null, inProject: false }],
   },
   {
     deviceId: "P-0001-0_DI-1", ia: "1.1.5", deviceName: "Kitchen actuator", comObjRefId: "O-2_R-2",
-    comObjNumber: 2, comObjName: "Status", functionText: "Feedback", unresolved: null, refusal: null, reason: "senderNotInProject",
+    comObjNumber: 2, comObjName: "Status", functionText: "Feedback", unresolved: null, refusal: null, unrecoverable: false, reason: "senderNotInProject",
     gas: [{ etsId: "GA-8", address: null, name: null, inProject: false }, { etsId: "GA-2", address: "0/0/2", name: "Kitchen status", inProject: true }],
   },
 ];
@@ -111,12 +145,12 @@ describe("links an import does not take over, per com-object", () => {
   test("a device whose configuration refuses its application shows the refusal on its objects, and the preview still answers", async () => {
     const refused = appXml(`<ChannelIndependentBlock><ParameterBlock Id="${A}_PB-1" Name="Main" Text="Main"><choose ParamRefId="${A}_P-1_R-1"><when test="on"><ComObjectRefRef RefId="${A}_O-1_R-1"/></when></choose></ParameterBlock></ChannelIndependentBlock>`);
     const a = await post(freshState(), "/api/projects/analyze", new File([knxprojWith(refused)], "Dropped.knxproj"));
-    expect(a.droppedLinks.map((l: any) => [l.comObjNumber, l.unresolved, l.refusal])).toEqual([[null, "refused", "PARAM_TEST_UNSUPPORTED"], [null, "refused", "PARAM_TEST_UNSUPPORTED"]]);
+    expect(a.droppedLinks.map((l: any) => [l.comObjNumber, l.unresolved, l.refusal, l.unrecoverable])).toEqual([[null, "refused", "PARAM_TEST_UNSUPPORTED", true], [null, "refused", "PARAM_TEST_UNSUPPORTED", true]]);
   });
 
   test("a device without its application program in the file says so on its objects", async () => {
     const a = await post(freshState(), "/api/projects/analyze", new File([storeZip({ [`${M}/Hardware.xml`]: hardware, "P-0001/0.xml": xml0 })], "Dropped.knxproj"));
-    expect(a.droppedLinks.map((l: any) => l.unresolved)).toEqual(["noApplication", "noApplication"]);
+    expect(a.droppedLinks.map((l: any) => [l.unresolved, l.unrecoverable])).toEqual([["noApplication", true], ["noApplication", true]]);
   });
 
   test("an address deleted since the import keeps its value and shows as not in the project", async () => {
@@ -188,6 +222,30 @@ describe("links an import does not take over, per com-object", () => {
     expect((await listed(state, imp.id)).map((l: any) => l.comObjRefId)).toEqual(["O-1_R-1"]);
     await put(state, imp.id, "params", { paramRefId: `${A}_P-1_R-1`, value: "1" });
     expect((await listed(state, imp.id)).map((l: any) => [l.comObjRefId, l.comObjNumber])).toEqual([["O-1_R-1", 1], ["O-2_R-2", 2]]);
+  });
+
+  test("an object the application does not have can never be linked again: listed apart, with its reason", async () => {
+    const state = freshState();
+    const project = xml0.replace(`<ComObjectInstanceRef RefId="O-3_R-3" Links="GA-2"/>`, `<ComObjectInstanceRef RefId="O-3_R-3" Links="GA-2"/><ComObjectInstanceRef RefId="O-7_R-7" Links="GA-9"/>`);
+    const imp = await post(state, "/api/projects/import", new File([knxprojWith(appXml(), project)], "Dropped.knxproj"));
+    expect((await listed(state, imp.id)).map((l: any) => [l.comObjRefId, l.unresolved, l.unrecoverable])).toEqual([
+      ["O-1_R-1", null, false], ["O-2_R-2", null, false], ["O-7_R-7", "notInApplication", true],
+    ]);
+  });
+
+  test("a module object is open while its instance is there and can never be linked again once a parameter removes it", async () => {
+    const state = freshState();
+    const imp = await post(state, "/api/projects/import", new File([moduleKnxproj], "Dropped.knxproj"));
+    const entry = async () => ((await listed(state, imp.id)) as any[]).map((l) => [l.comObjRefId, l.comObjNumber, l.unresolved, l.unrecoverable]);
+    // Two channels: the allocators make instances 1 and 2 of the device's values (it stores none).
+    expect(await entry()).toEqual([["MD-1_M-1_MI-2_O-1_R-1", 2, null, false]]);
+    await put(state, imp.id, "params", { paramRefId: `${MA}_P-1_R-1`, value: "1" });
+    expect(await entry()).toEqual([["MD-1_M-1_MI-2_O-1_R-1", null, "moduleInstanceGone", true]]);
+    // The record keeps the entry, and a second channel brings the object back as open work.
+    const data = (await unpackBusforge((await exportArtifact(state, imp.id)).bytes)) as any;
+    expect(data.droppedLinks.map((l: any) => l.comObjRefId)).toEqual(["MD-1_M-1_MI-2_O-1_R-1"]);
+    await put(state, imp.id, "params", { paramRefId: `${MA}_P-1_R-1`, value: "2" });
+    expect(await entry()).toEqual([["MD-1_M-1_MI-2_O-1_R-1", 2, null, false]]);
   });
 
   test("a project without dropped links lists none, and an unknown project is refused", async () => {

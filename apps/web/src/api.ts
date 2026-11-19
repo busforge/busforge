@@ -53,13 +53,14 @@ export interface Project { id: string; name: string; connectionId: string | null
 export interface ImportGap { ia: string; name: string }
 // A com-object whose ETS links an import did not take over in full (server DroppedLinkView): the object's
 // number and texts are null where the device's configuration does not place it, `unresolved` saying why
-// (`refusal`: the code of the configuration's refusal). An address is null where its value is not known
+// (`refusal`: the code of the configuration's refusal); `unrecoverable`: no link made in Busforge reaches
+// the object, so the entry is not counted as open work. An address is null where its value is not known
 // and only ETS's id names it; `inProject` says whether the project holds it now.
 export type DroppedLinkReason = "addressNotInProject" | "senderNotInProject" | "noSingleSender" | "moduleInstanceGone";
 export interface DroppedLink {
   deviceId: string; ia: string; deviceName: string; comObjRefId: string;
   comObjNumber: number | null; comObjName: string | null; functionText: string | null;
-  unresolved: "noApplication" | "refused" | "notInConfiguration" | null; refusal: string | null;
+  unresolved: "noApplication" | "refused" | "moduleInstanceGone" | "notInApplication" | "notInConfiguration" | null; refusal: string | null; unrecoverable: boolean;
   reason: DroppedLinkReason;
   gas: { etsId: string; address: string | null; name: string | null; inProject: boolean }[];
 }

@@ -49,7 +49,7 @@ import { ComObjLinks } from "./ComObjLinks.tsx";
 import { AssumeValuesPanel, NeverProgrammedKeptNote, UnprovenAssumptionsNote, UnresolvedNotes, assumeCandidates, assumeList, assumeReducer, assumedParams, initialAssumeState } from "./AssumeValues.tsx";
 import { addedLinks } from "@/lib/links.ts";
 import { HeaderWarning } from "@/components/HeaderWarning.tsx";
-import { DroppedLinksList } from "@/components/DroppedLinksList.tsx";
+import { DroppedLinksMark } from "@/components/DroppedLinksList.tsx";
 import { DcaModuleDialog } from "../dca/DcaModuleDialog.tsx";
 import { cn } from "@/lib/utils";
 import { errMsg } from "../lib/apiError.ts";
@@ -768,15 +768,7 @@ export function DeviceConfig() {
               label={t("device.warnGaps")} title={t("device.gapsTitle")} testId="device-gaps"
               items={[...gaps.types.map(([label, n]) => t("device.gapType", { type: label, count: n })), ...gaps.elements.map(([label, n]) => t("device.gapElement", { tag: label, count: n }))]}
             />
-            {droppedQuery.error && (
-              <HeaderWarning label={t("import.dropped.label")} title={t("import.dropped.title")} count={null} testId="device-dropped-links" items={[t("import.dropped.error", { reason: errMsg(t, droppedQuery.error) })]} />
-            )}
-            {dropped.length > 0 && (
-              <HeaderWarning
-                label={t("import.dropped.label")} title={t("import.dropped.title")} count={dropped.length} testId="device-dropped-links"
-                detail={<><p className="text-muted-foreground">{t("import.dropped.hint")} {t("import.dropped.open")}</p><DroppedLinksList links={dropped} showDevice={false} /></>}
-              />
-            )}
+            <DroppedLinksMark links={dropped} error={droppedQuery.error} testId="device-dropped-links" showDevice={false} />
             {!!view?.linkBaseGaps && (
               <HeaderWarning
                 label={t("device.warnLinkGaps")} title={t("device.linkGapsTitle")} testId="link-gaps-notice"

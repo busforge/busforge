@@ -3,7 +3,7 @@ import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { iaToNum, numToGa, formatGa, SENDER_ENTRY } from "@busforge/knx";
 import { extractAppPrograms, type Project, type DroppedLink, type DroppedLinkReason } from "@busforge/project";
-import { parseAppConfig, buildDeviceConfig, annotateCalculations, buildSecurityObject, hardwareRefusals, knxIpRefusals, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, effectiveComObjFlags, ProductError, imageWritableType, resolveParamRef, sameParamValue, type SameParamValue, takesValue, type EffectiveComObjFlags, type ComObjInstanceOverride, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
+import { parseAppConfig, buildDeviceConfig, resolveModuleInstances, annotateCalculations, buildSecurityObject, hardwareRefusals, knxIpRefusals, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, effectiveComObjFlags, ProductError, imageWritableType, resolveParamRef, sameParamValue, type SameParamValue, takesValue, type EffectiveComObjFlags, type ComObjInstanceOverride, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
 import { getAppProgram, putAppProgram, catalogBaggageNames, pictureType } from "./db/catalog.ts";
 import { getDeviceParams, getDeviceParamBase, getDeviceParamAssumed, getDeviceModules, getDeviceAppProgramId, getDeviceProductRef, getDeviceForFlash, deviceHasApplication, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps, getDeviceComObjOverrides, getDeviceComObjOverrideBase, getDeviceKnxIp } from "./db/deviceparams.ts";
 import { deviceCompatibility } from "./compatibility.ts";
@@ -622,26 +622,34 @@ export function buildGaDevicesView(state: AppState, projectId: string, raw: numb
 // One com-object whose ETS links an import did not take over in full, as the import preview and the
 // project show it: the device, the object's number and texts where the device's configuration places it,
 // and else why not (`unresolved`): the file or project has no application program for the device, the
-// configuration refuses the application (`refusal`, its code), or the object is not among those the
-// configuration shows (an object of a module instance the device no longer has, or one its current
-// parameters hide). Each ETS address carries its address where its raw value is known, its name and
-// `inProject` where the project holds it now.
+// configuration refuses the application (`refusal`, its code), the object belongs to a module instance
+// the device's configuration does not have now, the application has no such object, or the object is
+// one the configuration does not show (a module object its current parameters hide). `unrecoverable`:
+// no link made in Busforge can reach the object (every case but the last), so the entry is no open
+// work and the warning does not count it. Each ETS address carries its address where its raw value is
+// known, its name and `inProject` where the project holds it now.
+export type DroppedLinkUnresolved = "noApplication" | "refused" | "moduleInstanceGone" | "notInApplication" | "notInConfiguration";
 export interface DroppedLinkView {
   deviceId: string; ia: string; deviceName: string; comObjRefId: string;
   comObjNumber: number | null; comObjName: string | null; functionText: string | null;
-  unresolved: "noApplication" | "refused" | "notInConfiguration" | null; refusal: string | null;
+  unresolved: DroppedLinkUnresolved | null; refusal: string | null; unrecoverable: boolean;
   reason: DroppedLinkReason;
   gas: { etsId: string; address: string | null; name: string | null; inProject: boolean }[];
 }
 // `links`: the device's com-object links now, where the list leaves out what was linked again.
 interface DroppedLinkDevice { ia: string; name: string; app: () => AppConfig | null; params: StoredParams; modules: StoredModules; links?: Map<string, number[]> }
-type DeviceObjects = { objs: ReturnType<typeof comObjsByKey> } | { unresolved: "noApplication" } | { unresolved: "refused"; refusal: string };
+// `instances`: the ids of the module instances the configuration has now: the device's stored ones, or
+// those the allocators make of its values where it stores none (as buildDeviceConfig takes them).
+type DeviceObjects = { objs: ReturnType<typeof comObjsByKey>; instances: Set<string> } | { unresolved: "noApplication" } | { unresolved: "refused"; refusal: string };
 
 // A refused application is shown on its device's objects, never fails the list of the others.
 function deviceObjects(dev: DroppedLinkDevice, lang?: string): DeviceObjects {
   try {
     const app = dev.app();
-    return app ? { objs: comObjsByKey(app, buildDeviceConfig(app, dev.params, lang, dev.modules), lang) } : { unresolved: "noApplication" };
+    if (!app) return { unresolved: "noApplication" };
+    const objs = comObjsByKey(app, buildDeviceConfig(app, dev.params, lang, dev.modules), lang);
+    const instances = dev.modules.length || !app.hasModules ? dev.modules : resolveModuleInstances(app, dev.params);
+    return { objs, instances: new Set(instances.map((i) => i.id)) };
   } catch (e) {
     if (e instanceof ProductError) return { unresolved: "refused", refusal: e.code };
     throw e;
@@ -657,6 +665,15 @@ function linkedAgain(link: DroppedLink, view: DroppedLinkView, linked: number[])
   return have.size >= new Set(link.gas.map((g) => g.etsId)).size && link.gas.every((g, i) => !view.gas[i].inProject || have.has(g.raw!));
 }
 
+// Why the configuration does not place an object: the application's own objects are all known to it
+// (comObjsByKey, hidden ones included), so one it lacks is not the application's; a module object is
+// per instance (…_MI-n_…), and one of an instance the configuration has is hidden by its parameters.
+function missingObject(comObjRefId: string, instances: Set<string>): DroppedLinkUnresolved {
+  const instance = /^(.*_MI-\d+)_/.exec(comObjRefId)?.[1];
+  if (instance === undefined) return "notInApplication";
+  return instances.has(instance) ? "notInConfiguration" : "moduleInstanceGone";
+}
+
 function droppedLinkViews(links: DroppedLink[], deviceOf: (deviceId: string) => DroppedLinkDevice, gaOf: (raw: number) => { address: string; name: string | null; inProject: boolean }, lang?: string): DroppedLinkView[] {
   const devices = new Map<string, { dev: DroppedLinkDevice; objects: DeviceObjects }>();
   return links.flatMap((l) => {
@@ -667,11 +684,12 @@ function droppedLinkViews(links: DroppedLink[], deviceOf: (deviceId: string) => 
       devices.set(l.deviceId, d);
     }
     const co = "objs" in d.objects ? d.objects.objs.get(l.comObjRefId) : undefined;
+    const unresolved = co ? null : "objs" in d.objects ? missingObject(l.comObjRefId, d.objects.instances) : d.objects.unresolved;
     const view: DroppedLinkView = {
       deviceId: l.deviceId, ia: d.dev.ia, deviceName: d.dev.name, comObjRefId: l.comObjRefId,
       comObjNumber: co?.number ?? null, comObjName: co?.name ?? null, functionText: co?.functionText ?? null,
-      unresolved: co ? null : "objs" in d.objects ? "notInConfiguration" : d.objects.unresolved,
-      refusal: "refusal" in d.objects ? d.objects.refusal : null,
+      unresolved, refusal: "refusal" in d.objects ? d.objects.refusal : null,
+      unrecoverable: unresolved !== null && unresolved !== "notInConfiguration",
       reason: l.reason,
       gas: l.gas.map(({ etsId, raw }) => (raw === undefined ? { etsId, address: null, name: null, inProject: false } : { etsId, ...gaOf(raw) })),
     };
