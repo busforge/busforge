@@ -38,7 +38,8 @@ const APCI: Record<number, string> = {
   0x200: "MEMORY_READ", 0x240: "MEMORY_RESP", 0x280: "MEMORY_WRITE",
   0x300: "DESCR_READ", 0x340: "DESCR_RESP", 0x380: "RESTART",
   0x3d5: "PROP_READ", 0x3d6: "PROP_RESP", 0x3d7: "PROP_WRITE",
-  0x1c0: "ADC_READ", 0x1fb: "MEM_EXT_WRITE", 0x1fc: "MEM_EXT_READ",
+  0x180: "ADC_READ", 0x1c0: "ADC_RESP",
+  0x1fb: "MEM_EXT_WRITE", 0x1fc: "MEM_EXT_WRITE_RESP", 0x1fd: "MEM_EXT_READ", 0x1fe: "MEM_EXT_READ_RESP",
 };
 const SEARCH_RES = 0x0202, SEARCH_RES_EXT = 0x020c;
 const HPAI_UDP = 0x01, HPAI_TCP = 0x02;
@@ -57,7 +58,9 @@ function decodeCemi(cemi: Buffer): string {
   const conerr = msg === 0x2e ? (ctrl1 & 0x01 ? " CON-NEG" : " CON-OK") : "";
   if (tpdu.length < 2) return `${mc} ${ia(src)}->${ia(dst)}${conerr}`;
   const apci = ((tpdu[0] & 0x03) << 8) | tpdu[1];
-  const label = APCI[apci] ?? APCI[apci & 0x3c0] ?? `apci_0x${apci.toString(16)}`;
+  // The low six bits carry data only below 0x1c8: from there on the codes are the extended services.
+  const masked = (apci & 0x3c0) === 0x1c0 && apci >= 0x1c8 ? undefined : APCI[apci & 0x3c0];
+  const label = APCI[apci] ?? masked ?? `apci_0x${apci.toString(16)}`;
   return `${mc} ${ia(src)}->${ia(dst)}${conerr} ${label}`;
 }
 
