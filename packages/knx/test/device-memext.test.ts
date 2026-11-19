@@ -19,8 +19,11 @@ class FakeExtTransport implements KnxTransport {
   sent = 0; // every frame the device was sent, acknowledgements included
   // Injected faults for the negative tests.
   // `maxApdu`: the PID_MAX_APDU_LENGTH the device declares; absent, it answers that property with no element.
-  constructor(private readonly opts: { badCode?: boolean; wrongEcho?: boolean; maxApdu?: number } = {}) {}
+  // `userEcho`: how the device answers an A_UserMemory_Write ("same" echoes it, "wrong-address" and
+  // "wrong-data" alter one octet of the echo).
+  constructor(private readonly opts: { badCode?: boolean; wrongEcho?: boolean; maxApdu?: number; userEcho?: "same" | "wrong-address" | "wrong-data" } = {}) {}
   extWrites: number[] = []; // data length of each extended write
+  userWrites: Buffer[] = []; // the APDU after its APCI of each A_UserMemory_Write
   async connect() {}
   async disconnect() {}
   get assigned() { return this.assignedIa; }
@@ -62,6 +65,18 @@ class FakeExtTransport implements KnxTransport {
       this.onCemi?.(this.device, this.assignedIa, apdu(p.seq, APCI.MEMORY_EXT_WRITE_RESP, head), false);
       return;
     }
+    if (p.apci === APCI.USER_MEMORY_WRITE) {
+      this.userWrites.push(Buffer.from(p.data));
+      const count = p.data[0] & 0x0f;
+      const addr = ((p.data[0] >> 4) << 16) | (p.data[1] << 8) | p.data[2];
+      for (let i = 0; i < count; i++) this.mem.set(addr + i, p.data[3 + i]);
+      this.ack(p.seq);
+      const echo = Buffer.from(p.data);
+      if (this.opts.userEcho === "wrong-address") echo[2] ^= 0x01;
+      if (this.opts.userEcho === "wrong-data") echo[3] ^= 0xff;
+      this.onCemi?.(this.device, this.assignedIa, apdu(p.seq, APCI.USER_MEMORY_RESPONSE, echo), false);
+      return;
+    }
   }
 }
 
@@ -96,23 +111,56 @@ describe("A_MemoryExtended reaches past the 16-bit memory services", () => {
     expect(tun.sawClassic).toBe(0);
   });
 
-  // Other tools report that ETS reaches an application without the option past 0xFFFF with
-  // A_UserMemory (Zennio DIMinBOX/DALIBOX, ABB Caldion, SATEL KNX-SA41), which Busforge does not send;
-  // the SATEL acknowledges A_MemoryExtended and never answers it, so sending it ends in a timeout.
-  test("past 0xFFFF, an application without the extended memory services is refused before any frame", async () => {
+  // ETS reaches an application without the option past 0xFFFF with A_UserMemory_Write; no capture shows
+  // it reading there (A_UserMemory_Read), so a read, and a write that would be read back, refuse.
+  test("past 0xFFFF, an application without the extended memory services is not read there, and a write that would be read back is refused, before any frame", async () => {
     const tun = new FakeExtTransport({ maxApdu: 55 });
     const dev = new KnxDevice(tun, "1.1.11");
     dev.setExtendedMemoryServices(false);
     const refusals = [
       await dev.memRead(0x15000, 4).then(() => null, (e: Error & { code?: string }) => e),
       await dev.memWrite(0x15000, Buffer.from([1, 2, 3])).then(() => null, (e: Error & { code?: string }) => e),
+      await dev.memWrite(0x15000, Buffer.from([1, 2, 3]), { verify: true, echo: true }).then(() => null, (e: Error & { code?: string }) => e),
       await dev.memReadPartial(0x15000, 4, { chunk: 4 }).then(() => null, (e: Error & { code?: string }) => e),
       await dev.memRead(0xfff8, 16).then(() => null, (e: Error & { code?: string }) => e),
     ];
     for (const e of refusals) {
       expect(e?.code).toBe("USER_MEMORY_UNSUPPORTED");
-      expect(e?.message).toMatch(/A_UserMemory/);
+      expect(e?.message).toMatch(/A_UserMemory_Read/);
     }
+    expect(tun.sent).toBe(0);
+  });
+
+  // The frame ETS sends (a simulator's capture of a download into 0x10000): [address bits 16-19 << 4 |
+  // count][address bits 15-0][data], at most 15 octets, each answered by A_UserMemory_Response with the
+  // same octets. tools/bussard-user-memory.test.ts holds a whole segment against that capture.
+  test("past 0xFFFF, an application without the extended memory services is written with A_UserMemory_Write, each write echoed", async () => {
+    const tun = new FakeExtTransport({ maxApdu: 66 });
+    const dev = new KnxDevice(tun, "1.1.11");
+    dev.setExtendedMemoryServices(false);
+    const data = Buffer.from(Array.from({ length: 33 }, (_, i) => i + 1));
+    await dev.memWrite(0xffff + 0x20101, data, { verify: false, echo: true });
+    expect(tun.userWrites.map((w) => w.subarray(0, 3).toString("hex"))).toEqual(["3f0100", "3f010f", "33011e"]);
+    expect(Buffer.concat(tun.userWrites.map((w) => w.subarray(3))).equals(data)).toBe(true);
+    expect(tun.sawExtended).toBe(0);
+    expect(tun.sawClassic).toBe(0);
+  });
+
+  test("an A_UserMemory_Response for another address or with other bytes is refused, not taken as proof", async () => {
+    for (const userEcho of ["wrong-address", "wrong-data"] as const) {
+      const dev = new KnxDevice(new FakeExtTransport({ maxApdu: 66, userEcho }), "1.1.11");
+      dev.setExtendedMemoryServices(false);
+      const e = await dev.memWrite(0x10000, Buffer.from([1, 2, 3]), { verify: false }).then(() => null, (err: Error & { code?: string }) => err);
+      expect(e?.code).toBe("FLASH_VERIFY_MISMATCH");
+    }
+  });
+
+  test("A_UserMemory reaches 20 bits: a write past 0xFFFFF is refused before any frame", async () => {
+    const tun = new FakeExtTransport({ maxApdu: 66 });
+    const dev = new KnxDevice(tun, "1.1.11");
+    dev.setExtendedMemoryServices(false);
+    const e = await dev.memWrite(0xffffe, Buffer.from([1, 2, 3]), { verify: false }).then(() => null, (err: Error & { code?: string }) => err);
+    expect(e?.code).toBe("MEMORY_ADDRESS_TOO_HIGH");
     expect(tun.sent).toBe(0);
   });
 

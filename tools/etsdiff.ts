@@ -30,8 +30,8 @@
 //
 // WHAT IS COMPARED. The image is built by the SAME planner the server's full download runs
 // (DeviceProfile.planFullDownload, packages/product/src/profiles.ts), so every refusal the server
-// would raise is raised here too. ETS's side is every A_Memory_Write (APCI 0x280) and
-// A_MemoryExtended_Write (0x1FB) the capture shows ETS sending to the device's individual address,
+// would raise is raised here too. ETS's side is every A_Memory_Write (APCI 0x280),
+// A_MemoryExtended_Write (0x1FB) and A_UserMemory_Write (0x2C2) the capture shows ETS sending to the device's individual address,
 // replayed in order (a later write wins per byte). Each segment Busforge writes is compared at its
 // device address; ETS bytes that fall in no Busforge segment, and Busforge bytes ETS never wrote,
 // are listed, never dropped.
@@ -68,7 +68,7 @@ const TABLE_SOURCES = new Set<FullDownloadSegment["source"]>(["addrTable", "asso
 
 // ── capture parsing ──────────────────────────────────────────────────────────
 
-export interface MemWrite { addr: number; data: Buffer; service: "A_Memory_Write" | "A_MemoryExtended_Write" }
+export interface MemWrite { addr: number; data: Buffer; service: "A_Memory_Write" | "A_MemoryExtended_Write" | "A_UserMemory_Write" }
 export interface PropWrite { obj: number; pid: number; data: Buffer }
 export interface PropResponse { obj: number; pid: number; data: Buffer }
 export interface Capture {
@@ -143,6 +143,11 @@ function memWriteOf(t: Buffer, apci: number): MemWrite | null {
     if (t.length < 6) return null;
     const n = t[2], data = t.subarray(6, 6 + n);
     return data.length === n ? { addr: t.readUIntBE(3, 3), data: Buffer.from(data), service: "A_MemoryExtended_Write" } : null;
+  }
+  if (apci === 0x2c2) { // A_UserMemory_Write: address bits 16-19 and the count (1-15) in one octet, then address bits 15-0
+    if (t.length < 5) return null;
+    const n = t[2] & 0x0f, data = t.subarray(5, 5 + n);
+    return data.length === n ? { addr: ((t[2] >> 4) << 16) | t.readUInt16BE(3), data: Buffer.from(data), service: "A_UserMemory_Write" } : null;
   }
   return null;
 }

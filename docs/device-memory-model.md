@@ -595,21 +595,49 @@ than truncated and written to the wrong place.
 Past `0xFFFF` the **application decides**, as ETS does. Where it declares `<Options
 SupportsExtendedMemoryServices="true">`, `memRead` and `memWrite` serve a range whose last byte
 exceeds `0xFFFF` entirely by the extended path; everything at or below stays on the classic path
-(except the confirmed write below). Where it does not, other KNX tools report that ETS reaches that
-memory with `A_UserMemory` (APCI `0x2C0`-`0x2C2`, a 20-bit address, at most 15 octets per request), on
-SATEL, Zennio, ABB and Busch-Jaeger units, and that the SATEL KNX-SA41 acknowledges `A_MemoryExtended`
-on the transport layer and never answers it. Busforge does not send `A_UserMemory` and holds no
-capture of it, so such a range is refused before any request (`USER_MEMORY_UNSUPPORTED`); a range
-whose application option was never set is refused the same way (`MEMORY_SERVICES_UNDECIDED`). Every
-device session takes the option from the project's application before its first request, so the
-reads ahead of a write (backup, comparison, read-back) refuse before anything is written. The
-collector is the one reader that may know no application: there it reads past `0xFFFF` with
-`A_MemoryExtended` and records whatever comes back, silence included.
+(except the confirmed write below). Where it does not, the range is written with **A_UserMemory**,
+the service ETS writes it with there (below); a range whose application option was never set is
+refused before any request (`MEMORY_SERVICES_UNDECIDED`). Every device session takes the option from
+the project's application before its first request. The collector is the one reader that may know
+no application: there it reads past `0xFFFF` with `A_MemoryExtended` and records whatever comes back,
+silence included.
 
-One case refuses late. A relative segment's address is the device's own allocation, and a full
-download reads no memory before it unloads. On a device whose application lacks the option and
-whose allocator places a segment past `0xFFFF`, the full download is refused at its first write of
-that segment, after the unload: the device is left unloaded, and the way back is a download with ETS.
+#### A_UserMemory: past 64 KB without the extended services
+
+ETS's downloads of one application in two forms, an 8448-octet parameter segment placed at `0x10000`
+with and without the option, show the split for the part above `0xFFFF`. They come from a device
+simulator (third-party test data, [testing.md](testing.md#third-party-test-data)), so they show what
+ETS sends and what the simulator answered, never how a real device answers; no unit of ours places
+memory there without the option.
+
+- **APCIs**: `A_UserMemory_Write` = `0x2C2`, `A_UserMemory_Response` = `0x2C1`
+  (`A_UserMemory_Read` = `0x2C0`).
+- **Request**: `[x][address bits 15-0 (2)][data…]`, `x` = address bits 16-19 in the high nibble and
+  the count (1-15) in the low one: a 20-bit address. ETS's first write is `C2 1F 00 00 01 01 2C FF…`
+  (`0x10000`, 15 octets).
+- **15 octets per write**, the count's maximum, at the simulator's maximum APDU of 66 behind an
+  interface that announces none: 564 writes for the 8448 octets. Busforge sizes them as
+  `writeChunks` does: the shorter of the device's and the interface's APDU less 4, at most 15;
+  where the interface announces none, the extended path limit (which carries those 19 octets); where
+  the device declares none, the standard frame (11 octets, which no capture shows).
+- **Each write is answered** by an `A_UserMemory_Response` with the same three octets and data. ETS
+  reads no device-control property (verify mode) before these writes; whether a real device answers
+  only in verify mode the capture cannot show. Busforge awaits the answer for every write and refuses
+  one for another address or with other bytes (`FLASH_VERIFY_MISMATCH`); a System B full download
+  switches verify mode on before it writes, so it gets the answer either way.
+- **Not read.** No capture shows `A_UserMemory_Read`, so a read past `0xFFFF` on such an application,
+  and a write that would be read back, are refused before any request (`USER_MEMORY_UNSUPPORTED`): a
+  backup, a comparison, a parameter or structural flash and the partial form of the full download read
+  the segment first and refuse before they write. A full download writes the segment, and its check
+  after the restart takes the segment's CRC in its memory-control block; where that proves nothing the
+  download is reported unverified. A secured session with `A_UserMemory` is refused too: no capture
+  shows one.
+
+With the option, ETS writes every memory with `A_MemoryExtended_Write` of 61 octets (66 less 5),
+the tables below `0xFFFF` too, and reads no device-control property. Busforge writes the same way
+where the device declares `PID_MAX_APDU_LENGTH` (below), and ETS's own downloads of our units with the
+option show the same (no `PID 14` read, every write extended). Its chunk differs where the interface
+announces nothing: Busforge then keeps the measured path limit of 32.
 
 `memWrite` selects **by application and device, as ETS does**. The caller sets whether the
 application declares `<Options SupportsExtendedMemoryServices="true">`; before its first write on a

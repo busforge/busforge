@@ -43,6 +43,11 @@ export const APCI = {
   // APCI low bits, and the write is a CONFIRMED service (every write is answered with a return code).
   MEMORY_EXT_WRITE: 0x1fb, MEMORY_EXT_WRITE_RESP: 0x1fc,
   MEMORY_EXT_READ: 0x1fd, MEMORY_EXT_READ_RESP: 0x1fe,
+  // A_UserMemory: a 20-bit address, the top 4 bits in the high nibble of the octet whose low nibble is
+  // the count (1-15), then the low 16 bits. ETS writes memory past 0xFFFF with it where the application
+  // declares no extended memory services, and the device answers each write with A_UserMemory_Response
+  // carrying the same octets.
+  USER_MEMORY_WRITE: 0x2c2, USER_MEMORY_RESPONSE: 0x2c1,
   PROPERTY_READ: 0x3d5, PROPERTY_RESPONSE: 0x3d6, PROPERTY_WRITE: 0x3d7,
   PROPERTY_DESCRIPTION_READ: 0x3d8, PROPERTY_DESCRIPTION_RESPONSE: 0x3d9,
   AUTHORIZE_REQUEST: 0x3d1, AUTHORIZE_RESPONSE: 0x3d2,

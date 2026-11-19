@@ -18,11 +18,12 @@ test("the interface's maximum APDU from the Extended Device Information DIB", ()
 });
 
 test("memory writes sized as ETS sizes them: the shorter APDU less the write's octets, else the path limit", () => {
-  expect(writeChunks(254, 210)).toEqual({ classic: 63, ext: 205 }); // OpenKNX behind the MDT interface: 205 as ETS writes it
-  expect(writeChunks(55, 210)).toEqual({ classic: 52, ext: 50 });   // Theben DALI-Gateway / MIX 2: 52-byte classic writes
-  expect(writeChunks(15, 210)).toEqual({ classic: 12, ext: 10 });
-  expect(writeChunks(254, null)).toEqual({ classic: 12, ext: Math.min(EXT_WRITE_CHUNK, 249) });
-  expect(writeChunks(null, 210)).toEqual({ classic: 12, ext: EXT_WRITE_CHUNK });
+  expect(writeChunks(254, 210)).toEqual({ classic: 63, ext: 205, user: 15 }); // OpenKNX behind the MDT interface: 205 as ETS writes it
+  expect(writeChunks(55, 210)).toEqual({ classic: 52, ext: 50, user: 15 });   // Theben DALI-Gateway / MIX 2: 52-byte classic writes
+  expect(writeChunks(66, null).user).toBe(15);                                 // the simulator of the A_UserMemory capture: 15 as ETS writes it
+  expect(writeChunks(15, 210)).toEqual({ classic: 12, ext: 10, user: 11 });
+  expect(writeChunks(254, null)).toEqual({ classic: 12, ext: Math.min(EXT_WRITE_CHUNK, 249), user: 15 });
+  expect(writeChunks(null, 210)).toEqual({ classic: 12, ext: EXT_WRITE_CHUNK, user: 11 });
 });
 
 // A tunnel's UDP socket that answers the CONNECT_REQUEST and, if asked, the extended search with the MDT's response.

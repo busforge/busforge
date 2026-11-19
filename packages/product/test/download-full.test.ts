@@ -313,6 +313,22 @@ corpusDescribe("full download against the real M-0162 application", () => {
       expect(fullReads.length).toBeGreaterThanOrEqual(2);
     }, 100_000);
 
+    // A segment past 0xFFFF on an application without the extended memory services is written with
+    // A_UserMemory, which the device reads nothing back with (USER_MEMORY_UNSUPPORTED): no proof, no failure.
+    test("a parameter segment its CRC does not prove and that cannot be read back leaves the download unverified", async () => {
+      const dev = new MockDevice({ mcb: { size: target.size, crc: 0xdead } });
+      const read = dev.memRead.bind(dev);
+      dev.memRead = async (addr: number, len: number) => {
+        if (addr === A[OBJ.LSM]) throw Object.assign(new Error("the read would take A_UserMemory_Read"), { code: "USER_MEMORY_UNSUPPORTED" });
+        return read(addr, len);
+      };
+      const res = await classify(cfg).downloadFull(asDev(dev), cfg.mask, ctxFor(dev).ctx);
+      expect(res.kind).toBe("flashed");
+      if (res.kind !== "flashed") throw new Error("unreachable");
+      expect(res.verified).toBe(false);
+      expect(dev.events).toContain("write");
+    }, 100_000);
+
     test("dryRun with backup ON: captures the backup but writes NOTHING to the device", async () => {
       const dev = new MockDevice();
       const before = new Map(dev.mem);

@@ -1404,7 +1404,9 @@ export class SystemBProfile extends DeviceProfile {
       // A region whose CRC does not match, or a segment whose device reports none, is read back and
       // compared as every read-back is: the tables whole, the parameter image in the bytes a parameter
       // covers, less the markers the device sets itself (wholeBytes). No match is NOT a pass and NOT a
-      // failure verdict, only no proof.
+      // failure verdict, only no proof. So is a segment past 0xFFFF on an application without the
+      // extended memory services whose CRC proves nothing: it was written with A_UserMemory, and no
+      // capture shows it read (USER_MEMORY_UNSUPPORTED).
       verify: async () => {
         ctx.onProgress?.("verify");
         const { ok } = await verifySettled(
@@ -1422,7 +1424,7 @@ export class SystemBProfile extends DeviceProfile {
             const securityOk = !security || (sec !== null && sameSecurityObject(sec, security));
             return tablesOk && paramsOk && securityOk;
           },
-        );
+        ).catch((e: unknown) => { if ((e as { code?: string }).code === "USER_MEMORY_UNSUPPORTED") return { ok: false }; throw e; });
         return ok;
       },
     });

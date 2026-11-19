@@ -54,6 +54,8 @@ function assertElements(start: number, count: number): void {
 export type MemPiece = { address: number; length: number; bytes: Buffer } | { address: number; length: number; refused: string };
 export interface PartialMemRead { pieces: MemPiece[]; stopped: { address: number; error: unknown } | null }
 
+const memRange = (addr: number, len: number) => `0x${addr.toString(16)}..0x${(addr + len - 1).toString(16)}`;
+
 function serviceMismatch(what: string, got: number, want: number): KnxError {
   return new KnxError("PROPERTY_RESPONSE_MISMATCH", `${what} was answered with service 0x${got.toString(16)}, not 0x${want.toString(16)}`);
 }
@@ -144,10 +146,20 @@ export function transferChunks(maxApdu: number | null, secured: boolean): { clas
 // count. Where the interface announces nothing (a USB interface, or an IP one that does not answer the
 // extended search), the path limit stays: 32 extended (EXT_WRITE_CHUNK, the knob above caps only that
 // case), 12 classic.
-export function writeChunks(deviceMax: number | null, interfaceMax: number | null): { classic: number; ext: number } {
-  if (deviceMax === null || interfaceMax === null) return { classic: 12, ext: transferChunks(deviceMax, false).extWrite };
+//
+// A_UserMemory_Write spends 4 octets and counts in a nibble, so it carries at most 15. ETS writes 15 per
+// request to a device declaring 66 behind an interface announcing nothing (a simulator's capture); the
+// extended path limit (EXT_WRITE_CHUNK's 37-octet request) carries those 19 octets, so that case takes
+// the device's length here too. A device declaring none gets the 15-octet standard frame: 11, which no
+// capture shows.
+const USER_WRITE_OVERHEAD = 4;
+const USER_MEMORY_MAX_COUNT = 15;
+export function writeChunks(deviceMax: number | null, interfaceMax: number | null): { classic: number; ext: number; user: number } {
+  const userApdu = deviceMax === null ? 15 : Math.min(deviceMax, interfaceMax ?? EXT_WRITE_CHUNK + EXT_WRITE_OVERHEAD);
+  const user = Math.max(1, Math.min(USER_MEMORY_MAX_COUNT, userApdu - USER_WRITE_OVERHEAD));
+  if (deviceMax === null || interfaceMax === null) return { classic: 12, ext: transferChunks(deviceMax, false).extWrite, user };
   const n = Math.min(deviceMax, interfaceMax);
-  return { classic: Math.max(1, Math.min(63, n - 3)), ext: Math.max(1, Math.min(255, n - EXT_WRITE_OVERHEAD)) };
+  return { classic: Math.max(1, Math.min(63, n - 3)), ext: Math.max(1, Math.min(255, n - EXT_WRITE_OVERHEAD)), user };
 }
 
 // A_Restart carries its type in the low bits of its APCI: 0 = a plain reboot, 1 = a master reset,
@@ -184,8 +196,8 @@ export const OBJ = {
 // is byte-for-byte the plain one. Hardware-verified on an MDT IP interface.
 
 // A_Memory_Read/Write carry a 2-BYTE address, so they reach 0x0000..0xFFFF and no further. A device
-// that allocates a segment above that is handled by A_MemoryExtended: memRead/memWrite route any range
-// whose last byte exceeds 0xFFFF to the extended path, or refuse it, BEFORE this guard runs. So reaching here with a
+// that allocates a segment above that is handled by A_MemoryExtended or A_UserMemory: memRead/memWrite
+// route any range whose last byte exceeds 0xFFFF to one of them, or refuse it, BEFORE this guard runs. So reaching here with a
 // too-high last byte can only mean a negative (invalid) base address, never an unhandled high segment.
 // Refuse it rather than truncate: a truncated address writes the right bytes to the WRONG place, which
 // on a load-state machine means a device that comes up believing a table it never received.
@@ -267,6 +279,7 @@ const ANSWER_OF: Readonly<Record<number, number>> = {
   [APCI.FUNCTION_PROPERTY_EXT_COMMAND]: APCI.FUNCTION_PROPERTY_EXT_STATE_RESPONSE,
   [APCI.FUNCTION_PROPERTY_EXT_STATE_READ]: APCI.FUNCTION_PROPERTY_EXT_STATE_RESPONSE,
   [APCI.MEMORY_EXT_READ]: APCI.MEMORY_EXT_READ_RESP, [APCI.MEMORY_EXT_WRITE]: APCI.MEMORY_EXT_WRITE_RESP,
+  [APCI.USER_MEMORY_WRITE]: APCI.USER_MEMORY_RESPONSE,
 };
 // The reads, which a device may carry out twice: only these are asked again under a new number
 // (requestTries). Classic memory services are keyed by their service bits alone.
@@ -928,22 +941,21 @@ export class KnxDevice {
   // acknowledges it on the transport layer and never answers, and ETS writes it with A_Memory_Write.
   private extendedMemory: boolean | undefined;
   setExtendedMemoryServices(on: boolean): void { this.extendedMemory = on; }
-  // A range past the 16-bit reach of A_Memory_* goes out as A_MemoryExtended only where the
-  // application declares the extended memory services. Other KNX tools report that ETS reaches such
-  // memory with A_UserMemory where the option is absent (20-bit address, at most 15 octets per request;
-  // SATEL, Zennio, ABB and Busch-Jaeger units), and that a SATEL KNX-SA41 acknowledges A_MemoryExtended
-  // on the transport layer and never answers it. Busforge does not send A_UserMemory and holds no
-  // capture of it, so that range is refused before any request, and so is one whose application option
-  // was never set.
-  private assertHighMemoryService(what: string, addr: number, len: number): void {
-    if (this.extendedMemory === true) return;
-    const range = `0x${addr.toString(16)}..0x${(addr + len - 1).toString(16)}`;
-    if (this.extendedMemory === false) {
-      throw new KnxError("USER_MEMORY_UNSUPPORTED",
-        `${what} at ${range} lies past 0xFFFF, and the application does not declare SupportsExtendedMemoryServices, so the device is not reached there with A_MemoryExtended but with A_UserMemory, which busforge does not send; refusing before any request`);
-    }
+  // The service that reaches a range past the 16-bit reach of A_Memory_*: A_MemoryExtended where the
+  // application declares the extended memory services, A_UserMemory where it does not (ETS's download
+  // of such an application into a simulator; other KNX tools report a SATEL KNX-SA41 that acknowledges
+  // A_MemoryExtended on the transport layer and never answers it). A range whose application option was
+  // never set is refused before any request.
+  private highMemoryService(what: string, addr: number, len: number): "extended" | "user" {
+    if (this.extendedMemory === true) return "extended";
+    if (this.extendedMemory === false) return "user";
     throw new KnxError("MEMORY_SERVICES_UNDECIDED",
-      `${what} at ${range} lies past 0xFFFF, and without the application's SupportsExtendedMemoryServices option it is unknown whether the device takes A_MemoryExtended or A_UserMemory there; refusing before any request`);
+      `${what} at ${memRange(addr, len)} lies past 0xFFFF, and without the application's SupportsExtendedMemoryServices option it is unknown whether the device takes A_MemoryExtended or A_UserMemory there; refusing before any request`);
+  }
+  // No capture shows ETS reading memory with A_UserMemory_Read, so that memory is not read.
+  private userMemoryReadRefused(addr: number, len: number): KnxError {
+    return new KnxError("USER_MEMORY_UNSUPPORTED",
+      `memory read at ${memRange(addr, len)} lies past 0xFFFF, where the application, declaring no SupportsExtendedMemoryServices, is reached with A_UserMemory; no ETS capture shows that memory read (A_UserMemory_Read), so busforge does not read it; refusing before any request`);
   }
   // The interface's maximum APDU as it announces it (KnxTransport.queryMaxApdu), asked once per device,
   // before the first load-state event of a plan that writes (runLoadPlan) or else at the first memory
@@ -1027,9 +1039,9 @@ export class KnxDevice {
   }
   async memRead(addr: number, len: number, chunkBytes?: number, onProgress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<Buffer> {
     // A range past the 16-bit reach of A_Memory_Read is served by A_MemoryExtended where the application
-    // declares it (assertHighMemoryService). Classic path stays byte-identical below.
+    // declares it (highMemoryService). Classic path stays byte-identical below.
     if (addr >= 0 && addr + len - 1 > 0xffff) {
-      this.assertHighMemoryService("memory read", addr, len);
+      if (this.highMemoryService("memory read", addr, len) === "user") throw this.userMemoryReadRefused(addr, len);
       return this.memReadExtended(addr, len, undefined, onProgress, signal);
     }
     assertAddressable(addr, len, "memory read");
@@ -1123,7 +1135,7 @@ export class KnxDevice {
     // Past 0xFFFF this read sends A_MemoryExtended unless the application is known to lack the option:
     // it is the probe of a device whose application may be unknown (the collector), and whatever comes
     // back, silence included, is recorded, never taken as the device's content.
-    if (extended && this.extendedMemory === false) this.assertHighMemoryService("memory read", addr, len);
+    if (extended && this.extendedMemory === false) throw this.userMemoryReadRefused(addr, len);
     if (extended) this.assertExtAddressable(addr, len, "extended memory read");
     else assertAddressable(addr, len, "memory read");
     const chunk = Math.min(Math.max(1, Math.floor(opts.chunk)), extended ? 255 : 63); // count octet / 6-bit APCI count
@@ -1218,10 +1230,10 @@ export class KnxDevice {
 
   async memWrite(addr: number, data: Buffer, opts: { chunk?: number; verify?: boolean; echo?: boolean; onProgress?: (done: number, total: number) => void } = {}): Promise<void> {
     // Past the 16-bit reach of A_Memory_Write, the device is written with A_MemoryExtended where the
-    // application declares it (assertHighMemoryService). Classic path (and every device that fits in 16
-    // bits) stays byte-identical below.
+    // application declares it, else with A_UserMemory (highMemoryService). Classic path (and every device
+    // that fits in 16 bits) stays byte-identical below.
     if (addr >= 0 && addr + data.length - 1 > 0xffff) {
-      this.assertHighMemoryService("memory write", addr, data.length);
+      if (this.highMemoryService("memory write", addr, data.length) === "user") return this.memWriteUser(addr, data, opts);
       return this.memWriteExtended(addr, data, { chunk: opts.chunk, onProgress: opts.onProgress });
     }
     // An application declaring the extended memory services, on a device that declares
@@ -1318,6 +1330,48 @@ export class KnxDevice {
     }
     return out;
   }
+  // ---- A_UserMemory (20-bit address), the write ETS sends past 0xFFFF to an application that declares
+  // no extended memory services ----
+  // Request [x][a1 a0][data], x = address bits 16-19 in the high nibble, the count (1-15) in the low one,
+  // a1 a0 the low 16 address bits. ETS sends at most 15 octets per request, reads no PID 14 before these
+  // writes, and takes an A_UserMemory_Response with the same three octets and data for each (a download
+  // into a simulator: whether a real device answers only in verify mode it cannot show). So every write
+  // awaits that answer; an answer for another address or with other bytes is refused. No capture shows
+  // the read service (A_UserMemory_Read), so a read-back is refused before the first write, and so is a
+  // secured session, which no capture shows either. The caller's read-back after the restart proves the
+  // segment where the device can show it (its memory-control block's CRC).
+  private async memWriteUser(addr: number, data: Buffer, opts: { chunk?: number; verify?: boolean; onProgress?: (done: number, total: number) => void }): Promise<void> {
+    const range = memRange(addr, data.length);
+    if (addr < 0 || addr + data.length - 1 > 0xfffff) {
+      throw new KnxError("MEMORY_ADDRESS_TOO_HIGH", `memory write at ${range} is outside the 20-bit A_UserMemory address space`);
+    }
+    if (opts.verify ?? true) {
+      throw new KnxError("USER_MEMORY_UNSUPPORTED", `memory write at ${range} is reached with A_UserMemory, and its read-back would take A_UserMemory_Read, which no ETS capture shows; refusing before any request`);
+    }
+    if (this.secure !== undefined) {
+      throw new KnxError("USER_MEMORY_UNSUPPORTED", `memory write at ${range} is reached with A_UserMemory, which no ETS capture shows in a secured session; refusing before any request`);
+    }
+    const chunk = Math.min(USER_MEMORY_MAX_COUNT, Math.max(1, opts.chunk ?? writeChunks(await this.maxApduLength(), await this.interfaceMaxApdu()).user));
+    const total = Math.ceil(data.length / chunk) || 1;
+    let done = 0;
+    for (let pos = 0; pos < data.length; ) {
+      const n = Math.min(chunk, data.length - pos);
+      const slice = data.subarray(pos, pos + n);
+      const a = addr + pos;
+      const head = Buffer.from([((a >> 16) & 0x0f) << 4 | n, (a >> 8) & 0xff, a & 0xff]);
+      const r = await this.request((s) => apdu(s, APCI.USER_MEMORY_WRITE, Buffer.concat([head, slice])), true);
+      const d = r!.data;
+      if (d.length < 3 || !d.subarray(0, 3).equals(head)) {
+        throw new KnxError("FLASH_VERIFY_MISMATCH", `the device answered a user memory write to 0x${a.toString(16)} with ${d.length < 3 ? "no address" : `the address and count ${d.subarray(0, 3).toString("hex")}`}; refusing to take that as proof`);
+      }
+      if (!d.subarray(3).equals(slice)) {
+        throw new KnxError("FLASH_VERIFY_MISMATCH", `the device did not store the bytes written to 0x${a.toString(16)}: it reports ${d.subarray(3).toString("hex")} where ${slice.toString("hex")} was written`);
+      }
+      pos += n;
+      opts.onProgress?.(++done, total);
+    }
+  }
+
   // Every chunk the device confirmed with return code 0 since the last clearConfirmedWrites, with the
   // bytes it was sent (the answer carries a return code and the address, no data). ETS takes this confirmation as the check of a `Verify="true"` write on a device
   // written with A_MemoryExtended_Write (MDT IP Interface/Router: no verify mode, no read, only

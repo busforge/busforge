@@ -26,6 +26,7 @@ function line(dir: "ETS->BRIDGE" | "BRIDGE->ETS", code: number, src: string, dst
 const u16 = (n: number) => [(n >> 8) & 0xff, n & 0xff];
 const memWrite = (addr: number, data: number[]) => [0x42, 0x80 | data.length, ...u16(addr), ...data];
 const memExtWrite = (addr: number, data: number[]) => [0x41, 0xfb, data.length, (addr >> 16) & 0xff, (addr >> 8) & 0xff, addr & 0xff, ...data];
+const userMemWrite = (addr: number, data: number[]) => [0x42, 0xc2, ((addr >> 16) & 0x0f) << 4 | data.length, ...u16(addr & 0xffff), ...data];
 const propWrite = (obj: number, pid: number, data: number[]) => [0x43, 0xd7, obj, pid, 0x10, 0x01, ...data];
 const propResponse = (obj: number, pid: number, data: number[]) => [0x43, 0xd6, obj, pid, 0x10, 0x01, ...data];
 const DEV = "1.2.3", OTHER = "1.2.4", BRIDGE = "1.2.250";
@@ -55,6 +56,14 @@ function addedGa(gas: number[], links: { gaRaws: number[] }[]): number {
 }
 
 describe("capture parsing", () => {
+  test("an A_UserMemory_Write, its address bits 16-19 beside the count, and not the device's echo of it", () => {
+    const cap = parseCapture([
+      line("ETS->BRIDGE", 0x11, "0.0.0", DEV, userMemWrite(0x120fd, [0xff, 0xff, 0xff])),
+      line("BRIDGE->ETS", 0x29, DEV, BRIDGE, [0x42, 0xc1, 0x13, 0x20, 0xfd, 0xff, 0xff, 0xff]),
+    ].join("\n"), iaToNum(DEV));
+    expect(cap.writes.map((w) => [w.service, w.addr, [...w.data]])).toEqual([["A_UserMemory_Write", 0x120fd, [0xff, 0xff, 0xff]]]);
+  });
+
   test("both memory write services, only to the device, replayed in order", () => {
     const cap = parseCapture([
       line("ETS->BRIDGE", 0x11, "0.0.0", DEV, memWrite(0x4000, [1, 2, 3])),

@@ -76,13 +76,13 @@ depends on is hardware-proven.
   setting that capture does not show (a device name, DHCP, tunnelling users, IP Secure, the
   installation's routing settings), is refused until a capture shows it. The group tables with entries
   are not decoded, and no System 1 group-address download is captured.
-- **`A_UserMemory` for memory past `0xFFFF`.** An application without
-  `SupportsExtendedMemoryServices` is refused there (`USER_MEMORY_UNSUPPORTED`). Other KNX tools report
-  that ETS uses `A_UserMemory` on such units (APCI `0x2C0`-`0x2C2`, a 20-bit address, at most 15 octets
-  per request, echoed in verify mode); none of ours has shown it. Needs an ETS download of such a unit
-  in a capture. Until then a full download of one whose allocator places a segment past `0xFFFF` is
-  refused only after the unload, which leaves it unloaded
-  ([device-memory-model.md](device-memory-model.md#a_memoryextended-reaching-a-segment-above-64-kb)).
+- **Read memory past `0xFFFF` without the extended services, and show `A_UserMemory` on a unit.**
+  Busforge writes such memory with `A_UserMemory_Write` as ETS writes it into a device simulator, and
+  reads nothing there (`USER_MEMORY_UNSUPPORTED`): no capture shows `A_UserMemory_Read`, so a backup,
+  a comparison, a parameter or structural flash and a read-back are refused, and a full download whose
+  segment the device's CRC does not prove is reported unverified. Needs an ETS capture that reads such
+  memory, and a unit with such an application for transfer evidence
+  ([device-memory-model.md](device-memory-model.md#a_usermemory-past-64-kb-without-the-extended-services)).
 - **Time a large MV-0705 download against the stop grace period.** The 30-minute
   `stop_grace_period` ([deployment.md](deployment.md)) has been measured only against small MV-0705
   images.

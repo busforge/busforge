@@ -221,7 +221,8 @@ data they were taken from. Each product is fabricated under the KNX test manufac
 isolates one construct. ETS downloaded them into a device simulator, so they show what ETS sends for
 a construct; where ETS branches on a device's answer, they show its answer to the simulator, never a
 device's behaviour. `tools/bussard-synthetic.test.ts` checks the pcap conversion against the set and
-holds Busforge's images for these products against ETS's bytes. The set's README in the corpus names
+holds Busforge's images for these products against ETS's bytes; `tools/bussard-user-memory.test.ts`
+holds Busforge's `A_UserMemory_Write` requests against ETS's, frame by frame. The set's README in the corpus names
 the commit it was taken from and carries bussard's licence.
 
 ### The capture index
