@@ -2,7 +2,7 @@ import { test, expect, setDefaultTimeout } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { resolveDataDir } from "../src/app.ts";
+import { resolveDataDir, resolvePort } from "../src/app.ts";
 
 setDefaultTimeout(60_000);
 
@@ -17,6 +17,28 @@ test("the data directory defaults to apps/server/data and BUSFORGE_DATA_DIR repl
 test("an empty BUSFORGE_DATA_DIR is refused instead of falling back to the default directory", () => {
   expect(() => resolveDataDir({ BUSFORGE_DATA_DIR: "" })).toThrow("BUSFORGE_DATA_DIR");
   expect(() => resolveDataDir({ BUSFORGE_DATA_DIR: "  " })).toThrow("BUSFORGE_DATA_DIR");
+});
+
+test("PORT defaults to 3000 and anything that is not a port number is refused", () => {
+  expect(resolvePort({})).toBe(3000);
+  expect(resolvePort({ PORT: "3917" })).toBe(3917);
+  expect(resolvePort({ PORT: "0" })).toBe(0);
+  for (const bad of ["", "abc", "-1", "65536", "30 00", "3000.5"]) expect(() => resolvePort({ PORT: bad })).toThrow("PORT");
+});
+
+test("the server entry point refuses to start on an empty BUSFORGE_DATA_DIR or a bad PORT, with exit code 1", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "busforge-data-dir-"));
+  try {
+    for (const [name, env] of [["BUSFORGE_DATA_DIR", { BUSFORGE_DATA_DIR: "" }], ["PORT", { BUSFORGE_DATA_DIR: dir, PORT: "" }]] as const) {
+      const child = Bun.spawn(["bun", "run", serverEntry], { env: { ...process.env, ...env }, stdout: "pipe", stderr: "pipe" });
+      const [code, err] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+      expect(code).toBe(1);
+      expect(err).toContain("refusing to start");
+      expect(err).toContain(name);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("the server entry point opens its database in BUSFORGE_DATA_DIR on the port PORT names", async () => {

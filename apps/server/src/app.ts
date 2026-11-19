@@ -48,14 +48,25 @@ export interface AppState {
 
 const DEFAULT_DATA_DIR = join(import.meta.dir, "..", "data");
 
-// The server's data directory: BUSFORGE_DATA_DIR, resolved against the working directory, or
-// apps/server/data. A variable that is set but empty is refused, not read as unset: the server would
-// otherwise open the default directory's database where the operator asked for an isolated one.
+// The server's data directory: BUSFORGE_DATA_DIR, resolved against the working directory of the
+// server process, or apps/server/data. A variable that is set but empty is refused, not read as
+// unset: the server would otherwise open the default directory's database where the operator asked
+// for an isolated one.
 export function resolveDataDir(env: Record<string, string | undefined>): string {
   const dir = env.BUSFORGE_DATA_DIR;
   if (dir === undefined) return DEFAULT_DATA_DIR;
   if (dir.trim() === "") throw new Error("BUSFORGE_DATA_DIR is set but empty; give a directory or unset it");
   return resolve(dir);
+}
+
+// The port the server listens on: PORT, or 3000. 0 asks the system for a free port. A value that is
+// not a port number is refused: an empty one would read as 0, and the Vite dev server, which is told
+// the port separately, would then proxy to a port nothing listens on.
+export function resolvePort(env: Record<string, string | undefined>): number {
+  const raw = env.PORT;
+  if (raw === undefined) return 3000;
+  if (!/^\d{1,5}$/.test(raw) || Number(raw) > 65535) throw new Error(`PORT must be a port number between 0 and 65535, got "${raw}"`);
+  return Number(raw);
 }
 
 export function createState(opts?: { dbPath?: string; dataDir?: string; now?: () => number }): AppState {
