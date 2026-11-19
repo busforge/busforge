@@ -1,11 +1,11 @@
 import { test, expect, describe, mock, afterAll, setDefaultTimeout } from "bun:test";
-import { readFileSync, mkdtempSync, rmSync, readdirSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Database } from "bun:sqlite";
 import { APCI, iaToNum } from "@busforge/knx";
 import type { Connection } from "../src/db/connections.ts";
 import { SimSystemB, ALLOWED_APCIS } from "../../../packages/product/test/collect-sim.ts";
+import { tempDir } from "../../../tools/test-temp.ts";
 
 // Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 4.5 s with the
 // file alone (load 5-27) and up to 4.5 s with every workspace's tests in parallel (load 5-8). A full check on a busy
@@ -30,13 +30,10 @@ afterAll(() => { makeImpl = realMake; });
 
 const fixtures = join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures");
 const cfgFixture = readFileSync(join(fixtures, "sample-config.knxproj"));
-const tmps: string[] = [];
-afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
 const req = (path: string, init?: RequestInit) => new Request(`http://x${path}`, init);
 
 async function setup(now?: () => number): Promise<{ state: AppState; projectId: string; deviceId: string; dir: string }> {
-  const dir = mkdtempSync(join(tmpdir(), "busforge-collect-"));
-  tmps.push(dir);
+  const dir = tempDir("busforge-collect-");
   const state = createState({ dbPath: ":memory:", dataDir: dir, now });
   const form = new FormData();
   form.set("file", new File([cfgFixture], "ConfigDemo.knxproj"));

@@ -13,9 +13,10 @@ import { toolSequenceNow } from "./secureSession.ts";
 // tool's own sequence starts at: ETS does so when it activates the reset Jung 400021SE again, and not
 // when it activates a device for the first time (ETS captures of both). Receivers keep the last
 // sequence they took from a sender and drop anything not above it, so a counter the reset sent back
-// would leave the device's secured telegrams unheard. That ETS's run also gave the device its address
-// by serial, so that the write could belong to that instead, is open (docs/roadmap.md). A key that was
-// never confirmed on the device (an activation interrupted before the key write) is a first activation.
+// would leave the device's secured telegrams unheard. ETS's run also gave the device its address by
+// serial, and ETS writes PID 59 at every such assignment with Data Secure on (assignSecureAddressBySerial); whether it
+// writes it at a re-activation without one is open (docs/roadmap.md). A key that was never confirmed on
+// the device (an activation interrupted before the key write) is a first activation.
 // A failed PID 59 write fails the activation with the device already holding the new key: a rerun
 // finds it active and does not set PID 59.
 //

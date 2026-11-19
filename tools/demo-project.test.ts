@@ -1,14 +1,14 @@
-import { test, expect, afterAll, setDefaultTimeout } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { test, expect, setDefaultTimeout } from "bun:test";
+import { readFileSync } from "node:fs";
+import { basename } from "node:path";
 import { createState, handleApi } from "../apps/server/src/app.ts";
 import {
-  buildDemoProject, gaRaw, MANUFACTURER_DEMO, OPEN_DEMO, OPENKNX_RELEASES, openKnxProductDb, openKnxProductDbs, parseDemoArgs,
+  buildDemoProject, MANUFACTURER_DEMO, OPEN_DEMO, OPENKNX_RELEASES, openKnxProductDb, openKnxProductDbs, parseDemoArgs,
   type Demo, type DemoApi, type ProductDb,
 } from "./demo-project.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { corpusPath, DEMO_PRODUCT_FILES, OPENKNX_DEMO_DIR } from "./corpus.ts";
+import { removeTempDir, tempDir } from "./test-temp.ts";
 
 // Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): the manufacturer
 // demo builds in 3.6 s with the file alone (load 3-4), twenty times that, at least 60 s; the open
@@ -34,10 +34,6 @@ for (const demo of [OPEN_DEMO, MANUFACTURER_DEMO]) {
     expect(new Set(demo.devices.map((d) => d.ia)).size).toBe(demo.devices.length);
   });
 }
-
-test("a group address packs its three levels", () => {
-  expect(gaRaw("1/2/3")).toBe((1 << 11) | (2 << 8) | 3);
-});
 
 test("the open demo places OpenKNX applications only, each from a pinned OpenKNX release", () => {
   for (const d of OPEN_DEMO.devices) {
@@ -111,13 +107,9 @@ test("a download that does not answer, or fails, is refused, naming the address 
   expect(String(f)).toMatch(/github\.com\/OpenKNX\/.*failed: Unable to connect.*--openknx/);
 });
 
-const tmps: string[] = [];
-afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
-
 // Build `demo` into a fresh in-process instance and check what it holds.
 async function buildAndCheck(demo: Demo, dbs: ProductDb[], manufacturers: number) {
-  const dir = mkdtempSync(join(tmpdir(), "busforge-demo-"));
-  tmps.push(dir);
+  const dir = tempDir("busforge-demo-");
   const state = createState({ dataDir: dir });
   const api: DemoApi = async (path, init) => (await handleApi(new Request(`http://demo${path}`, init), state))!;
   const call = async (path: string) => (await api(path)).json();
@@ -148,13 +140,12 @@ async function buildAndCheck(demo: Demo, dbs: ProductDb[], manufacturers: number
     expect(String(again)).toMatch(/already holds a project/);
   } finally {
     state.db.close();
-    rmSync(dir, { recursive: true, force: true });
+    removeTempDir(dir);
   }
 }
 
 test("a product database that lacks a demo's application is refused before any project is made", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "busforge-demo-"));
-  tmps.push(dir);
+  const dir = tempDir("busforge-demo-");
   const state = createState({ dataDir: dir });
   const api: DemoApi = async (path, init) => (await handleApi(new Request(`http://demo${path}`, init), state))!;
   try {
@@ -163,7 +154,7 @@ test("a product database that lacks a demo's application is refused before any p
     expect(await (await api("/api/projects")).json()).toEqual([]);
   } finally {
     state.db.close();
-    rmSync(dir, { recursive: true, force: true });
+    removeTempDir(dir);
   }
 });
 

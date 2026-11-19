@@ -1,6 +1,5 @@
 import { test, expect, mock, afterAll, describe, jest } from "bun:test";
-import { readFileSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { KnxDevice, PID, STATE, VERIFY_MODE, APCI, parseApdu, tpAck, crc16Ccitt, type KnxTransport } from "@busforge/knx";
 import { buildComObjectTable, declaredPropChecks, programIdStamp, type FlashResult } from "@busforge/product";
@@ -8,6 +7,7 @@ import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
 import { SimSystemB, systemBObjects } from "../../../packages/product/test/collect-sim.ts";
 import type { Connection } from "../src/db/connections.ts";
+import { tempDir } from "../../../tools/test-temp.ts";
 
 // A device closes a transport connection that carries no request for the transport layer's connection
 // timeout (6 s), and a read or a write then goes out again on a new connection, after a pause, or fails on
@@ -146,8 +146,7 @@ await mock.module("../src/transport.ts", () => ({ ...transport, makeTransport: (
 const ops = await import("../src/deviceprofile.ts");
 afterAll(() => { unit = null; slow = false; });
 
-const dir = mkdtempSync(join(tmpdir(), "busforge-session-idle-"));
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
+const dir = tempDir("busforge-session-idle-");
 // A System B application with a parameter segment, offering every read and write.
 const appXml = readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "product", "test", "fixtures", "sample-grid-app.xml"), "utf8");
 {

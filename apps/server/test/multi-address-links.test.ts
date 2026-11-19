@@ -1,9 +1,9 @@
-import { test, expect, describe, afterAll } from "bun:test";
-import { readFileSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { test, expect, describe } from "bun:test";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createState, handleApi, type AppState } from "../src/app.ts";
 import { mergeLinkBaseline } from "../src/deviceservice.ts";
+import { tempDir } from "../../../tools/test-temp.ts";
 
 // Several group addresses on one com-object: the device page sends the whole ordered set (the first
 // is the object's sending address), and the views built from it (the device page, the
@@ -18,8 +18,6 @@ const PARAM = "M-TEST_A-1_P-1_R-1";
 const COMOBJ = "M-TEST_A-1_O-1_R-1";
 const STORED = "O-1_R-1";
 
-const tmps: string[] = [];
-afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
 const req = (path: string, init?: RequestInit) => new Request(`http://x${path}`, init);
 const jreq = (path: string, method: string, body: unknown) =>
   req(path, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -27,8 +25,7 @@ const j = async (res: Response | null) => (await res!.json()) as any;
 const comObj = (v: any) => v.blocks.flatMap((b: any) => b.items).find((i: any) => i.kind === "comObject" && i.comObject.refId === COMOBJ)?.comObject;
 
 async function setup() {
-  const dir = mkdtempSync(join(tmpdir(), "busforge-multi-"));
-  tmps.push(dir);
+  const dir = tempDir("busforge-multi-");
   const state: AppState = createState({ dbPath: ":memory:", dataDir: dir, now: () => 1000 });
   const form = new FormData();
   form.set("file", new File([cfgFixture], "ConfigDemo.knxproj"));

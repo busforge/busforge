@@ -1,20 +1,16 @@
-import { expect, afterAll } from "bun:test";
+import { expect } from "bun:test";
 import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusTest as test } from "../../../tools/corpus-test.ts";
-import { readFileSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createState, handleApi } from "../src/app.ts";
 import { resolveComObjOverrides, placeComObjOverrides, loadApp } from "../src/deviceservice.ts";
 import { parseAppConfig, buildDeviceConfig } from "@busforge/product";
 import { stripRef } from "../src/refids.ts";
-
-const dirs: string[] = [];
-afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
+import { tempDir } from "../../../tools/test-temp.ts";
 
 async function imported() {
-  const dir = mkdtempSync(join(tmpdir(), "busforge-overrides-"));
-  dirs.push(dir);
+  const dir = tempDir("busforge-overrides-");
   const state = createState({ dbPath: ":memory:", dataDir: dir, now: () => 1000 });
   const form = new FormData();
   form.set("file", new File([readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures", "sample-config.knxproj"))], "ConfigDemo.knxproj"));

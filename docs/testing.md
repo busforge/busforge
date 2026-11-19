@@ -165,6 +165,18 @@ A timeout is raised to the measurement; a test is never made smaller or left out
 whose assertion is about time does not lean on a wall clock the load stretches: it orders the events
 it checks (the read-back route's task, which waits for the request's answer before it ends).
 
+### Temporary directories
+
+A test that needs a directory calls `tempDir(prefix)` from `tools/test-temp.ts`. It creates the
+directory inside a per-process root under the system temp dir, and a watchdog process removes that
+root once the test process is gone: after a pass, a failure, a timeout, SIGTERM or SIGKILL alike
+(`bun test` ends without running `exit` handlers, so a hook inside the process would never fire). A
+test needs no `afterAll` for it, and a directory created right before a throw cannot leak.
+`removeTempDir(dir)` releases one earlier, for a test that is done with a large one. oxlint refuses a
+bare `mkdtemp` or `mkdtempSync` import in a test file (`.oxlintrc.json`). A test that needs a file
+rather than a directory puts it in a `tempDir` too. To see what a run leaves behind, point `TMPDIR` at
+an empty directory for it and list that directory afterwards.
+
 ### The demo project
 
 Screenshots and rehearsals show the manufacturer demo, *Musterhaus Sonnenweg*; the open demo,
@@ -265,7 +277,9 @@ holds Busforge's `A_UserMemory_Write` requests against ETS's, frame by frame. Th
 the commit it was taken from and carries bussard's licence.
 `tools/bussard-text.test.ts` holds the bytes of two products' text parameters beyond ASCII against ETS's.
 `tools/bussard-unfilled-allocation.test.ts` holds the full download's request and segment bytes of an
-unfilled parameter-segment allocation against ETS's.
+unfilled parameter-segment allocation against ETS's. `tools/bussard-com-object-zero.test.ts` holds
+the System B com-object table of the products that number an object 0 (on two of them its count and
+object 1 only, see the test), and the three tables of one with group addresses on it, against ETS's.
 
 ### The capture index
 

@@ -1,6 +1,5 @@
-import { test, expect, afterAll } from "bun:test";
-import { readFileSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { test, expect } from "bun:test";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createState, handleApi } from "../src/app.ts";
 import { storeZip } from "../../../packages/project/test/ziputil.ts";
@@ -10,15 +9,13 @@ import { insertProject } from "../src/db/projects.ts";
 import { exportProject } from "../src/db/exportProject.ts";
 import { importProjectExport } from "../src/db/importProject.ts";
 import { getDeviceKnxIp } from "../src/db/deviceparams.ts";
+import { tempDir } from "../../../tools/test-temp.ts";
 
 // What an import (.knxproj or .busforge) keeps of the keys a project holds. Synthetic keys and passwords only.
-const tmps: string[] = [];
-afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
 const xml0 = readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures", "sample-0.xml"), "utf8");
 
 async function importXml(xml: string) {
-  const dir = mkdtempSync(join(tmpdir(), "busforge-import-keys-"));
-  tmps.push(dir);
+  const dir = tempDir("busforge-import-keys-");
   const state = createState({ dbPath: ":memory:", dataDir: dir, now: () => 1000 });
   const form = new FormData();
   form.set("file", new File([storeZip({ "P-TEST/0.xml": xml })], "keys.knxproj"));

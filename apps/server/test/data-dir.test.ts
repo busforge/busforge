@@ -1,15 +1,12 @@
-import { test, expect, afterAll, setDefaultTimeout } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { test, expect, setDefaultTimeout } from "bun:test";
+import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { resolveDataDir, resolvePort } from "../src/app.ts";
+import { removeTempDir, tempDir } from "../../../tools/test-temp.ts";
 
 setDefaultTimeout(60_000);
 
 const serverEntry = join(import.meta.dir, "..", "src", "index.ts");
-
-const tmps: string[] = [];
-afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
 
 test("the data directory defaults to apps/server/data and BUSFORGE_DATA_DIR replaces it", () => {
   expect(resolveDataDir({})).toBe(resolve(import.meta.dir, "..", "data"));
@@ -30,7 +27,7 @@ test("PORT defaults to 3000 and anything that is not a port number is refused", 
 });
 
 test("the server entry point refuses to start on an empty BUSFORGE_DATA_DIR or a bad PORT, with exit code 1", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "busforge-data-dir-"));
+  const dir = tempDir("busforge-data-dir-");
   try {
     for (const [name, env] of [["BUSFORGE_DATA_DIR", { BUSFORGE_DATA_DIR: "" }], ["PORT", { BUSFORGE_DATA_DIR: dir, PORT: "" }]] as const) {
       const child = Bun.spawn(["bun", "run", serverEntry], { env: { ...process.env, ...env }, stdout: "pipe", stderr: "pipe" });
@@ -40,13 +37,12 @@ test("the server entry point refuses to start on an empty BUSFORGE_DATA_DIR or a
       expect(err).toContain(name);
     }
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    removeTempDir(dir);
   }
 });
 
 test("the server entry point opens its database in BUSFORGE_DATA_DIR on the port PORT names", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "busforge-data-dir-"));
-  tmps.push(dir);
+  const dir = tempDir("busforge-data-dir-");
   const child = Bun.spawn(["bun", "run", serverEntry], {
     env: { ...process.env, BUSFORGE_DATA_DIR: join(dir, "nested"), PORT: "0" },
     stdout: "pipe",
@@ -71,6 +67,6 @@ test("the server entry point opens its database in BUSFORGE_DATA_DIR on the port
   } finally {
     child.kill();
     await child.exited;
-    rmSync(dir, { recursive: true, force: true });
+    removeTempDir(dir);
   }
 });
