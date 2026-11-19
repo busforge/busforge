@@ -322,11 +322,14 @@ which `tools/secure-capture-decode.ts` prints a single capture with) and the key
 
 Every tool-access telegram is tried with every device key, whatever its destination, so a secured
 broadcast (ETS assigns a secure device's address by serial with tool-access telegrams to `0/0/0`) opens
-like a point-to-point one; a Sync answer opens against the challenge of the Sync request it answers. An
+like a point-to-point one; a Sync answer opens against the challenge of the Sync request it answers; a
+tunnelled request, whose source the tool leaves 0.0.0, is opened at the next tunnel telegram with the tunnel
+address known by then, which the confirmation right after it carries. An
 opened telegram's inner service counts among the file's services like a plain one, its assigned
 address and object/PID pair included, and `INDEX.md` lists every service seen inside a secured telegram
 with the files that show it, tagged with what the frame shows in clear: tool access, broadcast, group.
-A telegram no key opens stays in the count as `(not opened)`. The keys stay in memory: the index names
+A telegram no key opens stays in the count as `(not opened)`; one shorter than its service's layout is
+`(truncated)` and counts as an undecoded line. The keys stay in memory: the index names
 the file a key came from and which keys opened a capture, never a key or a plaintext, and lists each
 project or keyring it could not open with the reason, so an index written without the passwords says so,
 and the keys a project holds that it did not give (Busforge's project reader takes only the first
@@ -345,9 +348,14 @@ BUSFORGE_CORPUS=<corpus> bun run tools/capture-index.ts --properties 0/56 t17.1/
 # | Property | Elements | Error octet | Unit | Descriptor 0 | Tool | Answers | Files |
 ```
 
-Without property arguments it lists every property. Each row is one property, element count, error
-octet, unit, device descriptor 0 (as that capture shows it, `?` where it shows none) and tool, summed
-over the captures that show it.
+Without property arguments it lists every property; a property not written the way the index names it
+is refused, and one no capture answers is named under the table. Each row is one property, element
+count, error octet, unit, device descriptor 0 (as that capture shows it, `?` where it shows none) and
+tool, summed over the captures that show it. A unit is its individual address within a capture: captures
+of different installations reuse addresses, so units that share an address and descriptor 0 share a
+row, which names its files. Below the table the query says what it cannot see: secured telegrams whose
+service is not shown, undecoded lines, files no reader here takes, and projects or keyrings whose keys
+were not read.
 
 ## Why the golden snapshot is not a correctness proof
 
@@ -454,7 +462,7 @@ what the product cannot know:
 
 | Field | Meaning |
 |---|---|
-| `device` | `appRef`, `productRef`, target individual address, expected mask. Refs are pinned **verbatim** from `GET /api/catalog/products` and `GET .../config`, never reconstructed, so a typo is a compile error rather than a silent no-op |
+| `device` | `appRef`, `appProgramId` (the application the device runs), `productRef`, target individual address, expected mask. Refs are pinned **verbatim** from `GET /api/catalog/products` and `GET .../config`, never reconstructed, so a typo is a compile error rather than a silent no-op. The runner refuses a catalogue product or a project device that runs another application than `appProgramId`, and `tools/smoke/spec-applications.test.ts` pins every spec's id against the corpus |
 | `provision` | `skip-if-present` (the device already answers on its address, unattended), `require-prog-mode` (the operator presses the programming button), `import-knxproj` (the project is imported from `device.knxprod`, password in `BUSFORGE_SMOKE_KNXPROJ_PASSWORD`; the only way a KNX Data Secure device's keys reach the server. The run ends with a restore to the file's configuration, also after a failure) or `in-service` (a commissioned device in use, see [Devices in service](#devices-in-service)) |
 | `inService` | `in-service` only: the fingerprint and the steps the run may write |
 | `precondition` | A human-run step printed before provisioning |
@@ -607,7 +615,7 @@ data and the steps, nothing else:
 ```ts
 export const exampleInService: DeviceSpec = {
   id: "<product>-in-service",
-  device: { appRef: "…", productRef: "…", ia: "1.1.x", mask: "MV-…" },   // verbatim, as for every spec
+  device: { appRef: "…", appProgramId: "…", productRef: "…", ia: "1.1.x", mask: "MV-…" },   // verbatim, as for every spec; appProgramId is the application the device runs
   provision: "in-service",
   inService: {
     fingerprint: [
@@ -853,7 +861,7 @@ devices exercise, and nothing else. Which specs pass, in which channel, is in [s
 
 1. Import the product, place the device in a project, and read `GET /api/catalog/products` and
    `GET /api/projects/<pid>/devices/<did>/config`.
-2. Copy `appRef`, `productRef`, parameter refs and com-object refs **verbatim** into a new
+2. Copy `appRef`, `appProgramId`, `productRef`, parameter refs and com-object refs **verbatim** into a new
    `tools/smoke/specs/<id>.ts`. Never reconstruct a ref by hand: a fabricated ref fails preflight,
    and a plausible one is worse.
 3. Declare the baseline `configure` that makes the behaviour's objects visible, then the behaviours

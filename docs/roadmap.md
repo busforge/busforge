@@ -409,5 +409,12 @@ where they are required; raw acquisition is not a way around access control. Wha
   differential decides such a byte against the programmed baseline), but the preview's and the result's
   count of changed bytes and their list of bytes read as `FF` leave it out. Needs: count those bytes
   against the baseline's image, as the write set does.
+- **The com-object table of a never-programmed device that keeps a surgical flash.** Such a device (an
+  application that declares tunnelling entries, a System 7 application without group-table segments) is
+  programmed by the parameter and the group-address flash. The parameter flash keeps the com-object table
+  the unit holds, and whether that table fits the project's configuration is decided against the
+  programmed baseline, which for such a device holds its defaults and start values, not what the unit
+  holds; its verified result still ends the never-programmed state. On System 7 the group-address flash
+  keeps the table's configuration bytes as well. Needs: the table read or written before that state ends.
 - **DCA-replacement plugins, phase 2:** writing a device-specific configuration back.
 - Remaining parity gaps in the configuration view are tracked in [ets-coverage.md](ets-coverage.md).

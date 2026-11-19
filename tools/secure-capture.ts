@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { numToGa, numToIa } from "../packages/knx/src/frame.ts";
 import { loadKnxproj } from "../packages/project/src/knxproj.ts";
 import { readKeyring } from "../packages/project/src/keyring.ts";
-import { secureDecode } from "../packages/knx/src/secure.ts";
+import { SECURE_APDU_OVERHEAD, secureDecode } from "../packages/knx/src/secure.ts";
 import { NEEDS_PASSWORD, NOT_THIS_PASSWORD, codeOf, describeFailure } from "./corpus-archives.ts";
 
 export interface NamedKey { name: string; key: Buffer }
@@ -48,6 +48,7 @@ export function addKeys(keys: SecureKeys, device: NamedKey[], group: { raw: numb
 
 // `omitted` names the keys a source holds but did not give: Busforge's project reader takes only the first
 // installation and no tool key of a device without a serial, and a key that is not 16 bytes is left out.
+const KEYRING_NOT_THIS_PASSWORD = new Set(["KEYRING_SIGNATURE_MISMATCH", "KEYRING_PASSWORD_INVALID"]);
 export interface KeySource { file: string; deviceKeys: number; groupKeys: number; omitted: string[] }
 export interface KeyLoad { keys: SecureKeys; read: KeySource[]; notRead: { file: string; reason: string }[] }
 
@@ -73,9 +74,10 @@ export function corpusKeys(root: string, files: string[], passwords: string[]): 
         else omitted = projectKeys(load.keys, file, bytes, pw);
       } catch (e) {
         lastRefusal = describeFailure(e);
-        // A keyring's wrong password shows as a signature that does not verify; any refusal tries the next one.
+        // A keyring's wrong password shows as a signature that does not verify, a password a keyring cannot hold
+        // (not printable ASCII) as invalid; a malformed keyring opens with none.
         const code = codeOf(e) ?? "";
-        if (keyring || NEEDS_PASSWORD.has(code) || NOT_THIS_PASSWORD.has(code)) continue;
+        if (keyring ? KEYRING_NOT_THIS_PASSWORD.has(code) : NEEDS_PASSWORD.has(code) || NOT_THIS_PASSWORD.has(code)) continue;
         break;
       }
       load.read.push({ file, deviceKeys: load.keys.device.length - before.d, groupKeys: groupKeyCount(load.keys) - before.g, omitted });
@@ -91,7 +93,7 @@ export function corpusKeys(root: string, files: string[], passwords: string[]): 
 function projectKeys(keys: SecureKeys, file: string, bytes: Buffer, password: string | undefined): string[] {
   const p = loadKnxproj(bytes, password, file);
   const omitted: string[] = [];
-  if (p.skippedInstallations) omitted.push(`the keys of ${p.skippedInstallations} installation(s) after the first`);
+  if (p.skippedInstallations) omitted.push(`${p.skippedInstallations} unread installation(s) after the first`);
   if (p.secureDevicesWithoutSerial) omitted.push(`the tool keys of ${p.secureDevicesWithoutSerial} device(s) without a serial`);
   const key = (what: string, b64: string) => {
     const k = Buffer.from(b64, "base64");
@@ -124,9 +126,10 @@ function keyringKeys(keys: SecureKeys, file: string, xml: string, password: stri
 // ── one telegram ─────────────────────────────────────────────────────────────
 
 export const SCF_SERVICE: Record<number, string> = { 0: "S-A_Data", 2: "Sync.req", 3: "Sync.res" };
-const MAC = 4;
-// The shortest body of each service: SCF and sequence, a Sync.req's serial, at least one octet of payload, the MAC.
-const MIN_BODY: Record<number, number> = { 0: 1 + 6 + 1 + MAC, 2: 1 + 6 + 6 + 1 + MAC, 3: 1 + 6 + 1 + MAC };
+// The shortest body of each service behind the A_Data_Secure APCI: SCF, sequence and MAC, then an S-A_Data's inner
+// APDU (2 octets at least), a Sync.req's serial and 6-octet challenge, a Sync.res's 12-octet answer.
+const FRAMING = SECURE_APDU_OVERHEAD - 2;
+const MIN_BODY: Record<number, number> = { 0: FRAMING + 2, 2: FRAMING + 6 + 6, 3: FRAMING + 12 };
 
 export interface SecureFrame {
   scf: number;

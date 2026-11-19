@@ -32,6 +32,7 @@ export const meanwellKnx40eInService: DeviceSpec = {
   id: "meanwell-knx40e-in-service",
   device: {
     appRef: "M-0162_H-KNX.2D40E.2D1280D-1_HP-0004-11-F245",
+    appProgramId: "M-0162_A-0004-11-F245",
     productRef: "M-0162_H-KNX.2D40E.2D1280D-1_P-KNX.2D40E.2D1280D",
     ia: "1.1.20",
     mask: "MV-07B0",

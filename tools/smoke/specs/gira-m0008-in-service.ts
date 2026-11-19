@@ -18,6 +18,7 @@ export const giraM0008InService: DeviceSpec = {
   id: "gira-m0008-in-service",
   device: {
     appRef: "M-0008_H-8.20.2F.2F.20zxy3.20xx-1_HP-10D7-11-2783-O000A",
+    appProgramId: "M-0008_A-10D7-11-2783-O000A",
     productRef: "M-0008_H-8.20.2F.2F.20zxy3.20xx-1_P-5133.2000",
     ia: "1.1.1",
     mask: "MV-0705",

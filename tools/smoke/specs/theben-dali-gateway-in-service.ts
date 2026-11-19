@@ -35,6 +35,7 @@ export const thebenDaliGatewayInService: DeviceSpec = {
   id: "theben-dali-gateway-in-service",
   device: {
     appRef: "M-0048_H-9070929-1-O00EF_HP-9071-20-F258-O00EF",
+    appProgramId: "M-0048_A-9071-20-F258-O00EF",
     productRef: "M-0048_H-9070929-1-O00EF_P-9070929",
     ia: "1.1.55",
     mask: "MV-07B0",

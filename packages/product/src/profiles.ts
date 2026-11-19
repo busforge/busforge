@@ -499,7 +499,8 @@ async function runDeclaredChecks(dev: KnxDevice, coverage: ParCoverage): Promise
 // programmed, which this operation leaves alone and counts nowhere (leaveUnreadUnchanged); absent where
 // there is none.
 // `alwaysWrite` on a dry run: the operation is written even where `diffBytes` is 0, since it also writes
-// state it does not read (the System 1 download), so this dry run never reports unchanged.
+// state it does not read (the System 1 download) or what the device holds is not known (the System B
+// parameter flash of a device never programmed from this project), so this dry run never reports unchanged.
 // `constantsDiffer` on an unchanged result: the constant parameters (deviceimage.ts constantParams) the
 // device holds other bits in, no change of the configuration, named so a difference that is no
 // download marker is seen; absent where there is none.
@@ -845,6 +846,13 @@ export interface ParamFlashCtx extends WriteGate {
   // System 7 a hidden byte the unit holds otherwise than <Data> is written like ETS only then, refused
   // otherwise (HiddenBytes). Absent: not known.
   memorylessKnown?: boolean;
+  // The device has had no configuration of this project verified on it (it was placed, its product replaced,
+  // or ETS never downloaded it), so what it holds is not what `baseParams` describes. The System B flash then
+  // writes every byte it owns, also where the unit reads them all as the target, whatever the unit's stamps
+  // and the bytes it reads as FF included; every family judges a colour and a calculation against the
+  // application's defaults, as a full download does, and refuses a raw-data parameter in use, whose bytes no
+  // image writes. Absent: the device holds `baseParams`.
+  neverProgrammed?: boolean;
 }
 // Commissioning a device from nothing needs everything at once: the parameters AND the links,
 // because the com-object table it writes has to agree with the association table it writes.
@@ -1056,12 +1064,15 @@ function refuseSystem7UnknownFlags(baseline: () => BaselineObjects, ctx: FlagBas
 
 // A parameter or structural flash whose change Busforge cannot encode: a colour parameter (refuseColorWrites), a
 // raw-data parameter (refuseRawDataWrites), or a changed parameter of a <ParameterCalculation>
-// (refuseCalculationWrites); each configuration's module instances resolved as moduleAwareModel does.
-function refuseUnencodableChange(cfg: AppConfig, ctx: { params: Map<string, string>; baseParams: Map<string, string>; moduleInstances?: ModuleInstance[] }, rgbWritten: boolean): void {
+// (refuseCalculationWrites); each configuration's module instances resolved as moduleAwareModel does. Each is judged
+// against the configuration the device was last programmed with. On a device never programmed from this project
+// (ParamFlashCtx.neverProgrammed) a colour and a calculation are judged against the defaults, as for a full
+// download, and every raw-data parameter in use is refused: the flash keeps its bytes as the device holds them.
+function refuseUnencodableChange(cfg: AppConfig, ctx: { params: Map<string, string>; baseParams: Map<string, string>; moduleInstances?: ModuleInstance[]; neverProgrammed?: boolean }, rgbWritten: boolean): void {
   const at = (values: Map<string, string>) => moduleAwareModel(cfg, values, ctx.moduleInstances ?? []).instances;
-  const instances = at(ctx.params), base = { values: ctx.baseParams, instances: at(ctx.baseParams) };
+  const instances = at(ctx.params), base = ctx.neverProgrammed ? undefined : { values: ctx.baseParams, instances: at(ctx.baseParams) };
   refuseColorWrites(cfg, ctx.params, instances, rgbWritten, base);
-  refuseRawDataWrites(cfg, ctx.params, instances, base);
+  refuseRawDataWrites(cfg, ctx.params, instances, base ?? "unknown");
   refuseCalculationWrites(cfg, ctx.params, instances, base);
 }
 
@@ -1595,7 +1606,8 @@ export class SystemBProfile extends DeviceProfile {
     const projected = buildRelativeSegmentTarget(cfg, ctx.params, LSM, { moduleInstances: ctx.moduleInstances, ownIdleUnionDefaults: true });
     if (!projected || projected.size === 0) throw new ProductError("EMPTY_IMAGE", "built an empty parameter image; refusing to flash");
     const mcb = declaredMcbWrites(proc, projected.size, "par");
-    const baseProjected = (() => {
+    // A device never programmed from this project holds nothing its baseline describes, so no baseline decides a byte.
+    const baseProjected = ctx.neverProgrammed ? null : (() => {
       try { return buildRelativeSegmentTarget(cfg, ctx.baseParams, LSM, { moduleInstances: ctx.moduleInstances, ownIdleUnionDefaults: true }); }
       catch (e) {
         if (!(e instanceof ProductError)) throw e;
@@ -1604,18 +1616,19 @@ export class SystemBProfile extends DeviceProfile {
     })();
 
     await runDeclaredChecks(dev, coverage);
-    // A parameter (par) download rewrites an EXISTING segment; on a never-programmed device
-    // there is nothing to back up and nothing to merge our owned bytes into. Refuse: that device
+    // A parameter (par) download rewrites an EXISTING segment; on a device whose parameter segment is
+    // not loaded there is nothing to back up and nothing to merge our owned bytes into. Refuse: that device
     // needs a full download, which is a different operation (docs/commissioning.md).
     const addr = await loadedTableAddr(dev, LSM, "parameter segment");
     const current = await dev.memRead(addr, projected.size, undefined, (d, t) => ctx.onProgress?.("backup", d, t), ctx.signal);
     const loaded = await allLoaded(dev, [LSM]);
     // The bytes read as FF the project has not changed since the last programming stay as they are, with
     // a stamp record, without one and with one the unit's stamps no longer match (ETS's record of a unit it
-    // commissioned holds them as written); not on an application left not LOADED, which takes every owned
-    // byte. The baseline's module instances are not kept apart from the project's; the com-object table
-    // check above has held the structure the two share.
-    const { target, left: leftFF } = loaded ? leaveUnreadUnchanged(current, projected, baseProjected, addr) : { target: projected, left: [] };
+    // commissioned holds them as written); not on an application left not LOADED, nor on a device never
+    // programmed from this project, which take every owned byte. The baseline's module instances are not
+    // kept apart from the project's; the com-object table check above has held the structure the two share.
+    const whole = !loaded || ctx.neverProgrammed === true;
+    const { target, left: leftFF } = whole ? { target: projected, left: [] } : leaveUnreadUnchanged(current, projected, baseProjected, addr);
 
     const { image, diffBytes } = mergeRelativeTarget(current, target);
     // A segment the allocation moves is written whole (writeSegmentOwned), the bytes left alone with the
@@ -1629,8 +1642,9 @@ export class SystemBProfile extends DeviceProfile {
     // that wrote the parameters, so when they match the unit holds what that download left and the unit's
     // read stands for ETS's record of it.
     // An application not LOADED (an interrupted write) takes every owned byte, as ETS's differential is
-    // shown only onto a loaded one.
-    const written = loaded ? relativeParWriteSet(image, current, target.owned, mcb, await currentStamps(dev, ctx.stampRecord), baseProjected?.bytes) : target.owned;
+    // shown only onto a loaded one, and so does a device never programmed from this project: whatever its
+    // stamps say, its read stands for no download of this project's configuration.
+    const written = whole ? target.owned : relativeParWriteSet(image, current, target.owned, mcb, await currentStamps(dev, ctx.stampRecord), baseProjected?.bytes);
     const parStamps = stampCollector([LSM]);
     const backupFile = `${ctx.deviceId}-LSM${LSM}-${Date.now()}.bin`;
     return runFlashOp(dev, mask, ctx, {
@@ -1642,6 +1656,7 @@ export class SystemBProfile extends DeviceProfile {
       get leftFF() { return moved ? undefined : leftFF; },
       constantsDiffer,
       ...(loaded ? {} : { loadIncomplete: "rewrite" as const }),
+      ...(ctx.neverProgrammed ? { alwaysWrite: true } : {}),
       backup: backupFile,
       backups: [{ file: backupFile, bytes: current }],
       stamps: parStamps.stamps,

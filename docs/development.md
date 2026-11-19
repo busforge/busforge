@@ -53,6 +53,23 @@ Open `http://localhost:5917`. A second pair takes other ports and another direct
 nothing. Stop the pair with Ctrl-C (the Vite server) and `kill %1` (the Bun server, in the same
 shell), then remove the printed directory: it holds the pair's database and master key.
 
+To work with a real project in that instance, import a `.knxproj` through the API and print the ids the
+pages and the API address it by. Run this in bash (it was tried there; a shell that splits words differently,
+such as zsh, can break such a line), against the server above, from the same shell or any other. `F` is the project
+file, for a maintainer a file of the private corpus ([testing.md](testing.md#the-private-corpus)); the
+password is read from its source on stdin (`<password source>`, only needed for a protected archive, left out
+otherwise together with the `|`), so it appears in no command line and is written nowhere:
+
+```bash
+API=http://localhost:3917 F=$BUSFORGE_CORPUS/collections/<directory>/<project>.knxproj
+P=$(<password source> | curl -sf -F "file=@$F" -F 'password=<-' $API/api/projects/import | jq -r .id) && echo "project: $P" && curl -sf $API/api/projects/$P | jq -r '.devices[] | "device: \(.id)  \(.ia)  \(.name)"'
+```
+
+It prints `project: <uuid>` and one `device: <id>  <address>  <name>` line per device. The project opens at
+`http://localhost:5917/projects/<uuid>` and a device at `.../devices/<id>`, as long as the pair above runs.
+A wrong password or an unreadable archive makes the import fail without writing anything, and `P` stays
+empty. `jq` is the only tool beyond `curl` this needs.
+
 ## The gate
 
 ```bash

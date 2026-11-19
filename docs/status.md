@@ -274,12 +274,14 @@ What each row does not show:
   without one and with one the unit's stamps no longer match, leaves a byte the unit reads as `FF`
   alone where the project's value has not changed since the unit was last programmed, as ETS's
   parameter downloads leave the field, and its result names those bytes without counting them
-  (`leftFF`; the preview shows no difference for them). An application left not `LOADED`, and a
-  segment the allocation moves, take every owned byte, the field's with the project's value. A
+  (`leftFF`; the preview shows no difference for them). An application left not `LOADED`, a
+  segment the allocation moves, and a unit never programmed from this project take every owned byte,
+  the field's with the project's value. A
   password changed in the project goes out, the bytes that differ from the last programming; the preview counts them and names them as read as `FF`
-  (`readsFF`). **A unit that really holds `FF` there** (a field never written, or reset) keeps it: no
-  read tells it from the password, and the product's full download is refused, so only a change of the
-  password in the project writes it. The unit's download stamp is a CRC the unit computes over the
+  (`readsFF`). **A unit that really holds `FF` there** (a field never written, or reset) keeps it once it
+  counts as programmed: no read tells it from the password, and the product's full download is refused,
+  so only a change of the password in the project writes it. The flash of a unit never programmed from
+  this project writes the field; no run on a unit shows that flash. The unit's download stamp is a CRC the unit computes over the
   segment: with the project's password set it covers the password after a full download and `FF` after
   every parameter download, ETS's own included, so after Busforge's parameter flash it differs from ETS's
   record of a full download, and by ETS's rule its next parameter download falls back to every owned

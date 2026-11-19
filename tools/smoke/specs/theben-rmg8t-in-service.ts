@@ -27,6 +27,7 @@ export const thebenRmg8tInService: DeviceSpec = {
   id: "theben-rmg8t-in-service",
   device: {
     appRef: "M-0048_H-4930200-2_HP-493B-21-B471",
+    appProgramId: "M-0048_A-493B-21-B471",
     productRef: "M-0048_H-4930200-2_P-4930200",
     ia: "1.1.53",
     mask: "MV-07B0",

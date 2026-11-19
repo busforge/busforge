@@ -3,7 +3,6 @@
 // harness abort before any device contact and a guard-the-guardrail refusal are not device evidence
 // and produce none. Every record is validated before it is written; an invalid one throws.
 import { parseEvidenceRecord, maskInfo, type AxisResult, type EvidenceRecord, type Firmware } from "../../packages/product/src/index.ts";
-import { appProgramId as programOf } from "../../packages/project/src/index.ts";
 import { sha256, serverBuild } from "../evidence.ts";
 import type { CapabilityResult } from "./capabilities.ts";
 import type { BehaviourResult } from "./behaviours.ts";
@@ -64,7 +63,7 @@ export const reportText = (report: unknown): string =>
   `${JSON.stringify(report, (key, value: unknown) => (key === "backup" && typeof value === "string" ? serverDataPath(value) : value), 2)}\n`;
 
 export function runEvidence(run: ObservedRun, spec: DeviceSpec, cond: RunConditions): EvidenceRecord[] {
-  const appProgramId = programOf(spec.device.appRef);
+  const { appProgramId } = spec.device;
   const recordedAt = new Date(run.startedAt).toISOString();
   const base = {
     schema: "busforge.evidence/1", recordedAt,

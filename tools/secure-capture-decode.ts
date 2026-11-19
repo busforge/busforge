@@ -21,9 +21,23 @@ function groupAddress(name: string): number {
 addKeys(keys, parseKeyList(process.env.KEYS), parseKeyList(process.env.GROUP_KEYS).map((k) => ({ raw: groupAddress(k.name), key: k })));
 const decoder = new SecureCaptureDecoder(keys);
 
-// The bus source of a tunnelled request is the tunnel's IA, which ETS leaves as 0.0.0;
-// take it from the latest confirmation that carries it.
+// The bus source of a tunnelled request is the tunnel's IA, which ETS leaves as 0.0.0 and the confirmation that
+// follows carries: such a request waits and is printed at the next tunnel frame or the file's end, after a
+// confirmation has set the address.
 let tunnelIa = 0;
+let pending: (() => void) | null = null;
+const flush = () => { const p = pending; pending = null; p?.(); };
+
+function print(ts: string, dir: string, src: number, dst: number, isGroup: boolean, tpdu: Buffer): void {
+  const where = `${ia(src)}->${isGroup ? ga(dst) : ia(dst)}`;
+  const fr = decoder.open(src, dst, isGroup, tpdu);
+  const extra = fr.serial ? ` serial=${fr.serial.toString("hex")}` : "";
+  const head = `${ts} ${dir} ${where} SCF=${fr.scf.toString(16)} ${fr.service}${extra}`;
+  if (fr.truncated) { console.log(`${head}  TRUNCATED`); return; }
+  if (fr.noRequest) { console.log(`${ts} ${dir} ${where} SCF=${fr.scf.toString(16)} Sync.res  (no matching Sync.req decrypted)`); return; }
+  if (!fr.opened) { console.log(`${head}  UNDECRYPTED`); return; }
+  console.log(`${head} seq=${fr.opened.seq.toString("hex")} key=${fr.opened.key}  ${fr.opened.plaintext.toString("hex")}`);
+}
 
 for (const line of readFileSync(file, "utf8").split("\n")) {
   const bar = line.lastIndexOf(" | ");
@@ -32,13 +46,14 @@ for (const line of readFileSync(file, "utf8").split("\n")) {
   const cemi = f.subarray(10);
   const mc = cemi[0];
   const o = 2 + cemi[1];
-  if (cemi.length < o + 9) continue;
+  // an L_Data frame with at least one TPDU octet, as the capture index reads it
+  if (cemi.length < o + 8) continue;
   const ctrl2 = cemi[o + 1];
-  let src = cemi.readUInt16BE(o + 2);
+  const src = cemi.readUInt16BE(o + 2);
   const dst = cemi.readUInt16BE(o + 4);
   const tpdu = cemi.subarray(o + 7);
   if (mc === 0x2e && src !== 0) tunnelIa = src;
-  if (mc === 0x11 && src === 0) src = tunnelIa;
+  flush();
   if (mc === 0x2e) continue; // the confirmation repeats the request
   const isGroup = (ctrl2 & 0x80) !== 0;
   if (tpdu.length < 2 || (tpdu[0] & 0x03) !== 0x03 || tpdu[1] !== 0xf1) continue;
@@ -47,12 +62,7 @@ for (const line of readFileSync(file, "utf8").split("\n")) {
   // The tool as the proxy named it (PROXY_TOOL), never assumed to be ETS.
   const tool = line.match(/ (\S+)->BRIDGE /)?.[1];
   const dir = tool ? `${tool}>` : "<DEV";
-  const where = `${ia(src)}->${isGroup ? ga(dst) : ia(dst)}`;
-  const fr = decoder.open(src, dst, isGroup, tpdu);
-  const extra = fr.serial ? ` serial=${fr.serial.toString("hex")}` : "";
-  const head = `${ts} ${dir} ${where} SCF=${fr.scf.toString(16)} ${fr.service}${extra}`;
-  if (fr.truncated) { console.log(`${head}  TRUNCATED`); continue; }
-  if (fr.noRequest) { console.log(`${ts} ${dir} ${where} SCF=${fr.scf.toString(16)} Sync.res  (no matching Sync.req decrypted)`); continue; }
-  if (!fr.opened) { console.log(`${head}  UNDECRYPTED`); continue; }
-  console.log(`${head} seq=${fr.opened.seq.toString("hex")} key=${fr.opened.key}  ${fr.opened.plaintext.toString("hex")}`);
+  if (mc === 0x11 && src === 0) pending = () => print(ts, dir, tunnelIa, dst, isGroup, tpdu);
+  else print(ts, dir, src, dst, isGroup, tpdu);
 }
+flush();
