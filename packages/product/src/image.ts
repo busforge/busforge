@@ -89,9 +89,10 @@ export function imageValueForm(model: AppModel, refId: string, value: string): s
 // KNX 2-byte float (DPT 9.xxx): bit15 sign, bits14-11 exponent, bits10-0 mantissa.
 // value = 0.01 * mantissa * 2^exponent, the mantissa being an 11-bit two's
 // complement combined with the sign bit. Encoded as ETS writes it: the smallest
-// exponent whose rounded mantissa fits, the mantissa rounded once, half to even, from
-// the exact decimal value (the number's shortest decimal form, so 32.45 is 3245/2^1,
-// not the binary double just above it). Reference vectors: 0 -> 0x0000,
+// exponent whose rounded mantissa fits, the mantissa rounded once from the exact
+// decimal value (the number's shortest decimal form, so 32.45 has the mantissa 3245 / 2^1
+// at exponent 1, not the binary double just above it). Ties go to even; ETS's ties seen so far all had an even
+// lower neighbour, so half-down would match them too. Reference vectors: 0 -> 0x0000,
 // 21.0 -> 0x0C1A, -0.01 -> 0x87FF, 1000 -> 0x361A.
 export function encodeDpt9(value: number): number {
   const m = /^(-?)(\d+)(?:\.(\d+))?(?:e([+-]\d+))?$/.exec(String(value));

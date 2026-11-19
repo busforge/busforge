@@ -137,8 +137,8 @@ acknowledged on. A device that keeps answering did not reboot and did not save, 
 ### 2. Spec conformance (the codec math)
 
 The encoding primitives are tested against KNX reference vectors and known encodings,
-independent of any device: DPT-9 float (`21.0 -> 0x0C1A`, `-0.01 -> 0x87FF`, and ETS's
-rounding: `1000 -> 0x361A`, `32.45 -> 0x0E56`), big-endian
+independent of any device: DPT-9 float (`21.0 -> 0x0C1A`, `-0.01 -> 0x87FF`, and
+`1000 -> 0x361A` as an ETS download wrote it), big-endian
 integers, two's-complement sign, MSB-first bit-field placement
 (`packages/product/test/codec.test.ts`, `image.test.ts`). This proves the codec arithmetic
 regardless of which device uses it.

@@ -368,10 +368,11 @@ while every read-back check still passed. The float width is derived from `Encod
 rather than writing a wrong-sized value.
 
 A DPT-9 value is encoded as ETS writes it: the smallest exponent whose mantissa fits, the
-mantissa rounded once from the exact decimal value, ties to even. 1000 Lux is `36 1A`
-(100000 / 2^6 = 1562.5 → 1562), not `36 1B`; ETS's download of an MDT BE-02001.02 shows it.
-Rounding at every halving instead puts many values one step off (10000 would be `4F A2`
-instead of `4F A1`), and a read-back cannot see it: the device holds what was written.
+mantissa rounded once, at that exponent, from the exact decimal value. 1000 Lux is `36 1A`
+(100000 / 2^6 = 1562.5 → 1562); ETS's download of an MDT BE-02001.02 shows it. 10000 is
+`4F A1` (1953.125 → 1953). A tie goes to the even mantissa; every tie ETS has shown had an even
+lower neighbour, so a tie like 20.51 (1025.5) is not yet backed by a capture. A mantissa one
+step off passes a read-back unseen, since the device holds what was written.
 
 ## Which parameter types reach the image at all
 
