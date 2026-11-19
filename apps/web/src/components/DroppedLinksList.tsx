@@ -15,6 +15,13 @@ const UNRESOLVED_TEXT = {
   notInConfiguration: "import.dropped.objectUnknown",
 } as const;
 
+// The object number an ETS com-object ref names ("O-7_R-7", "MD-1_M-1_MI-2_O-1_R-1" and "O-4" are 7, 1 and 4): all
+// there is to call an object by where the configuration does not place it. Null for a ref of another shape.
+const refNumber = (comObjRefId: string): number | null => {
+  const m = /(?:^|_)O-(\d+)(?:_R-\d+)?$/.exec(comObjRefId);
+  return m ? Number(m[1]) : null;
+};
+
 // The project's links not taken over, as a mark in a page header: a warning counting the entries a link made
 // by hand can still close; where every entry is one no link reaches, a plain mark without a count, so the list
 // stays reachable and nothing reads as all taken over.
@@ -86,12 +93,14 @@ function ObjectsByDevice({ links, projectId, showDevice, testId }: { links: Drop
                     <span className="truncate text-foreground">{[o.comObjName, o.functionText].filter(Boolean).join(" · ")}</span>
                   </>
                 : <>
+                    <span className="shrink-0 font-mono text-xs text-muted-foreground" title={o.comObjRefId}>
+                      {refNumber(o.comObjRefId) !== null ? t("import.dropped.object", { number: refNumber(o.comObjRefId) }) : o.comObjRefId}
+                    </span>
                     <span className="text-muted-foreground">
                       {o.unresolved === "refused"
                         ? t("import.dropped.objectRefused", { reason: localizeError(t, o.refusal, o.refusal) })
                         : t(UNRESOLVED_TEXT[o.unresolved ?? "notInConfiguration"])}
                     </span>
-                    <span className="min-w-0 break-all font-mono text-xs text-muted-foreground">{o.comObjRefId}</span>
                   </>}
             </p>
             <div className="flex flex-wrap items-center gap-1.5">
@@ -101,7 +110,7 @@ function ObjectsByDevice({ links, projectId, showDevice, testId }: { links: Drop
                     {t("import.dropped.gaMissing")} <span className="font-mono opacity-80">{g.address ?? g.etsId}</span>
                   </Badge>)}
             </div>
-            <p className="text-xs text-muted-foreground">{t(`import.dropped.reason.${o.reason}`)}</p>
+            <p className="text-xs text-muted-foreground">{t(o.unrecoverable && o.reason === "addressNotInProject" ? "import.dropped.reasonUnrecoverable.addressNotInProject" : `import.dropped.reason.${o.reason}`)}</p>
           </li>
         ))}
       </ul>

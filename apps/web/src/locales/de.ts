@@ -135,6 +135,10 @@ const de: Messages = {
         noSingleSender: "ETS nennt keine oder mehrere Adressen, auf denen das Objekt sendet; keine seiner Verknüpfungen wurde übernommen.",
         moduleInstanceGone: "Das Gerät hat die Modulinstanz des Objekts nicht mehr; seine Verknüpfungen bleiben gespeichert und werden nie programmiert.",
       },
+      // Die Gründe, die für ein Objekt, das keine Verknüpfung in Busforge erreicht, anders lauten; die übrigen gelten unverändert.
+      reasonUnrecoverable: {
+        addressNotInProject: "Eine Adresse ist nicht im Projekt.",
+      },
     },
   },
   export: {

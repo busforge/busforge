@@ -134,6 +134,10 @@ const en = {
         noSingleSender: "ETS names no address or several for the object to send on; none of its links was imported.",
         moduleInstanceGone: "The device no longer has this object's module instance; its links are kept, never programmed.",
       },
+      // The reasons that read differently for an object no link made in Busforge reaches; the others hold as they are.
+      reasonUnrecoverable: {
+        addressNotInProject: "An address is not in the project.",
+      },
     },
   },
   export: {
