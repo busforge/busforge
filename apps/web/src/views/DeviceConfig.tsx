@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, Calculator, ChevronDown, ChevronLeft, ChevronsUpDown, Cpu, HardDriveDownload, Info, KeyRound, Loader2, MapPin, MessageSquareWarning, MoreVertical, Puzzle, RadioTower, Repeat2, RotateCcw, Search, ShieldCheck, Stethoscope, X } from "lucide-react";
+import { AlertTriangle, Calculator, ChevronDown, ChevronLeft, ChevronsUpDown, Cpu, HardDriveDownload, Info, KeyRound, Loader2, LocateFixed, MapPin, MessageSquareWarning, MoreVertical, Puzzle, RadioTower, Repeat2, RotateCcw, Search, ShieldCheck, Stethoscope, X } from "lucide-react";
 import { Link, useLocation, useNavigate, useParams, useRouter, useSearch } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -17,6 +17,7 @@ import { SectionNav } from "@/components/SectionNav.tsx";
 import { BreakableText } from "@/components/BreakableText.tsx";
 import { scrollToSection, useStickyVar } from "@/lib/stickyChrome.ts";
 import { useScrollSpy } from "@/lib/scrollSpy.ts";
+import { flowOf, inlineChildren, keptAt } from "@/lib/blockFlow.ts";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Notice } from "@/components/ui/notice";
@@ -34,6 +35,7 @@ import { ToolKeyDialog } from "./ToolKeyDialog.tsx";
 import { DiagnosticDialog } from "./DiagnosticDialog.tsx";
 import { ReportDialog } from "./ReportDialog.tsx";
 import { AddressDialog } from "./AddressDialog.tsx";
+import { LocateDialog } from "./LocateDialog.tsx";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -212,6 +214,7 @@ export function DeviceConfig() {
   const [secureOpen, setSecureOpen] = useState(false);
   const [toolKeyOpen, setToolKeyOpen] = useState(false);
   const [addressOpen, setAddressOpen] = useState(false);
+  const [locateOpen, setLocateOpen] = useState(false);
   const [diagnosticOpen, setDiagnosticOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   // What the last read-back of this device left open, and the offer of values to assume; reset when
@@ -376,11 +379,16 @@ export function DeviceConfig() {
 
   const groupChanged = (g: { head: CfgBlock; children: CfgBlock[] }) =>
     g.head.items.some(isItemChanged) || g.children.some((c) => c.items.some(isItemChanged));
+  // A block's page has changes: its own rows or those of the inline blocks on it.
+  const pageChanged = (b: CfgBlock, inline: Map<string, CfgBlock[]>): boolean =>
+    b.items.some(isItemChanged) || (inline.get(b.id) ?? []).some((k) => pageChanged(k, inline));
 
   // Filter the config by the search term: a matching section header (group or
   // sub-block name) reveals everything under it; otherwise only the matching
   // rows (param name/value, com-object label) are kept. The group header always
-  // renders as context when any of its children survive.
+  // renders as context when any of its children survive. An inline block is part
+  // of its parent's page: a matching page reveals it, and its place moves to the
+  // parent's rows that are still shown.
   const filteredGroups = useMemo(() => {
     if (!q) return groups;
     const keep = (items: CfgItem[]) => items.filter((it) => itemMatches(it, q));
@@ -389,26 +397,36 @@ export function DeviceConfig() {
       const headMatch = norm(g.head.name).includes(q);
       const headItems = headMatch ? g.head.items : keep(g.head.items);
       const children: CfgBlock[] = [];
-      // Stage a dropped level-1 block so a surviving deeper child can still show
-      // its parent heading as context (kept with no items).
-      let pendingParent: CfgBlock | null = null;
+      // Each shown block's own and shown items, to move its inline blocks' places; the pages that matched.
+      const shown = new Map<string, [CfgItem[], CfgItem[]]>([[g.head.id, [g.head.items, headItems]]]);
+      const matched = new Set<string>(headMatch ? [g.head.id] : []);
+      // A dropped block comes back (with no items) when a block below it survives, so
+      // that one keeps its parents' headings as context and an inline one its page.
+      const dropped = new Map<string, CfgBlock>();
+      const show = (b: CfgBlock, items: CfgItem[]) => {
+        const parent = b.parentId ? dropped.get(b.parentId) : undefined;
+        if (parent) { dropped.delete(parent.id); show(parent, []); }
+        children.push({ ...b, items });
+        shown.set(b.id, [b.items, items]);
+      };
       for (const c of g.children) {
-        const cMatch = headMatch || norm(c.name).includes(q);
+        const cMatch = headMatch || norm(c.name).includes(q) || (!!c.inline && !!c.parentId && matched.has(c.parentId));
+        if (cMatch) matched.add(c.id);
         const items = cMatch ? c.items : keep(c.items);
-        const kept = cMatch || items.length > 0;
-        if (c.level === 1) {
-          if (kept) { children.push({ ...c, items }); pendingParent = null; }
-          else pendingParent = c;
-        } else if (kept) {
-          if (pendingParent) { children.push({ ...pendingParent, items: [] }); pendingParent = null; }
-          children.push({ ...c, items });
-        }
+        if (cMatch || items.length > 0) show(c, items);
+        else dropped.set(c.id, c);
       }
+      const placed = children.map((c) => {
+        const parent = c.inline && c.at !== undefined && c.parentId ? shown.get(c.parentId) : undefined;
+        return parent ? { ...c, at: keptAt(parent[0], parent[1], c.at!) } : c;
+      });
       if (headMatch || headItems.length > 0 || children.length > 0)
-        out.push({ head: { ...g.head, items: headItems }, children });
+        out.push({ head: { ...g.head, items: headItems }, children: placed });
     }
     return out;
   }, [groups, q]);
+  // Per group, the inline blocks each of its blocks carries on its page.
+  const groupInline = useMemo(() => filteredGroups.map((g) => inlineChildren([g.head, ...g.children])), [filteredGroups]);
   const matchCount = useMemo(
     () => filteredGroups.reduce((n, g) => n + [g.head, ...g.children].reduce((m, b) => m + b.items.filter((i) => i.kind === "param" || i.kind === "comObject").length, 0), 0),
     [filteredGroups],
@@ -440,9 +458,9 @@ export function DeviceConfig() {
     return { types: [...types.entries()], elements: [...elements.entries()] };
   }, [view]);
 
-  // Section index. Only top-level group headers are tracked/scroll targets (one
-  // per channel/area), so the index stays short and the scroll-spy reliable even
-  // on devices with hundreds of rows.
+  // Section index. Only the sections it lists (group heads and their named level-1
+  // pages) are tracked/scroll targets, so the index stays short and the scroll-spy
+  // reliable even on devices with hundreds of rows.
   const { active: activeSec, registerRef, jump: scrollToSec } = useScrollSpy(filteredGroups[0] ? `sec-${filteredGroups[0].head.id}` : null, filteredGroups);
 
   // The com-object the URL names: the one a link led to (co), else the one whose linked objects are
@@ -708,9 +726,37 @@ export function DeviceConfig() {
     );
   };
 
+  // A block's page together with the inline blocks that stand on it, each at its authored place. The
+  // rows of a Grid/Table share one geometry, so inline blocks inside one follow it.
+  const renderPage = (b: CfgBlock, inline: Map<string, CfgBlock[]>): ReactNode[] =>
+    flowOf(b.items, inline.get(b.id) ?? [], !!b.layout).flatMap((p) => p.kind === "items"
+      ? (b.layout ? [renderItems(b, b.id)] : p.items.map((item, i) => renderItem(item, `${b.id}-${p.from + i}`)))
+      // ETS draws an inline block's Text above it; one without Text has no heading at all.
+      : [<div key={p.block.id} id={`sec-${p.block.id}`}>{p.block.name && subHeading(p.block, inline, true)}{renderPage(p.block, inline)}</div>]);
+  // A sub-section's heading: the label followed by a hairline that fades out, so each sub-block reads
+  // as its own section without a heavy left bar; `deep` (below a sub-section, or inline) is lighter.
+  // A page without a name keeps only the line.
+  const subHeading = (b: CfgBlock, inline: Map<string, CfgBlock[]>, deep: boolean) => (
+    <h4 className={cn("mb-3 flex items-center gap-2.5 font-semibold first:mt-0",
+      deep ? "mt-4 text-sm text-muted-foreground" : "mt-5 text-foreground")}>
+      {b.name && <span className="min-w-0 shrink truncate">{b.name}</span>}
+      {pageChanged(b, inline) && <span className="size-1.5 shrink-0 rounded-full bg-primary" title={t("device.changedDot")} />}
+      <span className={cn("h-px flex-1 bg-gradient-to-r to-transparent", deep ? "from-border/40" : "from-border/70")} />
+    </h4>
+  );
+
   // The section index mirrors the (filtered) tree shown on the right, so it stays
   // useful while searching; show it whenever there is more than one place to jump.
-  const navCount = filteredGroups.reduce((n, g) => n + 1 + g.children.filter((c) => c.level === 1).length, 0);
+  // It lists each group head plus its direct (level-1) pages that carry a name; an
+  // inline block is part of its parent's page and has no entry.
+  // A group without a name holds the leaves of a ChannelIndependentBlock (it has no Name), or is an
+  // inline block placed outside every page; the index needs a label for it: channel-independent.
+  const inIndex = (c: CfgBlock) => c.level === 1 && !c.inline && !!c.name;
+  const navEntries = filteredGroups.flatMap((g, gi) => [
+    { id: `sec-${g.head.id}`, label: g.head.name || t("device.channelIndependent"), changed: groupChanged(g) },
+    ...g.children.filter(inIndex).map((c) => ({ id: `sec-${c.id}`, label: c.name, sub: true, changed: pageChanged(c, groupInline[gi]) })),
+  ]);
+  const navCount = navEntries.length;
 
   return (
     <div className="space-y-4">
@@ -823,6 +869,9 @@ export function DeviceConfig() {
                 <DropdownMenuItem onClick={() => setAddressOpen(true)} disabled={!device} data-testid="change-address">
                   <MapPin className="size-4" /> {t("address.menu")}
                 </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setLocateOpen(true)} disabled={!device} data-testid="locate-device">
+                  <LocateFixed className="size-4" /> {t("locate.menu")}
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setReplaceOpen(true)} disabled={!view} data-testid="replace-product">
                   <Repeat2 className="size-4" /> {t("replace.menu")}
                 </DropdownMenuItem>
@@ -877,6 +926,10 @@ export function DeviceConfig() {
           onSaved={() => qc.invalidateQueries({ queryKey: qk.project(projectId) })}
           onAssign={() => setCommissionOpen(true)}
         />
+      )}
+
+      {device && (
+        <LocateDialog open={locateOpen} onOpenChange={setLocateOpen} projectId={projectId} device={device} />
       )}
 
       {device && (
@@ -936,18 +989,18 @@ export function DeviceConfig() {
       </AlertDialog>
 
       {view?.dca && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-sky-500/40 bg-sky-500/10 px-3 py-1.5 text-sm text-sky-700 dark:text-sky-300" data-testid="dca-notice">
+        <Notice tone="info" className="flex flex-wrap items-center gap-x-3 gap-y-1 py-1.5" data-testid="dca-notice">
           <Puzzle className="size-4 shrink-0" />
           <span className="font-medium">{view.dca.module ? view.dca.module.category : t("device.dcaTitle")}</span>
           {view.dca.module && (
-            <span className="text-xs text-sky-700/70 dark:text-sky-300/70">
+            <span className="text-xs text-info/70">
               {view.dca.module.displayName} · {t("dca.version", { version: view.dca.module.deviceVersion })}
             </span>
           )}
           {view.dca.module && (
             <span className="ml-auto"><DcaModuleDialog projectId={projectId} deviceId={deviceId} module={view.dca.module} /></span>
           )}
-        </div>
+        </Notice>
       )}
 
       {!!read?.unplaced.length && assumable.length > 0 && (
@@ -981,24 +1034,23 @@ export function DeviceConfig() {
           ) : (
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
           {navCount > 1 && (
-            // The index shows each group head plus its direct (level-1) blocks; deeper sub-blocks are
-            // reached by scrolling. The amber dot is reserved for "has changes".
+            // Deeper sub-blocks are reached by scrolling. The amber dot is reserved for "has changes".
             <SectionNav
               label={t("device.jumpTo")} changedTitle={t("device.changedDot")} active={activeSec} onJump={scrollToSec}
               context={device && !headerInView && <><span className="font-medium text-foreground">{device.name || t("common.unnamed")}</span> <span className="font-mono">{device.ia}</span></>}
-              entries={filteredGroups.flatMap((g) => [
-                { id: `sec-${g.head.id}`, label: g.head.name || t("device.unnamedSection"), changed: groupChanged(g) },
-                ...g.children.filter((c) => c.level === 1).map((c) => ({ id: `sec-${c.id}`, label: c.name || t("device.unnamedSection"), sub: true, changed: c.items.some(isItemChanged) })),
-              ])}
+              entries={navEntries}
             />
           )}
 
           <div ref={containerRef} className="min-w-0 flex-1 space-y-6">
-            {filteredGroups.map((g) => (
+            {filteredGroups.map((g, gi) => {
+              const inline = groupInline[gi];
+              const onPage = new Set([...inline.values()].flat().map((b) => b.id));
+              return (
               // Section heading sits ABOVE the card so each channel/group start is clear.
               <section key={g.head.id} className="space-y-2">
                 <h2 id={`sec-${g.head.id}`} ref={registerRef(`sec-${g.head.id}`)} className="flex scroll-mt-chrome items-center gap-2 px-1 text-lg font-semibold text-foreground">
-                  <span className="min-w-0 truncate">{g.head.name || t("device.unnamedSection")}</span>
+                  <span className="min-w-0 truncate">{g.head.name || t("device.channelIndependent")}</span>
                   {groupChanged(g) && <span className="size-2 shrink-0 rounded-full bg-primary" title={t("device.changedDot")} />}
                 </h2>
                 <Card className="gap-0 py-0">
@@ -1006,31 +1058,25 @@ export function DeviceConfig() {
                   {g.head.items.length === 0 && g.children.length === 0 && (
                     <p className="text-sm text-muted-foreground">{t("device.emptySection")}</p>
                   )}
-                  {renderItems(g.head, g.head.id)}
-                  {g.children.map((child: CfgBlock) => {
+                  {renderPage(g.head, inline)}
+                  {g.children.filter((c) => !onPage.has(c.id)).map((child: CfgBlock) => {
                     const deep = child.level >= 2; // sub-block of a sub-section: indent further, lighter heading
                     return (
                       <section
                         key={child.id} id={`sec-${child.id}`}
-                        ref={child.level === 1 ? registerRef(`sec-${child.id}`) : undefined}
+                        ref={inIndex(child) ? registerRef(`sec-${child.id}`) : undefined}
                         className={cn("scroll-mt-chrome pt-3 first:pt-0", deep && "pl-3")}
                       >
-                        {/* Channel sub-heading: the label followed by a hairline that fades out,
-                            so each sub-block reads as its own section without a heavy left bar. */}
-                        <h4 className={cn("mb-3 flex items-center gap-2.5 font-semibold first:mt-0",
-                          deep ? "mt-4 text-sm text-muted-foreground" : "mt-5 text-foreground")}>
-                          <span className="min-w-0 shrink truncate">{child.name || t("device.unnamedSection")}</span>
-                          {child.items.some(isItemChanged) && <span className="size-1.5 shrink-0 rounded-full bg-primary" title={t("device.changedDot")} />}
-                          <span className={cn("h-px flex-1 bg-gradient-to-r to-transparent", deep ? "from-border/40" : "from-border/70")} />
-                        </h4>
-                        {renderItems(child, child.id)}
+                        {subHeading(child, inline, deep)}
+                        {renderPage(child, inline)}
                       </section>
                     );
                   })}
                   </CardContent>
                 </Card>
               </section>
-            ))}
+              );
+            })}
           </div>
           </div>
           )}

@@ -141,7 +141,7 @@
     "readLinks": true,
     "flashParams": true,
     "flashLinks": true,
-    "fullDownload": false,
+    "fullDownload": true,
     "structuralFlash": false
    }
   },

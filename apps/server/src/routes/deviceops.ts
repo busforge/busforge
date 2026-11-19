@@ -1,4 +1,4 @@
-import { parseAppConfig, collectApp, takesValue, resolveParamRef, resolveModuleInstances, buildDeviceConfig, assumableMemorylessRefs, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, CollectCancelled, comObjectTableChanges, fullDownloadRefusedForTunnelingEntries, HARDWARE_PEI_PROGRAM_REFUSAL, hardwareRefusals, type CollectApp, type AppConfig, type DeviceReadbackInfo, type MatrixOperation, type ModuleInstance, type WriteGate, type KnxIpDevice } from "@busforge/product";
+import { parseAppConfig, collectApp, takesValue, resolveParamRef, resolveModuleInstances, buildDeviceConfig, assumableMemorylessRefs, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, CollectCancelled, comObjectTableChanges, knxIpRefusals, HARDWARE_PEI_PROGRAM_REFUSAL, hardwareRefusals, type CollectApp, type AppConfig, type DeviceReadbackInfo, type MatrixOperation, type ModuleInstance, type WriteGate, type KnxIpDevice } from "@busforge/product";
 import { getProjectConnection, getGaMeta } from "../db/projects.ts";
 import type { Database } from "bun:sqlite";
 import type { Connection } from "../db/connections.ts";
@@ -11,7 +11,7 @@ import { getDeviceCertificate, putDeviceCertificate } from "../db/deviceCertific
 import { getGroupKeys } from "../db/groupKeys.ts";
 import { sendersByGroup, nextSendSequence } from "../db/groupSenders.ts";
 import { decodeCertificate, groupValueRead, secureEncode, SCF, SECURE_APDU_OVERHEAD, numToIa, numToGa, toolSequenceNow } from "@busforge/knx";
-import { flashDeviceParameters, flashDeviceGroupAddresses, flashDeviceStructure, downloadDeviceFull, secureTablesUnsupported, readDeviceState, secureIdentify, activateDevice, classify, assignDeviceAddress, readDevicesInProgMode, type FlashResult } from "../deviceprofile.ts";
+import { flashDeviceParameters, flashDeviceGroupAddresses, flashDeviceStructure, downloadDeviceFull, secureTablesUnsupported, readDeviceState, secureIdentify, activateDevice, classify, assignDeviceAddress, readDevicesInProgMode, locateDevice, type FlashResult } from "../deviceprofile.ts";
 import { untestedStatus, missingApplication, loadApp, resolveAppXml, resolveDeviceLinks, resolveComObjOverrides, resolveComObjOverrideBase, changedComObjNumbers, deviceConfigRefs, readbackLinkBase, unwrittenParamRefs, paramValueSame, lookupAppXml, secureCredsFor, securityTablesWithFingerprint, setSecurityBase } from "../deviceservice.ts";
 import { ApiError } from "../errors.ts";
 import { runCollection } from "../collect.ts";
@@ -78,10 +78,13 @@ export async function distinguishable(app: AppConfig, values: Map<string, string
 // flash-ga): resolve the device, require a ready bus connection, resolve the
 // application XML. Codes, messages, statuses and their precedence are the
 // routes' locked contract; the per-route capability guard stays in each route
-// because the checked capability and the refusal code differ.
-function busOpPreamble(state: AppState, projectId: string, deviceId: string): { dev: NonNullable<ReturnType<typeof getDeviceForFlash>>; conn: Connection; appXml: string } {
-  const dev = getDeviceForFlash(state.db, projectId, deviceId);
-  if (!dev) throw new ApiError("DEVICE_NOT_FOUND", "device not found", 404);
+// because the checked capability and the refusal code differ. The device comes with
+// the KNXnet/IP settings the project holds for it (knxIpRefusals).
+type FlashDevice = NonNullable<ReturnType<typeof getDeviceForFlash>> & { knxIp: ReturnType<typeof getDeviceKnxIp> };
+function busOpPreamble(state: AppState, projectId: string, deviceId: string): { dev: FlashDevice; conn: Connection; appXml: string } {
+  const found = getDeviceForFlash(state.db, projectId, deviceId);
+  if (!found) throw new ApiError("DEVICE_NOT_FOUND", "device not found", 404);
+  const dev = { ...found, knxIp: getDeviceKnxIp(state.db, projectId, deviceId) };
   const conn = getProjectConnection(state.db, projectId);
   if (!isConnectionReady(conn)) throw new ApiError("INTERFACE_NOT_SET", "configure a bus connection first");
   const appXml = resolveAppXml(state, projectId, dev.appProgramId);
@@ -96,18 +99,20 @@ function busOpPreamble(state: AppState, projectId: string, deviceId: string): { 
 // same, pointing at ETS: its procedure declares no application check a surgical flash could run first,
 // and so is one whose hardware carries a PEI program (`peiProgram`, HARDWARE_PEI_PROGRAM_REFUSAL) or whose
 // application names an ETS download plugin (COM_OBJECT_TABLE_DOWNLOAD_PLUGIN): ETS commissions those.
-// A family that cannot be downloaded in full for another reason keeps the surgical flash, the only way
-// it is programmed; its verified result then ends the state (gaEndsNever, paramsEndNever). Where the
-// application keeps parameters in the device, only the parameter flash ends it: the group-address flash
-// writes none of them, and a parameter flash on a device no longer counted never programmed would leave
-// the bytes it reads as FF to a baseline the device was never shown to hold (ParamFlashCtx.neverProgrammed).
-const canDownloadFull = (app: AppConfig | null, peiProgram: boolean) => !peiProgram && !!app && classify(app).capabilities().fullDownload;
+// A family that cannot be downloaded in full for another reason, or a device whose KNXnet/IP settings
+// keep it from that (knxIpRefusals), keeps the surgical flash, the only way it is programmed; its
+// verified result then ends the state (gaEndsNever, paramsEndNever). Where the application keeps
+// parameters in the device, only the parameter flash ends it: the group-address flash writes none of
+// them, and a parameter flash on a device no longer counted never programmed would leave the bytes it
+// reads as FF to a baseline the device was never shown to hold (ParamFlashCtx.neverProgrammed).
+type DownloadTarget = Pick<FlashDevice, "peiProgram" | "knxIp">;
+const canDownloadFull = (app: AppConfig | null, dev: DownloadTarget) => !dev.peiProgram && !!app && classify(app).capabilities().fullDownload && !knxIpRefusals(app, dev.knxIp).fullDownload;
 const keepsParams = (app: AppConfig | null) => !!app && classify(app).capabilities().flashParams
   && [...app.params.values()].some((p) => p.codeSegment !== undefined && p.offset !== undefined);
 const onlyEtsDownloads = (app: AppConfig | null, peiProgram: boolean) => !!app && (peiProgram || classify(app).operationRefusals().fullDownload !== undefined);
-function refuseNeverProgrammed(dev: { neverProgrammed: boolean; peiProgram: boolean }, app: AppConfig | null): void {
+function refuseNeverProgrammed(dev: DownloadTarget & { neverProgrammed: boolean }, app: AppConfig | null): void {
   if (!dev.neverProgrammed) return;
-  if (canDownloadFull(app, dev.peiProgram)) {
+  if (canDownloadFull(app, dev)) {
     throw new ApiError("NEVER_PROGRAMMED_USE_DOWNLOAD", "no configuration of this project has been verified on this device since it was placed or its product replaced; a full download commissions it first", 400);
   }
   if (onlyEtsDownloads(app, dev.peiProgram)) {
@@ -195,21 +200,22 @@ async function programOrPreview(
 // family that can commission from scratch is pointed at the full download with a distinct code (the
 // FlashDialog offers it), and any other is refused. Returns "surgical" when the table stays, a
 // "structural" verdict, or the refusal to short-circuit with. Runs pre-enqueue, like the capability
-// guards: no snapshot, no bus. A device whose hardware carries a PEI program takes no full download.
+// guards: no snapshot, no bus. A device whose hardware carries a PEI program, or whose KNXnet/IP settings
+// refuse it (knxIpRefusals), takes no full download.
 function comObjectTableGuard(
   app: AppConfig | null,
   base: Map<string, string>,
   now: Map<string, string>,
   modules: ModuleInstance[],
   secure: boolean,
-  dev: { peiProgram: boolean },
+  dev: DownloadTarget,
 ): "surgical" | "structural" | Response {
   if (!app) return "surgical"; // no cfg: the profile layer's requireCfg refuses downstream
   if (!comObjectTableChanges(app, base, now, modules).length) return "surgical";
   if (secure && !classify(app).loadsSecurityObject) return secureTablesRefusal();
   const caps = classify(app).capabilities();
   if (caps.structuralFlash) return "structural";
-  if (canDownloadFull(app, dev.peiProgram)) return err("COM_OBJECT_TABLE_STALE_USE_DOWNLOAD", "this change alters the device's communication objects, which needs its com-object table rewritten; run a full download to apply it", 400);
+  if (canDownloadFull(app, dev)) return err("COM_OBJECT_TABLE_STALE_USE_DOWNLOAD", "this change alters the device's communication objects, which needs its com-object table rewritten; run a full download to apply it", 400);
   if (onlyEtsDownloads(app, dev.peiProgram)) return err("COM_OBJECT_TABLE_STALE_USE_ETS", "this change alters the device's communication objects, which needs its com-object table rewritten; Busforge cannot download this device in full (its application's load procedure, the ETS download plugin its application names, or its hardware keeps it from that), so apply it with ETS", 400);
   return err("COM_OBJECT_TABLE_STALE", "this change alters the device's communication objects, which needs its com-object table rewritten; busforge cannot do that for this device family yet", 400);
 }
@@ -270,6 +276,9 @@ function structuralFlash(
     }),
   );
 }
+
+// The longest finding a device holds its programming LED on: the queue runs no other bus operation meanwhile.
+const LOCATE_MAX_SECONDS = 120;
 
 function secureTablesRefusal(): Response {
   const e = secureTablesUnsupported();
@@ -332,6 +341,30 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
         if (result.verified && !deviceHasApplication(db, id, deviceId) && getDeviceForFlash(db, id, deviceId)?.ia === result.assigned) clearNeverProgrammed(db, id, deviceId);
         return result;
       },
+    );
+    return json(task, 202);
+  }
+
+  // /api/projects/:id/devices/:deviceId/locate {seconds}  -> find the device physically: its programming
+  // LED on for `seconds` (1 to LOCATE_MAX_SECONDS), then off, read back. Answers 202 with the queued task. A cancel of the running
+  // task ends the hold early and still switches the mode off (TaskMeta.undoesOnCancel); a failure to
+  // show it off is the task's error (LOCATE_PROG_MODE_LEFT_ON). While it holds, the queue runs no other
+  // bus operation, so no address assignment of this server meets the device in programming mode.
+  if (seg.length === 6 && seg[3] === "devices" && seg[5] === "locate" && req.method === "POST") {
+    const deviceId = decodeURIComponent(seg[4]);
+    const dev = getDeviceForFlash(db, id, deviceId);
+    if (!dev) return err("DEVICE_NOT_FOUND", "device not found", 404);
+    const conn = getProjectConnection(db, id);
+    if (!isConnectionReady(conn)) return err("INTERFACE_NOT_SET", "configure a bus connection first");
+    const body = (await req.json().catch(() => ({}))) as { seconds?: unknown };
+    const seconds = body.seconds;
+    if (typeof seconds !== "number" || !Number.isInteger(seconds) || seconds < 1 || seconds > LOCATE_MAX_SECONDS) {
+      return err("LOCATE_DURATION_INVALID", `seconds must be a whole number from 1 to ${LOCATE_MAX_SECONDS}`, 400, { max: LOCATE_MAX_SECONDS });
+    }
+    const secure = secureCredsFor(state, id, deviceId);
+    const task = state.queue.submit(
+      { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "locate", writes: true, undoesOnCancel: true },
+      (progress, signal, _commit, enterWrites) => locateDevice(conn, dev.ia, secure, { holdMs: seconds * 1000, signal, onProgress: progress, enterWrites }),
     );
     return json(task, 202);
   }
@@ -652,7 +685,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const { dev, conn, appXml: gaAppXml } = busOpPreamble(state, id, deviceId);
     const gaFamilyApp = loadApp(state, id, deviceId);
     refuseNeverProgrammed(dev, gaFamilyApp);
-    const gaEndsNever = dev.neverProgrammed && !canDownloadFull(gaFamilyApp, dev.peiProgram) && !keepsParams(gaFamilyApp);
+    const gaEndsNever = dev.neverProgrammed && !canDownloadFull(gaFamilyApp, dev) && !keepsParams(gaFamilyApp);
     const resolved = resolveDeviceLinks(state, id, deviceId);
     const submittedLinks = getDeviceLinks(db, id, deviceId);
     if (!resolved) return err("APP_PROGRAM_MISSING", "application program not found in project", 404);
@@ -732,13 +765,13 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     if (getDeviceForFlash(db, id, deviceId)?.peiProgram) return err(HARDWARE_PEI_PROGRAM_REFUSAL.code, HARDWARE_PEI_PROGRAM_REFUSAL.message);
     const { dev, conn, appXml } = busOpPreamble(state, id, deviceId);
     const app = loadApp(state, id, deviceId);
+    const knxIpWhy = app ? knxIpRefusals(app, dev.knxIp).fullDownload : undefined;
     if (app && !classify(app).capabilities().fullDownload) {
-      const why = classify(app).operationRefusals().fullDownload;
+      const why = classify(app).operationRefusals().fullDownload ?? knxIpWhy;
       if (why) return err(why.code, why.message);
-      return fullDownloadRefusedForTunnelingEntries(app)
-        ? err("FULL_DOWNLOAD_TUNNELING_ENTRIES", "this interface's tunnelling addresses are not written by Busforge; a full download would reallocate it without them")
-        : err("FULL_DOWNLOAD_UNSUPPORTED", "commissioning this device's memory model from scratch is not supported yet");
+      return err("FULL_DOWNLOAD_UNSUPPORTED", "commissioning this device's memory model from scratch is not supported yet");
     }
+    if (knxIpWhy) return err(knxIpWhy.code, knxIpWhy.message);
     const resolved = resolveDeviceLinks(state, id, deviceId);
     const submittedLinks = getDeviceLinks(db, id, deviceId);
     if (!resolved) return err("APP_PROGRAM_MISSING", "application program not found in project", 404);
@@ -783,7 +816,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const hardware = flApp ? hardwareRefusals(flApp, dev).flashParams : undefined;
     if (hardware) return err(hardware.code, hardware.message);
     refuseNeverProgrammed(dev, flApp);
-    const paramsEndNever = dev.neverProgrammed && !canDownloadFull(flApp, dev.peiProgram);
+    const paramsEndNever = dev.neverProgrammed && !canDownloadFull(flApp, dev);
     if (flApp && !classify(flApp).capabilities().flashParams) {
       const why = classify(flApp).operationRefusals().flashParams;
       return why ? err(why.code, why.message) : err("DEVICE_FAMILY_UNSUPPORTED", "this device's family does not support parameter programming yet");

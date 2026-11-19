@@ -28,6 +28,12 @@ describe("the parameters a read-back can be asked to assume", () => {
     expect(c[0]).toMatchObject({ name: "Rocker function", block: "Rocker 1", value: "0" });
   });
 
+  test("a parameter in a nameless inline block is named by the page it stands on", () => {
+    const v = view();
+    v.blocks.push({ id: "b1-inline", name: "", level: 1, parentId: "b1", inline: true, at: 0, items: [{ kind: "param", param: p({ memoryless: true }) }] });
+    expect(assumeCandidates(v)[0]).toMatchObject({ block: "Rocker 1" });
+  });
+
   test("only the chosen values are sent, as the server takes them", () => {
     const c = assumeCandidates(view(p({ memoryless: true }), p({ refId: "two", memoryless: true })));
     expect(assumeList(c, { "M-1_A-1_P-1_R-1": "2", two: "" })).toEqual({ assume: [{ paramRefId: "M-1_A-1_P-1_R-1", value: "2" }], invalid: [] });

@@ -8,6 +8,7 @@ export { searchInterfaces, extendedDeviceMaxApdu, descriptionDeviceInfo } from "
 export { KnxDevice, PID, OBJ, ERASE, VERIFY_MODE, RESTART_MASTER, OBJECT_TYPE_SECURITY, OBJECT_TYPE_KNXNETIP, RETURN_CODE_ADDRESS_VOID, SECURITY_PID, elementRuns, transferChunks, readSecurityMode, type SecurityModeReading, type MemPiece, type PartialMemRead } from "./device.ts";
 export * from "./rawcodec.ts";
 export * from "./individualaddress.ts";
+export { blinkProgrammingMode, type BlinkOptions, type BlinkResult, type BlinkEnd } from "./locate.ts";
 export * from "./flash.ts";
 export * from "./grouptable-read.ts";
 export * from "./loadrunner.ts";

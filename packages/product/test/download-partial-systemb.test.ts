@@ -130,6 +130,13 @@ corpusDescribe("System B full download on a unit holding the application (mock u
     expect(cfg.loadProcedures.secureEnabled).toBe(false);
   });
 
+  // No capture shows ETS's partial form on a unit describing the short association table; the planner refuses it
+  // as the download does, before it needs the unit's memory.
+  test("the partial form is refused for a unit describing the short association table", () => {
+    expect(() => classify(cfg).planFullDownload(cfg.mask, { ia: "1.1.250", params: new Map(), links: [], proc: cfg.loadProcedures, unitHoldsApplication: true, assocEntryBytes: 2 }))
+      .toThrow(expect.objectContaining({ code: "ASSOC_TABLE_SHORT_UNSUPPORTED" }));
+  });
+
   // The unit declares a maximum APDU of 55 and never answers an extended write; ETS's captures write
   // it with A_Memory_Write (dali-ets-fulldownload-real.log: 137 A_Memory_Write, no extended write).
   test("the application declares no extended memory services, and the download tells the device so", async () => {

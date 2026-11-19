@@ -25,9 +25,8 @@ setDefaultTimeout(60_000);
 //     bytes and is refused (its parameter and group-address flash write only what they derive).
 //   - LdCtrlLoadImageProp PID 27 closing a procedure is a read before the restart, and the GVS AMMA's
 //     closing object 4 PID 67 = 01 write is sent as declared: neither refuses anything.
-// Two refusals have other reasons and are listed so the table covers every fixture: M-0083_A-0137
-// declares tunnelling addresses (full download refused), M-0083_A-0138 is MV-0012 (System 1: its one procedure
-// "all" runs on the parameter route and the full-download route alike; no group-address download is captured).
+// M-0083_A-0138 is listed so the table covers every fixture: it is MV-0012 (System 1: its one procedure "all"
+// runs on the parameter route and the full-download route alike; no group-address download is captured).
 const ORACLE: Record<string, { flashParams: boolean; flashLinks: boolean; fullDownload: boolean }> = {
   "M-0002_A-A001-13-63C2.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
   "M-0004_A-7072-21-99A7-O000A.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
@@ -40,7 +39,7 @@ const ORACLE: Record<string, { flashParams: boolean; flashLinks: boolean; fullDo
   "M-0081_A-FF31-31-D6FF.xml.gz": { flashParams: true, flashLinks: true, fullDownload: false },
   "M-0083_A-00B4-32-3919.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
   "M-0083_A-00B6-32-9642.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
-  "M-0083_A-0137-20-7EB2.xml.gz": { flashParams: true, flashLinks: true, fullDownload: false },
+  "M-0083_A-0137-20-7EB2.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
   "M-0083_A-0138-21-F18E-O0072.xml.gz": { flashParams: true, flashLinks: false, fullDownload: true },
   "M-0085_A-0072-30-69AA.xml.gz": { flashParams: true, flashLinks: true, fullDownload: true },
   "M-008E_A-7079-10-9C41.xml.gz": { flashParams: true, flashLinks: true, fullDownload: false },
@@ -49,7 +48,8 @@ const ORACLE: Record<string, { flashParams: boolean; flashLinks: boolean; fullDo
 };
 
 // The KNXnet/IP settings of a device instance, as the ETS capture of the System 1 download shows them; device
-// instance data like the individual address, which the planners of other families do not read.
+// instance data like the individual address. The System 1 planner writes them; the other families' planners
+// refuse a device holding them (knxIpRefusals), so they plan an instance without.
 const KNXIP: KnxIpDevice = {
   ia: "1.1.250", instanceName: "", productName: "A KNXnet/IP interface with Secure", productNameTranslations: [], additionalAddresses: [251, 252, 253, 254],
   ipConfig: { Assign: "Fixed", IPAddress: "192.0.2.2", SubnetMask: "255.255.255.0", DefaultGateway: "192.0.2.1" },
@@ -79,7 +79,7 @@ corpusDescribe("capabilities() offers a write exactly where its planner runs the
       let code: string | undefined;
       // In either form (deviceflash.ts absoluteFullForm): on a unit without the application, or holding it.
       for (const unitHoldsApplication of [false, true]) {
-        try { profile.planFullDownload(cfg.mask, { ia: "1.1.250", params: new Map(), links: [], proc, unitHoldsApplication, knxIp: KNXIP }); code = undefined; break; } catch (e) { code = (e as { code?: string }).code ?? "uncoded"; }
+        try { profile.planFullDownload(cfg.mask, { ia: "1.1.250", params: new Map(), links: [], proc, unitHoldsApplication, knxIp: maskInfo(cfg.mask).memoryModel === "bcu1" ? KNXIP : undefined }); code = undefined; break; } catch (e) { code = (e as { code?: string }).code ?? "uncoded"; }
       }
       expect(caps.fullDownload).toBe(code === undefined);
       const refusal = profile.operationRefusals().fullDownload;
@@ -109,9 +109,9 @@ corpusDescribe("capabilities() offers a write exactly where its planner runs the
     expect(classify(parseAppConfig(catalogueXml("M-0081_A-FE01-11-75D9.xml.gz"))).operationRefusals()).toEqual({});
   });
 
-  test("the application's own reason is given where tunnelling entries would refuse the full download too", () => {
+  test("the application's own reason is given where additional addresses would refuse the full download too", () => {
     const xml = catalogueXml("M-008E_A-7079-10-9C41.xml.gz");
-    const cfg = { ...parseAppConfig(xml), maxTunnelingUserEntries: 2 };
+    const cfg = { ...parseAppConfig(xml), additionalAddressesCount: 2 };
     expect(classify(cfg).operationRefusals().fullDownload?.code).toBe("FULL_DOWNLOAD_SEGMENT_UNKNOWN");
     expect(() => classify(cfg).planFullDownload(cfg.mask, { ia: "1.1.250", params: new Map(), links: [], proc: parseLoadProcedures(xml) }))
       .toThrow(expect.objectContaining({ code: "FULL_DOWNLOAD_SEGMENT_UNKNOWN" }));

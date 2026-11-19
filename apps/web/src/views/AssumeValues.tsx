@@ -18,13 +18,16 @@ export interface AssumeCandidate {
 
 export function assumeCandidates(view: DeviceConfigView): AssumeCandidate[] {
   const out: AssumeCandidate[] = [], seen = new Set<string>();
+  // A field names its block, or for a nameless (inline) block the nearest one above it with a name.
+  const byId = new Map(view.blocks.map((b) => [b.id, b]));
+  const named = (b: (typeof view.blocks)[number] | undefined): string => !b ? "" : b.name || named(b.parentId ? byId.get(b.parentId) : undefined);
   for (const b of view.blocks) for (const it of b.items) {
     if (it.kind !== "param") continue;
     const p = it.param;
     if (!p.memoryless || p.readOnly || seen.has(p.refId)) continue;
     if (!(p.control === "enum" && p.options?.length) && !(p.control === "number" && !p.float)) continue;
     seen.add(p.refId);
-    out.push({ refId: p.refId, name: p.name.trim(), block: b.name, value: p.value, ...(p.control === "enum" ? { options: p.options } : { min: p.min, max: p.max }) });
+    out.push({ refId: p.refId, name: p.name.trim(), block: named(b), value: p.value, ...(p.control === "enum" ? { options: p.options } : { min: p.min, max: p.max }) });
   }
   return out;
 }
