@@ -45,8 +45,8 @@ ZIP64 (refused as such, `ZIP64_UNSUPPORTED`). Every offset and length the centra
 local headers declare is checked against the bytes the archive has, and an archive that points past
 them is refused (`INVALID_KNXPROJ`). An entry unpacks to exactly the size its directory declares or is
 refused; one declared over 512 MiB, or an archive over 1 GiB in all, is refused before anything is
-unpacked (`ARCHIVE_TOO_LARGE`). The largest project and product databases read so far unpack to
-under 100 MiB.
+unpacked (`ARCHIVE_TOO_LARGE`). A project's inner `P-XXXX.zip` is an archive of its own under the same
+caps. The largest project and product databases in the test corpus unpack to under 100 MiB.
 
 Key relations in `0.xml`:
 

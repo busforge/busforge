@@ -5,65 +5,28 @@ import { deflateRawSync } from "node:zlib";
 import { readZip, zipEncryption, ZIP_ENTRY_LIMIT, ZIP_TOTAL_LIMIT } from "../src/zip.ts";
 import { deriveWinzipPassword } from "../src/knxproj.ts";
 import { KnxprojError } from "../src/errors.ts";
+import { zipOf as zip, type ZipEntry } from "./ziputil.ts";
 
 const fixture = (n: string) => readFileSync(join(import.meta.dir, "fixtures", n));
 
-interface Entry { name: string; data: Buffer; method?: number; size?: number; extra?: Buffer; }
-
-// A zip of the given entries. `data` is written as is (already compressed for method 8); `size` is the
-// uncompressed size the central directory declares, so a test can make an entry lie about it.
-function zip(entries: Entry[]): Buffer {
-  const locals: Buffer[] = [];
-  const central: Buffer[] = [];
-  let offset = 0;
-  for (const e of entries) {
-    const name = Buffer.from(e.name);
-    const extra = e.extra ?? Buffer.alloc(0);
-    const size = e.size ?? e.data.length;
-    const lfh = Buffer.alloc(30);
-    lfh.writeUInt32LE(0x04034b50, 0);
-    lfh.writeUInt16LE(20, 4);
-    lfh.writeUInt16LE(e.method ?? 0, 8);
-    lfh.writeUInt32LE(e.data.length, 18);
-    lfh.writeUInt32LE(size, 22);
-    lfh.writeUInt16LE(name.length, 26);
-    lfh.writeUInt16LE(extra.length, 28);
-    const local = Buffer.concat([lfh, name, extra, e.data]);
-    const cd = Buffer.alloc(46);
-    cd.writeUInt32LE(0x02014b50, 0);
-    cd.writeUInt16LE(20, 4);
-    cd.writeUInt16LE(20, 6);
-    cd.writeUInt16LE(e.method ?? 0, 10);
-    cd.writeUInt32LE(e.data.length, 20);
-    cd.writeUInt32LE(size, 24);
-    cd.writeUInt16LE(name.length, 28);
-    cd.writeUInt32LE(offset, 42);
-    locals.push(local);
-    central.push(Buffer.concat([cd, name]));
-    offset += local.length;
-  }
-  const cdBuf = Buffer.concat(central);
-  const eocd = Buffer.alloc(22);
-  eocd.writeUInt32LE(0x06054b50, 0);
-  eocd.writeUInt16LE(entries.length, 8);
-  eocd.writeUInt16LE(entries.length, 10);
-  eocd.writeUInt32LE(cdBuf.length, 12);
-  eocd.writeUInt32LE(offset, 16);
-  return Buffer.concat([...locals, cdBuf, eocd]);
-}
-
-const deflated = (text: string): Entry => ({ name: "d.xml", data: deflateRawSync(Buffer.from(text)), method: 8, size: Buffer.byteLength(text) });
-const stored = (text: string): Entry => ({ name: "s.txt", data: Buffer.from(text) });
+const deflated = (text: string): ZipEntry => ({ name: "d.xml", data: deflateRawSync(Buffer.from(text)), method: 8, size: Buffer.byteLength(text) });
+const stored = (text: string): ZipEntry => ({ name: "s.txt", data: Buffer.from(text) });
 const sample = () => zip([stored("stored entry"), deflated("<x>deflated entry</x>".repeat(20))]);
 
 // Offsets inside the sample: the central directory starts where the entries' data ends.
 const EOCD = (b: Buffer) => b.length - 22;
 const CD = (b: Buffer) => b.readUInt32LE(EOCD(b) + 16);
 
-// The thrown value, so a test asserts the code and not only that something threw.
+// The thrown value's code, or what was thrown uncoded, so a test asserts the code and not only that
+// something threw.
 function codeOf(fn: () => unknown): string {
+  return thrown(fn).split(": ")[0];
+}
+
+// "<code>: <message>" of a KnxprojError, so a test can pin which check refused.
+function thrown(fn: () => unknown): string {
   try { fn(); } catch (e) {
-    if (e instanceof KnxprojError) return e.code;
+    if (e instanceof KnxprojError) return `${e.code}: ${e.message}`;
     return `uncoded ${(e as Error).name}: ${(e as Error).message}`;
   }
   return "no error";
@@ -103,6 +66,43 @@ describe("zip reader: offsets and lengths outside the archive", () => {
     }
   });
 
+  test("the last directory entry's name, extra or comment running past the end record is refused", () => {
+    const b = zip([stored("only entry")]);
+    for (const field of [28, 30, 32]) {
+      const c = Buffer.from(b);
+      c.writeUInt16LE(c.readUInt16LE(CD(c) + field) + 1, CD(c) + field);
+      expect(thrown(() => readZip(c))).toContain("entry 0 of 1 runs past the directory's end");
+    }
+  });
+
+  test("a directory size past the end record, or other than the entries fill, is refused", () => {
+    for (const delta of [1, -1]) {
+      const b = sample();
+      b.writeUInt32LE(b.readUInt32LE(EOCD(b) + 12) + delta, EOCD(b) + 12);
+      expect(codeOf(() => readZip(b))).toBe("INVALID_KNXPROJ");
+    }
+  });
+
+  test("an end record comment longer than the bytes after it is refused", () => {
+    const b = sample();
+    b.writeUInt16LE(1, EOCD(b) + 20);
+    expect(thrown(() => readZip(b))).toContain("comment of 1 bytes runs past the archive");
+  });
+
+  test("a local header whose sizes disagree with the directory's is refused", () => {
+    for (const field of [18, 22]) {
+      const b = sample();
+      b.writeUInt32LE(0xfffffff0, field);
+      expect(thrown(() => readZip(b))).toContain("local header of s.txt declares");
+    }
+  });
+
+  test("a directory entry's local header is checked like any other", () => {
+    const b = zip([{ name: "dir/", data: Buffer.alloc(0) }, stored("x")]);
+    b.writeUInt32LE(0xfffffff0, CD(b) + 42);
+    expect(thrown(() => readZip(b))).toContain("local header of dir/ at 4294967280 runs into the central directory");
+  });
+
   test("a local header offset past the data is refused", () => {
     for (const lfh of [0xfffffff0, 0]) {
       const b = sample();
@@ -134,7 +134,7 @@ describe("zip reader: offsets and lengths outside the archive", () => {
     const extra = Buffer.alloc(6);
     extra.writeUInt16LE(0x9901, 0);
     extra.writeUInt16LE(2, 2);
-    expect(codeOf(() => readZip(zip([{ ...stored("x"), method: 99, extra }]), "pw"))).toBe("INVALID_KNXPROJ");
+    expect(thrown(() => readZip(zip([{ ...stored("x"), method: 99, extra }]), "pw"))).toContain("AES extra field of s.txt is 2 bytes, shorter than 7");
   });
 
   test("an AES entry shorter than its salt, check and authentication code is refused", () => {
@@ -157,6 +157,11 @@ describe("zip reader: offsets and lengths outside the archive", () => {
     for (const field of [20, 24, 42]) {
       const b = sample();
       b.writeUInt32LE(0xffffffff, CD(b) + field);
+      expect(codeOf(() => readZip(b))).toBe("ZIP64_UNSUPPORTED");
+    }
+    for (const field of [18, 22]) {
+      const b = sample();
+      b.writeUInt32LE(0xffffffff, field);
       expect(codeOf(() => readZip(b))).toBe("ZIP64_UNSUPPORTED");
     }
     const b = sample();
@@ -212,11 +217,13 @@ describe("zip reader: truncated and damaged archives never escape uncoded", () =
 });
 
 describe("zip reader: unpacking bounded by the declared size and the caps", () => {
-  // 64 MiB of zeros deflate to about 64 KiB: a bomb that declares a small size.
-  const bomb = deflateRawSync(Buffer.alloc(64 * 1024 * 1024));
+  // 4 MiB of zeros deflate to about 4 KiB: a bomb that declares a small size.
+  const bomb = deflateRawSync(Buffer.alloc(4 * 1024 * 1024));
 
-  test("an entry that inflates past its declared size is refused", () => {
-    expect(codeOf(() => readZip(zip([{ name: "bomb.xml", data: bomb, method: 8, size: 1000 }])))).toBe("INVALID_KNXPROJ");
+  // Inflation stops one byte past the declared size; the message is the one of that stop, not of the
+  // length check after a full inflate.
+  test("an entry that inflates past its declared size is stopped there and refused", () => {
+    expect(thrown(() => readZip(zip([{ name: "bomb.xml", data: bomb, method: 8, size: 1000 }])))).toBe("INVALID_KNXPROJ: malformed zip: entry bomb.xml does not inflate to the 1000 bytes its directory declares");
   });
 
   test("an entry that inflates short of its declared size is refused", () => {
@@ -224,8 +231,10 @@ describe("zip reader: unpacking bounded by the declared size and the caps", () =
     expect(codeOf(() => readZip(zip([{ ...e, size: e.size! + 1 }])))).toBe("INVALID_KNXPROJ");
   });
 
+  // Refused on the lengths, before the stored bytes are copied.
   test("a stored entry whose size disagrees with its declared size is refused", () => {
-    expect(codeOf(() => readZip(zip([{ ...stored("abc"), size: 4 }])))).toBe("INVALID_KNXPROJ");
+    const b = zip([{ ...stored("abc"), size: 4 }]);
+    expect(thrown(() => readZip(b))).toContain("stored entry s.txt holds 3 bytes, its directory declares 4");
   });
 
   test("an entry declared over the per-entry cap is refused before it is unpacked", () => {
