@@ -375,22 +375,22 @@ describe("the keys of the corpus", () => {
     } finally { rmSync(root, { recursive: true }); }
   });
 
-  test("a project names the keys it holds but did not give: a device without a serial, a key that is not 16 bytes", () => {
+  test("a project gives the tool key of a device without a serial and names the keys it did not give: IP Secure, a key that is not 16 bytes", () => {
     const root = mkdtempSync(join(tmpdir(), "capture-index-"));
     try {
       for (const d of ["captures", "internal/captures", "collections"]) mkdirSync(join(root, d), { recursive: true });
-      // Synthetic keys: DI-1 has no serial, so the project reader gives no tool key for it; GA 1 carries 15 bytes.
+      // Synthetic keys: DI-1 has no serial and a device authentication code; GA 1 carries 15 bytes.
       const xml = readFileSync(join(import.meta.dir, "../packages/project/test/fixtures/sample-0.xml"), "utf8")
-        .replace('Hardware2ProgramRefId="M-0048_H-1_HP-1">', 'Hardware2ProgramRefId="M-0048_H-1_HP-1"><Security ToolKey="AAECAwQFBgcICQoLDA0ODw==" />')
+        .replace('Hardware2ProgramRefId="M-0048_H-1_HP-1">', 'Hardware2ProgramRefId="M-0048_H-1_HP-1"><Security ToolKey="AAECAwQFBgcICQoLDA0ODw==" DeviceAuthenticationCode="code" />')
         .replace('<GroupAddress Id="P-TEST-0_GA-1" Address="1"', '<GroupAddress Id="P-TEST-0_GA-1" Address="1" Key="AAECAwQFBgcICQoLDA0O"')
         .replace("</Installations>", '<Installation Name="Second" /></Installations>');
       writeFileSync(join(root, "captures/p.knxproj"), storeZip({ "P-TEST/0.xml": xml }));
       const index = buildIndex(root);
       expect(index.keys.read).toEqual([{
-        file: "captures/p.knxproj", deviceKeys: 0, groupKeys: 0,
-        omitted: ["1 unread installation(s) after the first", "the tool keys of 1 device(s) without a serial", "group key 0/0/1: 15 bytes, not 16"],
+        file: "captures/p.knxproj", deviceKeys: 1, groupKeys: 0,
+        omitted: ["1 unread installation(s) after the first", "1 key(s) or password(s) of KNX IP Secure or a BCU key", "group key 0/0/1: 15 bytes, not 16"],
       }]);
-      expect(renderMarkdown(index)).toContain("- `captures/p.knxproj`: 0 device, 0 group; not given: 1 unread installation(s) after the first, the tool keys of 1 device(s) without a serial, group key 0/0/1: 15 bytes, not 16");
+      expect(renderMarkdown(index)).toContain("- `captures/p.knxproj`: 1 device, 0 group; not given: 1 unread installation(s) after the first, 1 key(s) or password(s) of KNX IP Secure or a BCU key, group key 0/0/1: 15 bytes, not 16");
     } finally { rmSync(root, { recursive: true }); }
   });
 

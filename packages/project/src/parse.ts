@@ -101,14 +101,15 @@ export function parseProject(xml0: string, projectXml: string | undefined, fallb
   const deviceLinks = linkResults.map(({ deviceId, links }) => ({ deviceId, links }));
   const droppedLinks = linkResults.flatMap((r) => r.dropped);
   const deviceComObjOverrides = devices.map((d) => ({ deviceId: d.id, overrides: parseDeviceComObjOverrides(scope, d) })).filter((o) => o.overrides.length > 0);
-  const securities = devices.map((d) => parseDeviceSecurity(scope, d.id));
-  const deviceSecurity = securities.filter((x): x is DeviceSecurity => x !== undefined && x !== "noSerial");
-  const secureDevicesWithoutSerial = securities.filter((x) => x === "noSerial").length;
+  const securities = devices.map((d) => parseDeviceSecurity(scope, d.id)).filter((x): x is DeviceSecurity => x !== undefined);
+  const deviceSecurity = securities.filter((s) => s.serialNumber !== "");
+  const toolKeysWithoutSerial = securities.filter((s) => s.serialNumber === "").map(({ deviceId, toolKey }) => ({ deviceId, toolKey }));
+  const secretsNotImported = countSecretsNotImported(installation, scope, devices);
   const { secureSenders, unresolvedSenders } = parseSecureSenders(scope, devices, busInterfaceIndex);
   const deviceKnxIp = devices.map((d) => parseDeviceKnxIp(xml0, scope, d.id, productNames, productTranslations)).filter((x): x is DeviceKnxIp => x !== undefined);
 
   return {
-    name: parseName(projectInfo, installation, fallbackName), groupAddressLevels, topology, locations, devices, groupRanges, groupAddresses, deviceParams, deviceModules, deviceLinks, deviceComObjOverrides, deviceSecurity, deviceKnxIp, groupKeys, secureSenders, unresolvedSenders, secureDevicesWithoutSerial,
+    name: parseName(projectInfo, installation, fallbackName), groupAddressLevels, topology, locations, devices, groupRanges, groupAddresses, deviceParams, deviceModules, deviceLinks, deviceComObjOverrides, deviceSecurity, deviceKnxIp, groupKeys, secureSenders, unresolvedSenders, toolKeysWithoutSerial, secretsNotImported,
     malformedDevices, skippedInstallations, unassignedDevices, ...droppedLinkCounts(droppedLinks), droppedLinks,
   };
 }
@@ -134,27 +135,47 @@ function parseGroupAddressLevels(projectInfo: XmlNode | undefined, installation:
 }
 
 // A device's Data-Secure commissioning secrets, or undefined for a non-secure device.
-// The tool key lives in the device's nested <Security ToolKey="..b64.."> element
-// (present only once ETS secure-commissioned it); the 6-byte device serial used for the
-// Sync request is the DeviceInstance's own SerialNumber attribute. SequenceNumber here is
-// the group/data counter, kept for completeness; tool-access programming syncs its own.
+// The tool key lives in the device's nested <Security ToolKey="..b64.."> element; the 6-byte
+// device serial used for the Sync request is the DeviceInstance's own SerialNumber attribute.
+// SequenceNumber here is the group/data counter, kept for completeness; tool-access programming
+// syncs its own.
 //
 // ETS generates a tool key as soon as a secure device is added, before it has ever reached the
-// device; such a device has no SerialNumber yet, and without one no Sync can be run against it. It
-// is reported as "noSerial" (counted by the caller) instead of stored with a key nothing can use.
-function parseDeviceSecurity(doc: XmlNode, deviceId: string): DeviceSecurity | "noSerial" | undefined {
+// device; such a device has no SerialNumber yet (serialNumber ""), and without one no Sync can be
+// run against it. The caller gives that key apart (toolKeysWithoutSerial).
+function parseDeviceSecurity(doc: XmlNode, deviceId: string): DeviceSecurity | undefined {
   const dev = findDeviceInstance(doc, deviceId);
   const sec = dev?.Security;
   // A non-secure device has no <Security> child; a stray Security="Off" attribute
   // parses to a string, not an object, so the ToolKey lookup safely yields nothing.
   if (!isNode(sec) || sec.ToolKey === undefined) return undefined;
-  if (!text(dev?.SerialNumber)) return "noSerial";
   return {
     deviceId,
     toolKey: text(sec.ToolKey),
     serialNumber: text(dev?.SerialNumber),
     sequenceNumber: text(sec.SequenceNumber),
   };
+}
+
+// The BCU key ETS writes when the project sets none (0xFFFFFFFF, the free access key).
+const DEFAULT_BCU_KEY = "4294967295";
+// <Installation> attributes that hold a key: their values are kept nowhere (see parseDeviceKnxIp).
+const SECRET_INSTALLATION_ATTRS = ["IPRoutingBackboneKey", "BCUKey"] as const;
+const isSecretSet = (name: string, value: string | undefined): boolean => !!value && !(name === "BCUKey" && value === DEFAULT_BCU_KEY);
+
+// The keys and passwords the installation holds that Busforge does not use and does not import: KNX IP
+// Secure's backbone key, each device's authentication code and management password, each tunnelling
+// user's password, and a BCU key other than the default. The copies ETS records as loaded into a device
+// (LoadedIPRoutingBackboneKey and the hashes) are the same secrets and are not counted again.
+function countSecretsNotImported(installation: XmlNode | undefined, doc: XmlNode, devices: Device[]): number {
+  let n = SECRET_INSTALLATION_ATTRS.filter((a) => isSecretSet(a, attr(installation?.[a]))).length;
+  for (const d of devices) {
+    const dev = findDeviceInstance(doc, d.id);
+    const sec = node(dev?.Security);
+    for (const a of ["DeviceAuthenticationCode", "DeviceManagementPassword"]) if (attr(sec?.[a])) n++;
+    for (const bi of kids(node(dev?.BusInterfaces)?.BusInterface)) if (attr(bi.Password)) n++;
+  }
+  return n;
 }
 
 // An element's attributes as text, read off its start tag in the source: the parsed node holds its
@@ -168,6 +189,14 @@ function attrsOfTag(tag: string): Record<string, string> {
 function startTag(xml: string, name: string, from = 0): string {
   const m = new RegExp(`<${name}(?=[\\s/>])[^>]*>`).exec(xml.slice(from));
   return m ? m[0] : "";
+}
+
+// The installation's attributes with the value of each one that holds a key emptied: the name says the
+// project sets it, the key itself stays out of the unsealed device settings.
+function withoutSecrets(attrs: Record<string, string>): Record<string, string> {
+  const out = { ...attrs };
+  for (const a of SECRET_INSTALLATION_ATTRS) if (isSecretSet(a, out[a])) out[a] = "";
+  return out;
 }
 
 // The KNXnet/IP settings a DeviceInstance carries besides its parameters, or undefined for a device
@@ -192,7 +221,7 @@ function parseDeviceKnxIp(xml0: string, doc: XmlNode, deviceId: string, productN
     securityAttributes: Object.keys(secAttrs),
     toolKeyLoaded: secAttrs.ToolKey !== undefined && secAttrs.ToolKey === secAttrs.LoadedToolKey,
     busInterfaces: kids(node(dev?.BusInterfaces)?.BusInterface).length,
-    installation: attrsOfTag(startTag(xml0, "Installation")),
+    installation: withoutSecrets(attrsOfTag(startTag(xml0, "Installation"))),
   };
 }
 

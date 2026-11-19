@@ -104,6 +104,7 @@ const en = {
     gapUnresolvedLinks: "{{count}} group-address link(s) reference an address not in the project and were dropped",
     gapUnresolvedSenders: "{{count}} interface(s) assigned to a group address could not be resolved to an address and were not imported as senders",
     gapSecureWithoutSerial: "{{count}} secure device(s) were never commissioned by ETS (no serial number); imported without their tool key",
+    gapSecretsNotImported: "The project holds {{count}} key(s) or password(s) Busforge does not use (KNX IP Secure, a BCU key); not imported",
     gapMalformedDevices: "{{count}} device(s) had no id or a missing address in the file and were skipped",
     gapSkippedInstallations: "The project holds {{count}} further installation(s); only the first was imported",
     gapUnassignedDevices: "{{count}} device(s) sit outside the topology in ETS (no line, no address) and were not imported",

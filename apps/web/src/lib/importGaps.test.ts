@@ -23,8 +23,8 @@ test("each gap with a count becomes one notice, in display order, and the baggag
 });
 
 test("every notice has an English and a German text", () => {
-  const all = importGaps({ ...base, devicesWithoutProgram: [{ ia: "1.1.1", name: "" }], unresolvedLinks: 1, malformedDevices: 1, unresolvedSenders: 1, secureDevicesWithoutSerial: 1, skippedInstallations: 1, unassignedDevices: 1, linksWithoutSender: 1, staleModuleLinks: 1, baggageUnreadable: true });
-  expect(all).toHaveLength(10);
+  const all = importGaps({ ...base, devicesWithoutProgram: [{ ia: "1.1.1", name: "" }], unresolvedLinks: 1, malformedDevices: 1, unresolvedSenders: 1, secureDevicesWithoutSerial: 1, secretsNotImported: 1, skippedInstallations: 1, unassignedDevices: 1, linksWithoutSender: 1, staleModuleLinks: 1, baggageUnreadable: true });
+  expect(all).toHaveLength(11);
   for (const { key } of all) {
     const leaf = key.slice("import.".length) as keyof typeof en.import;
     expect(en.import[leaf]).toBeTruthy();

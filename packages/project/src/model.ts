@@ -165,7 +165,8 @@ export interface GroupRangeNode {
 // application's parameters (0.xml), which ETS writes into the device's KNXnet/IP parameter object.
 // Attributes are kept verbatim (names and values as ETS stores them, the security element's names
 // only): what a value means, and which values a download can write, is decided where it is written.
-// installation: the attributes of the project's <Installation> (the routing multicast settings live there).
+// installation: the attributes of the project's <Installation> (the routing multicast settings live there);
+// the value of one that holds a key (the IP routing backbone key, a BCU key other than the default) is "".
 export interface DeviceKnxIp {
   deviceId: string;
   instanceName: string;                    // the DeviceInstance Name, "" where ETS shows the product name
@@ -196,7 +197,8 @@ export interface Project {
   groupKeys: GroupKey[]; // Data-Secure group keys from 0.xml (only secured group addresses)
   secureSenders: SecureSender[]; // bus interfaces assigned to group addresses (0.xml BusInterface Connectors)
   unresolvedSenders: number;      // such assignments whose interface address could not be resolved (surfaced, never guessed)
-  secureDevicesWithoutSerial: number; // secure devices ETS holds a tool key for but never commissioned (no serial): imported without it
+  toolKeysWithoutSerial: { deviceId: string; toolKey: string }[]; // tool keys (base64) of secure devices ETS never commissioned (no serial): no Sync can run against them, so the import keeps them out of the key store
+  secretsNotImported: number;     // KNX IP Secure keys and passwords and a BCU key other than the default the installation sets: not imported (see parse.ts countSecretsNotImported)
   unresolvedLinks: number;        // link tokens that referenced a GA not in the tree (silently lost unless surfaced)
   malformedDevices: number;       // DeviceInstances dropped for a missing Id or non-numeric address (unkeyable/unaddressable; surfaced, not silently defaulted)
   skippedInstallations: number;   // <Installation>s after the first; only the first is imported

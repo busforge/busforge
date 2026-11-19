@@ -170,6 +170,13 @@ already decrypts to parse), every secure device carries a `<Security>` element w
 tool key and a sequence number. No `.knxkeys` import and no keyring parser are needed. The device's
 serial number, needed for the Sync request, comes from the same device instance.
 
+ETS creates a device's tool key when the device is added, before it commissions it. A device without a
+serial in the project was never commissioned by ETS, so no Sync can run against it: its key stays out of
+the store and the import result counts the device. The keys and passwords of KNX IP Secure (the backbone
+key, a device's authentication code and management password, a tunnelling user's password) and a BCU
+key other than the default are not imported either; the import result counts them, and the KNXnet/IP
+settings Busforge keeps for a download name such an installation attribute without its value.
+
 Three paths populate it: the project import (`import`), the activation from a device certificate
 (`pending` until confirmed, then `provisioned`, see below), and a key deposited by hand (`manual`).
 
