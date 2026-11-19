@@ -17,11 +17,14 @@ setDefaultTimeout(60_000);
 
 const imported = SPECS.filter((s) => s.provision === "import-knxproj");
 
+const opened = new Map<string, Project>();
 function open(file: string): Project {
+  const cached = opened.get(file);
+  if (cached) return cached;
   const bytes = readFileSync(corpusPath(file));
   let last: unknown;
   for (const pw of passwords()) {
-    try { return loadKnxproj(bytes, pw, file); } catch (e) { last = e; if (!NOT_THIS_PASSWORD.has(codeOf(e) ?? "")) throw e; }
+    try { const p = loadKnxproj(bytes, pw, file); opened.set(file, p); return p; } catch (e) { last = e; if (!NOT_THIS_PASSWORD.has(codeOf(e) ?? "")) throw e; }
   }
   throw new Error(`none of the passwords in ${PASSWORDS_ENV} opens ${file}: ${String(last)}`);
 }

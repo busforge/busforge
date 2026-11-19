@@ -6,11 +6,9 @@ import { BENCH_ETS_PROJECT } from "../../corpus.ts";
 // read + transmit), and the bench bridge's tunnel address assigned as a sender of that address, so the
 // device's security table lists it beside the GVS AMMA, which transmits on the same address too
 // (docs/findings.md §22). The plain spec cannot drive it any more:
-// its keys exist only in that ETS project, so this spec imports the project file (the export lives in the
-// private corpus because it holds the keys; its password, the bench ETS project's, comes from
-// BUSFORGE_SMOKE_KNXPROJ_PASSWORD) and runs every bus operation through a secure session. The file must be
-// an export taken after the unit's tool key was last written: ETS replaces the tool key whenever it switches
-// Data Secure on again, and an older export then no longer opens the unit.
+// its keys exist only in that ETS project, so this spec imports the project file (BENCH_ETS_PROJECT in
+// tools/corpus.ts; its password, the bench ETS project's, comes from BUSFORGE_SMOKE_KNXPROJ_PASSWORD) and
+// runs every bus operation through a secure session.
 //
 // Behaviours: K1's secured object answers a secured read from the witness, after this run's full
 // download wrote and verified the security object (key table, flags, and the bridge's tunnel address in
