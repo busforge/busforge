@@ -790,7 +790,7 @@ const en = {
     searchEmpty: "No parameters or objects match your search.",
     searchCount_one: "{{count}} row shown",
     searchCount_other: "{{count}} rows shown",
-    unnamedSection: "Device-wide objects",
+    channelIndependent: "Channel-independent",
     emptySection: "No parameters in this section for the current configuration.",
     dcaTitle: "Configured with an ETS DCA app",
     gapsTitle: "This device uses settings busforge does not fully support yet:",

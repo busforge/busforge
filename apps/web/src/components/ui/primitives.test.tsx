@@ -107,6 +107,15 @@ describe("a notice", () => {
     expect(c).toContain("py-1.5");
     expect(c).not.toContain("py-2");
   });
+  test("in the info tone is the info badge's colours as a box, and no warning", () => {
+    const badge = classes(renderToStaticMarkup(<Badge tone="info">Derived</Badge>));
+    const c = classes(renderToStaticMarkup(<Notice tone="info">Configured by a plug-in</Notice>));
+    for (const tone of ["border-info/40", "bg-info/10", "text-info"]) {
+      expect(badge).toContain(tone);
+      expect(c).toContain(tone);
+    }
+    expect(c.some((x) => x.includes("warning"))).toBe(false);
+  });
 });
 
 describe("a chip", () => {

@@ -131,6 +131,11 @@ export interface CfgBlock {
   // ETS Layout="Grid"/"Table" (absent = plain list). `rows`/`cols` are the declared
   // geometry; the items carry the Cell that places them in it.
   layout?: "Grid" | "Table"; rows?: CfgGridLine[]; cols?: CfgGridLine[];
+  // ETS Inline="true": the block belongs to its parent's page, not a page of its own, so it has no
+  // entry in the page index, and a heading only from its Text or the text of the parameter it names
+  // (ParamRefId), never from its Name. `at` is where it stands among the parent's items (it comes
+  // before parent.items[at]), as authored; set when the parent is a block.
+  inline?: true; at?: number;
 }
 // The read-back facts the server attaches to a config response (never set by
 // buildDeviceConfig). Defined once here so the server's ReadbackSummary and the web client
@@ -731,6 +736,11 @@ function buildDeviceConfigReading(
   };
   const instancesFor = (moduleNodeId: string) => instances.filter((mi) => `${app.id}_${mi.refId}` === moduleNodeId);
 
+  // Where each shown inline block stands among its parent's items, keyed by its instance id (a
+  // module's nodes are shared by its instances), and how many collect() has met: collect() records
+  // them, walk() reads them right after.
+  const inlineAt = new Map<string, number>();
+  let inlineSeen = 0;
   // Walk a node sequence in order, appending items to the current block. Active
   // choose branches inline their items; Assign mutates env; Module nodes expand
   // each device instance with its own scope.
@@ -755,7 +765,7 @@ function buildDeviceConfigReading(
         // that way is known (Jung/HMG place the hidden block at container/top level, where walk
         // orders it correctly). Should one leave the view's objects different from the image's,
         // the configuration is refused (CONFIG_VIEW_INCOMPLETE below), not shown short.
-        case "block": break;
+        case "block": if (n.inline && n.access !== "None") { inlineAt.set(scope.rewrite(n.id), items.length); inlineSeen++; } break;
       }
     }
   };
@@ -763,6 +773,8 @@ function buildDeviceConfigReading(
   // A ParameterBlock heading comes from its own (translatable) Text, or, when it
   // has none, from a referenced parameter's text (a common manufacturer pattern,
   // e.g. Theben push-buttons); only then fall back to the language-independent Name.
+  // An inline block never takes its Name: it has no page to name, and its Name is an
+  // identifier (OpenKNX "BASE_StartupDelayCycle"), never a caption.
   const blockTitle = (n: Extract<DynNode, { kind: "block" }>, scope: Scope): string => {
     const fill = (t: string) => fillTextParam(subst(t, scope), n.textParamRefId ? resolve(n.textParamRefId, scope) ?? "" : undefined);
     const own = tr(n.id, "Text", n.text);
@@ -773,7 +785,7 @@ function buildDeviceConfigReading(
       const t = paramRefText(n.paramRefId!, ref, param, scope, n.textParamRefId);
       if (t) return t;
     }
-    return fill(n.name);
+    return n.inline ? "" : fill(n.name);
   };
 
   // Build the section tree in document order (so Assign side effects and choose
@@ -820,6 +832,11 @@ function buildDeviceConfigReading(
     }
   };
 
+  const inlineOf = (n: Extract<DynNode, { kind: "block" }>, id: string): Pick<CfgBlock, "inline" | "at"> => {
+    if (!n.inline) return {};
+    const at = inlineAt.get(id);
+    return at === undefined ? { inline: true } : { inline: true, at };
+  };
   // `loose` receives the leaves placed outside every ParameterBlock: a ComObjectRefRef or
   // ParameterRefRef directly under a <Channel> or ChannelIndependentBlock (Theben places its
   // measured-value objects there; ETS lists them and its tables link them). Inside a block it is
@@ -831,10 +848,14 @@ function buildDeviceConfigReading(
         case "block": {
           if (n.access === "None") { applyEnv(n.children, scope, section); break; } // hidden, but its Merker/Assign side effects still gate later chooses
           const items: CfgItem[] = [];
+          const inlineBefore = inlineSeen;
           collect(n.children, items, scope);
-          if (items.length) {
+          // A page whose rows all sit in inline blocks is still a page: they stand on it, not above it.
+          if (items.length || inlineSeen > inlineBefore) {
             const name = blockTitle(n, scope);
-            const node: Node = { block: { id: scope.rewrite(n.id), name: cap(name), items, level: 0, ...gridOf(n, scope) }, order: headOrder(n), seq: seq++, children: [] };
+            const id = scope.rewrite(n.id);
+            // An inline block keeps its authored place among its siblings: DisplayOrder orders pages, not rows on one.
+            const node: Node = { block: { id, name: cap(name), items, level: 0, ...gridOf(n, scope), ...inlineOf(n, id) }, order: n.inline ? 0 : headOrder(n), seq: seq++, children: [] };
             into.push(node);
             walk(n.children, scope, node.children, null, items);
           } else if (n.children.length === 0 && (n.paramRefId || n.text)) {
@@ -843,7 +864,8 @@ function buildDeviceConfigReading(
             // empty section rather than dropping it. (Headers in inactive choose
             // branches are never reached, so this adds no noise.)
             const name = cap(blockTitle(n, scope));
-            if (name) into.push({ block: { id: scope.rewrite(n.id), name, items: [], level: 0 }, order: headOrder(n), seq: seq++, children: [] });
+            const id = scope.rewrite(n.id);
+            if (name) into.push({ block: { id, name, items: [], level: 0, ...inlineOf(n, id) }, order: headOrder(n), seq: seq++, children: [] });
           } else {
             walk(n.children, scope, into, null, section); // transparent wrapper: children keep this level; its leaves are none (collect found no items)
           }

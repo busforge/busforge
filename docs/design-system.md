@@ -122,7 +122,7 @@ The primitives live in `apps/web/src/components/ui/`. Views use them instead of 
 | `IconButton` | An action shown only as an icon | Same variants and sizes (`icon-xs` to `icon-lg`, on a touch screen 36 to 40 px). Its `label` is required: the accessible name and the tooltip |
 | `Badge` | A status or label mark that does nothing on click | Tones `neutral`, `outline`, `primary`, `ok`, `info`, `warning`, `danger`; sizes `sm` 20 px, `md` 24 px; `mono` for bus data; `tapHeight` where it sits among `BadgeButton`s, so it grows with them on a touch screen |
 | `BadgeButton` | The same mark when it opens a detail (popover, dialog) | As `Badge`, plus the states of a control; 32 px high on a touch screen |
-| `Notice` | A boxed warning in a dialog or on a page: what is left out, unproven or about to be exposed | The `warning` tone as a block; the caller lays out its icon and text |
+| `Notice` | A boxed note in a dialog or on a page: a warning (what is left out, unproven or about to be exposed), or with `tone="info"` a derived state that is no warning (the DCA notice) | The `warning` (default) or `info` tone as a block; the caller lays out its icon and text |
 | `Chip` | A filter toggle or one choice among a few (IP/USB, transport) | `active`, announced as `aria-pressed` |
 | `Dialog` | A task in a window: a form, a preview, a running read | `backdropClose`, `dismissible` |
 | `AlertDialog` | A question before an action (delete, restore, write) | `backdropClose`, `dismissible`; the cancel button takes the initial focus |

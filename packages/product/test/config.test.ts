@@ -579,6 +579,90 @@ describe("grid layouts (Rows/Columns/Cell) and Buttons", () => {
   });
 });
 
+// Inline="true" puts a block on its parent's page, where it stands in the parent's flow (the
+// OpenKNX RaumController draws every value-and-unit row as such a grid). It is no page, so its Name,
+// an identifier, never becomes a heading.
+describe("inline blocks", () => {
+  const xml = `<KNX><ApplicationProgram Id="M-TEST_A-13" DefaultLanguage="en-US"><Static>
+    <Parameters>${[1, 2, 3, 4].map((i) => `<Parameter Id="M-TEST_A-13_P-${i}" ParameterType="M-TEST_A-13_PT-1" Text="P${i}" Value="1" />`).join("")}</Parameters>
+    <ParameterRefs>${[1, 2, 3, 4].map((i) => `<ParameterRef Id="M-TEST_A-13_P-${i}_R-1" RefId="M-TEST_A-13_P-${i}" />`).join("")}</ParameterRefs>
+    <ParameterTypes><ParameterType Id="M-TEST_A-13_PT-1"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="9" /></ParameterType></ParameterTypes>
+    </Static><Dynamic><ChannelIndependentBlock>
+      <ParameterBlock Id="M-TEST_A-13_PB-1" Name="PageName" Text="Page">
+        <ParameterSeparator Id="M-TEST_A-13_PS-1" Text="General" UIHint="Headline" />
+        <ParameterBlock Id="M-TEST_A-13_PB-2" Name="X_StartupDelay" Inline="true"><ParameterRefRef RefId="M-TEST_A-13_P-1_R-1" /></ParameterBlock>
+        <ParameterRefRef RefId="M-TEST_A-13_P-2_R-1" />
+        <ParameterBlock Id="M-TEST_A-13_PB-3" Name="X_Table" Text="IO" Inline="true"><ParameterRefRef RefId="M-TEST_A-13_P-3_R-1" /></ParameterBlock>
+        <ParameterBlock Id="M-TEST_A-13_PB-4" Name="X_SubPage"><ParameterRefRef RefId="M-TEST_A-13_P-4_R-1" /></ParameterBlock>
+      </ParameterBlock>
+    </ChannelIndependentBlock></Dynamic></ApplicationProgram></KNX>`;
+  const blocks = buildDeviceConfig(parseAppConfig(xml), new Map()).blocks;
+  const byId = (n: number) => blocks.find((b) => b.id === `M-TEST_A-13_PB-${n}`)!;
+
+  test("an inline block stands where it is authored among its parent's items", () => {
+    expect(byId(1).items.map((i) => (i.kind === "param" ? i.param.name : i.kind))).toEqual(["separator", "P2"]);
+    expect(byId(2)).toMatchObject({ inline: true, at: 1, parentId: "M-TEST_A-13_PB-1", level: 1 });
+    expect(byId(3)).toMatchObject({ inline: true, at: 2 });
+  });
+
+  test("an inline block takes its Text as heading, never its Name", () => {
+    expect(byId(2).name).toBe("");
+    expect(byId(3).name).toBe("IO");
+  });
+
+  test("a block that is not inline stays a page of its own, named as before", () => {
+    expect(byId(4).inline).toBeUndefined();
+    expect(byId(4).at).toBeUndefined();
+    expect(byId(4).name).toBe("X_SubPage");
+  });
+
+  // The OpenKNX RaumController's "Kanal 1" page holds nothing but its inline "Konfiguration" block.
+  test("a page whose rows all sit in inline blocks stays a page, and its inline blocks stand on it", () => {
+    const only = xml.replace(/<ParameterBlock Id="M-TEST_A-13_PB-1"[\s\S]*<\/ParameterBlock>\s*<\/ChannelIndependentBlock>/, `<ParameterBlock Id="M-TEST_A-13_PB-1" Text="Page">
+        <ParameterBlock Id="M-TEST_A-13_PB-2" Text="Configuration" Inline="true">
+          <ParameterRefRef RefId="M-TEST_A-13_P-1_R-1" />
+          <ParameterBlock Id="M-TEST_A-13_PB-3" Inline="true"><ParameterRefRef RefId="M-TEST_A-13_P-2_R-1" /></ParameterBlock>
+        </ParameterBlock>
+        <ParameterBlock Id="M-TEST_A-13_PB-4" Inline="true" Access="None"><ParameterRefRef RefId="M-TEST_A-13_P-3_R-1" /></ParameterBlock>
+      </ParameterBlock></ChannelIndependentBlock>`);
+    const v = buildDeviceConfig(parseAppConfig(only), new Map()).blocks;
+    expect(v.map((b) => [b.id.slice(-4), b.level, b.parentId?.slice(-4), b.at])).toEqual([
+      ["PB-1", 0, undefined, undefined], ["PB-2", 1, "PB-1", 0], ["PB-3", 2, "PB-2", 1],
+    ]);
+  });
+
+  test("inline blocks at one place keep their authored order, whatever DisplayOrder their named parameters carry", () => {
+    const ordered = xml
+      .replace('<ParameterRef Id="M-TEST_A-13_P-3_R-1" RefId="M-TEST_A-13_P-3" />', '<ParameterRef Id="M-TEST_A-13_P-3_R-1" RefId="M-TEST_A-13_P-3" DisplayOrder="9" />')
+      .replace('<ParameterRef Id="M-TEST_A-13_P-4_R-1" RefId="M-TEST_A-13_P-4" />', '<ParameterRef Id="M-TEST_A-13_P-4_R-1" RefId="M-TEST_A-13_P-4" DisplayOrder="1" />')
+      .replace(/<ParameterBlock Id="M-TEST_A-13_PB-1"[\s\S]*<\/ParameterBlock>\s*<\/ChannelIndependentBlock>/, `<ParameterBlock Id="M-TEST_A-13_PB-1" Text="Page">
+        <ParameterRefRef RefId="M-TEST_A-13_P-1_R-1" />
+        <ParameterBlock Id="M-TEST_A-13_PB-2" Inline="true" ParamRefId="M-TEST_A-13_P-3_R-1"><ParameterRefRef RefId="M-TEST_A-13_P-2_R-1" /></ParameterBlock>
+        <ParameterBlock Id="M-TEST_A-13_PB-3" Inline="true" ParamRefId="M-TEST_A-13_P-4_R-1"><ParameterRefRef RefId="M-TEST_A-13_P-3_R-1" /></ParameterBlock>
+      </ParameterBlock></ChannelIndependentBlock>`);
+    const v = buildDeviceConfig(parseAppConfig(ordered), new Map()).blocks;
+    expect(v.filter((b) => b.inline).map((b) => [b.id.slice(-4), b.at])).toEqual([["PB-2", 1], ["PB-3", 1]]);
+  });
+
+  // A module's nodes are shared by its instances; each instance's inline block stands after its own rows.
+  test("each module instance's inline block stands at its own place", () => {
+    const xml = readFileSync(join(import.meta.dir, "fixtures", "sample-module-app.xml"), "utf8")
+      .replace(/<ParameterBlock Id="M-TEST_A-2_MD-1_PB-1"[\s\S]*?<\/ParameterBlock>/, `<ParameterRefRef RefId="M-TEST_A-2_MD-1_P-1_R-1" />
+        <ParameterBlock Id="M-TEST_A-2_MD-1_PB-2" Inline="true"><ComObjectRefRef RefId="M-TEST_A-2_MD-1_O-1_R-1" /></ParameterBlock>`)
+      .replace(/(<Repeat[\s\S]*?<\/Repeat>)/, `<ParameterBlock Id="M-TEST_A-2_PB-9" Text="Page">$1</ParameterBlock>`);
+    const instances = [
+      { id: "MD-1_M-1_MI-1", refId: "MD-1_M-1", args: [{ refId: "MD-1_A-1", value: "A" }, { refId: "MD-1_A-2", value: "10" }] },
+      { id: "MD-1_M-1_MI-2", refId: "MD-1_M-1", args: [{ refId: "MD-1_A-1", value: "B" }, { refId: "MD-1_A-2", value: "20" }] },
+    ];
+    const blocks = buildDeviceConfig(parseAppConfig(xml), new Map(), undefined, instances).blocks;
+    const page = blocks.find((b) => b.id === "M-TEST_A-2_PB-9")!;
+    expect(page.items.map((i) => (i.kind === "param" ? i.param.name : i.kind))).toEqual(["Channel A enable", "Channel B enable"]);
+    expect(blocks.filter((b) => b.inline).map((b) => [b.id, b.at])).toEqual([
+      ["M-TEST_A-2_MD-1_M-1_MI-1_PB-2", 1], ["M-TEST_A-2_MD-1_M-1_MI-2_PB-2", 2],
+    ]);
+  });
+});
+
 // Several ParameterRefs of one parameter share one value (docs/findings.md §9). Modelled on the Jung
 // 400021SE: P-S is shown through R-A (the parameter's default 5) and tested through R-B (Value 0);
 // the test on R-B picks one of two union members. The place that shows R-A is a nested block, and
