@@ -144,7 +144,7 @@ export function UnprovenAssumptionsNote({ params, hidden = 0 }: { params: { refI
   );
 }
 
-const noteCls = "flex items-start gap-2 py-1.5";
+const noteLayout = "flex items-start gap-2 py-1.5";
 
 // Objects of device links the last read left unresolved that no assumption places: those the project's
 // own values hide (Revert takes the device's values), those the read could not tell without the device's
@@ -157,7 +157,7 @@ export function UnresolvedNotes({ hidden, unknown, unplacedUnoffered }: { hidden
   return (
     <>
       {notes.map(([id, key, objects]) => (
-        <Notice key={id} className={noteCls} data-testid={id}><AlertTriangle className="mt-0.5 size-4 shrink-0" /><span>{t(key, { objects: objects.join(", ") })}</span></Notice>
+        <Notice key={id} className={noteLayout} data-testid={id}><AlertTriangle className="mt-0.5 size-4 shrink-0" /><span>{t(key, { objects: objects.join(", ") })}</span></Notice>
       ))}
     </>
   );
@@ -171,7 +171,7 @@ export function NeverProgrammedKeptNote({ reasons, ets = false }: { reasons: Kep
   const { t, i18n } = useTranslation();
   if (!reasons.length) return null;
   return (
-    <Notice className={noteCls} data-testid="never-programmed-kept">
+    <Notice className={noteLayout} data-testid="never-programmed-kept">
       <AlertTriangle className="mt-0.5 size-4 shrink-0" />
       <div className="space-y-0.5">
         <p className="font-medium">{t(ets ? "device.etsNotDownloadedKeptTitle" : "device.neverProgrammedKeptTitle")}</p>

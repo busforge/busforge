@@ -5,7 +5,7 @@ import { Ban, Check, Circle, Download, FileJson, Loader2, ShieldAlert, Stethosco
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Notice as WarningNotice } from "@/components/ui/notice";
+import { Notice } from "@/components/ui/notice";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api, ApiError, taskActive, type DiagnosticPackage, type Task } from "../api.ts";
 import { qk } from "../queries.ts";
@@ -87,13 +87,13 @@ export function DiagnosticDialog({ projectId, device, taskId: initialTaskId, ope
         {stage === "consent" && <Consent device={device} starting={start.isPending} onStart={() => start.mutate()} onCancel={() => onOpenChange(false)} />}
         {stage === "running" && task && <Progress task={task} device={device} cancelling={cancelAsked} onCancel={() => cancel.mutate()} />}
         {stage === "cancelled" && (
-          <Notice icon={<Ban className="size-4 text-muted-foreground" />} title={t("diagnostic.cancelled.title")} body={t("diagnostic.cancelled.body")} onClose={() => onOpenChange(false)} />
+          <EndState icon={<Ban className="size-4 text-muted-foreground" />} title={t("diagnostic.cancelled.title")} body={t("diagnostic.cancelled.body")} onClose={() => onOpenChange(false)} />
         )}
         {stage === "missing" && (
-          <Notice icon={<FileJson className="size-4 text-muted-foreground" />} title={t("diagnostic.missing.title")} body={t("diagnostic.missing.body")} onClose={() => onOpenChange(false)} />
+          <EndState icon={<FileJson className="size-4 text-muted-foreground" />} title={t("diagnostic.missing.title")} body={t("diagnostic.missing.body")} onClose={() => onOpenChange(false)} />
         )}
         {stage === "failed" && (
-          <Notice
+          <EndState
             icon={<ShieldAlert className="size-4 text-destructive" />} title={t("diagnostic.failedEarly")}
             body={task ? localizeError(t, task.errorCode, task.error, task.errorDetails) : errMsg(t, pkgQ.error)} onClose={() => onOpenChange(false)}
           />
@@ -114,7 +114,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function Notice({ icon, title, body, onClose }: { icon: React.ReactNode; title: string; body: string; onClose: () => void }) {
+function EndState({ icon, title, body, onClose }: { icon: React.ReactNode; title: string; body: string; onClose: () => void }) {
   const { t } = useTranslation();
   return (
     <>
@@ -249,10 +249,10 @@ function Preview({ pkg, onClose }: { pkg: DiagnosticPackage; onClose: () => void
               <li>{t("diagnostic.preview.removed.serial")}</li>
             </ul>
           </Section>
-          <WarningNotice className="flex items-start gap-2">
+          <Notice className="flex items-start gap-2">
             <ShieldAlert className="mt-0.5 size-4 shrink-0" />
             <div><p className="font-medium">{t("diagnostic.preview.rawTitle")}</p><p>{t("diagnostic.preview.raw")}</p></div>
-          </WarningNotice>
+          </Notice>
           <Section title={t("diagnostic.preview.keepTitle")}>
             <p>{t("diagnostic.preview.keep")}</p>
             <p className="mt-1">{t("diagnostic.preview.lifetime")}</p>
