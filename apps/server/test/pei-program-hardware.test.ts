@@ -105,7 +105,10 @@ describe("hardware that carries a PEI program", () => {
     expect(getDeviceForFlash(target.db, "copy", device.id)?.peiProgram).toBe(true);
     const r = await call(target, `/api/projects/copy/devices/${encodeURIComponent(device.id)}/download`, { method: "POST" });
     expect(r.body.error.code).toBe("HARDWARE_PEI_PROGRAM_UNSUPPORTED");
-    // The catalogue rebuilt from the re-imported devices keeps it as well.
+    // The catalogue rebuilt from the re-imported devices keeps it as well, also on a row it held without it.
+    backfillCatalogFromDevices(target.db);
+    expect(getCatalogProduct(target.db, device.appRef, device.productRef)).toMatchObject({ peiProgram: true });
+    target.db.run("UPDATE catalog_products SET pei_program = 0");
     backfillCatalogFromDevices(target.db);
     expect(getCatalogProduct(target.db, device.appRef, device.productRef)).toMatchObject({ peiProgram: true });
 
@@ -195,10 +198,13 @@ describe("hardware that carries a PEI program, with a System B application that 
       await connect(state, projectId);
       state.db.run("UPDATE devices SET never_programmed = 0 WHERE project_id = ? AND instance_id = ?", [projectId, device.id]);
       setDeviceParam(state.db, projectId, device.id, "M-0085_A-0072-30-69AA_P-9_R-9", "2");
-      return (await call(state, `/api/projects/${projectId}/devices/${encodeURIComponent(device.id)}/flash`, { method: "POST" })).body.error.code;
+      const codes: string[] = [];
+      for (const route of ["flash", "flash-ga"]) codes.push((await call(state, `/api/projects/${projectId}/devices/${encodeURIComponent(device.id)}/${route}`, { method: "POST" })).body.error.code);
+      expect((await call(state, `/api/projects/${projectId}/tasks`)).body).toEqual([]);
+      return codes;
     };
-    expect(await outcome(1)).toBe("COM_OBJECT_TABLE_STALE_USE_DOWNLOAD");
-    expect(await outcome(2)).toBe("COM_OBJECT_TABLE_STALE_USE_ETS");
+    expect(await outcome(1)).toEqual(["COM_OBJECT_TABLE_STALE_USE_DOWNLOAD", "COM_OBJECT_TABLE_STALE_USE_DOWNLOAD"]);
+    expect(await outcome(2)).toEqual(["COM_OBJECT_TABLE_STALE_USE_ETS", "COM_OBJECT_TABLE_STALE_USE_ETS"]);
   });
 
   // A System 1 parameter download is its full download: on PEI hardware it is refused as well (MDT IP

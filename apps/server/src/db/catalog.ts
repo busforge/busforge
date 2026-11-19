@@ -90,8 +90,8 @@ export function getCatalogProduct(db: Database, appRef: string, productRef: stri
 // installer's), order number and hardware version are unknown. Only products whose application
 // program is in the catalog are added, so every entry stays placeable, and products without an
 // application program, which need none to be placed (they have no program to name them: the picker
-// shows their product id). A PEI program a device's hardware carries goes along. Idempotent (only keys not yet in
-// the catalog). Returns the number of rows added.
+// shows their product id). A PEI program a device's hardware carries goes along, also onto a row the catalogue
+// already holds without it. Idempotent (only keys not yet in the catalog are added). Returns the number of rows added.
 export function backfillCatalogFromDevices(db: Database): number {
   const stored = new Set((db.query("SELECT id FROM app_programs").all() as { id: string }[]).map((r) => r.id));
   const rows = db.query(
@@ -112,6 +112,7 @@ export function backfillCatalogFromDevices(db: Database): number {
   };
   let n = 0;
   db.transaction(() => {
+    db.run("UPDATE catalog_products SET pei_program = 1 WHERE pei_program = 0 AND EXISTS (SELECT 1 FROM devices d WHERE d.app_ref = catalog_products.app_ref AND d.product_ref = catalog_products.product_ref AND d.pei_program = 1)");
     for (const r of rows) {
       if (r.hasApplication === 0) {
         n += db.prepare(
