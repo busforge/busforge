@@ -93,7 +93,7 @@ export function ProjectLayout() {
           </div>
         </header>
 
-        {/* Below sm the three tabs grow to share the width and drop their icons, so all of them fit a 360 px
+        {/* Below sm the three tabs grow to share the width and drop their icons, so all of them fit a 320 px
             phone in either language; the bar still scrolls where even that is too narrow. */}
         <nav ref={tabsRef} className="sticky top-0 z-20 flex w-full justify-start gap-1 overflow-x-auto border-y border-border bg-background/90 px-2 backdrop-blur sm:static sm:bg-transparent sm:px-4 sm:backdrop-blur-none">
           {TABS.map((tab) => {
