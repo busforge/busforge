@@ -529,13 +529,13 @@ export function DeviceConfig() {
       // heading; only an explicit Headline keeps the heading weight.
       if (compact) {
         return (
-          <span key={key} className={cn("block min-w-0 whitespace-pre-wrap text-sm", item.uiHint === "Headline" ? "font-semibold text-foreground" : "text-foreground")}>
+          <span key={key} className={cn("block min-w-0 text-sm break-words whitespace-pre-wrap", item.uiHint === "Headline" ? "font-semibold text-foreground" : "text-foreground")}>
             {item.text}
           </span>
         );
       }
       // Any other text separator is a section heading in ETS.
-      return <div key={key} className="mt-4 mb-1 border-b border-border/40 pb-1 text-sm font-semibold text-foreground first:mt-0">{item.text}</div>;
+      return <div key={key} className="mt-4 mb-1 border-b border-border/40 pb-1 text-sm font-semibold break-words text-foreground first:mt-0">{item.text}</div>;
     }
     // An ETS <Button> runs a manufacturer script action (EventHandler) inside ETS.
     // busforge has no ETS script host, so the control is rendered DISABLED and says
@@ -546,10 +546,11 @@ export function DeviceConfig() {
       return (
         <Tooltip key={key}>
           <TooltipTrigger asChild>
-            <span className={cn("inline-flex", compact ? "min-w-0 max-w-full" : "my-1")} data-testid={`button-${item.button.handler}`}>
-              <Button type="button" variant="outline" size="sm" disabled aria-disabled className="min-w-0 justify-start">
+            <span className={cn("inline-flex max-w-full", compact ? "min-w-0" : "my-1")} data-testid={`button-${item.button.handler}`}>
+              {/* The label wraps inside the cell: the base button neither shrinks nor wraps. */}
+              <Button type="button" variant="outline" size="sm" disabled aria-disabled className="h-auto min-h-8 min-w-0 shrink justify-start py-1.5 text-left whitespace-normal pointer-coarse:h-auto pointer-coarse:min-h-10">
                 <AlertTriangle className="size-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
-                <span className="truncate">{item.button.text}</span>
+                <span className="min-w-0 break-words">{item.button.text}</span>
               </Button>
             </span>
           </TooltipTrigger>
@@ -672,32 +673,36 @@ export function DeviceConfig() {
     // read, and interpolating it raw would invalidate the whole grid-template-columns
     // declaration and collapse the block: fall back to an auto track for that column.
     const width = (w?: string) => (w && /^\d+(\.\d+)?(%|px|rem|em)$/.test(w) ? w : "auto");
-    const widths = Array.from({ length: maxCol }, (_, i) => `minmax(0, ${width(block.cols?.[i]?.width)})`);
+    // Below the sm breakpoint a column never gets narrower than 8rem (--col-min): a table with many
+    // columns scrolls sideways inside its own wrapper instead of crushing its cells or widening the page.
+    const widths = Array.from({ length: maxCol }, (_, i) => `minmax(var(--col-min), ${width(block.cols?.[i]?.width)})`);
     const template = (table ? "auto " : "") + widths.join(" ");
     return (
-      <div key={keyPrefix} className="my-1 grid items-center gap-x-3 gap-y-1" style={{ gridTemplateColumns: template }}>
-        {table && block.cols?.map((c, i) => c.text ? (
-          <span key={`${keyPrefix}-ch-${i}`} style={{ gridRow: 1, gridColumn: i + 2 }} className="border-b border-border/40 pb-1 text-xs font-semibold text-muted-foreground">{c.text}</span>
-        ) : null)}
-        {table && block.rows?.map((r, i) => r.text ? (
-          <span key={`${keyPrefix}-rh-${i}`} style={{ gridRow: i + 2, gridColumn: 1 }} className="pr-2 text-sm text-muted-foreground">{r.text}</span>
-        ) : null)}
-        {[...cells].map(([key, items]) => {
-          const [row, col] = key.split(",").map(Number);
-          return (
-            <div key={`${keyPrefix}-${key}`} style={{ gridRow: row + off, gridColumn: col + off }} className="min-w-0">
-              {items.map((item, i) => renderItem(item, `${keyPrefix}-${key}-${i}`, true))}
+      <div key={keyPrefix} className="-mx-1 overflow-x-auto p-1">
+        <div className="grid items-center gap-x-3 gap-y-1 [--col-min:0px] max-sm:[--col-min:8rem]" style={{ gridTemplateColumns: template }}>
+          {table && block.cols?.map((c, i) => c.text ? (
+            <span key={`${keyPrefix}-ch-${i}`} style={{ gridRow: 1, gridColumn: i + 2 }} className="border-b border-border/40 pb-1 text-xs font-semibold text-muted-foreground">{c.text}</span>
+          ) : null)}
+          {table && block.rows?.map((r, i) => r.text ? (
+            <span key={`${keyPrefix}-rh-${i}`} style={{ gridRow: i + 2, gridColumn: 1 }} className="pr-2 text-sm text-muted-foreground">{r.text}</span>
+          ) : null)}
+          {[...cells].map(([key, items]) => {
+            const [row, col] = key.split(",").map(Number);
+            return (
+              <div key={`${keyPrefix}-${key}`} style={{ gridRow: row + off, gridColumn: col + off }} className="min-w-0">
+                {items.map((item, i) => renderItem(item, `${keyPrefix}-${key}-${i}`, true))}
+              </div>
+            );
+          })}
+          {/* Pinned to the row AFTER the last one: CSS auto-placement would otherwise drop
+              this full-width block into the first empty row (e.g. a row whose items all sit
+              in an inactive choose branch), i.e. into the middle of the grid. */}
+          {loose.length > 0 && (
+            <div style={{ gridRow: maxRow + off + 1, gridColumn: "1 / -1" }} className="min-w-0">
+              {loose.map((item, i) => renderItem(item, `${keyPrefix}-loose-${i}`))}
             </div>
-          );
-        })}
-        {/* Pinned to the row AFTER the last one: CSS auto-placement would otherwise drop
-            this full-width block into the first empty row (e.g. a row whose items all sit
-            in an inactive choose branch), i.e. into the middle of the grid. */}
-        {loose.length > 0 && (
-          <div style={{ gridRow: maxRow + off + 1, gridColumn: "1 / -1" }} className="min-w-0">
-            {loose.map((item, i) => renderItem(item, `${keyPrefix}-loose-${i}`))}
-          </div>
-        )}
+          )}
+        </div>
       </div>
     );
   };
