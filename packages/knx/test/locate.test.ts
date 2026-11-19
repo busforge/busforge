@@ -104,6 +104,21 @@ describe("blinking the programming LED", () => {
     expect(writes(sim)).toEqual([]);
   });
 
+  test("a signal aborted before the first write writes nothing, also without the caller's hook", async () => {
+    const sim = new SimDevice();
+    const e = await blinkProgrammingMode(device(sim), { holdMs: 100, signal: AbortSignal.abort() }).catch((x: unknown) => x);
+    expect((e as Error).name).toBe("AbortError");
+    expect(writes(sim)).toEqual([]);
+  });
+
+  test("a progress report that throws does not keep the mode from being switched off", async () => {
+    const sim = new SimDevice();
+    const r = await blinkProgrammingMode(device(sim), { holdMs: 30, pollMs: 10, onProgress: (p) => { if (p !== "prog-mode-read") throw new Error(`report ${p} failed`); } });
+    expect(r.progModeOff).toBe(true);
+    expect(writes(sim)).toEqual(["write:01", "write:00"]);
+    expect(sim.progMode).toBe(0);
+  });
+
   test("a device that does not take the mode is refused, and still switched off", async () => {
     const sim = new SimDevice();
     sim.refusesOn = true;

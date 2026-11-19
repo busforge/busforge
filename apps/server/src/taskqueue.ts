@@ -108,7 +108,7 @@ export interface TaskMeta {
 }
 
 // Called by a job right before its first write. Throws when the task was cancelled in time; after it
-// returns, the task is no longer cancellable.
+// returns, the task is no longer cancellable, unless it undoes itself on a cancel (TaskMeta.undoesOnCancel).
 export type EnterWritesFn = () => void;
 type JobFn<T> = (progress: ProgressFn, signal: AbortSignal, commit: CommitFn, enterWrites: EnterWritesFn) => Promise<T>;
 
@@ -296,9 +296,9 @@ export class TaskQueue {
   }
 
   // Cancel a task. Queued tasks are always cancellable (they never run). Of the running tasks a read
-  // is: it honors the abort signal and writes nothing; and a write that undoes itself on a cancel
-  // (TaskMeta.undoesOnCancel). Any other running write is refused, because stopping mid-bracket can
-  // leave the device reset.
+  // is: it honors the abort signal and writes nothing; a write still before its first write
+  // (TaskMeta.cancelBeforeWrite); and a write that undoes itself on a cancel (TaskMeta.undoesOnCancel).
+  // Any other running write is refused, because stopping mid-bracket can leave the device reset.
   cancel(taskId: string): "queued" | "running" | null {
     const task = this.live.get(taskId);
     if (!task) return null;

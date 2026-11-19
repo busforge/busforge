@@ -95,25 +95,29 @@ export async function blinkProgrammingMode(dev: KnxDevice, opts: BlinkOptions): 
     throw new KnxError("LOCATE_NO_PROG_MODE_PROPERTY",
       "the device answers its programming-mode property (device object, PID 54) with no element, so its programming mode is not switched over the bus; find it by its address label");
   }
+  // A cancel that came before the first write writes nothing, with or without the caller's hook.
+  signal?.throwIfAborted();
   enterWrites?.();
+  // From here the switch-off must run; a progress report that throws must not skip it.
+  const report = (phase: string) => { try { onProgress?.(phase); } catch { /* a report, not a step of the run */ } };
   let heldMs = 0;
   let endedBy: BlinkEnd = "cancel";
   let failure: unknown = null;
   try {
-    onProgress?.("prog-mode-on");
+    report("prog-mode-on");
     const echo = await dev.propWrite(DEVICE_OBJECT, PID.PROG_MODE, Buffer.from([ON]));
     if (!isOn(echo)) {
       throw new KnxError("LOCATE_PROG_MODE_NOT_TAKEN",
         `the device did not take programming mode (it answered the write with ${echo.length ? echo.toString("hex") : "no element"})`);
     }
-    onProgress?.("prog-mode-hold");
+    report("prog-mode-hold");
     const started = Date.now();
     endedBy = await hold(dev, holdMs, pollMs, signal);
     heldMs = Date.now() - started;
   } catch (e) {
     failure = e;
   }
-  onProgress?.("prog-mode-off");
+  report("prog-mode-off");
   try {
     await switchOff(dev);
   } catch (off) {
