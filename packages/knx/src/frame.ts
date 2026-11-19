@@ -216,8 +216,10 @@ export const gaToNum = (s: string) => { const [m, mid, sub] = s.split("/").map(N
 export { formatGa, gaFromLevels, parseGa, type Levels };
 // The bus-log / no-project-context default is three-level.
 export const numToGa = (n: number) => formatGa(n, 3);
+// A TPDU longer than a standard frame carries goes as an extended frame, as in cemiLData: ETS sends its
+// secured broadcasts (TPDUs of 21 to 27 octets) as extended frames.
 export function cemiLDataGroup(src: number, ga: number, tpdu: Buffer): Buffer {
-  const head = Buffer.from([0x11, 0x00, 0xbc, 0xe0, (src >> 8) & 0xff, src & 0xff, (ga >> 8) & 0xff, ga & 0xff, tpdu.length - 1]);
+  const head = Buffer.from([0x11, 0x00, tpdu.length > 16 ? 0x3c : 0xbc, 0xe0, (src >> 8) & 0xff, src & 0xff, (ga >> 8) & 0xff, ga & 0xff, tpdu.length - 1]);
   return Buffer.concat([head, tpdu]);
 }
 export const groupValueRead = () => Buffer.from([0x00, 0x00]); // unnumbered, APCI GroupValueRead

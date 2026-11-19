@@ -2,8 +2,7 @@ import { putGroupSenders } from "../src/db/groupSenders.ts";
 import { test, expect, describe, mock, afterAll, setDefaultTimeout } from "bun:test";
 import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusDescribe, corpusTest } from "../../../tools/corpus-test.ts";
-import { readFileSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { setDeviceParam, setDeviceLink, getDeviceChangedKeys, getDeviceParamBase, replaceParamBase, getImageStamps, setImageStamps } from "../src/db/deviceparams.ts";
 import { deviceParamRefs } from "../src/deviceservice.ts";
@@ -14,6 +13,7 @@ import { encodeCertificate } from "@busforge/knx";
 import { classify, parseAppConfig } from "@busforge/product";
 import type { FlashResult } from "../src/deviceprofile.ts";
 import { settle } from "./task-client.ts";
+import { tempDir } from "../../../tools/test-temp.ts";
 // Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 0.6 s with the
 // file alone (load 5-27) and up to 0.6 s with every workspace's tests in parallel (load 5-8). A full check on a busy
 // machine stretches a test up to twenty times (2.2 s -> 44.9 s at load 30-50), so every test gets twenty times its own
@@ -71,11 +71,8 @@ const realAppXml = () => catalogueXml("M-0081_A-FE01-11-75D9.xml.gz");
 const PARAM_REF = "M-0081_A-FE01-11-75D9_P-6_R-6";
 const LINK_KEY = "O-0_R-63";
 
-const tmps: string[] = [];
-afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
 function freshState(): AppState {
-  const dir = mkdtempSync(join(tmpdir(), "busforge-flashroute-"));
-  tmps.push(dir);
+  const dir = tempDir("busforge-flashroute-");
   return createState({ dbPath: ":memory:", dataDir: dir, now: () => 1000 });
 }
 const req = (path: string, init?: RequestInit) => new Request(`http://x${path}`, init);
@@ -300,8 +297,7 @@ corpusDescribe("the stamp record across the flash routes and a server restart", 
   const withStamps = (verified: boolean, crc?: string): FlashResult => ({ ...flashed(verified), ...(crc ? { stamps: stamps(crc) } : {}) } as FlashResult);
 
   test("adopted on a verified commit, kept otherwise, read back by the next parameter flash after a restart", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "busforge-stamps-"));
-    tmps.push(dir);
+    const dir = tempDir("busforge-stamps-");
     const open = () => createState({ dbPath: join(dir, "busforge.db"), dataDir: dir, now: () => 1000 });
     const state = open();
     const { projectId, deviceId } = await mdtProject(state);
@@ -1018,8 +1014,7 @@ corpusDescribe("programming jobs outlive the request that submitted them", () =>
   });
 
   test("a restart reports unfinished work as interrupted or not started, and replays none of it", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "busforge-restart-"));
-    tmps.push(dir);
+    const dir = tempDir("busforge-restart-");
     const dbPath = join(dir, "busforge.db");
     const before = createState({ dbPath, dataDir: dir, now: () => 1000 });
     const { projectId, deviceId } = await mdtProject(before);

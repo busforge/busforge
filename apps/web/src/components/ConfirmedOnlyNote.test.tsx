@@ -17,7 +17,7 @@ describe("the note on bytes resting on the write confirmation alone", () => {
   test("names the bytes and their device addresses, in the warning colour", () => {
     const html = renderToStaticMarkup(<ConfirmedOnlyNote result={flashed({ confirmedOnly: [{ address: 0x4028, length: 20 }, { address: 0x4100, length: 1 }] })} />);
     expect(html).toContain('data-testid="flash-confirmed-only"');
-    expect(html).toMatch(/class="[^"]*text-amber-600[^"]*dark:text-amber-400/);
+    expect(html).toMatch(/class="[^"]*text-warning/);
     expect(html).toContain("21 byte(s) at 0x4028-0x403B, 0x4100 the device does not give back when read");
   });
 
@@ -43,7 +43,7 @@ describe("the note on a dry run's bytes read as FF", () => {
   test("names the bytes and their device addresses, in the warning colour, in English and German", async () => {
     const html = renderToStaticMarkup(<ReadsFFNote result={dry({ readsFF: [{ address: 0x4028, length: 20 }] })} />);
     expect(html).toContain('data-testid="flash-reads-ff"');
-    expect(html).toMatch(/class="[^"]*text-amber-600/);
+    expect(html).toMatch(/class="[^"]*text-warning/);
     expect(html).toContain("20 of them, at 0x4028-0x403B, read as FF");
     await i18n.changeLanguage("de");
     try { expect(renderToStaticMarkup(<ReadsFFNote result={dry({ readsFF: [{ address: 0x4028, length: 20 }] })} />)).toContain("20 davon, bei 0x4028-0x403B, lesen sich als FF"); }

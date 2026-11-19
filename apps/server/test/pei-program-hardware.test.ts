@@ -1,6 +1,5 @@
-import { test, expect, describe, afterAll } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { test, expect, describe } from "bun:test";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readZip, readXml0, appProgramId } from "@busforge/project";
 import { createState, handleApi, type AppState } from "../src/app.ts";
@@ -12,6 +11,7 @@ import { getDeviceForFlash, replaceDeviceProduct, setDeviceParam } from "../src/
 import { storeZip } from "../../../packages/project/test/ziputil.ts";
 import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusTest } from "../../../tools/corpus-test.ts";
+import { tempDir } from "../../../tools/test-temp.ts";
 
 // Two-application hardware: a Hardware2Program that names a PEI program next to the application (the
 // schema allows two ApplicationProgramRefs). No full download of Busforge loads a PEI program, the System B
@@ -24,11 +24,8 @@ import { corpusTest } from "../../../tools/corpus-test.ts";
 const sample = readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures", "sample-config.knxproj"));
 const PASSWORD = "tester12";
 
-const tmps: string[] = [];
-afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
 function fresh(): AppState {
-  const dir = mkdtempSync(join(tmpdir(), "busforge-pei-"));
-  tmps.push(dir);
+  const dir = tempDir("busforge-pei-");
   return createState({ dbPath: ":memory:", dataDir: dir, now: () => 1000 });
 }
 type Res = { status: number; body: any };

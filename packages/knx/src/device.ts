@@ -251,6 +251,11 @@ function assertAddressable(addr: number, len: number, what: string): void {
 export const SYNC_GAP_MS = 1200;
 // The slot is reserved before waiting, so two sessions starting together queue one gap apart.
 const lastSync = new Map<number, number>();
+// A Sync that went to the device another way (a broadcast Sync, which names the device by its serial)
+// counts for the gap as well, under every address the device may answer on next.
+export function noteSync(dst: number, at = Date.now()): void {
+  lastSync.set(dst, Math.max(lastSync.get(dst) ?? 0, at));
+}
 async function waitForSyncGap(dst: number): Promise<void> {
   const at = Math.max(Date.now(), (lastSync.get(dst) ?? 0) + SYNC_GAP_MS);
   lastSync.set(dst, at);
@@ -579,6 +584,19 @@ export class KnxDevice {
       }
     }
   }
+  // Secure a connection opened plain: the Sync runs on it under `session`, and every request from here
+  // on goes secured. ETS reads a Data Secure device's descriptor and PID_MAX_APDU_LENGTH plainly on the
+  // connection it opens after giving the device its address by serial, and syncs only then (private corpus
+  // internal/captures/progmode-end-2026-11-19, b1/c1/i1/a2: T_Connect, DescRead, PID 56 read, Sync.req with
+  // transport sequence 2).
+  async secureOpenConnection(session: SecureSession): Promise<void> {
+    if (this.secure) throw new KnxError("SECURE_SESSION_OPEN", "this connection is already secured");
+    if (this.closedSinceConnect) throw new KnxError("DEVICE_CLOSED_CONNECTION", "the device closed the connection before it was secured");
+    this.secure = session;
+    await this.runSync(session);
+  }
+  // PID_MAX_APDU_LENGTH of the device object, as maxApduLength reads it once per connection.
+  async readMaxApduLength(): Promise<number | null> { return this.maxApduLength(); }
   // Teardown. A T_Disconnect the device never sees is the same as one it did: the connection is
   // over either way, and there is nothing a caller could do about the failure.
   async disconnect() { try { await this.sendCemi(cemiLData(this.me, this.dst, tpDisconnect())); } catch { /* the link may already be gone */ } }

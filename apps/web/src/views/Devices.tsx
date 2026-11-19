@@ -566,7 +566,7 @@ function RoomSelect({ targets, value, deviceIa, busy, onChange }: {
   const trigger = (
     <Button
       variant="ghost" size="icon" role="combobox" disabled={busy} data-testid={`room-select-${deviceIa}`}
-      className={cn("size-7 text-muted-foreground pointer-coarse:size-10", value == null && "text-primary")}
+      className="size-7 text-muted-foreground pointer-coarse:size-10"
       title={value == null ? t("devices.assignRoom") : t("devices.changeRoom")}
     >
       <MapPin className="size-3.5" />

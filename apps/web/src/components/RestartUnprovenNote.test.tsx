@@ -16,7 +16,7 @@ describe("the note on a restart the device did not confirm", () => {
   test("says what is missing, in the warning colour", () => {
     const html = renderToStaticMarkup(<RestartUnprovenNote result={flashed({ restartUnproven: true })} />);
     expect(html).toContain('data-testid="flash-restart-unproven"');
-    expect(html).toMatch(/class="[^"]*text-amber-600[^"]*dark:text-amber-400/);
+    expect(html).toMatch(/class="[^"]*text-warning/);
     expect(html).toContain("The device did not confirm its restart");
     expect(html).toContain("is not proven");
   });

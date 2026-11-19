@@ -158,8 +158,8 @@ export function ComObjRow({ projectId, entry: e, onNavigate, direction, sameDevi
         </span>
         {letters && <span className="shrink-0 font-mono" title={t("gaDevices.flags")}>{letters}</span>}
       </span>
-      {e.hidden && <span className="pl-1 text-xs text-amber-700 dark:text-amber-300" data-testid="ga-object-hidden">{t(direction ? "gaDevices.hidden" : "gaDevices.hiddenSorted")}</span>}
-      {e.flagsRefused && <span className="pl-1 text-xs text-amber-700 dark:text-amber-300" data-testid="ga-flags-refused">{t(direction ? "linkedObjects.flagsRefused" : "gaDevices.flagsRefused")}</span>}
+      {e.hidden && <span className="pl-1 text-xs text-warning" data-testid="ga-object-hidden">{t(direction ? "gaDevices.hidden" : "gaDevices.hiddenSorted")}</span>}
+      {e.flagsRefused && <span className="pl-1 text-xs text-warning" data-testid="ga-flags-refused">{t(direction ? "linkedObjects.flagsRefused" : "gaDevices.flagsRefused")}</span>}
     </>
   );
   if (sameDevice && e.hidden) return <div className="flex flex-col gap-0.5 px-1.5 py-1" data-testid={testId}>{body}</div>;

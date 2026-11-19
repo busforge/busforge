@@ -1,12 +1,10 @@
-import { test, expect, describe, afterAll } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { test, expect, describe } from "bun:test";
 import { createState, handleApi, type AppState } from "../src/app.ts";
 import { getDeviceParams, getDeviceParamBase, getDeviceForFlash } from "../src/db/deviceparams.ts";
 import { KnxError, LSM, STATE, type KnxDevice } from "@busforge/knx";
 import { classify, parseAppConfig } from "@busforge/product";
 import { storeZip } from "../../../packages/project/test/ziputil.ts";
+import { tempDir } from "../../../tools/test-temp.ts";
 
 // A device placed from the catalogue, or given another product, starts at the values ETS gives a device added to a
 // project in the client's language (initialValues, packages/product/src/config.ts): a text parameter's
@@ -43,15 +41,11 @@ const hardware = `<?xml version="1.0"?>
   </Hardware></Hardware>
 </Manufacturer></ManufacturerData></KNX>`;
 
-const tmps: string[] = [];
-afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
-
 const post = (path: string, body: unknown) =>
   new Request(`http://x${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 
 async function project(xml: string): Promise<{ state: AppState; projectId: string }> {
-  const dir = mkdtempSync(join(tmpdir(), "busforge-initval-"));
-  tmps.push(dir);
+  const dir = tempDir("busforge-initval-");
   const state = createState({ dbPath: ":memory:", dataDir: dir, now: () => 1000 });
   const form = new FormData();
   form.set("file", new File([storeZip({ [`${M}/Hardware.xml`]: hardware, [`${M}/${A}.xml`]: xml })], "prod.knxprod"));

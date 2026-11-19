@@ -1,12 +1,12 @@
-import { test, expect, describe, afterAll } from "bun:test";
-import { readFileSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { test, expect, describe } from "bun:test";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createState, handleApi, type AppState } from "../src/app.ts";
 import { putGroupKeys } from "../src/db/groupKeys.ts";
 import { createSnapshot, restoreSnapshot } from "../src/db/snapshots.ts";
 import { exportProject } from "../src/db/exportProject.ts";
 import { importProjectExport, validateExport } from "../src/db/importProject.ts";
+import { tempDir } from "../../../tools/test-temp.ts";
 
 // HTTP route-glue tests for the structural-edit routes (groups.ts, spaces.ts,
 // devices.ts link/revert endpoints, deviceops.ts task cancel). The db functions
@@ -25,13 +25,10 @@ const cfgFixture = readFileSync(join(fixtures, "sample-config.knxproj"));
 const PARAM = "M-TEST_A-1_P-1_R-1";
 const COMOBJ = "M-TEST_A-1_O-1_R-1";
 
-const tmps: string[] = [];
 function freshState(): AppState {
-  const dir = mkdtempSync(join(tmpdir(), "busforge-structure-"));
-  tmps.push(dir);
+  const dir = tempDir("busforge-structure-");
   return createState({ dbPath: ":memory:", dataDir: dir, now: () => 1000 });
 }
-afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
 
 const req = (path: string, init?: RequestInit) => new Request(`http://x${path}`, init);
 const jreq = (path: string, method: string, body: unknown) =>

@@ -1,6 +1,5 @@
 import { test, expect, describe, setDefaultTimeout } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import net from "node:net";
 import { KnxIpServer, cemiLData, crc16CcittFalse, parseCemiLData, withSource, type PropertyDescription } from "../packages/knx/src/index.ts";
@@ -12,6 +11,7 @@ import { parseTunnelFrame } from "./etsdiff.ts";
 import { startProxy } from "./knxproxy.ts";
 import { SimUnit, type SimProperty, type SimUnitModel } from "./sim-unit.ts";
 import { MEANWELL_KNX40E, newSimUnit } from "./sim-units.ts";
+import { removeTempDir, tempDir } from "./test-temp.ts";
 
 // The Busforge download below runs on the wall clock (the unit's line timing, the restart proof's 4 s window):
 // about 15 s alone; twenty times that under a loaded full check (docs/testing.md, "Timeouts of heavy tests").
@@ -202,7 +202,7 @@ corpusDescribe("the simulated MEAN WELL KNX-40E-1280D", () => {
   // build that took it, whose download into this simulator gives that capture frame for frame (the corpus's
   // internal/ets-sweep/spike.md); the differences of this build's frames are Busforge's own, named below.
   test("takes Busforge's full download through the KNXnet/IP server as the unit took it", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "busforge-sim-unit-"));
+    const dir = tempDir("busforge-sim-unit-");
     const sim = newSimUnit(MEANWELL_KNX40E);
     const port = await freePort();
     const server = new KnxIpServer({ transport: sim, maxApdu: MEANWELL_KNX40E.interfaceMaxApdu, port });
@@ -253,7 +253,7 @@ corpusDescribe("the simulated MEAN WELL KNX-40E-1280D", () => {
     } finally {
       proxy.close();
       await server.stop();
-      rmSync(dir, { recursive: true, force: true });
+      removeTempDir(dir);
     }
   });
 });
