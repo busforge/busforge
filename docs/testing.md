@@ -378,7 +378,7 @@ private corpus):
 
 | Unit | ETS's downloads replayed | Busforge's full download |
 |---|---|---|
-| MEAN WELL KNX-40E-1280D power supply | Every request of ETS's six captured downloads (a link, a parameter, the revert, the full download, a parameter that shows an object, on and off), in order into one unit: every frame the simulator answers (its control field too, where the interface reports the frame type) and every confirmation on the line equal the unit's | Through `KnxIpServer` and the proxy, with the server's download task: the bracket from the first unload to the restart equals the capture of the same download into the unit in every frame both ways; the session before it and the verification after it differ by Busforge's own changes since that capture, which the test names |
+| MEAN WELL KNX-40E-1280D power supply | Every request of ETS's six captured downloads (a link, a parameter, the revert, the full download, a parameter that shows an object, on and off), in order into one unit: every frame the simulator answers (its control field too, where the interface reports the frame type) and every confirmation on the line equal the unit's | Through `KnxIpServer` and the proxy, with the server's download task: the bracket from the first unload to the restart equals the capture of the same download into the unit in every frame both ways (each TPDU without its sequence number, the unit's control field, every confirmation on the line); the session before it and the verification after it differ by Busforge's own changes since that capture, which the test names |
 
 ```bash
 BUSFORGE_CORPUS=... bun run tools/sim-unit-serve.ts meanwell-knx40e --tool ETS --log ./capture.log \

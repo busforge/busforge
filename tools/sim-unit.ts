@@ -35,6 +35,8 @@ const EVENT = { LOAD: 1, LOAD_COMPLETED: 2, ADDITIONAL: 3, UNLOAD: 4 } as const;
 const VERIFY_MODE = 0x04, APPLICATION_STOPPED = 0x01;
 const APPLICATION_LSM = 4;
 const PRIORITY_BITS = 0x0c, STANDARD_FRAME = 0x80, STANDARD_TPDU_MAX = 16;
+// The reach of the memory services the unit answers (A_Memory_Read/Write, a 16-bit address).
+const MEMORY_END = 0x10000;
 // KNX 3/3/4: a transport connection that carries nothing for 6 s is closed by the device.
 const CONNECTION_TIMEOUT_MS = 6_000;
 // KNX 3/3/4: a numbered frame is acknowledged within 3 s.
@@ -110,6 +112,8 @@ export class SimUnit implements KnxTransport {
   // The priority bits of the request on the line, which the unit's frames in answer carry.
   private priority = 0;
   private line: Promise<void> = Promise.resolve();
+  // Set by disconnect(): no frame is taken and none sent until connect().
+  private stopped = false;
 
   constructor(
     private readonly model: SimUnitModel,
@@ -133,8 +137,8 @@ export class SimUnit implements KnxTransport {
   private note(line: string): void { this.lines.push(line); this.opts.log?.(line); }
   private refuse(what: string): void { const r = `sim-refused ${what}`; this.refusals.push(r); this.note(r); }
 
-  async connect(): Promise<void> {}
-  async disconnect(): Promise<void> { this.close(); }
+  async connect(): Promise<void> { this.stopped = false; }
+  async disconnect(): Promise<void> { this.stopped = true; this.close(); await this.line; }
 
   // The device's memory of one segment, for a test that compares what a download left in it.
   segment(lsm: number): { at: number; bytes: Buffer } | null {
@@ -153,6 +157,7 @@ export class SimUnit implements KnxTransport {
 
   private async onLine(cemi: Buffer): Promise<void> {
     const nak = async (why: string): Promise<never> => { await sleep(this.model.link.nakMs); throw new Error(why); };
+    if (this.stopped) throw new Error("the simulated unit is disconnected");
     if (cemi[0] !== CEMI.LDATA_REQ) { this.refuse(`cEMI message code 0x${cemi[0].toString(16)}`); return; }
     const { src, dst, tpdu, isGroup } = parseCemiLData(cemi);
     if (isGroup) { this.refuse(`a ${dst === 0 ? "broadcast" : "group"} telegram ${tpdu.toString("hex")} from ${numToIa(src)}: no group or broadcast service is modelled`); return; }
@@ -284,7 +289,7 @@ export class SimUnit implements KnxTransport {
     const ctrl = 2 + cemi[1];
     const priority = tpdu.length === 1 ? 0 : this.priority;
     cemi[ctrl] = (cemi[ctrl] & ~(PRIORITY_BITS | STANDARD_FRAME)) | priority | (tpdu.length > STANDARD_TPDU_MAX ? 0 : STANDARD_FRAME);
-    setTimeout(() => { this.onRawCemi?.(cemi); this.onCemi?.(this.model.ia, to, tpdu, false); }, 0);
+    setTimeout(() => { if (this.stopped) return; this.onRawCemi?.(cemi); this.onCemi?.(this.model.ia, to, tpdu, false); }, 0);
   }
 
   // ---- application layer ----
@@ -418,6 +423,7 @@ export class SimUnit implements KnxTransport {
         return this.allocate(obj, value.readUInt32BE(2), value[6], value[7], what) ? state : null;
       case EVENT.LOAD_COMPLETED: {
         if (state !== STATE.LOADING) { this.refuse(`${what}: load completed in state ${state}`); return null; }
+        if (this.referenceKnown.get(obj) === false) { this.refuse(`${what}: load completed without an allocation after the unload`); return null; }
         const seg = this.segments.get(obj);
         const mcb = this.property(obj, PID_MCB);
         if (mcb && mcb.elements !== null) {
@@ -444,6 +450,7 @@ export class SimUnit implements KnxTransport {
     const other = [...this.segments].find(([lsm, s]) => lsm !== obj && seg.at < s.at + s.size && s.at < seg.at + size);
     if (other) { this.refuse(`${what}: ${size} bytes at 0x${seg.at.toString(16)} reach into the segment of object ${other[0]}; where the unit places them then is not known`); return false; }
     if (mode !== 0 && mode !== 1) { this.refuse(`${what}: allocation mode ${mode}`); return false; }
+    if (size === 0 || seg.at + size > MEMORY_END) { this.refuse(`${what}: ${size} bytes at 0x${seg.at.toString(16)} do not fit the unit's memory services`); return false; }
     const bytes = Buffer.alloc(size, fill), known = new Uint8Array(size).fill(mode);
     if (mode === 0) { seg.bytes.copy(bytes, 0, 0, Math.min(size, seg.size)); known.set(seg.known.subarray(0, Math.min(size, seg.size))); }
     Object.assign(seg, { size, bytes, known });
@@ -474,6 +481,7 @@ export class SimUnit implements KnxTransport {
     const hit = this.segmentAt(addr, n);
     if (!hit) { this.refuse(`${what}: outside an allocated segment`); return; }
     if (this.state(hit[0]) !== STATE.LOADING) { this.refuse(`${what}: into the segment of object ${hit[0]} while it is not loading`); return; }
+    if (this.referenceKnown.get(hit[0]) === false) { this.refuse(`${what}: into the segment of object ${hit[0]}, unloaded and not allocated again`); return; }
     const off = addr - hit[1].at;
     data.copy(hit[1].bytes, off);
     hit[1].known.fill(1, off, off + n);

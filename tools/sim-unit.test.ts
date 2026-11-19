@@ -106,7 +106,16 @@ describe("a simulated unit", () => {
     const crc = crc16CcittFalse(Buffer.from("0a0b0c0d", "hex")).toString(16).padStart(4, "0");
     expect(await req("43d5041b1001")).toEqual([`d6041b100100000004${"00ff"}${crc}`]);
     expect(sim.segment(4)?.bytes.toString("hex")).toBe("0a0b0c0d");
-    expect(sim.refusals.slice(1)).toEqual(["sim-refused A_PropertyValue_Read 4/7 of 1 from 1 after the unload of its load-state machine: what the unit reports there before the next allocation is not known"]);
+    // Written and completed without the allocation after an unload: refused, the segment is not where it was.
+    expect(await req("43d70405100104000000000000000000")).toEqual(["d60405100100"]);
+    expect(await req("43d70405100101000000000000000000")).toEqual(["d60405100102"]);
+    expect(await req("4281" + "4000" + "ff")).toEqual([]);
+    expect(await req("43d70405100102000000000000000000")).toEqual([]);
+    expect(sim.refusals.slice(2)).toEqual([
+      "sim-refused A_Memory_Write 1 at 0x4000: into the segment of object 4, unloaded and not allocated again",
+      "sim-refused A_PropertyValue_Write 4/5 02000000000000000000: load completed without an allocation after the unload",
+    ]);
+    expect(sim.refusals.slice(1, 2)).toEqual(["sim-refused A_PropertyValue_Read 4/7 of 1 from 1 after the unload of its load-state machine: what the unit reports there before the next allocation is not known"]);
   });
 
   test("answers a numbered frame without a connection with T_Disconnect, on the connection its restart ended as the unit does; another address does not acknowledge on layer 2", async () => {
