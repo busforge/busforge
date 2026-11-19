@@ -2,6 +2,7 @@ import { XMLParser } from "fast-xml-parser";
 import { ProductError } from "./errors.ts";
 import { type ONode, tagOf, attrsOf, kidsOf, childrenByTag, firstByTag } from "./onode.ts";
 import { loadProceduresOf, type LoadProcedures } from "./loadproc.ts";
+import { decodeTextEntities } from "./config.ts";
 
 // Parse a KNX ApplicationProgram for the configuration UI: parameter types with
 // their enumerations and ranges, parameters and refs, communication objects, the
@@ -430,7 +431,7 @@ function calculationsOf(nodes: ONode[]): CfgCalculation[] {
       out.push({
         id: a.Id, name: a.Name, lRefs: side("LParameters"), rRefs: side("RParameters"), aliases,
         ...(a.Language !== undefined ? { language: a.Language } : {}),
-        ...(lr ? { lrScript: concatText(lr) } : {}),
+        ...(lr ? { lrScript: decodeTextEntities(concatText(lr)) } : {}),
         ...(a.LRTransformationFunc !== undefined ? { lrFunc: a.LRTransformationFunc } : {}),
       });
     }
