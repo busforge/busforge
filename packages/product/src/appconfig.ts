@@ -1,5 +1,6 @@
 import { XMLParser } from "fast-xml-parser";
 import { ProductError } from "./errors.ts";
+import { dpt9Encodable } from "./image.ts";
 import { type ONode, tagOf, attrsOf, kidsOf, childrenByTag, firstByTag } from "./onode.ts";
 import { loadProceduresOf, type LoadProcedures } from "./loadproc.ts";
 
@@ -322,10 +323,11 @@ export function sameParamValue(app: AppConfig): SameParamValue {
 
 // Whether a parameter type takes `value`: one of its enumeration's values, or a whole number within
 // its bounds, read without the blanks at its edges. Undefined for every other type, whose values this
-// does not judge.
+// does not judge; of a 2-byte float (DPT 9) it judges only a number the float has no code for, false.
 export function takesValue(type: CfgType, raw: string): boolean | undefined {
   const value = raw.trim();
   if (type.enums.length) return type.enums.some((e) => String(e.value) === value);
+  if (type.base === "Float" && type.sizeInBit === 16 && value !== "" && Number.isFinite(Number(value))) return dpt9Encodable(Number(value)) ? undefined : false;
   if (type.base !== "Number" && type.base !== "Value") return undefined;
   return /^(0|-?[1-9]\d*)$/.test(value) && (type.min === undefined || Number(value) >= type.min) && (type.max === undefined || Number(value) <= type.max);
 }
