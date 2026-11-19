@@ -48,7 +48,10 @@ depends on is hardware-proven.
   interface's `L_Data.con`, so a restart that never reached the bus takes the positive row of
   [the restart's proof](load-procedures.md#a-negative-confirmation-of-the-restart-frame), where an
   unanswered probe proves the reboot. Open decision: wait for the confirmation over UDP too, or prove
-  every restart there as an unconfirmed one.
+  every restart there as an unconfirmed one. The same gap hides a secure Sync request that Busforge's
+  bridge refuses on a tunnel that is not its USB interface's address: over UDP it reads as
+  `SECURE_SYNC_NO_RESPONSE` after the Sync timeout, over TCP as `SECURE_SYNC_NOT_CONFIRMED` at once
+  ([connections.md](connections.md#the-usb-limit-answers-reach-only-the-interfaces-own-address)).
 - **The stamp record on System 7.** With its record (PID 27 stamps) ETS's parameter download of the
   Gira M-0008 writes a changed byte alone (a byte in the middle of `AS-444E`), and the unstamped segment
   `AS-454E` whole; but a change of `0x435F` brings the three unchanged bytes before it along, every time.

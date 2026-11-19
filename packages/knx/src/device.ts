@@ -608,7 +608,12 @@ export class KnxDevice {
     try {
       if (!this.closedSinceConnect) {
         await waitForSyncGap(this.dst);
-        await this.sendCemi(cemiLData(this.me, this.dst, sec.buildSyncRequest(sec.serial, challenge, this.seq)));
+        try {
+          await this.sendCemi(cemiLData(this.me, this.dst, sec.buildSyncRequest(sec.serial, challenge, this.seq)));
+        } catch (e) {
+          if ((e as { code?: string }).code !== "BUS_SEND_FAILED") throw e;
+          throw new KnxError("SECURE_SYNC_NOT_CONFIRMED", "the interface confirmed the secure Sync request negatively: a Busforge bridge does so for a secured frame on a tunnel that does not hold its USB interface's own address, without sending it (it sends point-to-point frames as that address, and the MAC binds the tunnel's), so connect over the tunnel holding the interface's address; any other interface does so when no device acknowledged the frame (absent, unpowered, still starting)");
+        }
       }
       const rsp = await this.rawNext();
       await this.sendCemi(cemiLData(this.me, this.dst, tpAck((rsp[0] >> 2) & 0x0f))); // ACK the device's Sync.res
