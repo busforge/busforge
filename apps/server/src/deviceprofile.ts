@@ -1,8 +1,8 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { KnxDevice, KnxUsbTransport, PID, STATE, lsmState, SecureSession, iaToNum, assignIndividualAddress, readProgModeDevices, activateSecureDevice, readSecurityMode, type SecurityModeReading, type AssignIaResult, type ActivationResult } from "@busforge/knx";
+import { KnxDevice, KnxUsbTransport, PID, STATE, lsmState, SecureSession, iaToNum, assignIndividualAddress, readProgModeDevices, activateSecureDevice, readSecurityMode, blinkProgrammingMode, type SecurityModeReading, type AssignIaResult, type ActivationResult, type BlinkResult } from "@busforge/knx";
 import {
-  classify, parseAppConfig, sameMask, planForMask, resolveModuleInstances, type ComObjectLink, type ComObjInstanceOverride, programIdStamp, maskInfo, isMemoryMappedLsm,
+  classify, parseAppConfig, sameMask, planForMask, resolveModuleInstances, type ComObjectLink, type ComObjInstanceOverride, programIdStamp, maskInfo, isMemoryMappedLsm, progModeByProperty,
   buildDeviceConfig, deviceComObjOverrideRows, placeComObjOverrides, type AppConfig,
   type FlashResult, type DeviceReadback, type ParamFlashCtx, type GaFlashCtx, type FullDownloadCtx, type StructureFlashCtx, type ReadStateCtx,
   type PersistBackups, type ProgressFn, type ConstantDifference,
@@ -489,6 +489,25 @@ export async function assignDeviceAddress(
   } finally {
     await tun.disconnect();
   }
+}
+
+// Find a device physically: its programming LED on for `holdMs`, then off, read back
+// (blinkProgrammingMode in @busforge/knx). Only where the mask the device reports holds programming
+// mode in the device object's PID 54 (progModeByProperty); every other device is refused before
+// anything is written. A Data Secure device is switched under its tool key.
+export async function locateDevice(
+  connection: Connection, ia: string, secure: SecureCreds | undefined,
+  opts: { holdMs: number; signal?: AbortSignal; onProgress?: ProgressFn; enterWrites?: () => void },
+): Promise<BlinkResult> {
+  return withDeviceSession(connection, ia, null, opts.onProgress, async (dev, mask) => {
+    // No expected mask here: the gate applies only its Data Secure check (MV-FFFF without a key).
+    const refused = maskGate(mask, mask, secure !== undefined);
+    if (refused) throw refused;
+    if (!progModeByProperty(mask)) {
+      throw new ApiError("LOCATE_UNSUPPORTED_FAMILY", `the device reports mask ${mask}, which holds its programming mode in memory or in no device object; Busforge switches programming mode over the bus only on System B and System 7 devices with property-mapped load control. Find it by its address label`, 400);
+    }
+    return blinkProgrammingMode(dev, { holdMs: opts.holdMs, signal: opts.signal, onProgress: (p) => opts.onProgress?.(p), enterWrites: opts.enterWrites });
+  }, secure);
 }
 
 // Who is currently in programming mode? Read-only broadcast probe; drives the UI that tells

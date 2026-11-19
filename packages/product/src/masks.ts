@@ -163,3 +163,13 @@ export function maskInfo(mask: string): MaskInfo {
 export function isMemoryMappedLsm(mask: string): boolean {
   return maskInfo(mask).propertyMappedLsms === false;
 }
+
+// True when programming mode is switched over a connection by the device object's PID_PROGMODE (54):
+// System B and the property-mapped System 7 masks. ETS switches it off that way on MV-07B0 (its unload
+// writes 0/54 := 00); Busforge switches it on that way on MV-0705 and MV-07B0, plain and under Data
+// Secure. A BCU1 has no device object, and MV-0701 answers PID 54 with no element: both hold the mode in
+// memory, which no ETS capture shows being written, so they are not switched.
+export function progModeByProperty(mask: string): boolean {
+  const info = maskInfo(mask);
+  return (info.family === "system-b" || info.family === "system-7") && info.propertyMappedLsms !== false;
+}

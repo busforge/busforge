@@ -106,7 +106,7 @@ export interface GaComObj {
 // objects (a tunnelling channel); a secured address's receivers list them in their security table.
 export interface GaDevicesView { address: string; name: string; dpt: string; path: string[]; senders: GaComObj[]; receivers: GaComObj[]; secured: boolean; interfaceSenders: { ia: string; source: "import" | "busforge" }[]; }
 
-export type TaskKind = "read" | "flash-params" | "flash-ga" | "flash-structure" | "assign-ia" | "download" | "secure-activate" | "collect";
+export type TaskKind = "read" | "flash-params" | "flash-ga" | "flash-structure" | "assign-ia" | "download" | "secure-activate" | "collect" | "locate";
 export type TaskState = "queued" | "running" | "done" | "error" | "cancelled" | "interrupted";
 export interface Task {
   id: string; projectId: string; deviceId: string; deviceName: string; ia: string;
@@ -118,6 +118,9 @@ export interface Task {
   // Whether the server accepts a cancel now: queued, writing nothing, or a write still only reading.
   cancellable: boolean;
 }
+// How finding a device ended: its time ran out, it was stopped, or the device left programming mode itself
+// (its button). Programming mode is off and was read back off the device; anything else is an error.
+export interface LocateResult { kind: "located"; endedBy: "time" | "cancel" | "device"; heldMs: number; progModeOff: true }
 // A value a read-back is asked to assume for a parameter without memory location.
 export interface AssumedValue { paramRefId: string; value: string }
 export const taskActive = (t: Task) => t.state === "queued" || t.state === "running";
@@ -382,6 +385,12 @@ export const api = {
   // and stores before writing it). A device that already holds the key on file is left alone.
   secureActivate: (id: string, deviceId: string): Promise<{ outcome: "activated" | "already-active" }> =>
     awaitTask(id, fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/secure-activate`, { method: "POST" }).then((r) => jsonOrThrow<Task>(r))),
+  // Find the device physically: its programming LED on for `seconds`, then off, read back. Cancelling
+  // the task (cancelTask) ends the hold early; programming mode still goes off.
+  locateDevice: (id: string, deviceId: string, seconds: number, onTask?: (t: Task) => void): Promise<LocateResult> =>
+    awaitTask(id, fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/locate`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ seconds }),
+    }).then((r) => jsonOrThrow<Task>(r)), onTask),
   // Commission the device from nothing: application id + parameter image +
   // com-object table + group tables in one bracket (dry=true only previews).
   downloadDevice: (id: string, deviceId: string, dry: boolean, onTask?: (t: Task) => void): Promise<FlashResult> => programDevice(id, deviceId, "download", dry, onTask),
