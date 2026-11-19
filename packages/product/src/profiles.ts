@@ -424,6 +424,14 @@ async function verifyMcb(dev: KnxDevice, obj: number, size: number): Promise<Mcb
 // slice of `expected` (mcbProvenRegions) stands as that slice, every other region is read from the
 // device at `at`, and a segment whose CRCs prove nothing is read whole. These are the blocks ETS reads
 // at the close of every download; a few property reads in place of one memory read per twelve bytes.
+// A read of memory that an application without the extended memory services reaches with A_UserMemory,
+// refused before any request (USER_MEMORY_UNSUPPORTED): null, the content not shown.
+async function unreadIfUserMemory<T>(read: Promise<T>): Promise<T | null> {
+  try { return await read; } catch (e) {
+    if ((e as { code?: string }).code === "USER_MEMORY_UNSUPPORTED") return null;
+    throw e;
+  }
+}
 async function segmentContent(dev: KnxDevice, obj: number, expected: Buffer, at: number, onProgress?: (done: number, total: number) => void): Promise<Buffer> {
   const entries = await verifyMcb(dev, obj, expected.length);
   const proven = mcbProvenRegions(entries, expected);
@@ -1409,25 +1417,25 @@ export class SystemBProfile extends DeviceProfile {
       // covers, less the markers the device sets itself (wholeBytes). No match is NOT a pass and NOT a
       // failure verdict, only no proof. So is a segment past 0xFFFF on an application without the
       // extended memory services whose CRC proves nothing: it was written with A_UserMemory, and no
-      // capture shows it read (USER_MEMORY_UNSUPPORTED).
+      // capture shows it read (USER_MEMORY_UNSUPPORTED), so it stands as unread.
       verify: async () => {
         ctx.onProgress?.("verify");
         const { ok } = await verifySettled(
           async () => {
-            const gt = await groupTablesContent(dev, { addr, assoc, comObj }, assocForm);
-            const img = await segmentContent(dev, LSM, target.bytes, await loadedTableAddr(dev, LSM, "parameter segment"));
+            const gt = await unreadIfUserMemory(groupTablesContent(dev, { addr, assoc, comObj }, assocForm));
+            const img = await unreadIfUserMemory(segmentContent(dev, LSM, target.bytes, await loadedTableAddr(dev, LSM, "parameter segment")));
             // This form reads no security object before it writes, so a key table the read refuses is
             // only met here, after the write: it leaves the download unverified rather than unloaded.
             const sec = security ? await readSecurityObject(dev, security).catch((e: unknown) => { if (e instanceof ProductError && e.code === "SECURE_KEY_TABLE_UNPROVEN") return null; throw e; }) : null;
             return { gt, img, sec };
           },
           ({ gt, img, sec }) => {
-            const tablesOk = gt.addr.equals(addr) && gt.assoc.equals(assoc) && gt.comObj.equals(comObj);
-            const paramsOk = verifyMaskedBytes(img, target.bytes, wholeBytes(target.verify, target.markers));
+            const tablesOk = gt !== null && gt.addr.equals(addr) && gt.assoc.equals(assoc) && gt.comObj.equals(comObj);
+            const paramsOk = img !== null && verifyMaskedBytes(img, target.bytes, wholeBytes(target.verify, target.markers));
             const securityOk = !security || (sec !== null && sameSecurityObject(sec, security));
             return tablesOk && paramsOk && securityOk;
           },
-        ).catch((e: unknown) => { if ((e as { code?: string }).code === "USER_MEMORY_UNSUPPORTED") return { ok: false }; throw e; });
+        );
         return ok;
       },
     });

@@ -267,8 +267,8 @@ describe("a write keeps no connection idle, through its restart and its verifica
 
 // A unit that placed its parameter segment past 0xFFFF. The session sets the application's memory
 // services before its first request, so the read ahead of any write already takes the service the
-// application declares: without SupportsExtendedMemoryServices other tools report A_UserMemory, which
-// Busforge does not send, so the read refuses before a memory request goes out.
+// application declares: without SupportsExtendedMemoryServices that memory is reached with A_UserMemory,
+// which Busforge does not read, so the read refuses before a memory request goes out.
 describe("a session reaches a segment past 0xFFFF by the application's memory services", () => {
   const HIGH_AT = 0x15100;
   const highUnit = () => {

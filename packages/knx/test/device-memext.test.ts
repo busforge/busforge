@@ -155,6 +155,16 @@ describe("A_MemoryExtended reaches past the 16-bit memory services", () => {
     }
   });
 
+  test("a write across 0x10000 on an application without the extended memory services is refused before any frame", async () => {
+    const tun = new FakeExtTransport({ maxApdu: 66 });
+    const dev = new KnxDevice(tun, "1.1.11");
+    dev.setExtendedMemoryServices(false);
+    const e = await dev.memWrite(0xfff8, Buffer.alloc(16), { verify: false, echo: true }).then(() => null, (err: Error & { code?: string }) => err);
+    expect(e?.code).toBe("USER_MEMORY_UNSUPPORTED");
+    expect(e?.message).toMatch(/crosses 0x10000/);
+    expect(tun.sent).toBe(0);
+  });
+
   test("A_UserMemory reaches 20 bits: a write past 0xFFFFF is refused before any frame", async () => {
     const tun = new FakeExtTransport({ maxApdu: 66 });
     const dev = new KnxDevice(tun, "1.1.11");

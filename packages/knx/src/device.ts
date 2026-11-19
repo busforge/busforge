@@ -55,6 +55,14 @@ export type MemPiece = { address: number; length: number; bytes: Buffer } | { ad
 export interface PartialMemRead { pieces: MemPiece[]; stopped: { address: number; error: unknown } | null }
 
 const memRange = (addr: number, len: number) => `0x${addr.toString(16)}..0x${(addr + len - 1).toString(16)}`;
+// The bytes a memory write's answer reports against the bytes written (A_Memory_Response in verify mode,
+// A_UserMemory_Response).
+function assertEchoedBytes(addr: number, written: Buffer, reported: Buffer): void {
+  if (!reported.equals(written)) {
+    throw new KnxError("FLASH_VERIFY_MISMATCH",
+      `the device did not store the bytes written to 0x${addr.toString(16)}: it reports ${reported.toString("hex")} where ${written.toString("hex")} was written`);
+  }
+}
 
 function serviceMismatch(what: string, got: number, want: number): KnxError {
   return new KnxError("PROPERTY_RESPONSE_MISMATCH", `${what} was answered with service 0x${got.toString(16)}, not 0x${want.toString(16)}`);
@@ -149,13 +157,14 @@ export function transferChunks(maxApdu: number | null, secured: boolean): { clas
 //
 // A_UserMemory_Write spends 4 octets and counts in a nibble, so it carries at most 15. ETS writes 15 per
 // request to a device declaring 66 behind an interface announcing nothing (a simulator's capture); the
-// extended path limit (EXT_WRITE_CHUNK's 37-octet request) carries those 19 octets, so that case takes
+// measured path limit (a 32-byte extended write, 37 octets) carries those 19 octets, so that case takes
 // the device's length here too. A device declaring none gets the 15-octet standard frame: 11, which no
 // capture shows.
 const USER_WRITE_OVERHEAD = 4;
 const USER_MEMORY_MAX_COUNT = 15;
+const PATH_WRITE_APDU = 32 + EXT_WRITE_OVERHEAD;
 export function writeChunks(deviceMax: number | null, interfaceMax: number | null): { classic: number; ext: number; user: number } {
-  const userApdu = deviceMax === null ? 15 : Math.min(deviceMax, interfaceMax ?? EXT_WRITE_CHUNK + EXT_WRITE_OVERHEAD);
+  const userApdu = deviceMax === null ? 15 : Math.min(deviceMax, interfaceMax ?? PATH_WRITE_APDU);
   const user = Math.max(1, Math.min(USER_MEMORY_MAX_COUNT, userApdu - USER_WRITE_OVERHEAD));
   if (deviceMax === null || interfaceMax === null) return { classic: 12, ext: transferChunks(deviceMax, false).extWrite, user };
   const n = Math.min(deviceMax, interfaceMax);
@@ -1244,7 +1253,8 @@ export class KnxDevice {
     // bytes further on). ETS captures: every application declaring the option (GVS AMMA, Jung 400021SE,
     // Theben MIX 2, OpenKNX) is written extended only; every other one classic only, also the Theben
     // DALI-Gateway, which answers the property with 55 (writesConfirmed). Like ETS, it is not read back
-    // mid-bracket (see memWriteExtended); `verify` and `echo` apply to the classic write only.
+    // mid-bracket (see memWriteExtended); `verify` and `echo` apply to the classic write only (and
+    // `verify` to memWriteUser, which refuses it).
     if (await this.writesConfirmed()) {
       const maxApdu = (await this.maxApduLength())!;
       const path = this.secure !== undefined ? transferChunks(maxApdu, true).extWrite : writeChunks(maxApdu, await this.interfaceMaxApdu()).ext;
@@ -1276,11 +1286,7 @@ export class KnxDevice {
           throw new KnxError("FLASH_VERIFY_MISMATCH",
             `the device answered a write to 0x${a.toString(16)} with an echo for 0x${echoedAt.toString(16)}; refusing to take that as proof`);
         }
-        const back = r!.data.subarray(2, 2 + n);
-        if (!back.equals(slice)) {
-          throw new KnxError("FLASH_VERIFY_MISMATCH",
-            `the device did not store the bytes written to 0x${a.toString(16)}: it reports ${back.toString("hex")} where ${slice.toString("hex")} was written`);
-        }
+        assertEchoedBytes(a, slice, r!.data.subarray(2, 2 + n));
       } else {
         await this.request((s) => apdu(s, APCI.MEMORY_WRITE, tail, n), false); // T_ACK only
       }
@@ -1295,7 +1301,7 @@ export class KnxDevice {
 
   // ---- A_MemoryExtended (3-byte address) ----
   // A device whose application declares the extended memory services is reached past 0xFFFF with
-  // these (memRead and memWrite refuse that range otherwise, assertHighMemoryService). The address is 3
+  // these (highMemoryService; without the option A_UserMemory writes there). The address is 3
   // octets (0x000000..0xFFFFFF) and the requested byte count is a payload octet (not folded into the
   // APCI, the way classic memory folds it). Request format is [count, addrHi, addrMid, addrLo, ...data
   // for a write]; the RESPONSE leads with [returnCode, addrHi, addrMid, addrLo] and then, for a read,
@@ -1340,10 +1346,15 @@ export class KnxDevice {
   // the read service (A_UserMemory_Read), so a read-back is refused before the first write, and so is a
   // secured session, which no capture shows either. The caller's read-back after the restart proves the
   // segment where the device can show it (its memory-control block's CRC).
+  // ETS writes the memory below 0x10000 classic and A_UserMemory only from 0x10000 on; no capture shows a
+  // range across that boundary, so one is refused.
   private async memWriteUser(addr: number, data: Buffer, opts: { chunk?: number; verify?: boolean; onProgress?: (done: number, total: number) => void }): Promise<void> {
     const range = memRange(addr, data.length);
-    if (addr < 0 || addr + data.length - 1 > 0xfffff) {
+    if (addr + data.length - 1 > 0xfffff) {
       throw new KnxError("MEMORY_ADDRESS_TOO_HIGH", `memory write at ${range} is outside the 20-bit A_UserMemory address space`);
+    }
+    if (addr < 0x10000) {
+      throw new KnxError("USER_MEMORY_UNSUPPORTED", `memory write at ${range} crosses 0x10000, and no ETS capture shows a write across it with A_UserMemory; refusing before any request`);
     }
     if (opts.verify ?? true) {
       throw new KnxError("USER_MEMORY_UNSUPPORTED", `memory write at ${range} is reached with A_UserMemory, and its read-back would take A_UserMemory_Read, which no ETS capture shows; refusing before any request`);
@@ -1364,9 +1375,7 @@ export class KnxDevice {
       if (d.length < 3 || !d.subarray(0, 3).equals(head)) {
         throw new KnxError("FLASH_VERIFY_MISMATCH", `the device answered a user memory write to 0x${a.toString(16)} with ${d.length < 3 ? "no address" : `the address and count ${d.subarray(0, 3).toString("hex")}`}; refusing to take that as proof`);
       }
-      if (!d.subarray(3).equals(slice)) {
-        throw new KnxError("FLASH_VERIFY_MISMATCH", `the device did not store the bytes written to 0x${a.toString(16)}: it reports ${d.subarray(3).toString("hex")} where ${slice.toString("hex")} was written`);
-      }
+      assertEchoedBytes(a, slice, d.subarray(3));
       pos += n;
       opts.onProgress?.(++done, total);
     }

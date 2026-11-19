@@ -678,15 +678,18 @@ memory there without the option.
 - **Each write is answered** by an `A_UserMemory_Response` with the same three octets and data. ETS
   reads no device-control property (verify mode) before these writes; whether a real device answers
   only in verify mode the capture cannot show. Busforge awaits the answer for every write and refuses
-  one for another address or with other bytes (`FLASH_VERIFY_MISMATCH`); a System B full download
-  switches verify mode on before it writes, so it gets the answer either way.
+  one for another address or with other bytes (`FLASH_VERIFY_MISMATCH`). It deviates from ETS here:
+  a System B full download switches verify mode on before its unload, so these writes go out in
+  verify mode, where ETS reads that property only after them, before its first classic write. The
+  answer is awaited either way.
 - **Not read.** No capture shows `A_UserMemory_Read`, so a read past `0xFFFF` on such an application,
   and a write that would be read back, are refused before any request (`USER_MEMORY_UNSUPPORTED`): a
   backup, a comparison, a parameter or structural flash and the partial form of the full download read
   the segment first and refuse before they write. A full download writes the segment, and its check
   after the restart takes the segment's CRC in its memory-control block; where that proves nothing the
-  download is reported unverified. A secured session with `A_UserMemory` is refused too: no capture
-  shows one.
+  download is reported unverified. A secured session with `A_UserMemory` is refused too, and so is a
+  write across `0x10000` (ETS writes below it classic and from it with `A_UserMemory`): no capture
+  shows either.
 
 With the option, ETS writes every memory with `A_MemoryExtended_Write` of 61 octets (66 less 5),
 the tables below `0xFFFF` too, and reads no device-control property. Busforge writes the same way

@@ -45,8 +45,8 @@ export const APCI = {
   MEMORY_EXT_READ: 0x1fd, MEMORY_EXT_READ_RESP: 0x1fe,
   // A_UserMemory: a 20-bit address, the top 4 bits in the high nibble of the octet whose low nibble is
   // the count (1-15), then the low 16 bits. ETS writes memory past 0xFFFF with it where the application
-  // declares no extended memory services, and the device answers each write with A_UserMemory_Response
-  // carrying the same octets.
+  // declares no extended memory services; in its download into a device simulator each write was
+  // answered with an A_UserMemory_Response carrying the same octets.
   USER_MEMORY_WRITE: 0x2c2, USER_MEMORY_RESPONSE: 0x2c1,
   PROPERTY_READ: 0x3d5, PROPERTY_RESPONSE: 0x3d6, PROPERTY_WRITE: 0x3d7,
   PROPERTY_DESCRIPTION_READ: 0x3d8, PROPERTY_DESCRIPTION_RESPONSE: 0x3d9,
