@@ -176,7 +176,7 @@ A list filter always shows that it is on, and how to undo it:
 - The count turns amber and reads "N of M shown"; unfiltered it is the quiet "N / M".
 - "Reset filters" appears while any filter is on and clears them all. A choice of place (the building shown) is not a filter and stays.
 - Filter state lives in the URL, so reload, back and a shared link keep it.
-- Typing in a search field never sends the page back to the top: a row in view that the filter keeps stays where it is, and the page moves up only as far as the rows above it drop out or the list ends.
+- Typing in a search field never sends the page back to the top: the scroll position stays, and the browser moves it only where its scroll anchoring holds a row in view in place as rows around it drop out. A com-object the URL names that the filter brings back is scrolled to.
 
 A page filter sits in the toolbar row of the page it narrows: on the device page the parameter filter is in the header's second row, in front of the actions, with its match count.
 
