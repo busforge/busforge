@@ -574,7 +574,7 @@ The classic `A_Memory_Read` / `A_Memory_Write` services carry a **2-byte** addre
 reach `0x0000`-`0xFFFF` and no further. Several System B devices allocate their parameter
 segment above that (a Jung 2-fold universal interface puts its parameter image at
 `0x15000`). Those are served by **A_MemoryExtended**, the KNX service with a 3-byte (24-bit)
-address. An address outside even that space is refused (`MEMORY_ADDRESS_TOO_HIGH`) rather
+address, where the application declares it (below). An address outside even that space is refused (`MEMORY_ADDRESS_TOO_HIGH`) rather
 than truncated and written to the wrong place.
 
 - **APCIs**: `A_MemoryExtended_Write` = `0x1FB`, `_Write_Response` = `0x1FC`,
@@ -592,8 +592,24 @@ than truncated and written to the wrong place.
   answered `fd 00 00 00` (return code `0xFD`, that address is forbidden, a legitimate
   refusal).
 
-`memRead` **auto-selects** by address: a range whose last byte exceeds `0xFFFF` is served
-entirely by the extended path, everything at or below stays on the classic path.
+Past `0xFFFF` the **application decides**, as ETS does. Where it declares `<Options
+SupportsExtendedMemoryServices="true">`, `memRead` and `memWrite` serve a range whose last byte
+exceeds `0xFFFF` entirely by the extended path; everything at or below stays on the classic path
+(except the confirmed write below). Where it does not, other KNX tools report that ETS reaches that
+memory with `A_UserMemory` (APCI `0x2C0`-`0x2C2`, a 20-bit address, at most 15 octets per request), on
+SATEL, Zennio, ABB and Busch-Jaeger units, and that the SATEL KNX-SA41 acknowledges `A_MemoryExtended`
+on the transport layer and never answers it. Busforge does not send `A_UserMemory` and holds no
+capture of it, so such a range is refused before any request (`USER_MEMORY_UNSUPPORTED`); a range
+whose application option was never set is refused the same way (`MEMORY_SERVICES_UNDECIDED`). Every
+device session takes the option from the project's application before its first request, so the
+reads ahead of a write (backup, comparison, read-back) refuse before anything is written. The
+collector is the one reader that may know no application: there it reads past `0xFFFF` with
+`A_MemoryExtended` and records whatever comes back, silence included.
+
+One case refuses late. A relative segment's address is the device's own allocation, and a full
+download reads no memory before it unloads. On a device whose application lacks the option and
+whose allocator places a segment past `0xFFFF`, the full download is refused at its first write of
+that segment, after the unload: the device is left unloaded, and the way back is a download with ETS.
 
 `memWrite` selects **by application and device, as ETS does**. The caller sets whether the
 application declares `<Options SupportsExtendedMemoryServices="true">`; before its first write on a

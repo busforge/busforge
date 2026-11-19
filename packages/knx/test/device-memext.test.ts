@@ -16,6 +16,7 @@ class FakeExtTransport implements KnxTransport {
   readonly mem = new Map<number, number>();
   sawClassic = 0;
   sawExtended = 0;
+  sent = 0; // every frame the device was sent, acknowledgements included
   // Injected faults for the negative tests.
   // `maxApdu`: the PID_MAX_APDU_LENGTH the device declares; absent, it answers that property with no element.
   constructor(private readonly opts: { badCode?: boolean; wrongEcho?: boolean; maxApdu?: number } = {}) {}
@@ -26,6 +27,7 @@ class FakeExtTransport implements KnxTransport {
   private ack(seq: number) { this.onCemi?.(this.device, this.assignedIa, tpAck(seq), false); }
   async sendCemi(cemi: Buffer): Promise<void> {
     const tpdu = cemi.subarray(9); // skip the 9-byte L_Data head
+    this.sent++;
     const p = parseApdu(tpdu);
     if (p.control) return;
     if (p.apci === APCI.PROPERTY_READ) {
@@ -67,6 +69,7 @@ describe("A_MemoryExtended reaches past the 16-bit memory services", () => {
   test("memRead auto-routes to extended above 0xFFFF and reads full-length, address-aligned", async () => {
     const tun = new FakeExtTransport();
     const dev = new KnxDevice(tun, "1.1.11");
+    dev.setExtendedMemoryServices(true);
     const got = await dev.memRead(0x15000, 30, 12); // Jung 400021SE param segment lives here
     expect(got.equals(Buffer.from(Array.from({ length: 30 }, (_, i) => (0x15000 + i) & 0xff)))).toBe(true);
     expect(tun.sawExtended).toBeGreaterThan(0);
@@ -76,6 +79,7 @@ describe("A_MemoryExtended reaches past the 16-bit memory services", () => {
   test("memWrite auto-routes to extended above 0xFFFF, and the bytes read back", async () => {
     const tun = new FakeExtTransport();
     const dev = new KnxDevice(tun, "1.1.11");
+    dev.setExtendedMemoryServices(true);
     const payload = Buffer.from(Array.from({ length: 25 }, (_, i) => (i * 7) & 0xff));
     await dev.memWrite(0x15000, payload, { chunk: 12 }); // verify:true by default -> reads back via extended
     const back = await dev.memReadExtended(0x15000, payload.length);
@@ -85,10 +89,51 @@ describe("A_MemoryExtended reaches past the 16-bit memory services", () => {
   test("a segment spanning the 0xFFFF boundary is served entirely by extended (never truncated)", async () => {
     const tun = new FakeExtTransport();
     const dev = new KnxDevice(tun, "1.1.11");
+    dev.setExtendedMemoryServices(true);
     const got = await dev.memRead(0xfff8, 16, 12); // 0xFFF8..0x10007 crosses the classic ceiling
     expect(got.length).toBe(16);
     expect(tun.sawExtended).toBeGreaterThan(0);
     expect(tun.sawClassic).toBe(0);
+  });
+
+  // Other tools report that ETS reaches an application without the option past 0xFFFF with
+  // A_UserMemory (Zennio DIMinBOX/DALIBOX, ABB Caldion, SATEL KNX-SA41), which Busforge does not send;
+  // the SATEL acknowledges A_MemoryExtended and never answers it, so sending it ends in a timeout.
+  test("past 0xFFFF, an application without the extended memory services is refused before any frame", async () => {
+    const tun = new FakeExtTransport({ maxApdu: 55 });
+    const dev = new KnxDevice(tun, "1.1.11");
+    dev.setExtendedMemoryServices(false);
+    const refusals = [
+      await dev.memRead(0x15000, 4).then(() => null, (e: Error & { code?: string }) => e),
+      await dev.memWrite(0x15000, Buffer.from([1, 2, 3])).then(() => null, (e: Error & { code?: string }) => e),
+      await dev.memReadPartial(0x15000, 4, { chunk: 4 }).then(() => null, (e: Error & { code?: string }) => e),
+      await dev.memRead(0xfff8, 16).then(() => null, (e: Error & { code?: string }) => e),
+    ];
+    for (const e of refusals) {
+      expect(e?.code).toBe("USER_MEMORY_UNSUPPORTED");
+      expect(e?.message).toMatch(/A_UserMemory/);
+    }
+    expect(tun.sent).toBe(0);
+  });
+
+  test("past 0xFFFF, an application whose memory services were never set is refused before any frame", async () => {
+    const tun = new FakeExtTransport({ maxApdu: 55 });
+    const dev = new KnxDevice(tun, "1.1.11");
+    const refusals = [
+      await dev.memRead(0x15000, 4).then(() => null, (e: Error & { code?: string }) => e),
+      await dev.memWrite(0x15000, Buffer.from([1, 2, 3])).then(() => null, (e: Error & { code?: string }) => e),
+    ];
+    for (const e of refusals) expect(e?.code).toBe("MEMORY_SERVICES_UNDECIDED");
+    expect(tun.sent).toBe(0);
+  });
+
+  // The collector reads a device whose application it may not know; its read records every answer.
+  test("the recording read probes past 0xFFFF with A_MemoryExtended where the application is not known", async () => {
+    const tun = new FakeExtTransport();
+    const dev = new KnxDevice(tun, "1.1.11");
+    const read = await dev.memReadPartial(0x15000, 4, { chunk: 4 });
+    expect(read.stopped).toBeNull();
+    expect(tun.sawExtended).toBe(1);
   });
 
   test("a non-zero return code is refused, not trusted", async () => {

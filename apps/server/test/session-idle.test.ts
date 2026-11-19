@@ -265,6 +265,40 @@ describe("a write keeps no connection idle, through its restart and its verifica
   });
 });
 
+// A unit that placed its parameter segment past 0xFFFF. The session sets the application's memory
+// services before its first request, so the read ahead of any write already takes the service the
+// application declares: without SupportsExtendedMemoryServices other tools report A_UserMemory, which
+// Busforge does not send, so the read refuses before a memory request goes out.
+describe("a session reaches a segment past 0xFFFF by the application's memory services", () => {
+  const HIGH_AT = 0x15100;
+  const highUnit = () => {
+    const u = new IdleClosingUnit();
+    u.objects[4].props.set(7, { pdt: 0x13, readLevel: 3, elements: [u32(HIGH_AT)] });
+    return u;
+  };
+  test("without the option, the read-back and a parameter flash are refused with no memory request", async () => {
+    const u = highUnit();
+    unit = u;
+    try {
+      const read = await ops.readDeviceState({ ...scope, appXml, liveParams: params, baseParams: params }).catch((e: { code?: string }) => e);
+      expect((read as { code?: string }).code).toBe("USER_MEMORY_UNSUPPORTED");
+      const flash = await ops.flashDeviceParameters({ ...scope, appXml, params, baseParams: params, dryRun: true }).catch((e: { code?: string }) => e);
+      expect((flash as { code?: string }).code).toBe("USER_MEMORY_UNSUPPORTED");
+      expect(u.apcis.filter((a) => a === APCI.MEMORY_READ || a === APCI.MEMORY_EXT_READ)).toEqual([]);
+    } finally { unit = null; }
+  });
+  test("with the option, the same segment is read with A_MemoryExtended", async () => {
+    const u = highUnit();
+    unit = u;
+    const extended = appXml.replace("<Static>", '<Static><Options SupportsExtendedMemoryServices="true" />');
+    try {
+      const flash = await ops.flashDeviceParameters({ ...scope, appXml: extended, params, baseParams: params, dryRun: true });
+      expect(["dryRun", "unchanged"]).toContain(flash.kind);
+      expect(u.apcis).toContain(APCI.MEMORY_EXT_READ);
+    } finally { unit = null; }
+  });
+});
+
 test("an operation refused before it needs the device opens no session", async () => {
   const { result, unit: u } = await onUnit(() => ops.flashDeviceParameters({ ...scope, appXml, params: new Map([["M-NOPE_A-1_P-1_R-1", "1"]]), baseParams: params, dryRun: true }).catch((e: { code?: string }) => e));
   expect((result as { code?: string }).code).toBeDefined();

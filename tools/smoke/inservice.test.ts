@@ -1303,7 +1303,7 @@ describe("a device in service: its memory against the backup read before the fir
 describe("the unit's memory from the server's diagnostic package", () => {
   const pkg = (records: DiagnosticPackage["records"], extra: Partial<DiagnosticPackage> = {}): DiagnosticPackage => ({
     format: "busforge-diagnostic/1", cleaned: { removed: [], notAnonymized: [] }, busforge: { version: "0", commit: "x" }, connection: { kind: "ip", ipTransport: "tcp" },
-    ia: "1.1.56", mask: "MV-0705", family: "system-7", secured: false, authorizeLevel: 0, maxApdu: 15, plan: planForMask("MV-0705", { mask: "MV-0705", absoluteSegments: [] }), records, limits: [], stop: null, error: null,
+    ia: "1.1.56", mask: "MV-0705", family: "system-7", secured: false, authorizeLevel: 0, maxApdu: 15, plan: planForMask("MV-0705", { mask: "MV-0705", absoluteSegments: [], extendedMemory: false }), records, limits: [], stop: null, error: null,
     counts: { requests: 0, scanRequests: 0, memoryRequests: 0, memoryBytes: 0, reconnects: 0 }, startedAt: 0, finishedAt: 0, bus: { takenAt: 0, monitorClosedAt: null, releasedAt: 0 }, ...extra,
   });
   const mem = (step: string, address: number, bytes: string) => ({ step, space: "memory" as const, target: { address, length: bytes.length / 2 }, source: "device" as const, outcome: "bytes" as const, bytes, at: 0 });

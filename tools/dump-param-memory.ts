@@ -44,6 +44,7 @@ for (const d of devices) {
   const app = parseAppConfig(row.xml);
   const model = toAppModel(app);
   const dev = new KnxDevice(tun, d.ia);
+  dev.setExtendedMemoryServices(app.loadProcedures.extendedMemoryServices);
   try {
     await withTimeout((async () => {
       await dev.connect();

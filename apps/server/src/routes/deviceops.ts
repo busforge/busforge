@@ -1,4 +1,4 @@
-import { parseAppConfig, takesValue, resolveParamRef, resolveModuleInstances, buildDeviceConfig, assumableMemorylessRefs, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, CollectCancelled, comObjectTableChanges, fullDownloadRefusedForTunnelingEntries, type CollectApp, type AppConfig, type DeviceReadbackInfo, type MatrixOperation, type ModuleInstance, type WriteGate, type KnxIpDevice } from "@busforge/product";
+import { parseAppConfig, collectApp, takesValue, resolveParamRef, resolveModuleInstances, buildDeviceConfig, assumableMemorylessRefs, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, CollectCancelled, comObjectTableChanges, fullDownloadRefusedForTunnelingEntries, type CollectApp, type AppConfig, type DeviceReadbackInfo, type MatrixOperation, type ModuleInstance, type WriteGate, type KnxIpDevice } from "@busforge/product";
 import { getProjectConnection, getGaMeta } from "../db/projects.ts";
 import type { Database } from "bun:sqlite";
 import type { Connection } from "../db/connections.ts";
@@ -454,12 +454,13 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const conn = getProjectConnection(db, id);
     if (!isConnectionReady(conn)) return err("INTERFACE_NOT_SET", "configure a bus connection first");
     const secure = secureCredsFor(state, id, deviceId);
-    // The project's application program places the M112 parameter segments. Looked up without writing
-    // the catalog; one Busforge cannot parse is a reason in the package, not a refusal of the collection.
+    // The project's application program places the M112 parameter segments and decides how memory past
+    // 0xFFFF is reached. Looked up without writing the catalog; one Busforge cannot parse is a reason in
+    // the package, not a refusal of the collection.
     const appXml = dev.appRef ? lookupAppXml(state, id, dev.appRef)?.xml ?? null : null;
     let app: CollectApp | null = null;
     if (appXml) {
-      try { const cfg = parseAppConfig(appXml); app = { mask: cfg.mask, absoluteSegments: cfg.absoluteSegments }; }
+      try { app = collectApp(parseAppConfig(appXml)); }
       catch (e) { app = { unavailable: `${(e as { code?: string }).code ?? "unparseable"}: ${e instanceof Error ? e.message : String(e)}` }; }
     }
     // The job starts only after submit has returned, so the id is set by then.

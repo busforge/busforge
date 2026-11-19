@@ -1,5 +1,5 @@
 import { maskInfo, sameMask } from "./masks.ts";
-import type { CfgAbsSegment } from "./appconfig.ts";
+import type { AppConfig, CfgAbsSegment } from "./appconfig.ts";
 
 // What raw acquisition reads from a device of a given mask, before the first request after the
 // descriptor (docs/raw-acquisition.md, "The generic stage" and "Per memory model"). Every location
@@ -97,7 +97,12 @@ const base = (mask: string, family: string): MaskPlan => ({
 });
 
 // The project's application program for the device, or why there is none to use.
-export type CollectApp = { mask: string; absoluteSegments: CfgAbsSegment[] } | { unavailable: string };
+// `extendedMemory`: the application's <Options SupportsExtendedMemoryServices>, which decides how the
+// device is reached past 0xFFFF (KnxDevice.setExtendedMemoryServices).
+export type CollectApp = { mask: string; absoluteSegments: CfgAbsSegment[]; extendedMemory: boolean } | { unavailable: string };
+export function collectApp(cfg: AppConfig): CollectApp {
+  return { mask: cfg.mask, absoluteSegments: cfg.absoluteSegments, extendedMemory: cfg.loadProcedures.extendedMemoryServices };
+}
 
 // The plan for a device that answered `mask`. On M112 the project's application program alone places
 // the com-object table and the parameter segments, and only if it is for the mask the device answered.

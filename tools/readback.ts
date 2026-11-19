@@ -19,7 +19,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadKnxproj, readXml0, readAppProgram, appProgramId, deviceParamValues } from "../packages/project/src/index.ts";
-import { parseApplication, buildParameterImage } from "../packages/product/src/index.ts";
+import { parseApplication, buildParameterImage, parseLoadProcedures } from "../packages/product/src/index.ts";
 import { KnxIpTunnel, KnxDevice, assocFormOf, ASSOC_TABLE_DESCRIPTION } from "../packages/knx/src/index.ts";
 import type { EvidenceRecord, Firmware } from "../packages/product/src/index.ts";
 import { readbackEvidence, readFirmwareRevision, gitRevision, sha256, transportOf, type DeclaredOrigin, type ImageComparison } from "./evidence.ts";
@@ -105,13 +105,16 @@ for (const d of proj.devices) {
   const dev = new KnxDevice(tun, d.ia);
   try {
     await withTimeout((async () => {
+      // How the device is reached past 0xFFFF is the application's to say; without its program such a
+      // read is refused (KnxDevice.setExtendedMemoryServices).
+      const xml = readAppProgram(bytes, d.appRef);
+      if (xml) dev.setExtendedMemoryServices(parseLoadProcedures(xml).extendedMemoryServices);
       await dev.connect();
       const mask = await dev.deviceDescriptor();
       let comparison: (Omit<ImageComparison, "firmware"> & { artifact: string; sha256: string }) | null = null;
       if (mask === "MV-FFFF") { console.log(`${d.ia} ${mask} SECURE (skipped)`); return; }
 
       if (mode === "params" || mode === "all") {
-        const xml = readAppProgram(bytes, d.appRef);
         const model = xml ? parseApplication(xml) : null;
         if (model && model.segments.some((s) => s.lsm === LSM_PARAM)) {
           const { values } = deviceParamValues(xml0, d.id);

@@ -37,6 +37,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function readTables() {
   const tun = new KnxIpTunnel(ip); await tun.connect();
   const dev = new KnxDevice(tun, ia); await dev.connect();
+  dev.setExtendedMemoryServices(services === "extended");
   const mask = await dev.deviceDescriptor();
   // The association table is written back as read, so it is read in the form the unit describes.
   const form = assocFormOf(await dev.propertyDescription(ASSOC_TABLE_DESCRIPTION.object, ASSOC_TABLE_DESCRIPTION.pid, 0));

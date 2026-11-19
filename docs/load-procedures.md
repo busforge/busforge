@@ -405,6 +405,8 @@ the Theben DALI-Gateway answers the property with 55, has no such option, and ET
 blocks of 52 bytes (the maximum APDU less 3). That gateway acknowledges an extended write on the
 transport layer and never answers it, so the option, not the property, decides; Busforge takes it from
 the application and refuses a write to a device declaring a long APDU while the option is unknown.
+Past `0xFFFF` an application without the option is refused before any request
+(`USER_MEMORY_UNSUPPORTED`, [device-memory-model.md](device-memory-model.md#a_memoryextended-reaching-a-segment-above-64-kb)).
 On a device written classic (System B and System 7 alike: Auro, Gira, MDT BE-02001.02 and BE-06001.02,
 Theben TheLuxa P300 and DALI-Gateway) ETS reads object 0 PID 14 and writes it back with bit `04` set
 right before its first memory write, in every capture of such a download, and takes the device's echo

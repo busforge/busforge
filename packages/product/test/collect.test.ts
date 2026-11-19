@@ -192,6 +192,52 @@ describe("raw acquisition on a System B device", () => {
     expect(memRecords(p, "association table").some((r) => r.outcome === "bytes")).toBe(true);
   });
 
+  test("past 0xFFFF, the project's application decides: without the extended memory services the table is not attempted", async () => {
+    const run = async (extendedMemory: boolean) => {
+      const { sim, dev, reopen } = setup();
+      const ref = Buffer.alloc(4); ref.writeUInt32BE(0x15000);
+      sim.objects[1].props.get(7)!.elements[0] = ref;
+      const p = await collectDevice(dev, { ia: "1.2.3", signal: ctl().signal, reopen, app: { mask: "MV-07B0", absoluteSegments: [], extendedMemory } });
+      return { p, sim };
+    };
+    const without = await run(false);
+    expect(without.p.stop).toBeNull();
+    // The simulated association table sits at 0x10000, past the classic reach too.
+    for (const step of ["group address table", "association table"]) {
+      expect(memRecords(without.p, step)).toMatchObject([{ outcome: "not-attempted", detail: expect.stringContaining("A_UserMemory") }]);
+    }
+    expect(without.sim.apcis).not.toContain(APCI.MEMORY_EXT_READ);
+    expect(memRecords(without.p, "application").some((r) => r.outcome === "bytes")).toBe(true);
+    const withOption = await run(true);
+    expect(withOption.sim.apcis).toContain(APCI.MEMORY_EXT_READ);
+    for (const step of ["group address table", "association table"]) {
+      expect(memRecords(withOption.p, step).every((r) => r.outcome === "bytes")).toBe(true);
+    }
+  });
+
+  test("an application for another mask, or one that cannot be used, decides nothing: memory past 0xFFFF is probed", async () => {
+    for (const app of [{ mask: "MV-0705", absoluteSegments: [], extendedMemory: false }, { unavailable: "PARAM_BYTE_ORDER_UNSUPPORTED: no" }]) {
+      const { sim, dev, reopen } = setup();
+      const p = await collectDevice(dev, { ia: "1.2.3", signal: ctl().signal, reopen, app });
+      expect(p.stop).toBeNull();
+      expect(sim.apcis).toContain(APCI.MEMORY_EXT_READ);
+      expect(memRecords(p, "association table").every((r) => r.outcome === "bytes")).toBe(true);
+    }
+  });
+
+  test("a range crossing 0xFFFF on an application without the extended memory services is read classic up to 0xFFFF", async () => {
+    const { sim, dev, reopen } = setup();
+    const ref = Buffer.alloc(4); ref.writeUInt32BE(0xfffc);
+    sim.objects[1].props.get(7)!.elements[0] = ref;
+    const p = await collectDevice(dev, { ia: "1.2.3", signal: ctl().signal, reopen, app: { mask: "MV-07B0", absoluteSegments: [], extendedMemory: false } });
+    expect(p.stop).toBeNull();
+    expect(memRecords(p, "group address table")).toMatchObject([
+      { space: "memory", outcome: "bytes", target: { address: 0xfffc, length: 4 }, bytes: bytesAt(sim, 0xfffc, 4) },
+      { space: "memory-extended", outcome: "not-attempted", target: { address: 0x10000 }, detail: expect.stringContaining("A_UserMemory") },
+    ]);
+    expect(sim.apcis).not.toContain(APCI.MEMORY_EXT_READ);
+  });
+
   test("a table of several memory-control-block regions is read to the end of the last", async () => {
     const { sim, dev, reopen } = setup();
     const region = (size: number) => { const b = Buffer.alloc(8); b.writeUInt32BE(size); b.writeUInt16BE(0x0032, 4); return b; };
@@ -253,6 +299,7 @@ function bcu1(secured: boolean, pid56: "absent" | "silent" | "mac-failed" | Buff
   let memoryReads = 0;
   const dev: CollectDevice = {
     secured,
+    setExtendedMemoryServices() {},
     descriptorType0: async () => { asked.push("descriptor"); return "MV-0012"; },
     authorizeFreeKey: async () => { throw new Error("BCU1 declares no AuthorizeLevels"); },
     propertyDescription: async () => { throw new Error("BCU1 plan scans no objects"); },
@@ -372,10 +419,10 @@ describe("raw acquisition plans", () => {
   test("M112: the product XML places the parameter segments, and without it they are named as not attempted", () => {
     expect(planForMask("MV-0705").notAttempted.map((n) => n.name)).toContain("application segments");
     const segs = [{ id: "S1", address: 0x4400, size: 32, data: Buffer.alloc(0) }];
-    const p = planForMask("MV-0705", { mask: "MV-0705", absoluteSegments: segs });
+    const p = planForMask("MV-0705", { mask: "MV-0705", absoluteSegments: segs, extendedMemory: false });
     expect(p.memory.find((m) => m.source === "product-xml")).toMatchObject({ address: 0x4400, length: 32 });
     // An application for another mask (a device another tool reprogrammed) places nothing.
-    const other = planForMask("MV-0705", { mask: "MV-0701", absoluteSegments: segs });
+    const other = planForMask("MV-0705", { mask: "MV-0701", absoluteSegments: segs, extendedMemory: false });
     expect(other.memory.some((m) => m.source === "product-xml")).toBe(false);
     expect(other.notAttempted.find((n) => n.name === "application segments")?.reason).toContain("MV-0701");
     expect(planForMask("MV-0705", { unavailable: "PARAM_BYTE_ORDER_UNSUPPORTED" }).notAttempted.find((n) => n.name === "application segments")?.reason).toContain("PARAM_BYTE_ORDER_UNSUPPORTED");

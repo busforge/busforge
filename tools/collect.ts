@@ -6,7 +6,9 @@
 //   bun run tools/collect.ts <host[:port]> <ia> <out.json> [--app=<app.xml | app.xml.gz>] [--no-authorize]
 //        [--knxproj=<file.knxproj> --password-env=<VAR>]
 //
-// --app            the device's application program, which places the M112 parameter segments
+// --app            the device's application program, which places the M112 parameter segments and
+//                  decides how memory past 0xFFFF is reached (without it, that memory is probed with
+//                  A_MemoryExtended)
 // --no-authorize   no free-key authorize, to compare what the device answers without it
 // --knxproj        a secured device: its tool key and serial come from the project (password from the
 //                  environment variable), the session runs secured; the key never enters the package
@@ -25,7 +27,7 @@ import { dirname } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { KnxIpTunnel, KnxDevice, SecureSession, iaToNum } from "../packages/knx/src/index.ts";
 import { loadKnxproj } from "../packages/project/src/index.ts";
-import { collectDevice, parseAppConfig, CollectCancelled, type CollectApp } from "../packages/product/src/index.ts";
+import { collectDevice, collectApp, parseAppConfig, CollectCancelled, type CollectApp } from "../packages/product/src/index.ts";
 import { gitRevision } from "./evidence.ts";
 
 const USAGE = "usage: bun run tools/collect.ts <host[:port]> <ia> <out.json> [--app=<app.xml[.gz]>] [--no-authorize] [--knxproj=<file> --password-env=<VAR>]";
@@ -63,7 +65,7 @@ const appPath = flag("app");
 if (appPath) {
   const raw = readFileSync(appPath);
   const cfg = parseAppConfig((appPath.endsWith(".gz") ? gunzipSync(raw) : raw).toString("utf8"));
-  app = { mask: cfg.mask, absoluteSegments: cfg.absoluteSegments };
+  app = collectApp(cfg);
 }
 
 let creds: { toolKey: Buffer; serial: Buffer } | undefined;

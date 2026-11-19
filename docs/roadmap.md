@@ -76,6 +76,13 @@ depends on is hardware-proven.
   setting that capture does not show (a device name, DHCP, tunnelling users, IP Secure, the
   installation's routing settings), is refused until a capture shows it. The group tables with entries
   are not decoded, and no System 1 group-address download is captured.
+- **`A_UserMemory` for memory past `0xFFFF`.** An application without
+  `SupportsExtendedMemoryServices` is refused there (`USER_MEMORY_UNSUPPORTED`). Other KNX tools report
+  that ETS uses `A_UserMemory` on such units (APCI `0x2C0`-`0x2C2`, a 20-bit address, at most 15 octets
+  per request, echoed in verify mode); none of ours has shown it. Needs an ETS download of such a unit
+  in a capture. Until then a full download of one whose allocator places a segment past `0xFFFF` is
+  refused only after the unload, which leaves it unloaded
+  ([device-memory-model.md](device-memory-model.md#a_memoryextended-reaching-a-segment-above-64-kb)).
 - **Time a large MV-0705 download against the stop grace period.** The 30-minute
   `stop_grace_period` ([deployment.md](deployment.md)) has been measured only against small MV-0705
   images.

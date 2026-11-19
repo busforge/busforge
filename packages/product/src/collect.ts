@@ -1,4 +1,5 @@
 import { transferChunks, OBJECT_TYPE_SECURITY, type PropertyDescription, type PropertyValueResponse, type PartialMemRead } from "@busforge/knx";
+import { sameMask } from "./masks.ts";
 import { planForMask, unreadableReason, type CollectApp, type MaskPlan, type MemoryRange, type RangeSource, type TableStep } from "./collectplan.ts";
 
 // Raw acquisition (docs/raw-acquisition.md): read a device's identity, its interface objects and the
@@ -15,6 +16,7 @@ export interface CollectDevice {
   propertyDescription(obj: number, pid: number, propertyIndex: number): Promise<PropertyDescription>;
   propReadCounted(obj: number, pid: number, start: number, count: number): Promise<PropertyValueResponse>;
   memReadPartial(addr: number, len: number, opts: { chunk: number; signal?: AbortSignal; beforeRequest?: () => void }): Promise<PartialMemRead>;
+  setExtendedMemoryServices(on: boolean): void;
   funcPropExtStateRead(objectType: number, instance: number, pid: number, data: Buffer): Promise<{ returnCode: number; result: Buffer }>;
 }
 
@@ -120,6 +122,8 @@ export async function collectDevice(dev: CollectDevice, opts: CollectOptions): P
   let phase: "generic" | "scan" | "memory" = "generic";
   let failures = 0;
   let authorize = false;
+  // The project's application for this mask declares no extended memory services (see the plan step).
+  let classicOnly = false;
   // The reason no maximum APDU length is known, for as long as none is.
   let noMaxApdu = "no maximum APDU length is known: this plan does not read PID 56 of object 0";
 
@@ -226,6 +230,12 @@ export async function collectDevice(dev: CollectDevice, opts: CollectOptions): P
     }
     const plan = planForMask(mask, opts.app);
     pkg.plan = plan;
+    // The project's application, where it is for this mask, decides how memory past 0xFFFF is reached;
+    // without one (or with one that cannot be parsed) the read probes there with A_MemoryExtended and
+    // records what comes back.
+    const appForMask = opts.app && !("unavailable" in opts.app) && sameMask(opts.app.mask, mask) ? opts.app : null;
+    if (appForMask) dev.setExtendedMemoryServices(appForMask.extendedMemory);
+    classicOnly = appForMask?.extendedMemory === false;
     pkg.family = plan.family;
     for (const n of plan.notAttempted) rec({ step: "plan", space: n.space ?? "memory", target: { name: n.name }, source: "master-data", outcome: "not-attempted", detail: n.reason });
 
@@ -465,12 +475,21 @@ export async function collectDevice(dev: CollectDevice, opts: CollectOptions): P
         rec({ step, space: end - 1 > 0xffff ? "memory-extended" : "memory", target: { address: pos, length: end - pos }, source, outcome: "not-attempted", detail: `memory budget of ${L.memoryBytes} bytes reached` });
         throw new PhaseLimit(`memory plan: ${L.memoryBytes} bytes`);
       }
-      const len = Math.min(end - pos, L.memoryBytes - pkg.counts.memoryBytes);
+      // A range crossing 0xFFFF on a device reached classic only is read classic up to 0xFFFF; the rest is
+      // refused (USER_MEMORY_UNSUPPORTED) and recorded as not attempted.
+      const len = Math.min(end - pos, L.memoryBytes - pkg.counts.memoryBytes, classicOnly && pos <= 0xffff ? 0x10000 - pos : Infinity);
       // memReadPartial takes the extended service for a request whose range passes 0xFFFF.
       const extended = pos + len - 1 > 0xffff;
       const space: RecordSpace = extended ? "memory-extended" : "memory";
       const chunk = extended ? chunks.extRead : chunks.classicRead;
-      const res = await dev.memReadPartial(pos, len, { chunk, signal: opts.signal, beforeRequest });
+      let res: PartialMemRead;
+      try { res = await dev.memReadPartial(pos, len, { chunk, signal: opts.signal, beforeRequest }); }
+      catch (e) {
+        // Refused before any request: the application reaches that memory with a service the collector does not send.
+        if ((e as { code?: string }).code !== "USER_MEMORY_UNSUPPORTED") throw e;
+        rec({ step, space, target: { address: pos, length: end - pos }, source, outcome: "not-attempted", detail: (e as Error).message });
+        return null;
+      }
       for (const p of res.pieces) {
         pkg.counts.memoryBytes += p.length;
         if ("bytes" in p) { rec({ step, space, target: { address: p.address, length: p.length }, source, outcome: "bytes", bytes: hex(p.bytes) }); if (out) p.bytes.copy(out, p.address - r.address); }

@@ -54,10 +54,19 @@ export function maskGate(mask: string, wantMask: string, secured: boolean): ApiE
   return null;
 }
 
+// What a session for one application holds the device to: the mask of the gate below, and the memory
+// services the application declares (<Options SupportsExtendedMemoryServices>), which decide how the
+// device is reached past 0xFFFF and how it is written (KnxDevice.setExtendedMemoryServices). Set before
+// the body's first request, so a read ahead of a write takes the same service the write would.
+type SessionApp = { mask: string; extendedMemory: boolean };
+function sessionApp(mask: string, cfg: AppConfig): SessionApp {
+  return { mask, extendedMemory: cfg.loadProcedures.extendedMemoryServices };
+}
+
 // Open a connection-oriented link to the device, verify it is the device/application we
 // expect, run the model-specific body, and always tear the link down. The mask check is
 // the primary safety gate (wrong device or wrong application aborts before any read or
-// write); wantMask null = identification session (reading the mask is the goal).
+// write); app null = identification session (reading the mask is the goal).
 //
 // With an expected mask the link opens at the body's first request to the device, and the body is
 // handed that mask (the gate holds the device to it). A device closes a transport connection that
@@ -68,11 +77,12 @@ export function maskGate(mask: string, wantMask: string, secured: boolean): ApiE
 async function withDeviceSession<T>(
   connection: Connection,
   ia: string,
-  wantMask: string | null,
+  app: SessionApp | null,
   onProgress: ProgressFn | undefined,
   body: (dev: KnxDevice, mask: string) => Promise<T>,
   secure?: SecureCreds,
 ): Promise<T> {
+  const wantMask = app?.mask ?? null;
   const tun = makeTransport(connection);
   let dev: KnxDevice | null = null;
   let session: SecureSession | undefined;
@@ -106,14 +116,15 @@ async function withDeviceSession<T>(
   };
   try {
     let result: T;
-    if (wantMask === null) {
+    if (app === null) {
       const opened = await open();
       result = await body(opened.dev, opened.mask);
     } else {
       const lazy = openedOnFirstRequest(open, tun instanceof KnxUsbTransport, secure !== undefined);
+      lazy.dev.setExtendedMemoryServices(app.extendedMemory);
       settleOpening = () => lazy.settled();
       failureOf = () => lazy.failure();
-      result = await body(lazy.dev, wantMask);
+      result = await body(lazy.dev, app.mask);
       // A failed opening (the mask gate above all) fails the session even where the body took the
       // failure of the request that opened it as an answer.
       const failed = lazy.failure();
@@ -212,9 +223,10 @@ type BaselineComObjOverrides = ProjectComObjOverrides & { comObjectOverrideBase:
 
 // Program a device\'s parameter segment from its stored configuration.
 export function flashDeviceParameters(opts: Omit<ParamFlashCtx, "persistBackups"> & ServerScope): Promise<FlashResult> {
-  const profile = classify(parseAppConfig(opts.appXml));
+  const cfg = parseAppConfig(opts.appXml);
+  const profile = classify(cfg);
   const ctx: ParamFlashCtx = { ...opts, persistBackups: backupPersister(opts.dataDir, opts.projectId) };
-  return withDeviceSession(opts.connection, opts.ia, profile.mask, opts.onProgress, (dev, mask) => profile.flashParameters(dev, mask, ctx), opts.secure);
+  return withDeviceSession(opts.connection, opts.ia, sessionApp(profile.mask, cfg), opts.onProgress, (dev, mask) => profile.flashParameters(dev, mask, ctx), opts.secure);
 }
 
 // A secured session that rewrites a device's group tables must load its security object with
@@ -233,9 +245,10 @@ function refuseSessionWithoutSecurityObject(opts: { secure?: SecureCreds; securi
 export function flashDeviceGroupAddresses(opts: Omit<GaFlashCtx, "persistBackups"> & ServerScope & BaselineComObjOverrides & { appXml: string }): Promise<FlashResult> {
   const refused = refuseSessionWithoutSecurityObject(opts);
   if (refused) return refused;
-  const profile = classify(parseAppConfig(opts.appXml));
+  const cfg = parseAppConfig(opts.appXml);
+  const profile = classify(cfg);
   const ctx: GaFlashCtx = { ...opts, persistBackups: backupPersister(opts.dataDir, opts.projectId) };
-  return withDeviceSession(opts.connection, opts.ia, profile.mask, opts.onProgress, (dev, mask) => profile.flashGroupTables(dev, mask, ctx), opts.secure);
+  return withDeviceSession(opts.connection, opts.ia, sessionApp(profile.mask, cfg), opts.onProgress, (dev, mask) => profile.flashGroupTables(dev, mask, ctx), opts.secure);
 }
 
 // Write a parameter change that alters the com-object table: parameters, the com-object table they
@@ -243,9 +256,10 @@ export function flashDeviceGroupAddresses(opts: Omit<GaFlashCtx, "persistBackups
 export function flashDeviceStructure(opts: Omit<StructureFlashCtx, "persistBackups"> & ServerScope & BaselineComObjOverrides): Promise<FlashResult> {
   const refused = refuseSessionWithoutSecurityObject(opts);
   if (refused) return refused;
-  const profile = classify(parseAppConfig(opts.appXml));
+  const cfg = parseAppConfig(opts.appXml);
+  const profile = classify(cfg);
   const ctx: StructureFlashCtx = { ...opts, persistBackups: backupPersister(opts.dataDir, opts.projectId) };
-  return withDeviceSession(opts.connection, opts.ia, profile.mask, opts.onProgress, (dev, mask) => profile.flashStructure(dev, mask, ctx), opts.secure);
+  return withDeviceSession(opts.connection, opts.ia, sessionApp(profile.mask, cfg), opts.onProgress, (dev, mask) => profile.flashStructure(dev, mask, ctx), opts.secure);
 }
 
 // Commission a device from nothing: application id, parameter image, com-object table and group
@@ -254,17 +268,18 @@ export function flashDeviceStructure(opts: Omit<StructureFlashCtx, "persistBacku
 export function downloadDeviceFull(opts: Omit<FullDownloadCtx, "persistBackups"> & ServerScope & ProjectComObjOverrides): Promise<FlashResult> {
   const refused = refuseSessionWithoutSecurityObject(opts);
   if (refused) return refused;
-  const profile = classify(parseAppConfig(opts.appXml));
+  const cfg = parseAppConfig(opts.appXml);
+  const profile = classify(cfg);
   const ctx: FullDownloadCtx = { ...opts, persistBackups: backupPersister(opts.dataDir, opts.projectId) };
-  return withDeviceSession(opts.connection, opts.ia, profile.mask, opts.onProgress, (dev, mask) => profile.downloadFull(dev, mask, ctx), opts.secure);
+  return withDeviceSession(opts.connection, opts.ia, sessionApp(profile.mask, cfg), opts.onProgress, (dev, mask) => profile.downloadFull(dev, mask, ctx), opts.secure);
 }
 
 // Read a device\'s current state back off the bus into a programmed baseline (drift
 // detection). Read-only: nothing is written to the device.
 export function readDeviceState(opts: ReadStateOpts & { ia: string; connection: Connection; secure?: SecureCreds }): Promise<DeviceStateRead> {
   const cfg = parseAppConfig(opts.appXml);
-  const mask = classify(cfg).mask;
-  return readStateIn((body) => withDeviceSession(opts.connection, opts.ia, mask, opts.onProgress, body, opts.secure), cfg, opts);
+  const app = sessionApp(classify(cfg).mask, cfg);
+  return readStateIn((body) => withDeviceSession(opts.connection, opts.ia, app, opts.onProgress, body, opts.secure), cfg, opts);
 }
 
 // A read-back, and with `holds` set, whether the device holds this configuration in a way a read of

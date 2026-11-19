@@ -10,7 +10,7 @@
 // There are no default paths or default target: every argument is required so a
 // bare invocation opens no tunnel and reads nothing.
 import fs from "node:fs";
-import { parseApplication, buildParameterImage } from "../packages/product/src/index.ts";
+import { parseApplication, buildParameterImage, parseLoadProcedures } from "../packages/product/src/index.ts";
 import { deviceParamValues } from "../packages/project/src/index.ts";
 import { KnxIpTunnel, KnxDevice } from "../packages/knx/src/index.ts";
 
@@ -25,7 +25,8 @@ if (!ip || !ia || !appXml || !proj0 || !devId) {
 }
 const LSM = 4;
 
-const model = parseApplication(fs.readFileSync(appXml, "utf8"));
+const xml = fs.readFileSync(appXml, "utf8");
+const model = parseApplication(xml);
 const { values } = deviceParamValues(fs.readFileSync(proj0, "utf8"), devId);
 console.log(`app ${model.manufacturer.toString(16)}/${model.appNumber}/${model.version} mask ${model.mask}, ${model.params.size} params, ${values.size} instance values`);
 const built = buildParameterImage(model, LSM, values);
@@ -33,6 +34,7 @@ console.log(`built image: ${built.length}B`);
 
 const tun = new KnxIpTunnel(ip); await tun.connect();
 const dev = new KnxDevice(tun, ia); await dev.connect();
+dev.setExtendedMemoryServices(parseLoadProcedures(xml).extendedMemoryServices);
 await dev.deviceDescriptor();
 const addr = await dev.tableAddr(LSM);
 const onDevice = await dev.memRead(addr, built.length);
