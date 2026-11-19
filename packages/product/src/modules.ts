@@ -1,5 +1,5 @@
 import type { AppConfig, DynNode, ModuleInstance } from "./appconfig.ts";
-import { matchTest } from "./config.ts";
+import { defaultBranchOf, matchTest, unsettledDefaultRefusal } from "./config.ts";
 import { ProductError } from "./errors.ts";
 
 // A module argument's value as a number where it is used as one (a memory base offset, a com-object
@@ -24,31 +24,35 @@ export const moduleArgNumber = (value: string): number => (/^-?\d+$/.test(value)
 // binds an argument to an allocator takes the current counter and advances it by that
 // argument's `allocates`. A `<Repeat Count="k">` replays its body k times, so a six-channel
 // block yields six instances at start, start+allocates, ... A `choose` descends only into
-// the matching branch, so inactive device variants neither render nor allocate. Its default branch only
-// where the configuration takes it (config.ts selectWhens): when the choose's ref is placed, by a reached
-// ParameterRefRef or as the page parameter heading a reached block, found by walking until the placement
-// settles. A module in a default branch no ETS download decides is refused (CHOOSE_DEFAULT_UNSETTLED).
+// the matching branch, so inactive device variants neither render nor allocate. Its default branch is taken
+// where the configuration takes it (config.ts defaultBranchOf), with the refs placed by reached ParameterRefRefs
+// and the refs heading reached blocks found by walking until they settle. Where no ETS download decides a default
+// branch, the instances are allocated with it taken and without, and refused (CHOOSE_DEFAULT_UNSETTLED) where the
+// two differ.
 export function resolveModuleInstances(app: AppConfig, env: Map<string, string>): ModuleInstance[] {
-  // Rewritten ParameterRef ids: placed by a reached ParameterRefRef or page-block heading, and heading a reached
-  // block without being a page parameter.
-  let seen = { placed: new Set<string>(), heads: new Set<string>() };
-  const same = (a: Set<string>, b: Set<string>) => a.size === b.size && [...a].every((r) => b.has(r));
-  for (let pass = 0; ; pass++) {
-    const run = allocate(app, env, seen);
-    if (same(run.placed, seen.placed) && same(run.heads, seen.heads)) return run.out;
-    if (pass >= 50) throw new ProductError("CONFIG_NOT_RESOLVABLE", "the application's parameter visibility does not settle while its module instances are allocated");
-    seen = run;
-  }
+  const settled = (takeOpen: boolean) => {
+    let seen = { placed: new Set<string>(), heads: new Set<string>() };
+    const same = (a: Set<string>, b: Set<string>) => a.size === b.size && [...a].every((r) => b.has(r));
+    for (let pass = 0; ; pass++) {
+      const run = allocate(app, env, seen, takeOpen);
+      if (same(run.placed, seen.placed) && same(run.heads, seen.heads)) return run;
+      if (pass >= 50) throw new ProductError("CONFIG_NOT_RESOLVABLE", "the application's parameter visibility does not settle while its module instances are allocated");
+      seen = run;
+    }
+  };
+  const taken = settled(true);
+  if (!taken.open.size) return taken.out;
+  if (JSON.stringify(settled(false).out) !== JSON.stringify(taken.out)) throw unsettledDefaultRefusal([...taken.open]);
+  return taken.out;
 }
 
-const containsModule = (nodes: DynNode[]): boolean =>
-  nodes.some((n) => n.kind === "module" || ((n.kind === "block" || n.kind === "container") && containsModule(n.children)) || (n.kind === "choose" && n.whens.some((w) => containsModule(w.children))));
-
-function allocate(app: AppConfig, env: Map<string, string>, before: { placed: Set<string>; heads: Set<string> }): { out: ModuleInstance[]; placed: Set<string>; heads: Set<string> } {
+// One allocation walk over the placement `before` found. `open`: the chooses whose default branch it took or left
+// by `takeOpen` alone.
+function allocate(app: AppConfig, env: Map<string, string>, before: { placed: Set<string>; heads: Set<string> }, takeOpen: boolean): { out: ModuleInstance[]; placed: Set<string>; heads: Set<string>; open: Set<string> } {
   const alloc = new Map<string, number>();
   for (const a of app.allocators.values()) alloc.set(a.id, a.start);
   const out: ModuleInstance[] = [];
-  const placed = new Set<string>(), heads = new Set<string>();
+  const placed = new Set<string>(), heads = new Set<string>(), open = new Set<string>();
   const miCount = new Map<string, number>(); // module-node id -> instances seen so far (for MI-n)
 
   const strip = (id: string) => (id.startsWith(`${app.id}_`) ? id.slice(app.id.length + 1) : id);
@@ -70,7 +74,7 @@ function allocate(app: AppConfig, env: Map<string, string>, before: { placed: Se
     for (const n of nodes) {
       switch (n.kind) {
         case "block":
-          if (n.paramRefId) (app.types.get(app.params.get(app.refs.get(n.paramRefId)?.paramId ?? "")?.typeId ?? "")?.kind === "TypeNone" ? placed : heads).add(rewrite(n.paramRefId));
+          if (n.paramRefId) heads.add(rewrite(n.paramRefId));
           walk(n.children, rewrite);
           break;
         case "container":
@@ -79,20 +83,19 @@ function allocate(app: AppConfig, env: Map<string, string>, before: { placed: Se
           break;
         case "choose": {
           // ETS evaluates EVERY matching <when>, not just the first (see config.ts
-          // selectWhens); the default fires only when none match. Allocation must walk the
-          // same branches the config/image walk does, or a from-scratch device's instance
-          // set would diverge from ETS's.
+          // selectWhens); the default is taken only when none match, by defaultBranchOf. Allocation
+          // must walk the same branches the config/image walk does, or a from-scratch device's
+          // instance set would diverge from ETS's.
           const v = effVal(n.paramRefId, rewrite);
           const matched = n.whens.filter((x) => !x.isDefault && x.test !== undefined && matchTest(x.test, v));
           const def = n.whens.find((x) => x.isDefault);
-          const ref = app.refs.get(n.paramRefId);
           const id = rewrite(n.paramRefId);
-          const open = !matched.length && !!def && !!ref && !before.placed.has(id)
-            && (before.heads.has(id) || (ref.access ?? app.params.get(ref.paramId)?.access) === "None");
-          if (open && containsModule(def.children)) {
-            throw new ProductError("CHOOSE_DEFAULT_UNSETTLED", `the module instances depend on whether the <choose> on ${id} takes its default branch: its ParameterRef is Access="None" and no active branch places it, or it only heads a reached block, and no ETS download shows which; an ETS download of this application in this configuration settles it`);
+          let branches = matched;
+          if (!matched.length && def) {
+            const rule = defaultBranchOf(app, n.paramRefId, before.placed.has(id), before.heads.has(id));
+            if (rule === "open" && def.children.length) open.add(id);
+            branches = rule === "take" || (rule === "open" && takeOpen) ? [def] : [];
           }
-          const branches = matched.length ? matched : def && (before.placed.has(id) || open) ? [def] : [];
           for (const w of branches) walk(w.children, rewrite);
           break;
         }
@@ -144,5 +147,5 @@ function allocate(app: AppConfig, env: Map<string, string>, before: { placed: Se
     }
   };
   walk(app.dynamic, (s) => s);
-  return { out, placed, heads };
+  return { out, placed, heads, open };
 }

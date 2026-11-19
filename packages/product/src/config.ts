@@ -409,11 +409,11 @@ const fillTextParam = (text: string, value: string | undefined): string =>
   value === undefined ? text : text.replace(textParamPlaceholder, (_m, def: string | undefined) => (value !== "" ? value : def ?? ""));
 
 // A choose on a ParameterRef no active branch places takes no default branch (docs/findings.md, "A choose on a
-// ParameterRef nothing places takes no default branch"); one on a page parameter (TypeNone) heading a reached
-// block takes it. ETS's downloads show both; none shows a choose on an Access="None" ref nothing places (an
-// internal value no branch places by design) or on another parameter that only heads a reached block. Such a
-// choose is built both ways: other com-objects refuse the configuration here, its view included; other values
-// with memory are left to the segment builders, which refuse where the two readings make other bytes.
+// ParameterRef nothing places takes no default branch"); one on a memoryless parameter heading a reached block
+// takes it. ETS's downloads show both; none shows a choose on an Access="None" ref nothing places (an internal
+// value no branch places by design) or on a parameter with memory that only heads a reached block. Such a choose
+// is built both ways: other com-objects refuse the configuration here, its view included; other values with
+// memory are left to the segment builders, which refuse where the two readings make other bytes.
 export function buildDeviceConfig(
   app: AppConfig,
   overrides: Map<string, string>,
@@ -433,18 +433,36 @@ export function buildDeviceConfig(
   const calculated = new Set([...app.calculationRefs].map((r) => resolveParamRef(app, r)?.param?.id));
   const reaches = (refId: string) => {
     const p = resolveParamRef(app, refId)?.param;
-    return !!p && (p.offset !== undefined || !!p.onProperty || calculated.has(p.id));
+    return !!p && (holdsValue(p) || calculated.has(p.id));
   };
-  const imageInput = (b: DeviceConfigBuild) => [[...b.imageValues].filter(([r]) => reaches(r)).sort(), [...b.rejectedRefs].filter(reaches).sort()];
+  const byId = (x: string, y: string) => x.localeCompare(y);
+  const imageInput = (b: DeviceConfigBuild) => [
+    [...b.imageValues].filter(([r]) => reaches(r)).sort((x, y) => byId(x[0], y[0])),
+    [...b.rejectedRefs].filter(reaches).sort(byId),
+  ];
   if (same(imageInput(taken.build), imageInput(skipped))) return taken.build;
   return { ...taken.build, otherReading: skipped, unsettledChooses };
+}
+
+// Whether a parameter's value is held by the device: in memory or in a property.
+const holdsValue = (p: CfgParam): boolean => p.hasMemory || !!p.onProperty;
+
+// What a choose none of whose tests matches does with its default branch: takes it on a ParameterRef an active
+// branch places ("take"), and on a memoryless parameter heading a reached block; not on a ref nothing places
+// ("skip"); "open" where no ETS download decides it (buildDeviceConfig). Shared with the module allocator.
+export function defaultBranchOf(app: AppConfig, defRefId: string, placed: boolean, heads: boolean): "take" | "skip" | "open" {
+  const ref = app.refs.get(defRefId);
+  if (!ref || placed) return "take";
+  const param = app.params.get(ref.paramId);
+  if (heads) return param && holdsValue(param) ? "open" : "take";
+  return (ref.access ?? param?.access) === "None" ? "open" : "skip";
 }
 
 // Every reading of a configuration: the build, and the other reading where it has one (buildDeviceConfig).
 export const readingsOf = (b: DeviceConfigBuild): DeviceConfigBuild[] => (b.otherReading ? [b, b.otherReading] : [b]);
 
 export const unsettledDefaultRefusal = (chooses: string[] | undefined) => new ProductError("CHOOSE_DEFAULT_UNSETTLED",
-  `this configuration images differently depending on whether a <choose> takes its default branch${chooses?.length ? ` (on ${chooses.slice(0, 5).join(", ")})` : ""}: its ParameterRef is Access="None" and no active branch places it, or it only heads a reached block, and no ETS download shows which; an ETS download of this application in this configuration settles it`);
+  `this configuration images differently depending on whether a <choose> takes its default branch${chooses?.length ? ` (on ${chooses.slice(0, 5).join(", ")})` : ""}: its ParameterRef is Access="None" and no active branch places it, or it has memory and only heads a reached block, and no ETS download shows which; an ETS download of this application in this configuration settles it`);
 
 function buildDeviceConfigReading(
   app: AppConfig,
@@ -568,8 +586,8 @@ function buildDeviceConfigReading(
   // syn-choose-per-ref (the unplaced second ref of a shown parameter) leave the com-object of the only, default
   // branch out, and the second's download with that ref placed writes it. Its tests still count: the Jung
   // 400021SE's choose on its unplaced R-1 and the OpenKNX RaumController's on unplaced internal values place what
-  // ETS writes. A page parameter (TypeNone) heading a reached block counts as placed: on the Gira, Theben and ABB
-  // products the captures show, ETS takes the default branch of a choose on one.
+  // ETS writes. A memoryless parameter heading a reached block counts as placed: on the Gira, Theben and ABB
+  // products the captures show, ETS takes the default branch of a choose on such a page parameter.
   const selectWhens = (defParamRefId: string, whens: DynWhen[], scope: Scope, e: Map<string, string> = env): DynWhen[] => {
     // A choose on a union member that no active branch places matches none of its tests: that
     // member holds no value, since its union's memory belongs to whichever member is placed (GVS
@@ -583,11 +601,9 @@ function buildDeviceConfigReading(
     const def = whens.find((w) => w.isDefault);
     if (!def) return [];
     const ref = app.refs.get(defParamRefId);
-    if (!ref || placement.get(scope.rewrite(ref.paramId))?.has(defParamRefId)) return [def];
-    const param = app.params.get(ref.paramId);
-    const heads = headed.has(scope.rewrite(defParamRefId));
-    if (heads && app.types.get(param?.typeId ?? "")?.kind === "TypeNone") return [def];
-    if (!heads && (ref.access ?? param?.access) !== "None") return [];
+    const placed = !!ref && !!placement.get(scope.rewrite(ref.paramId))?.has(defParamRefId);
+    const rule = defaultBranchOf(app, defParamRefId, placed, headed.has(scope.rewrite(defParamRefId)));
+    if (rule !== "open") return rule === "take" ? [def] : [];
     if (def.children.length) unsettled.add(scope.rewrite(defParamRefId));
     return takeOpenDefaults ? [def] : [];
   };

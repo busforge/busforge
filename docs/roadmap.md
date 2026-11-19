@@ -190,14 +190,17 @@ depends on is hardware-proven.
   at import and reach the write path, as the PEI program does, so that a product whose factory image
   holds the com-object table is refused the same writes. An ETS capture of a download of either kind
   settles what the table holds; no product in the test corpus is of either kind.
-- **The default branch of a `<choose>` on an `Access="None"` ParameterRef nothing places.** ETS takes no
-  default branch of a choose on a ParameterRef nothing places, as its downloads of shown parameters'
-  refs show ([findings.md](findings.md#11-a-choose-on-a-parameterref-nothing-places-takes-no-default-branch));
-  none shows an internal (`Access="None"`) ref, which OpenKNX applications assign and test but never place,
-  nor a parameter other than a page parameter that only heads a reached block.
-  A configuration whose bytes depend on it is refused (`CHOOSE_DEFAULT_UNSETTLED`). An ETS
-  download of such a configuration settles it. In every configuration the corpus checks build, the two
-  readings make the same bytes; on the OpenKNX RaumController the branch sets internal values without memory.
+- **The default branch of a `<choose>` no ETS download decides.** ETS takes no default branch of a choose
+  on a ParameterRef nothing places, as its downloads of shown parameters' refs show, and takes it on a page
+  parameter heading a reached block
+  ([findings.md](findings.md#11-a-choose-on-a-parameterref-nothing-places-takes-no-default-branch)). None
+  shows an internal (`Access="None"`) ref, which OpenKNX applications assign and test but never place, nor a
+  parameter with memory that only heads a reached block, nor the ABB US/U 4.2's numeric page parameters
+  where they decide (Busforge takes their default branch, as for any memoryless page parameter). A
+  configuration whose bytes depend on an undecided one is refused, its read-back too
+  (`CHOOSE_DEFAULT_UNSETTLED`); an ETS download of such a configuration settles it. In every configuration
+  the corpus checks build, the two readings make the same bytes; on the OpenKNX RaumController the branch
+  sets internal values without memory.
 - **Prove a non-TP device.** One read-back on real powerline, RF or IP hardware promotes that row
   from extrapolation to proof. Hardware verification help is welcome.
 - **OpenKNX surgical flashes under an automated run.** The device-in-service spec
