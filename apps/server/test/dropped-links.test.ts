@@ -234,6 +234,19 @@ describe("links an import does not take over, per com-object", () => {
     ]);
   });
 
+  test("an object its parameters hide stays open also where the configuration places it without a ComObjectRef", async () => {
+    const state = freshState();
+    const direct = appXml(`<ChannelIndependentBlock><ParameterBlock Id="${A}_PB-1" Name="Main" Text="Main"><ParameterRefRef RefId="${A}_P-1_R-1"/>
+      <choose ParamRefId="${A}_P-1_R-1"><when test="1"><ComObjectRefRef RefId="${A}_O-4"/></when></choose>
+    </ParameterBlock></ChannelIndependentBlock>`).replace("</ComObjectTable>", `${obj(4, "Scene", "Recall")}</ComObjectTable>`);
+    const project = xml0.replace(/<ComObjectInstanceRefs>[\s\S]*<\/ComObjectInstanceRefs>/, `<ComObjectInstanceRefs><ComObjectInstanceRef RefId="O-4" Links="GA-1 GA-9"/></ComObjectInstanceRefs>`);
+    const imp = await post(state, "/api/projects/import", new File([knxprojWith(direct, project)], "Dropped.knxproj"));
+    const entries = async () => ((await listed(state, imp.id)) as any[]).map((l) => [l.comObjRefId, l.comObjNumber, l.unresolved, l.unrecoverable]);
+    expect(await entries()).toEqual([["O-4", null, "notInConfiguration", false]]);
+    await put(state, imp.id, "params", { paramRefId: `${A}_P-1_R-1`, value: "1" });
+    expect(await entries()).toEqual([["O-4", 4, null, false]]);
+  });
+
   test("a module object is open while its instance is there and can never be linked again once a parameter removes it", async () => {
     const state = freshState();
     const imp = await post(state, "/api/projects/import", new File([moduleKnxproj], "Dropped.knxproj"));
