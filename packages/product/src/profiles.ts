@@ -345,6 +345,10 @@ export const KNXIP_SETTINGS_REFUSAL: OperationRefusal = {
 function fullDownloadRefusedForKnxIp(app: AppConfig, knxIp: KnxIpSettings): boolean {
   return (declaresAdditionalAddresses(app) || holdsKnxIpSettings(knxIp)) && classify({ ...app, additionalAddressesCount: 0 }).capabilities().fullDownload;
 }
+// The refusal an application's own declaration of additional addresses makes, which every instance holds: named
+// among the application's refusals (operationRefusals), after any other reason its profile has.
+const declaredKnxIpRefusal = (app: AppConfig): OperationRefusal | undefined =>
+  fullDownloadRefusedForKnxIp(app, null) ? KNXIP_SETTINGS_REFUSAL : undefined;
 // What the device's KNXnet/IP settings in the project keep Busforge from, on top of its application's own
 // refusals (operationRefusals), as hardwareRefusals for its hardware. System 1 writes the settings itself.
 export function knxIpRefusals(app: AppConfig, knxIp: KnxIpSettings): OperationRefusals {
@@ -1229,7 +1233,7 @@ export class SystemBProfile extends DeviceProfile {
     const par = parRefusal(assessParCoverage(this.cfg.loadProcedures, "relative"), "parameter download");
     const grp = parRefusal({ blocked: unrunGrpSteps(this.cfg.loadProcedures), skipped: [], checks: [] }, "group-address flash");
     const table = downloadPluginRefusal(this.cfg) ?? comObjectTableRefusal(this.cfg);
-    const full = par ?? relativeFullDownloadRefusal(this.cfg, this.cfg.loadProcedures) ?? table;
+    const full = par ?? relativeFullDownloadRefusal(this.cfg, this.cfg.loadProcedures) ?? table ?? declaredKnxIpRefusal(this.cfg);
     const links = grp ?? table;
     return {
       ...(par ? { flashParams: par } : {}),
@@ -1243,10 +1247,9 @@ export class SystemBProfile extends DeviceProfile {
   }
 
   // A full download needs the parameter segment to fill AND an application to author the
-  // com-object table from; without either there is nothing to commission. An application declaring
-  // additional addresses holds KNXnet/IP settings on every instance (refuseKnxIpSettings).
+  // com-object table from; without either there is nothing to commission.
   private fullDownloadOffered(): boolean {
-    return this.hasParamSegment() && !!this.cfg && !declaresAdditionalAddresses(this.cfg);
+    return this.hasParamSegment() && !!this.cfg;
   }
 
   planFullDownload(mask: string, inputs: FullDownloadInputs): FullDownloadBuild {
@@ -2061,6 +2064,8 @@ export class System7Profile extends DeviceProfile {
       if ("l3" in ga && ga.l3) out.flashLinks ??= plugin;
       if (this.fullDownloadOffered()) out.fullDownload ??= plugin;
     }
+    const knxIp = this.fullDownloadOffered() ? declaredKnxIpRefusal(cfg) : undefined;
+    if (knxIp) out.fullDownload ??= knxIp;
     return out;
   }
 
@@ -2078,7 +2083,7 @@ export class System7Profile extends DeviceProfile {
   }
 
   private fullDownloadOffered(): boolean {
-    return this.canAuthor() && !!this.cfg && !declaresAdditionalAddresses(this.cfg);
+    return this.canAuthor() && !!this.cfg;
   }
 
   async readDevice(dev: KnxDevice, mask: string, ctx: ReadStateCtx): Promise<() => DeviceReadback> {
