@@ -428,9 +428,10 @@ export async function secureIdentify(
 export interface DeviceIdentity { secure: boolean; mask: string; serial: string | null; securityMode: SecurityModeReading }
 // Take a secure device from its factory key to a tool key of busforge's (activateSecureDevice in
 // @busforge/knx): every session is opened on its own link, under the key being tried. The new key
-// reaches `persistKey` before it is written to the device.
+// reaches `persistKey` before it is written to the device. `stored.wasActive`: the device has been seen
+// under the key on file (any source but a pending key).
 export async function activateDevice(
-  connection: Connection, ia: string, cert: { fdsk: Buffer; serial: Buffer }, storedKey: Buffer | undefined,
+  connection: Connection, ia: string, cert: { fdsk: Buffer; serial: Buffer }, stored: { toolKey: Buffer; wasActive: boolean } | undefined,
   persistKey: (key: Buffer) => void, onProgress?: ProgressFn, onPeerSequence?: (sequence: bigint) => void,
 ): Promise<Omit<ActivationResult, "toolKey">> {
   const links = new Map<KnxDevice, { tun: { disconnect(): Promise<void> }; session: SecureSession }>();
@@ -461,7 +462,7 @@ export async function activateDevice(
       // Whatever key a session ran under, the device answered from its one sending counter.
       reportPeerSequence(link?.session, onPeerSequence);
     },
-  }, { fdsk: cert.fdsk, serial: cert.serial, storedKey, persistKey });
+  }, { fdsk: cert.fdsk, serial: cert.serial, storedKey: stored?.toolKey, storedKeyWasActive: stored?.wasActive, persistKey });
   return { outcome: r.outcome };
 }
 

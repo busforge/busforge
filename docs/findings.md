@@ -692,9 +692,11 @@ reboot by the device's silence, not by the acknowledgement; a check that trusted
 call such a download done (`RESTART_IGNORED` is the refusal).
 
 On the path it was captured on (a KNXnet/IP tunnel through Busforge's bridge to TP), ETS never
-sends the Jung a secured request longer than 40 octets:
-after 151-byte frames go unanswered it writes 22-byte memory chunks and 18-element property writes,
-both exactly 40. Busforge holds secured writes to that.
+sends the Jung a secured request longer than 40 octets that the device answers: after 151-byte
+frames go unanswered it writes 22-byte memory chunks and 18-element property writes, both exactly
+40, the size ETS falls back to after a long write fails. ETS first sizes a secured write by the
+shorter of the device's and the interface's maximum APDU; Busforge sizes it the same way on the
+interface's own line and holds it to 40 elsewhere ([knx-secure.md](knx-secure.md#using-it)).
 
 ## 19. What a factory-fresh secure device demands of the activation
 

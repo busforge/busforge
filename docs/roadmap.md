@@ -327,7 +327,23 @@ where they are required; raw acquisition is not a way around access control. Wha
 
 - **The security object on System 7.** Only System B loads it; the others refuse a secure device's
   GA flash and full download.
-- **Individual-address assignment of a secure device.** It is a broadcast and cannot use a session.
+- **Individual-address assignment of a secure device in Data Secure.** Busforge assigns it plain. ETS
+  sends the serial-number write as a secured broadcast after a broadcast Sync to `0/0/0`; captured for a
+  reset device under its FDSK ([knx-secure.md](knx-secure.md#individual-address-assignment)), not for a
+  device in secure mode under its tool key, which a bench capture has to show before it is built.
+- **Repeat a secured write that fails at the long size at 40 octets,** as ETS does ("switching to
+  shorter frames"), and then size secured writes up to the interface's full length as ETS does. Until
+  then a secured write uses the interface's announced length only on the interface's own line and
+  within the 55 octets shown answered, and a path that carries less than its interface announces fails
+  the write.
+- **What makes ETS set a device's sending sequence (PID 59).** Its one capture with the write was both a
+  re-activation of a reset device and an address assignment by serial; Busforge writes it on a
+  re-activation. An ETS download that re-activates a reset device whose address was assigned by its
+  programming button separates the two.
+- **A master reset before downloading a secure-capable application over another one.** Reported for
+  ETS (erase code 7 on such a device, none on a fresh one or one holding the same application); not in
+  Busforge's captures, and the Jung 400021SE ignores a secured master reset. Needs an ETS capture of
+  such a download before anything is built.
 - **A smoke behaviour on a fresh address Busforge secures,** to show the device acting on a
   Busforge-generated key, not only holding it.
 - **Sending:** read the interface's L_Data.con over UDP, extended frames for values longer than

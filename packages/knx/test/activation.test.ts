@@ -6,7 +6,7 @@ const FDSK = Buffer.alloc(16, 0xfd), SERIAL = Buffer.from("00fa01020304", "hex")
 
 // A secure device as the activation sees it: which key opens it, its security mode, and what it
 // does with a tool key write. `log` records the order of everything that happens.
-function device(opts: { toolKey?: Buffer; mode?: boolean; keyWrite?: "takes" | "takes-then-silent" | "lost"; serial?: Buffer }) {
+function device(opts: { toolKey?: Buffer; mode?: boolean; keyWrite?: "takes" | "takes-then-silent" | "lost"; serial?: Buffer; sequenceRefused?: boolean }) {
   const state = { toolKey: opts.toolKey ?? null as Buffer | null, mode: opts.mode ?? false };
   const log: string[] = [];
   const deps: ActivationDeps = {
@@ -30,6 +30,11 @@ function device(opts: { toolKey?: Buffer; mode?: boolean; keyWrite?: "takes" | "
           if (opts.keyWrite === "lost") throw Object.assign(new Error("lost"), { code: "DEVICE_NOT_ANSWERING" });
           state.toolKey = k;
           if (opts.keyWrite === "takes-then-silent") throw Object.assign(new Error("silent"), { code: "DEVICE_NOT_ANSWERING" });
+        },
+        writeSendingSequence: async (seq: bigint) => {
+          log.push(`sending sequence under ${state.toolKey?.[0].toString(16)}`);
+          if (opts.sequenceRefused) throw Object.assign(new Error("refused"), { code: "PROPERTY_EXT_WRITE_REFUSED" });
+          return seq;
         },
       } as unknown as KnxDevice;
     },
@@ -63,6 +68,31 @@ describe("secure activation from the factory key", () => {
     expect(d.state).toEqual({ toolKey: NEW, mode: true });
   });
 
+  // ETS activating the reset Jung 400021SE again: the key it holds goes unanswered, the FDSK opens, and
+  // right after the tool key ETS sets PID 59 under it. A first activation (above) sets none.
+  test("a device reset since its activation also gets its sending sequence, right after the key and under it", async () => {
+    const d = device({});
+    const r = await activateSecureDevice(d.deps, { fdsk: FDSK, serial: SERIAL, storedKey: NEW, storedKeyWasActive: true, persistKey: () => {} });
+    expect(r).toEqual({ outcome: "activated", toolKey: NEW });
+    expect(d.log).toEqual(["sync 11 unanswered", "sync fd serial 000000000000", "read serial", "mode on", "write key", "sending sequence under 11", "close", "sync 11 serial 00fa01020304", "close"]);
+  });
+
+  test("a key on file that was never active on the device is a first activation: no sending sequence", async () => {
+    const d = device({});
+    await activateSecureDevice(d.deps, { fdsk: FDSK, serial: SERIAL, storedKey: NEW, storedKeyWasActive: false, persistKey: () => {} });
+    expect(d.log).toContain("write key");
+    expect(d.log.some((l) => l.startsWith("sending sequence"))).toBe(false);
+  });
+
+  test("a refused sending sequence fails the activation; the device holds the new key, and a rerun finds it active", async () => {
+    const d = device({ sequenceRefused: true });
+    const err = await activateSecureDevice(d.deps, { fdsk: FDSK, serial: SERIAL, storedKey: NEW, storedKeyWasActive: true, persistKey: () => {} }).catch((e: unknown) => e);
+    expect((err as { code?: string }).code).toBe("PROPERTY_EXT_WRITE_REFUSED");
+    expect(d.state.toolKey).toEqual(NEW);
+    const again = await activateSecureDevice(d.deps, { fdsk: FDSK, serial: SERIAL, storedKey: NEW, storedKeyWasActive: true, persistKey: () => {} });
+    expect(again.outcome).toBe("already-active");
+  });
+
   test("a device that already holds the key on file is left alone", async () => {
     const d = device({ toolKey: NEW, mode: true });
     const r = await activateSecureDevice(d.deps, { fdsk: FDSK, serial: SERIAL, storedKey: NEW, persistKey: () => { throw new Error("must not persist"); } });
@@ -94,5 +124,6 @@ describe("secure activation from the factory key", () => {
     const d2 = device({});
     const again = await activateSecureDevice(d2.deps, { fdsk: FDSK, serial: SERIAL, storedKey: onFile, newKey: () => Buffer.alloc(16, 0x22), persistKey: () => {} });
     expect(again).toEqual({ outcome: "activated", toolKey: NEW });
+    expect(d2.log.some((l) => l.startsWith("sending sequence"))).toBe(false); // the key was never active
   });
 });

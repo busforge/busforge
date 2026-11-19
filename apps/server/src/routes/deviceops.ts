@@ -615,7 +615,8 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
         // A key busforge generates is kept as pending before it is written, and marked provisioned
         // once the device is confirmed under it; a key already on file keeps its origin.
         let generated = false;
-        const result = await activateDevice(conn, dev.ia, { fdsk: cert.fdsk, serial: cert.serialNumber }, stored?.toolKey, (key) => {
+        const onFile = stored ? { toolKey: stored.toolKey, wasActive: stored.source !== "pending" } : undefined;
+        const result = await activateDevice(conn, dev.ia, { fdsk: cert.fdsk, serial: cert.serialNumber }, onFile, (key) => {
           generated = !stored;
           putDeviceSecurity(db, id, [{ deviceId, toolKey: key, serialNumber: cert.serialNumber, sequenceNumber: stored?.sequenceNumber ?? "", source: stored?.source ?? "pending" }], state.masterKey);
         }, progress, (seq) => setDeviceSequence(db, id, deviceId, seq));

@@ -77,7 +77,10 @@ For a Sync request a 6-byte serial number is inserted at offset 9, before the pa
 **SCF**, one byte, `T A A A B S S S`: bit 7 tool access, bits 6-4 the algorithm, bit 3 system
 broadcast, bits 2-0 the service. A normal secure management write is therefore `0x90` (tool access,
 CCM with authentication and confidentiality, service S-A_Data); a Sync request is `0x92`. Tool
-access *requires* authentication plus confidentiality and an individual-address destination.
+access *requires* authentication plus confidentiality. Its destination is normally the device's
+individual address; ETS also sends it to the broadcast address `0/0/0` to give a secure device its
+address by serial number ([below](#individual-address-assignment)), with `0x80` in B0's address-type
+octet as for any group destination.
 
 ### AES-128-CCM, exactly as KNX builds it
 
@@ -137,7 +140,11 @@ obtained live:
 3. Adopt `ourNextSeq` and send every further tool-access frame with a strictly increasing value.
 
 This repairs a stale or unknown counter in one round trip, and it is the first thing a secure session
-does. A failed Sync is a coded refusal (`SECURE_SYNC_FAILED`), never a blind retry.
+does. A failed Sync is a coded refusal (`SECURE_SYNC_FAILED`), never a blind retry. In the ETS
+captures every point-to-point Sync was answered the first time; the only Sync ETS sent again was its
+broadcast Sync for an address assignment by serial: unanswered under the tool key the project held
+(the device had been reset), ETS sent it once more under that key 6 s later, then under the FDSK,
+which the device answered.
 
 **A session goes on under another source address.** The MAC binds the sender's individual address
 (it is in B0 and Ctr0), and the reference stacks differ on whether a device keeps its last tool-access
@@ -298,24 +305,79 @@ sequence and MAC). Every per-request data size therefore shrinks by 13 inside a 
 refused (`SECURE_APDU_TOO_SHORT`), as is any secured memory request to a device that declares no
 maximum APDU length. Shown for reads: a 48-byte extended read, the most the USB interface it was tried
 through carries in plain, gets no answer from the secured Jung 400021SE, 35 bytes do (sizes in between not
-tried). A secured write is held to the 40 octets ETS sends on that path: 22-byte memory writes and
-18-byte property elements, which is what Busforge's own secured download of the Jung writes and the
-device answers ([findings.md](findings.md#18-a-device-in-secure-mode-ignores-a-plain-a_restart)).
-The extended property services carry 4 octets more than the extended memory ones, so their element
-data per request is 4 less (`propRead`, `propWrite`).
+tried).
+
+**A secured write fits the shorter of the device's and the interface's maximum APDU**, as ETS 6
+sizes it: the device's `PID_MAX_APDU_LENGTH` against the interface's maximum APDU, less 5 octets for
+an extended memory write (9 for an extended property write) and the 13 of the framing. ETS's logs
+name the outcome per download ("NegotiateMaxApduLength -> 55, restricted by ByTargetDevice"), and
+its secured writes follow it:
+
+| Device (its maximum APDU) | Interface's maximum APDU | Memory write | Property elements (PID 61) |
+|---|---|---|---|
+| MDT IP Router Secure (55) | 210 | 37 bytes | 33 |
+| GVS AMMA (55), Jung 400021SE (233) | 40 (Busforge's bridge, a USB report's limit) | 22 bytes | 18 |
+
+When a write at that size fails, ETS limits the device to 40 and repeats the operation ("Operation
+using very long frames failed; switching to shorter frames"), so behind an interface that announces
+more than its path carries (a bridge announcing 254 in front of a USB report) its 151-, 64- or
+37-byte writes go unanswered and it goes on in 22-byte ones.
+
+Busforge repeats no failed write, so it sizes within what has been shown answered, pinned against
+those logs (`tools/secure-chunks.test.ts`): the shorter of the device's maximum APDU and the one the
+interface announces in its extended device information, held to 55 octets, the longest secured
+write shown answered (37-byte memory writes and 33-element property writes). Where the interface
+announces nothing (a USB interface, Busforge's bridge, an IP interface that does not answer the
+extended search) or the route may cross a coupler, the write is held to 40 octets, the size ETS
+falls back to. Reads are sized by the device alone. A path that carries less than its interface
+announces fails the write (`DEVICE_NOT_ANSWERING`). A secured download through the bridge writes the
+22-byte memory chunks and 18-element property writes the Jung and the GVS answer
+([findings.md](findings.md#18-a-device-in-secure-mode-ignores-a-plain-a_restart)). The extended
+property services carry 4 octets more than the extended memory ones, so their element data per
+request is 4 less (`propRead`, `propWrite`).
 
 **Every numbered service goes through the session**, the restart and the master reset included. A
 device in secure mode acknowledges a plain A_Restart on the transport layer and then ignores it (the
 Jung 400021SE), which the restart check reports as `RESTART_IGNORED`.
 
-**Individual-address assignment goes out plain.** It is a broadcast and cannot go through a session.
-It is not refused for a secure device: a master reset clears the address with the key, and the
-assignment is proven by talking to the device on its new address. On a device still in secure mode
-the plain programming-mode reset afterwards is ignored (the Jung 400021SE), which the assignment
-reports; switching it off through the secured session works. The Jung also ignores a master reset
-(A_Restart with erase code 0x02 or 0x07) sent through its secured session: no answer, nothing
-reset. Its only way back to the factory key is the physical reset
+### Individual-address assignment
+
+**Busforge assigns an individual address plain.** It is a broadcast and does not go through a
+session. It is not refused for a secure device: a master reset clears the address with the key, and
+the assignment is proven by talking to the device on its new address. On a device still in secure
+mode the plain programming-mode reset afterwards is ignored (the Jung 400021SE), which the
+assignment reports; switching it off through the secured session works. The Jung also ignores a
+master reset (A_Restart with erase code 0x02 or 0x07) sent through its secured session: no answer,
+nothing reset. Its only way back to the factory key is the physical reset
 ([findings.md](findings.md#19-what-a-factory-fresh-secure-device-demands-of-the-activation)).
+
+**ETS assigns a secure device's address by serial number in Data Secure.** Its full download of the
+Jung 400021SE after a physical reset (the device on `15.15.255` under its FDSK, the project holding
+the tool key of its earlier activation):
+
+1. A plain broadcast `A_SystemNetworkParameter_Read` of PID 11 (serial number), answered plainly by
+   the device from `15.15.255`; a T_Connect to the project address finds no device there.
+2. An S-A_Sync_Req (SCF `0x92`) from the tunnel to `0/0/0`, the device's serial in its body and AAD,
+   B0 with the group flag: twice under the project's tool key (6 s apart, unanswered), then under
+   the FDSK, which the device answers with an S-A_Sync_Rsp (SCF `0x93`) from `15.15.255` to `0/0/0`.
+3. Two S-A_Data broadcasts under the FDSK, the first at the Sync request's own sequence:
+   `A_IndividualAddress_SerialNumber_Write` (serial, new address, 4 octets `00`) and
+   `A_IndividualAddressSerialNumber_Read` (serial). The device answers the read secured, from its new
+   address to `0/0/0`: serial, domain address `0000`, two octets `00`.
+4. Then the activation and download, point to point under the FDSK.
+
+Busforge does not send the secured form; its plain assignment is what reached the reset Jung. How ETS
+assigns the address of a secure device in secure mode (under its tool key) is not captured.
+
+**ETS sets the device's sending sequence when it activates a reset device again.** In that download,
+right after the tool key and under it, ETS writes PID 59 of the security object (one 6-octet element):
+the value of the millisecond clock its tool sequence starts at. The device answers that write, and
+every later frame, from that sequence on, and ETS records it as the device's sequence number in the
+project. ETS writes no PID 59 when it activates a device for the first time (the Jung and the GVS
+AMMA). Busforge does the same in its [activation](#activation-from-the-device-certificate), taking
+"activated before" from a key on file that the device has been seen under. ETS's run with the write
+also gave the device its address by serial; whether the write belongs to the re-activation or to that
+is not separated by a capture.
 
 ## Programming a secure device
 
@@ -563,7 +625,11 @@ then does what ETS does (`activateSecureDevice` in `packages/knx/src/activation.
    otherwise, stored as `pending` and marked `provisioned` once confirmed.
 4. Security mode on (PID 51), the tool key written (PID 56). The device answers that write already
    under the new key, so the session switches keys between framing the write and its answer, and the
-   write is never retried: a retry would go out under a key the device may not hold.
+   write is never retried: a retry would go out under a key the device may not hold. Where a tool key
+   was on file and the device opened only under its FDSK (reset since its activation), its sending
+   sequence (PID 59) is set next, under the new key, from Busforge's tool-sequence clock and never
+   below a sequence the device has sent in the session, as ETS does
+   ([above](#individual-address-assignment)): a receiver drops a sender whose counter goes back.
 5. A new session under the new key must open and report security mode on (`ACTIVATION_UNCONFIRMED`
    otherwise, the key stays on file for the next run).
 
@@ -606,8 +672,9 @@ does, in order:
    to `0x03`), PID 5 event 2 (loaded).
 8. The application id, the other objects' load completed, and the restart.
 
-Every secured request ETS sends there is at most 40 octets long: a 22-byte memory write and an
-18-element property write come to exactly that. The exported ETS project carries the same tool key
+Every secured request ETS sends there and gets answered is at most 40 octets long: a 22-byte memory
+write and an 18-element property write come to exactly that, the size ETS falls back to after a
+longer write fails ([Using it](#using-it)). The exported ETS project carries the same tool key
 (checked by hash) and, on the group address, the same group key the device holds. This capture is
 the reference for the security object download and for Busforge's own activation (see
 [Activation from the device certificate](#activation-from-the-device-certificate)).

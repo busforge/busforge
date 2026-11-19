@@ -92,6 +92,7 @@ export const SECURITY_PID = {
   GROUP_KEY_TABLE: 53,          // elements of address-table index (2) + key (16)
   SECURITY_IA_TABLE: 54,        // peers' individual addresses and sequence counters
   TOOL_KEY: 56,
+  SEQUENCE_NUMBER_SENDING: 59,  // the device's own 48-bit sending sequence
   GO_SECURITY_FLAGS: 61,        // one byte per group object, element k = object k
 } as const;
 const PID_SECURITY_MODE = SECURITY_PID.SECURITY_MODE;
@@ -118,19 +119,28 @@ export function elementRuns(start: number, elementSize: number, data: Buffer, bu
 // and whether the session is secured. A_Memory_Read spends 3 octets besides the data, the extended
 // read and write 5; the path limits above are for plain frames, so a secured session subtracts its
 // framing from both (a Jung 400021SE over the bench answered no secured 48-byte read, and every
-// 35-byte one). A secured write is held to the 40 octets ETS itself sends on that path (22-byte
-// memory writes and 18-byte property elements in its secured download of the Jung, after longer
-// requests went unanswered). A secured session needs the device's maximum APDU: a device that does
-// not declare it is held to the 15-octet standard frame, which no secured request fits. Where the
-// framing leaves no data byte, the request is refused rather than sent oversize into silence.
+// 35-byte one). A secured write fits the shorter of the device's and the interface's maximum APDU, as
+// ETS 6 sizes it ("NegotiateMaxApduLength -> 55, restricted by ByTargetDevice": 37-byte memory writes
+// and 33-element property writes to an MDT IP Router Secure behind an interface announcing 210; "-> 40,
+// restricted by ByInterface": 22 and 18 to the GVS AMMA and the Jung 400021SE behind one announcing
+// 40), held to the 55 octets the longest secured write shown answered there took
+// (SECURE_WRITE_SHOWN_APDU). ETS goes longer and, where a long write fails, falls back to 40 and repeats
+// it ("switching to shorter frames"); Busforge repeats nothing, so it stays within what was shown.
+// Where the interface announces nothing (a KNX USB interface, or an IP one that does not answer the
+// extended search), or the route may cross a coupler (secureWriteInterfaceApdu), the write is held to
+// 40 octets: the size ETS falls back to, and the most a USB HID report carries secured. A secured
+// session needs the device's maximum APDU: a device that does not declare it is held to the 15-octet
+// standard frame, which no secured request fits. Where the framing leaves no data byte, the request
+// is refused rather than sent oversize into silence.
 //
 // The extended property services spend 4 octets more than the extended memory ones (object type,
 // instance and PID in 5, count and start in 3, against count and address in 4), so their element
 // data per request (`propRead`, `propWrite`) is the memory figure less 4; where that leaves no room
 // for one element, the property request itself refuses.
 const SECURE_WRITE_PATH_APDU = 40;
+const SECURE_WRITE_SHOWN_APDU = 55;
 const PROP_EXTRA_OVERHEAD = 4;
-export function transferChunks(maxApdu: number | null, secured: boolean): { classicRead: number; extRead: number; extWrite: number; propRead: number; propWrite: number } {
+export function transferChunks(maxApdu: number | null, secured: boolean, interfaceMax: number | null = null): { classicRead: number; extRead: number; extWrite: number; propRead: number; propWrite: number } {
   const withProps = (c: { classicRead: number; extRead: number; extWrite: number }) =>
     ({ ...c, propRead: c.extRead - PROP_EXTRA_OVERHEAD, propWrite: c.extWrite - PROP_EXTRA_OVERHEAD });
   if (!secured) {
@@ -143,16 +153,19 @@ export function transferChunks(maxApdu: number | null, secured: boolean): { clas
   if (maxApdu === null) {
     throw new KnxError("SECURE_APDU_TOO_SHORT", "the device declares no maximum APDU length, so it takes standard frames only, and a secured memory request does not fit one");
   }
-  const fit = (n: number, what: string) => {
+  const fit = (n: number, what: string, limit: string) => {
     if (n - SECURE_APDU_OVERHEAD < 1) {
-      throw new KnxError("SECURE_APDU_TOO_SHORT", `a secured ${what} does not fit the device's maximum APDU length of ${maxApdu}`);
+      throw new KnxError("SECURE_APDU_TOO_SHORT", `a secured ${what} does not fit ${limit}`);
     }
     return n - SECURE_APDU_OVERHEAD;
   };
+  const device = `the device's maximum APDU length of ${maxApdu}`;
+  const writeApdu = Math.min(maxApdu, interfaceMax === null ? SECURE_WRITE_PATH_APDU : Math.min(interfaceMax, SECURE_WRITE_SHOWN_APDU));
   return withProps({
-    classicRead: fit(Math.min(EXT_READ_CHUNK, maxApdu - CLASSIC_MEMORY_OVERHEAD), "memory read"),
-    extRead: fit(Math.min(EXT_READ_CHUNK, maxApdu - EXT_WRITE_OVERHEAD), "extended memory read"),
-    extWrite: fit(Math.min(SECURE_WRITE_PATH_APDU, maxApdu) - EXT_WRITE_OVERHEAD, "extended memory write"),
+    classicRead: fit(Math.min(EXT_READ_CHUNK, maxApdu - CLASSIC_MEMORY_OVERHEAD), "memory read", device),
+    extRead: fit(Math.min(EXT_READ_CHUNK, maxApdu - EXT_WRITE_OVERHEAD), "extended memory read", device),
+    extWrite: fit(writeApdu - EXT_WRITE_OVERHEAD, "extended memory write",
+      interfaceMax !== null && interfaceMax < maxApdu ? `the interface's maximum APDU length of ${interfaceMax}` : device),
   });
 }
 
@@ -920,16 +933,40 @@ export class KnxDevice {
       throw new KnxError("PROPERTY_EXT_WRITE_REFUSED", `the device refused the new tool key: ${rest.toString("hex") || "no return code"}`);
     }
   }
+  // Set the device's own sending sequence (PID 59 of the security object, 6 octets big-endian), the
+  // counter its secured answers and group telegrams carry next: the device answers this very write
+  // from it. Never below a sequence the device has sent in this session, since a receiver drops a
+  // sender whose counter goes back; the bound is taken each time the request is framed, so a reconnect
+  // whose Sync learned a higher sequence raises it. Returns the value written.
+  async writeSendingSequence(seq: bigint): Promise<bigint> {
+    const sec = this.secure;
+    if (!sec) throw new KnxError("SECURE_SESSION_REQUIRED", "a sending sequence is only ever written inside a secured session");
+    const head = propertyExtHead(OBJECT_TYPE_SECURITY, 1, SECURITY_PID.SEQUENCE_NUMBER_SENDING);
+    let value = seq;
+    const r = await this.request((s) => {
+      const seen = sec.peerSequence;
+      value = seen !== null && seq <= seen ? seen + 1n : seq;
+      if (value >= 1n << 48n) throw new KnxError("SECURE_SEQUENCE_EXHAUSTED", `a sending sequence of ${value} does not fit 48 bits`);
+      const data = Buffer.alloc(6);
+      data.writeUIntBE(Number(value), 0, 6);
+      return apdu(s, APCI.PROPERTY_EXT_WRITE_CON, Buffer.concat([head, Buffer.from([1, 0, 1]), data]));
+    }, true);
+    const rest = this.extEcho(r!, APCI.PROPERTY_EXT_WRITE_CON_RESP, head, "the sending sequence write");
+    if (rest.length < 4 || rest[3] !== 0x00) {
+      throw new KnxError("PROPERTY_EXT_WRITE_REFUSED", `the device refused the sending sequence: ${rest.toString("hex") || "no return code"}`);
+    }
+    return value;
+  }
   // Whole elements written from `start`, as many per request as the path and the device take.
   async propExtWriteElements(objectType: number, instance: number, pid: number, start: number, elementSize: number, data: Buffer): Promise<void> {
-    for (const r of elementRuns(start, elementSize, data, (await this.extChunks()).propWrite)) {
+    for (const r of elementRuns(start, elementSize, data, (await this.extChunks(true)).propWrite)) {
       await this.propExtWriteCon(objectType, instance, pid, r.bytes, r.start, r.count);
     }
   }
   // `count` whole elements read from `start`. An answer of another length is an error, not data.
   async propExtReadElements(objectType: number, instance: number, pid: number, start: number, count: number, elementSize: number): Promise<Buffer> {
     const parts: Buffer[] = [];
-    for (const r of elementRuns(start, elementSize, Buffer.alloc(count * elementSize), (await this.extChunks()).propRead)) {
+    for (const r of elementRuns(start, elementSize, Buffer.alloc(count * elementSize), (await this.extChunks(false)).propRead)) {
       const got = await this.propExtRead(objectType, instance, pid, r.start, r.count);
       if (got.length !== r.bytes.length) {
         throw new KnxError("PROPERTY_RESPONSE_MISMATCH", `object type ${objectType} PID ${pid}: asked for ${r.count} element(s) of ${elementSize} bytes from ${r.start}, got ${got.length} bytes`);
@@ -979,8 +1016,8 @@ export class KnxDevice {
   }
   // The interface's maximum APDU as it announces it (KnxTransport.queryMaxApdu), asked once per device,
   // before the first load-state event of a plan that writes (runLoadPlan) or else at the first memory
-  // write; null where it announces none or cannot be asked. With the device's it sizes the memory writes
-  // (writeChunks).
+  // or secured property write; null where it announces none or cannot be asked. With the device's it
+  // sizes the memory writes (writeChunks) and a secured session's writes (transferChunks).
   private interfaceApdu: Promise<number | null> | undefined;
   // How the device took restart()'s probe on the transport layer: T_NAK (there, refused the sequence
   // number) or T_ACK (there, took it). Either shows it still holds the connection.
@@ -1009,6 +1046,14 @@ export class KnxDevice {
   get restartUnproven(): boolean { return this.unprovenRestartSeen; }
   interfaceMaxApdu(): Promise<number | null> {
     return (this.interfaceApdu ??= this.tun.queryMaxApdu ? this.tun.queryMaxApdu().catch(() => null) : Promise.resolve(null));
+  }
+  // The interface's maximum APDU as a secured write may use it: only on a route within the interface's
+  // own line. ETS sizes a secured write by it too, and where such a write fails it falls back to 40
+  // octets and repeats it ("Operation using very long frames failed; switching to shorter frames");
+  // Busforge does not repeat it, so across a coupler, which may not pass the longer frame, the write is
+  // held to those 40 (transferChunks).
+  private async secureWriteInterfaceApdu(): Promise<number | null> {
+    return this.routeCrossesCoupler() ? null : this.interfaceMaxApdu();
   }
   // Whether memWrite uses the confirmed extended write on this device. The load runner asks before
   // its first load-state event, where ETS reads the property too (right after the descriptor).
@@ -1085,11 +1130,12 @@ export class KnxDevice {
     return Math.min(transferChunks(await this.maxApduLength(), this.secure !== undefined).classicRead, this.routeChunk(CLASSIC_MEMORY_OVERHEAD));
   }
   // The extended services run at the path limits in a plain session, as they always have; a secured
-  // one also fits them to the device's maximum APDU (transferChunks). The extended property services are
-  // held to standard frames here where standardFramesOnly, the memory services where they send.
-  private async extChunks(): Promise<ReturnType<typeof transferChunks>> {
+  // one also fits them to the device's maximum APDU, and its writes to the interface's (transferChunks), so
+  // only a write asks the interface. The extended property services are held to standard frames here
+  // where standardFramesOnly, the memory services where they send.
+  private async extChunks(forWrite: boolean): Promise<ReturnType<typeof transferChunks>> {
     const secured = this.secure !== undefined;
-    const c = transferChunks(secured ? await this.maxApduLength() : null, secured);
+    const c = secured ? transferChunks(await this.maxApduLength(), true, forWrite ? await this.secureWriteInterfaceApdu() : null) : transferChunks(null, false);
     const prop = this.routeChunk(EXT_WRITE_OVERHEAD + PROP_EXTRA_OVERHEAD);
     return { ...c, propRead: Math.min(c.propRead, prop), propWrite: Math.min(c.propWrite, prop) };
   }
@@ -1304,7 +1350,7 @@ export class KnxDevice {
     // `verify` to memWriteUser, which refuses it).
     if (await this.writesConfirmed()) {
       const maxApdu = (await this.maxApduLength())!;
-      const path = this.secure !== undefined ? transferChunks(maxApdu, true).extWrite : writeChunks(maxApdu, await this.interfaceMaxApdu()).ext;
+      const path = this.secure !== undefined ? transferChunks(maxApdu, true, await this.secureWriteInterfaceApdu()).extWrite : writeChunks(maxApdu, await this.interfaceMaxApdu()).ext;
       const chunk = Math.min(path, opts.chunk ?? Infinity);
       return this.memWriteExtended(addr, data, { chunk, onProgress: opts.onProgress });
     }
@@ -1361,7 +1407,7 @@ export class KnxDevice {
   }
   async memReadExtended(addr: number, len: number, chunkBytes?: number, onProgress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<Buffer> {
     this.assertExtAddressable(addr, len, "extended memory read");
-    const chunk = Math.min(Math.max(1, chunkBytes ?? (await this.extChunks()).extRead), 255, this.routeChunk(EXT_WRITE_OVERHEAD)); // the count is a single request octet
+    const chunk = Math.min(Math.max(1, chunkBytes ?? (await this.extChunks(false)).extRead), 255, this.routeChunk(EXT_WRITE_OVERHEAD)); // the count is a single request octet
     const out = Buffer.alloc(len);
     let pos = 0;
     while (pos < len) {
@@ -1442,7 +1488,7 @@ export class KnxDevice {
   // The per-chunk return code and the caller's read-back after the restart are the proof.
   async memWriteExtended(addr: number, data: Buffer, opts: { chunk?: number; onProgress?: (done: number, total: number) => void } = {}): Promise<void> {
     this.assertExtAddressable(addr, data.length, "extended memory write");
-    const chunk = Math.min(Math.max(1, opts.chunk ?? (await this.extChunks()).extWrite), 255, this.routeChunk(EXT_WRITE_OVERHEAD)); // the count is a single request octet
+    const chunk = Math.min(Math.max(1, opts.chunk ?? (await this.extChunks(true)).extWrite), 255, this.routeChunk(EXT_WRITE_OVERHEAD)); // the count is a single request octet
     const total = Math.ceil(data.length / chunk) || 1;
     let done = 0;
     for (let pos = 0; pos < data.length; ) {

@@ -1,7 +1,7 @@
 // Decrypt the A_Data_Secure frames of a knxproxy capture log offline.
 // Keys come only from the environment, never from a file:
-//   KEYS="fdsk=<32 hex>,tool=<32 hex>"   tried in order on every secured P2P frame
-//   GROUP_KEYS="2/1/7=<32 hex>,..."       optional, for secured group frames
+//   KEYS="fdsk=<32 hex>,tool=<32 hex>"   tried in order on every tool-access frame (P2P or to 0/0/0)
+//   GROUP_KEYS="2/1/7=<32 hex>,..."       optional, for the other secured group frames
 //   bun run tools/secure-capture-decode.ts <capture.log>
 import { readFileSync } from "node:fs";
 import { secureDecode } from "../packages/knx/src/secure.ts";
@@ -27,7 +27,11 @@ const SCF_SERVICE: Record<number, string> = { 0: "S-A_Data", 2: "Sync.req", 3: "
 // The bus source of a tunnelled request is the tunnel's IA, which ETS leaves as 0.0.0;
 // learn it from the first confirmation that carries it.
 let tunnelIa = 0;
-const challenges = new Map<string, Buffer>(); // "src>dst" of the Sync.req -> plaintext challenge
+// The plaintext challenges of the Sync.reqs, by "tool -> device", the latest one for a point-to-point
+// Sync. A broadcast Sync (to 0/0/0) is answered by whichever device holds the serial, from an address the
+// request does not name, and to 0/0/0 again: all of them are kept under "* -> 0/0/0", and an answer is
+// tried against each until one authenticates.
+const challenges = new Map<string, Buffer[]>();
 
 for (const line of readFileSync(file, "utf8").split("\n")) {
   const bar = line.lastIndexOf(" | ");
@@ -58,30 +62,42 @@ for (const line of readFileSync(file, "utf8").split("\n")) {
   const where = `${ia(src)}->${isGroup ? ga(dst) : ia(dst)}`;
   let aadFor = (s: number) => Buffer.from([s]);
   let extra = "";
+  let bodies = [body];
 
   if (service === 2) {
     // Sync.req carries the target serial in clear after the sequence, and in the AAD.
     const serial = body.subarray(7, 13);
     aadFor = (s) => Buffer.concat([Buffer.from([s]), serial]);
-    body = Buffer.concat([body.subarray(0, 7), body.subarray(13)]);
+    bodies = [Buffer.concat([body.subarray(0, 7), body.subarray(13)])];
     extra = ` serial=${serial.toString("hex")}`;
   } else if (service === 3) {
     // Sync.res: the sequence slot is random XOR the requester's challenge.
-    const ch = challenges.get(`${ia(dst)}>${ia(src)}`);
-    if (!ch) { console.log(`${ts} ${dir} ${where} SCF=${scf.toString(16)} Sync.res  (no matching Sync.req decrypted)`); continue; }
-    const r = Buffer.alloc(6);
-    for (let i = 0; i < 6; i++) r[i] = body[1 + i] ^ ch[i];
-    body = Buffer.concat([body.subarray(0, 1), r, body.subarray(7)]);
+    const chs = challenges.get(isGroup ? `* -> ${ga(dst)}` : `${ia(dst)} -> ${ia(src)}`);
+    if (!chs) { console.log(`${ts} ${dir} ${where} SCF=${scf.toString(16)} Sync.res  (no matching Sync.req decrypted)`); continue; }
+    bodies = chs.map((ch) => {
+      const r = Buffer.alloc(6);
+      for (let i = 0; i < 6; i++) r[i] = body[1 + i] ^ ch[i];
+      return Buffer.concat([body.subarray(0, 1), r, body.subarray(7)]);
+    });
   }
 
-  const candidates = isGroup ? (groupKeys.has(ga(dst)) ? [{ name: ga(dst), key: groupKeys.get(ga(dst))! }] : []) : keys;
+  // Tool access (SCF bit 7) runs under a device's tool key or FDSK whatever the destination:
+  // ETS assigns a secure device's address by serial with tool-access frames to the broadcast 0/0/0.
+  const toolAccess = (scf & 0x80) !== 0;
+  const candidates = isGroup && !toolAccess ? (groupKeys.has(ga(dst)) ? [{ name: ga(dst), key: groupKeys.get(ga(dst))! }] : []) : keys;
   let hit: { name: string; plaintext: Buffer; seq: Buffer } | null = null;
-  for (const k of candidates) {
-    const r = secureDecode(body, { key: k.key, src, dst, dstIsGroup: isGroup, tpci: outerTpci, aadFor });
-    if (r) { hit = { name: k.name, ...r }; break; }
+  for (const b of bodies) {
+    for (const k of candidates) {
+      const r = secureDecode(b, { key: k.key, src, dst, dstIsGroup: isGroup, tpci: outerTpci, aadFor });
+      if (r) { hit = { name: k.name, ...r }; break; }
+    }
+    if (hit) break;
   }
   const head = `${ts} ${dir} ${where} SCF=${scf.toString(16)} ${SCF_SERVICE[service] ?? `svc${service}`}${extra}`;
   if (!hit) { console.log(`${head}  UNDECRYPTED`); continue; }
-  if (service === 2) challenges.set(`${ia(src)}>${ia(dst)}`, hit.plaintext);
+  if (service === 2) {
+    const pair = isGroup ? `* -> ${ga(dst)}` : `${ia(src)} -> ${ia(dst)}`;
+    challenges.set(pair, isGroup ? [...(challenges.get(pair) ?? []), hit.plaintext] : [hit.plaintext]);
+  }
   console.log(`${head} seq=${hit.seq.toString("hex")} key=${hit.name}  ${hit.plaintext.toString("hex")}`);
 }

@@ -2,10 +2,22 @@ import { randomBytes } from "node:crypto";
 import type { KnxDevice } from "./device.ts";
 import { OBJECT_TYPE_SECURITY, SECURITY_PID } from "./device.ts";
 import { KnxError } from "./errors.ts";
+import { toolSequenceNow } from "./secureSession.ts";
 
 // Taking a secure device from its factory key (FDSK) to a tool key of our own, as ETS does it
 // (an ETS capture of a Jung 400021SE): a secured session under the FDSK, the security mode switched on,
 // the new tool key written, and a new session under that key to prove it took.
+//
+// A device that holds its factory key although the key on file was active on it (reset since) also
+// gets its sending sequence (PID 59) set, right after the tool key and under it, from the clock the
+// tool's own sequence starts at: ETS does so when it activates the reset Jung 400021SE again, and not
+// when it activates a device for the first time (ETS captures of both). Receivers keep the last
+// sequence they took from a sender and drop anything not above it, so a counter the reset sent back
+// would leave the device's secured telegrams unheard. That ETS's run also gave the device its address
+// by serial, so that the write could belong to that instead, is open (docs/roadmap.md). A key that was
+// never confirmed on the device (an activation interrupted before the key write) is a first activation.
+// A failed PID 59 write fails the activation with the device already holding the new key: a rerun
+// finds it active and does not set PID 59.
 //
 // The new key is persisted BEFORE it is written to the device. Once written, it is the only way in
 // short of a master reset, and a write interrupted after the device took the key but before we
@@ -22,6 +34,7 @@ export interface ActivationInput {
   fdsk: Buffer;
   serial: Buffer;           // the device's serial, for the Sync under the tool key
   storedKey?: Buffer;       // the tool key on file, if any: reused, so a repeated run converges
+  storedKeyWasActive?: boolean; // the device has been seen under storedKey (imported, deposited, confirmed)
   persistKey: (key: Buffer) => void | Promise<void>;
   newKey?: () => Buffer;
 }
@@ -74,6 +87,7 @@ export async function activateSecureDevice(deps: ActivationDeps, input: Activati
     await input.persistKey(key);
     await switchModeOn(factory);
     await factory.writeToolKey(key);
+    if (input.storedKey && input.storedKeyWasActive) await factory.writeSendingSequence(toolSequenceNow());
   } finally { await deps.close(factory); }
   const dev = await tryOpen(deps, key, input.serial);
   if (!dev) throw new KnxError("ACTIVATION_UNCONFIRMED", "the device took the tool key write but opens no session under the new key");
