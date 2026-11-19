@@ -24,10 +24,12 @@ class SimDevice {
   // `closes`: answer every numbered frame with a T_Disconnect, as a device in another tool's
   // connection (or one that missed our T_Connect) does.
   // `mask`: what A_DeviceDescriptor_Read answers. `noProperties`: a device without interface objects
-  // (a BCU1), which leaves a property write unanswered. `serial`: what the serial-number services match.
+  // (a BCU1), which leaves a property write unanswered. `serial`: what the serial-number services match;
+  // `serialDeafFor`: ignore this many serial-number reads before answering.
   mask = "07b0";
   noProperties = false;
   serial = "";
+  serialDeafFor = 0;
   constructor(public ia: string, public progMode: boolean, public takesWrite = true, public deafFor = 0, public closes = false) {}
 }
 
@@ -62,13 +64,13 @@ class SimBus implements KnxTransport {
       const bySerial = () => this.devices.filter((d) => d.serial !== "" && Buffer.from(d.serial, "hex").equals(p.data.subarray(0, 6)));
       if (p.apci === APCI.IA_SERIAL_READ) {
         // every device holding that serial answers, from its own address, repeating the serial
-        for (const d of bySerial()) this.deliver(iaToNum(d.ia), BROADCAST, apduUnnumbered(APCI.IA_SERIAL_RESPONSE, Buffer.concat([p.data.subarray(0, 6), Buffer.alloc(4)])), true);
+        for (const d of bySerial()) if (d.serialDeafFor > 0) d.serialDeafFor--; else this.deliver(iaToNum(d.ia), BROADCAST, apduUnnumbered(APCI.IA_SERIAL_RESPONSE, Buffer.concat([p.data.subarray(0, 6), Buffer.alloc(4)])), true);
         return;
       }
       if (p.apci === APCI.IA_SERIAL_WRITE) {
         const ia = numToIa((p.data[6] << 8) | p.data[7]);
         this.broadcastWrites.push(ia);
-        for (const d of bySerial()) d.ia = ia;
+        for (const d of bySerial().filter((x) => x.takesWrite)) d.ia = ia;
         return;
       }
       if (p.apci === APCI.INDIVIDUAL_ADDRESS_READ) {
@@ -376,6 +378,28 @@ describe("assigning an individual address by serial number", () => {
     expect(bus.wire).toEqual(["IA_SerialRead"]);
     expect(bus.broadcastWrites).toEqual([]);
   });
+
+  test("a second unit with the serial that shows itself only after the write leaves the write unverified", async () => {
+    // It misses the probe and the write, then answers the verify read from where it is.
+    const late = Object.assign(withSerial("1.1.7", "00fa01020304"), { serialDeafFor: 1, takesWrite: false });
+    const bus = new SimBus([withSerial("15.15.255", "00fa01020304"), late]);
+
+    const err = await assignAddressBySerial(bus, "00fa01020304", NEW_IA, fast).then(() => null, (e) => e);
+
+    expect((err as KnxError).code).toBe("IA_WRITE_UNVERIFIED");
+    expect((err as KnxError).message).toContain(NEW_IA);
+  }, 100_000); // one silent-address probe: the free-address check
+
+  for (const serial of ["00FA0102030", "00FA010203045", "0x00FA01020304", "00FA0102030G"]) {
+    test(`refuses ${serial} as no 6-byte serial number, before anything reaches the bus`, async () => {
+      const bus = new SimBus([withSerial("15.15.255", "00fa01020304")]);
+
+      const err = await assignAddressBySerial(bus, serial, NEW_IA, fast).then(() => null, (e) => e);
+
+      expect((err as KnxError).code).toBe("SERIAL_INVALID");
+      expect(bus.wire).toEqual([]);
+    });
+  }
 
   test("a read of a serial nobody holds is an empty answer, not an error", async () => {
     expect(await readAddressBySerial(new SimBus([withSerial("1.1.7", "00fa01020304")]), "00fa09090909", 20)).toBeNull();

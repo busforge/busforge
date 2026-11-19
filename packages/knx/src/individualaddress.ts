@@ -234,8 +234,9 @@ export async function assignIndividualAddress(tun: KnxTransport, ia: string, opt
 //
 // The programming-mode dance above has two costs: somebody must physically press a button, and
 // every device in programming mode takes the address. Addressing by serial number has neither. It
-// is still a broadcast, but it names exactly one device, so no bystander can take the address by
-// accident and nobody has to be at the bench.
+// is still a broadcast, but only a device holding the serial it names takes the address, so no bystander in
+// programming mode takes it by accident and nobody has to be at the bench. A serial does not name one
+// device by itself: one that is not set, or one two units share, reaches each of them, and that is refused.
 //
 // It is also the only thing that works in the situation it was invented for: SEVERAL unconfigured
 // devices on one line. They all sit on the factory address 15.15.255, so a point-to-point read
@@ -248,10 +249,11 @@ const SERIAL_LEN = 6;
 // (cleared or erased memory), so any number of units can hold it and a serial-number service would
 // reach every one of them.
 function serialBytes(serial: string): Buffer {
-  const b = Buffer.from(serial.replace(/[^0-9a-f]/gi, ""), "hex");
-  if (b.length !== SERIAL_LEN) {
+  const hex = serial.replace(/[\s:.-]/g, "");
+  if (!new RegExp(`^[0-9a-f]{${SERIAL_LEN * 2}}$`, "i").test(hex)) {
     throw new KnxError("SERIAL_INVALID", `"${serial}" is not a 6-byte KNX serial number (e.g. 00FA00000032)`);
   }
+  const b = Buffer.from(hex, "hex");
   if (b.every((x) => x === 0x00) || b.every((x) => x === 0xff)) {
     throw new KnxError("SERIAL_NOT_UNIQUE",
       `the serial number ${b.toString("hex").toUpperCase()} is not set on the unit and does not tell it apart from others; assign its address by programming mode`);
@@ -259,11 +261,10 @@ function serialBytes(serial: string): Buffer {
   return b;
 }
 
-// Ask, by broadcast, which address the device with this serial number currently holds. Only that
-// device answers (the firmware compares the serial against its own PID_SERIAL_NUMBER), so an empty
-// result means it is not on this line, not that something went wrong. Two addresses answering for
-// one serial mean it is not unique on this line, and that is refused.
-export async function readAddressBySerial(tun: KnxTransport, serial: string, probeMs = 3000): Promise<string | null> {
+// Ask, by broadcast, which addresses answer for this serial number. A device answers where the serial
+// equals its own PID_SERIAL_NUMBER, so an empty result means no device holding it is on this line, not
+// that something went wrong.
+async function serialResponders(tun: KnxTransport, serial: string, probeMs: number): Promise<string[]> {
   const want = serialBytes(serial);
   const found = new Set<number>();
   const prev = tun.onCemi;
@@ -279,11 +280,18 @@ export async function readAddressBySerial(tun: KnxTransport, serial: string, pro
   } finally {
     tun.onCemi = prev;
   }
-  if (found.size > 1) {
+  return [...found].sort((a, b) => a - b).map(numToIa);
+}
+
+// The address the device with this serial number currently holds, or null where none answers. Two
+// addresses answering for one serial mean it is not unique on this line, and that is refused.
+export async function readAddressBySerial(tun: KnxTransport, serial: string, probeMs = 3000): Promise<string | null> {
+  const found = await serialResponders(tun, serial, probeMs);
+  if (found.length > 1) {
     throw new KnxError("SERIAL_NOT_UNIQUE",
-      `devices on ${[...found].sort((a, b) => a - b).map(numToIa).join(", ")} all answer for the serial number ${serial}; a serial-number write would reach each of them. Assign their addresses by programming mode`);
+      `devices on ${found.join(", ")} all answer for the serial number ${serial}; a serial-number write would reach each of them. Assign their addresses by programming mode`);
   }
-  return found.size === 0 ? null : numToIa([...found][0]);
+  return found[0] ?? null;
 }
 
 // A_IndividualAddress_SerialNumber_Write: serial (6) + the new address (2) + 4 reserved zero bytes.
@@ -297,7 +305,8 @@ export async function writeAddressBySerial(tun: KnxTransport, serial: string, ia
 //
 // The safety rails are the same ones the programming-mode path needs, minus the ones it only needs
 // because it cannot tell devices apart:
-//   1. The device must actually be on this line (it answers a serial-number read).
+//   1. The device must actually be on this line (it answers a serial-number read), and it alone: a
+//      serial that is not set, or that answers from two addresses, is refused before the write.
 //   2. The target address must not already answer from a DIFFERENT device.
 //   3. Afterwards the device must report the new address FOR THAT SERIAL. Identity, not presence:
 //      "something answers at the target" would also be true if the write never landed and an
@@ -325,10 +334,14 @@ export async function assignAddressBySerial(tun: KnxTransport, serial: string, i
   await sleep(settleMs);
 
   onProgress?.("verify");
-  const now = await readAddressBySerial(tun, serial, probeMs);
-  if (now !== ia) {
+  const now = await serialResponders(tun, serial, probeMs);
+  if (now.length > 1) {
     throw new KnxError("IA_WRITE_UNVERIFIED",
-      `${ia} was written but the device with serial ${serial} reports ${now ?? "nothing"}; it may still hold ${previous}. Read the bus before continuing.`);
+      `${ia} was written, and devices on ${now.join(", ")} now all answer for the serial ${serial}; another unit holding it may have taken the address too. Read the bus before continuing.`);
+  }
+  if (now[0] !== ia) {
+    throw new KnxError("IA_WRITE_UNVERIFIED",
+      `${ia} was written but the device with serial ${serial} reports ${now[0] ?? "nothing"}; it may still hold ${previous}. Read the bus before continuing.`);
   }
   if (!(await addressAnswers(tun, ia, true))) {
     throw new KnxError("IA_WRITE_UNVERIFIED",
