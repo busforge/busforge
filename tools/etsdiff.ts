@@ -274,7 +274,7 @@ const hex = (n: number, w = 4) => `0x${n.toString(16).padStart(w, "0")}`;
 const hexByte = (n: number) => n.toString(16).padStart(2, "0");
 
 // A group address as the project writes it: "a/b/c" (3-level), "a/b" (2-level) or a raw number.
-export function parseGa(s: string): number {
+export function parseGaAnyForm(s: string): number {
   const p = s.split("/").map(Number);
   if (p.some((x) => !Number.isInteger(x) || x < 0)) throw new Error(`not a group address: ${s}`);
   const threeLevel = p.length === 3 ? gaFromLevels(p[0], p[1], p[2]) : null;
@@ -352,7 +352,7 @@ async function loadSubject(opt: (k: string) => string | undefined, many: (k: str
   const links = many("link").map((l): ComObjectLink => {
     const [num, gas] = l.split(":");
     if (!/^\d+$/.test(num) || !gas) throw new Error(`--link needs <objNum>:<ga>[,<ga>], not ${l}`);
-    return { comObjNum: Number(num), gaRaws: gas.split(",").map(parseGa) };
+    return { comObjNum: Number(num), gaRaws: gas.split(",").map(parseGaAnyForm) };
   });
   const cfg = parseAppConfig(appXml);
   const configuration = `application defaults${params.size ? ` with ${[...params].map(([k, v]) => `${k}=${v}`).join(", ")}` : ""}, ${links.length ? `links ${links.map((l) => `#${l.comObjNum}->${redact ? `${l.gaRaws.length} group address${l.gaRaws.length === 1 ? "" : "es"}` : l.gaRaws.map((g) => hex(g)).join("+")}`).join(", ")}` : "no links"}`;

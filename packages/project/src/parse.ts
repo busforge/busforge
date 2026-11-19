@@ -69,11 +69,21 @@ export function appProgramId(appRef: string): string {
 // An xs:boolean attribute: "true" or "1" (ETS 4 writes the digits, later versions the words).
 const xsBool = (v: unknown): boolean => { const t = text(v); return t === "true" || t === "1"; };
 
+// The parser of a project's 0.xml. A ParameterInstanceRef's Value is the parameter's value as the file
+// writes it, blanks at either end included (XML keeps them, and a text parameter writes them into the
+// device); every other attribute and text node is trimmed. Character references (ETS writes a tab, CR or
+// LF in an attribute as &#x9;, &#xD;, &#xA;) are decoded.
+const project0Parser = () => new XMLParser({
+  ignoreAttributes: false, attributeNamePrefix: "", isArray: () => false, trimValues: false, htmlEntities: true,
+  attributeValueProcessor: (name, v, jPath) => (name === "Value" && String(jPath).endsWith(".ParameterInstanceRef") ? v : v.trim()),
+  tagValueProcessor: (_tag, v) => v.trim(),
+});
+
 // `applications`: the application program of each Hardware2Program the archive's Hardware.xml describes
 // ("" where it names none, or none Busforge can tell apart from a PEI program); a device whose
 // Hardware2Program it lacks takes the program its id names (appProgramId).
 export function parseProject(xml0: string, projectXml: string | undefined, fallbackName: string, productNames: Map<string, string> = new Map(), busInterfaceIndex: ReadonlyMap<string, number> = new Map(), productTranslations: ReadonlyMap<string, string[]> = new Map(), applications: ReadonlyMap<string, string> = new Map()): Project {
-  const p = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", isArray: () => false });
+  const p = project0Parser();
   const doc = p.parse(xml0) as XmlNode;
 
   // A project can hold several installations. Busforge imports the first and reports how many it
@@ -427,8 +437,7 @@ function parseDeviceModules(doc: XmlNode, deviceId: string) {
 // every device; the hardware read-back harnesses work one device at a time and only
 // need this. Throws on an unknown id rather than returning a misleading empty map.
 export function deviceParamValues(xml0: string, deviceId: string): { appRef: string; values: Map<string, string> } {
-  const p = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", isArray: () => false });
-  const dev = findDeviceInstance(p.parse(xml0) as XmlNode, deviceId);
+  const dev = findDeviceInstance(project0Parser().parse(xml0) as XmlNode, deviceId);
   if (!dev) throw new Error(`device ${deviceId} not found`);
   const values = new Map<string, string>();
   for (const r of kids(node(dev.ParameterInstanceRefs)?.ParameterInstanceRef)) if (r.Value !== undefined) values.set(text(r.RefId), text(r.Value));

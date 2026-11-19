@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { deviceParamValues } from "../src/parse.ts";
+import { deviceParamValues, parseProject } from "../src/parse.ts";
 
 // deviceParamValues is the 0.xml stored-value extraction feeding every flash (the
 // device's ParameterInstanceRef Values are the instance overrides laid over the
@@ -69,4 +69,16 @@ test("a device without ParameterInstanceRefs yields an empty map, appRef intact"
 
 test("an unknown device id throws (no silent empty result for a bogus target)", () => {
   expect(() => deviceParamValues(xml0, "P-01AB-0_DI-99")).toThrow("device P-01AB-0_DI-99 not found");
+});
+
+// XML keeps the blanks at either end of an attribute's value. A ParameterInstanceRef's Value keeps them (a text
+// parameter writes them into the device), every other attribute is trimmed; character references are decoded.
+test("a ParameterInstanceRef's Value keeps the blanks at its edges, every other attribute is trimmed", () => {
+  const xml = xml0
+    .replace('<DeviceInstance Id="P-01AB-0_DI-2" Address="11"', '<DeviceInstance Id="P-01AB-0_DI-2" Address=" 11 " Name=" Lamp "')
+    .replace('RefId="M-TEST_A-2_P-1_R-1" Value="0"', 'RefId=" M-TEST_A-2_P-1_R-1 " Value="Kitchen&#x9;&#xA;"');
+  expect(deviceParamValues(xml, "P-01AB-0_DI-2").values).toEqual(new Map([["M-TEST_A-2_P-1_R-1", "Kitchen\t\n"]]));
+  const p = parseProject(xml, undefined, "x");
+  expect(p.deviceParams.find((d) => d.deviceId === "P-01AB-0_DI-2")?.values).toEqual([{ refId: "M-TEST_A-2_P-1_R-1", value: "Kitchen\t\n" }]);
+  expect(p.devices.find((d) => d.id === "P-01AB-0_DI-2")).toMatchObject({ name: "Lamp", ia: "1.1.11" });
 });

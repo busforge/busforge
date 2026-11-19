@@ -152,6 +152,20 @@ describe("text parameters", () => {
   test("a zero character is refused", () => {
     expect(() => buildParameterImage(m(), 4, new Map([["R-Ptext", "a\0b"]]))).toThrow(/zero character/);
   });
+  // No ETS image in the corpus shows a text value that begins or ends with a blank: the only such values of its
+  // projects are of parameters without memory, and no catalogue default has one.
+  test("a value beginning or ending with a blank is refused, and such a field decodes to nothing", () => {
+    for (const v of ["dali ", " dali", "dali\t", "\tdali", "\u00a0dali"]) {
+      expect(() => buildParameterImage(m(), 4, new Map([["R-Ptext", v]]))).toThrow(expect.objectContaining({ code: "PARAM_TEXT_EDGE_BLANK" }));
+    }
+    expect(roundtrip(m(), { "R-Ptext": "da li" })["R-Ptext"]).toBe("da li");
+    const img = Buffer.alloc(68);
+    img.write("dali ", 0, "latin1");
+    img.write(" x", 8, "latin1");
+    const out = decodeParameterImage(m(), 4, img);
+    expect(out.has("R-Ptext")).toBe(false);
+    expect(out.has("R-Pempty")).toBe(false);
+  });
   // bussard's ETS 6.4.1 downloads of its synthetic products (private corpus captures/external/bussard-synthetic/;
   // tools/bussard-text.test.ts holds Busforge's images against them): an application declaring no
   // TextParameterEncoding gets "Störung" as 53 74 F6 72 75 6E 67 (syn-text-undeclared), one declaring "utf-8" its
