@@ -54,8 +54,8 @@ nothing. Stop the pair with Ctrl-C (the Vite server) and `kill %1` (the Bun serv
 shell), then remove the printed directory: it holds the pair's database and master key.
 
 To work with a real project in that instance, import a `.knxproj` through the API and print the ids the
-pages and the API address it by. Run this in bash (zsh does not split the unquoted `$API` words the same way
-and has spoiled such a run), against the server above, from the same shell or any other. `F` is the project
+pages and the API address it by. Run this in bash (it was tried there; a shell that splits words differently,
+such as zsh, can break such a line), against the server above, from the same shell or any other. `F` is the project
 file, for a maintainer a file of the private corpus ([testing.md](testing.md#the-private-corpus)); the
 password is read from its source on stdin (`<password source>`, only needed for a protected archive, left out
 otherwise together with the `|`), so it appears in no command line and is written nowhere:
