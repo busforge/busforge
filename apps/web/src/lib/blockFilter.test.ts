@@ -42,6 +42,10 @@ describe("matchingItems in a grid", () => {
     same(matchingItems(b, "121"), [...head, ...row]);
     same(matchingItems(b, "zzz"), []);
   });
+  test("a grid without cells keeps only what matches itself", () => {
+    const co: CfgItem = { kind: "comObject", comObject: { number: 4, name: "Haltedauer Objekt" } as never };
+    same(matchingItems(grid([co, param("x", "1")]), "haltedauer"), [co]);
+  });
   test("a cell-less item is kept only when it matches itself", () => {
     const co: CfgItem = { kind: "comObject", comObject: { number: 4, name: "Haltedauer Objekt" } as never };
     same(matchingItems(grid([label, value, co, other, far]), "haltedauer"), [label, value, co]);
@@ -81,5 +85,6 @@ describe("underMatchingHeading", () => {
     expect(underMatchingHeading(block, 4, "startverz")).toBe(false);
     expect(underMatchingHeading(block, 0, "startverz")).toBe(false);
     expect(underMatchingHeading(grid(block.items), 2, "startverz")).toBe(false);
+    expect(underMatchingHeading(list([sep("Startverzögerung"), sep("Ungültig", undefined, "Error")]), 2, "startverz")).toBe(true);
   });
 });

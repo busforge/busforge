@@ -12,7 +12,9 @@ describe("gridLayout", () => {
     const co: CfgItem = { kind: "comObject", comObject: { number: 1, name: "o" } as never };
     const b = grid([sep("1.05", c(1, 6), "Headline"), sep("1.05", c(1, 6), "Headline"), param("a", c(1, 6)), sep("x", c(1, 6)), co]);
     const { cells, loose } = gridLayout(b, b);
-    expect(cells.get("1,6")).toEqual([b.items[0], b.items[2], b.items[3]]);
+    const kept = cells.get("1,6")!;
+    expect(kept.length).toBe(3);
+    [b.items[0], b.items[2], b.items[3]].forEach((item, i) => expect(kept[i]).toBe(item));
     expect(loose).toEqual([co]);
   });
   test("leaves out the columns no item occupies and shares the width by the percentages when they exceed 100", () => {
@@ -24,6 +26,10 @@ describe("gridLayout", () => {
   test("percentages under 100 leave the rest of the width free", () => {
     const b = grid([sep("a", c(1, 1)), param("b", c(1, 2))], { cols: [{ width: "45%" }, { width: "20.5%" }] });
     expect(gridLayout(b, b).template).toBe("minmax(min-content, 45fr) minmax(min-content, 20.5fr) minmax(0px, 34.5fr)");
+  });
+  test("the free rest follows a Table's caption column and a fixed column", () => {
+    const b = grid([param("a", c(1, 1)), param("b", c(1, 2))], { layout: "Table", cols: [{ width: "40%" }, { width: "8rem" }] });
+    expect(gridLayout(b, b).template).toBe("auto minmax(min-content, 40fr) minmax(min-content, 8rem) minmax(0px, 60fr)");
   });
   test("a plain length stays, anything else and an undeclared column become auto", () => {
     const b = grid([param("a", c(1, 1)), param("b", c(1, 2)), param("c", c(1, 3))], { cols: [{ width: "120px" }, { width: "*" }] });

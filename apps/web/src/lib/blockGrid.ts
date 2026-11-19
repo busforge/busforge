@@ -27,7 +27,8 @@ export interface GridLayout {
 // - The columns come from `configured`, so a search does not move them. A column no item (and, in a
 //   Table, no caption) occupies is left out: a choose that shows a few of many authored columns would
 //   otherwise leave a gap per empty column and squeeze the rest.
-// - The rows are those `shown` occupies, and while nothing is filtered a Table's captioned rows too.
+// - The rows are those `shown` occupies, and while `shown` holds the configured items themselves (no
+//   filter, or a filter that matched the whole block) a Table's captioned rows too.
 // - ETS authors widths as percentages; OpenKNX calibration grids declare over 200 %, so shown columns
 //   that add up to more than 100 % share the width in that proportion, and less leaves the rest free.
 //   A column is never narrower than its content: a label breaks only between words, a control keeps the

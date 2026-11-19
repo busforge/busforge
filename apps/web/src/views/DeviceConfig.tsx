@@ -1206,6 +1206,7 @@ function ParamRow({ param, compact, changedTitle, revertTitle, reverting, onChan
           <span className="relative flex w-full">
             <select
               value={param.value} onChange={(e) => onChange(e.target.value)} aria-label={label}
+              // Only in a cell: a device has 500+ enums, and the option scan is wasted on a full row.
               style={compact ? fit(Math.max(0, ...(param.options ?? []).map((o) => o.text.length)), "3rem") : undefined}
               className="h-9 w-full appearance-none rounded-md border border-input bg-background pr-8 pl-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 pointer-coarse:h-11 pointer-coarse:text-base"
               data-testid={`param-${param.refId}`}
