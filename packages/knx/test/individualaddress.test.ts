@@ -120,7 +120,7 @@ class SimBus implements KnxTransport {
 }
 
 const NEW_IA = "1.2.3";
-const fast = { probeMs: 20, settleMs: 5 };
+const fast = { probeMs: 20, settleMs: 5, returnMs: 0 };
 
 describe("reading who is in programming mode", () => {
   test("reports every device that answers, by its own address", async () => {
@@ -148,7 +148,7 @@ describe("assigning an individual address", () => {
 
     const res = await assignIndividualAddress(bus, NEW_IA, fast);
 
-    expect(res).toEqual({ previous: "15.15.255", assigned: NEW_IA, verified: true, progModeCleared: true, progModeError: null });
+    expect(res).toEqual({ previous: "15.15.255", assigned: NEW_IA, verified: true, progModeCleared: true, progModeError: null, route: "programming-mode" });
     expect(virgin.ia).toBe(NEW_IA);       // the device really moved
     expect(virgin.progMode).toBe(false);  // and will not answer the next assignment
     expect(bus.broadcastWrites).toEqual([NEW_IA]);
@@ -177,7 +177,7 @@ describe("assigning an individual address", () => {
 
     const res = await assignIndividualAddress(bus, NEW_IA, fast);
 
-    expect(res).toEqual({ previous: "1.1.255", assigned: NEW_IA, verified: true, progModeCleared: true, progModeError: null });
+    expect(res).toEqual({ previous: "1.1.255", assigned: NEW_IA, verified: true, progModeCleared: true, progModeError: null, route: "programming-mode" });
     expect(bus.restarts).toBe(1);
     expect(bus.progModeWrites).toBe(0);
     expect(bcu1.progMode).toBe(false);
@@ -195,7 +195,7 @@ describe("assigning an individual address", () => {
 
     const res = await assignIndividualAddress(bus, NEW_IA, fast);
 
-    expect(res).toEqual({ previous: "1.1.255", assigned: NEW_IA, verified: true, progModeCleared: false, progModeError: "the device still answers in programming mode after the restart" });
+    expect(res).toEqual({ previous: "1.1.255", assigned: NEW_IA, verified: true, progModeCleared: false, progModeError: "the device still answers in programming mode after the restart", route: "programming-mode" });
   }, 100_000);
 
   test("a device that does not come back after the restart is reported as not known to have left programming mode", async () => {
@@ -210,8 +210,34 @@ describe("assigning an individual address", () => {
 
     const res = await assignIndividualAddress(bus, NEW_IA, fast);
 
-    expect(res).toEqual({ previous: "1.1.255", assigned: NEW_IA, verified: true, progModeCleared: false, progModeError: `the device does not answer at ${NEW_IA} after the restart, so whether it left programming mode is not known` });
+    expect(res).toEqual({ previous: "1.1.255", assigned: NEW_IA, verified: true, progModeCleared: false, progModeError: `the device does not answer at ${NEW_IA} after the restart, so whether it left programming mode is not known`, route: "programming-mode" });
     expect(bus.wire.filter((w) => w === "IA_Read").length).toBe(2); // the two before the restart: no probe without the device back
+  }, 100_000);
+
+  test("for a Data Secure device whose keys went unanswered, a device in programming mode with another serial is refused", async () => {
+    const other = new SimDevice("1.1.30", true); other.serial = "00fa09090909";
+    const target = new SimDevice("1.1.31", false); target.serial = "00fa01020304";
+    const bus = new SimBus([other, target]);
+    const err = await assignIndividualAddress(bus, NEW_IA, { ...fast, onlySerial: "00fa01020304" }).then(() => null, (e) => e);
+    expect(err.code).toBe("PROG_MODE_NOT_THIS_DEVICE");
+    expect(bus.broadcastWrites).toEqual([]);
+  });
+
+  test("a device that takes longer to come back after the restart is asked again until it answers", async () => {
+    const dev = new SimDevice("1.1.255", true);
+    const bus = new SimBus([dev]);
+    const orig = bus.sendCemi.bind(bus);
+    bus.sendCemi = async (cemi: Buffer) => {
+      const { tpdu, isGroup } = parseCemiLData(cemi);
+      // reboots: silent through the first check (T_Connect, three descriptor reads, T_Disconnect)
+      if (!isGroup && parseApdu(tpdu).apci === APCI.RESTART) { await orig(cemi); dev.deafFor = 5; return; }
+      return orig(cemi);
+    };
+
+    const res = await assignIndividualAddress(bus, NEW_IA, { ...fast, returnMs: 60_000 });
+
+    expect(res).toMatchObject({ verified: true, progModeCleared: true, progModeError: null });
+    expect(bus.wire.filter((w) => w === "IA_Read").length).toBe(3);
   }, 100_000);
 
   test("a device that closes the connection instead of handing out its descriptor gets the restart on a new one", async () => {
@@ -232,7 +258,7 @@ describe("assigning an individual address", () => {
 
     const res = await assignIndividualAddress(bus, NEW_IA, { ...fast, onProgress: (p) => { if (p === "prog-mode-off") { ending = true; endingAt = bus.wire.length; } } });
 
-    expect(res).toEqual({ previous: "1.1.255", assigned: NEW_IA, verified: true, progModeCleared: true, progModeError: null });
+    expect(res).toEqual({ previous: "1.1.255", assigned: NEW_IA, verified: true, progModeCleared: true, progModeError: null, route: "programming-mode" });
     expect(bus.restarts).toBe(1);
     expect(bus.progModeWrites).toBe(0);
     // The restart went out on a connection opened after the reachability check had none to hand over.
@@ -356,7 +382,7 @@ describe("assigning an individual address by serial number", () => {
 
     const res = await assignAddressBySerial(bus, "00FA01020304", NEW_IA, fast);
 
-    expect(res).toEqual({ previous: "15.15.255", assigned: NEW_IA, verified: true, progModeCleared: true, progModeError: null });
+    expect(res).toEqual({ previous: "15.15.255", assigned: NEW_IA, verified: true, progModeCleared: true, progModeError: null, route: "serial" });
     expect(unit.ia).toBe(NEW_IA);
     expect(bus.devices[1].ia).toBe("15.15.255");
   }, 100_000); // one silent-address probe: the free-address check

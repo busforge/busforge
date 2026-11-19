@@ -78,9 +78,10 @@ For a Sync request a 6-byte serial number is inserted at offset 9, before the pa
 broadcast, bits 2-0 the service. A normal secure management write is therefore `0x90` (tool access,
 CCM with authentication and confidentiality, service S-A_Data); a Sync request is `0x92`. Tool
 access *requires* authentication plus confidentiality. Its destination is normally the device's
-individual address; ETS also sends it to the broadcast address `0/0/0` to give a secure device its
-address by serial number ([below](#individual-address-assignment)), with `0x80` in B0's address-type
-octet as for any group destination.
+individual address; ETS, and Busforge, also send it to the broadcast address `0/0/0` to give a secure
+device its address by serial number ([below](#individual-address-assignment)), with `0x80` in B0's
+address-type octet as for any group destination, an unnumbered outer TPCI (`0x03`), and the device's
+answer opened under the address it comes from.
 
 ### AES-128-CCM, exactly as KNX builds it
 
@@ -349,11 +350,14 @@ Jung 400021SE), which the restart check reports as `RESTART_IGNORED`.
 
 ### Individual-address assignment
 
-**Busforge assigns an individual address plain.** It is a broadcast and does not go through a
-session. It is not refused for a secure device: a master reset clears the address with the key, and
-the assignment is proven by talking to the device on its new address. On a device still in secure
-mode the plain programming-mode reset afterwards is ignored (the Jung 400021SE), which the
-assignment reports; switching it off through the secured session works. The Jung also ignores a
+**Busforge assigns a secure device's address by serial number in Data Secure, as ETS does**: by
+broadcast under the device's tool key (or, where the project runs it without Data Secure, under its
+FDSK), then the security object's network configuration and a secured confirmed restart on a
+connection to the new address. The frames, the order and the fallback to the plain route are in
+[commissioning.md](commissioning.md#a-data-secure-device). Under a key the device does not hold, the
+broadcast Sync goes unanswered and nothing is written. On the plain route, which a device without a
+key or certificate on file takes, a unit still in secure mode ignores the plain `A_Restart`
+afterwards (the Jung 400021SE), which the assignment reports. The Jung also ignores a
 master reset (A_Restart with erase code 0x02 or 0x07) sent through its secured session: no answer,
 nothing reset. Its only way back to the factory key is the physical reset
 ([findings.md](findings.md#19-what-a-factory-fresh-secure-device-demands-of-the-activation)).
@@ -373,18 +377,26 @@ the tool key of its earlier activation):
    address to `0/0/0`: serial, domain address `0000`, two octets `00`.
 4. Then the activation and download, point to point under the FDSK.
 
-Busforge does not send the secured form; its plain assignment is what reached the reset Jung. How ETS
-assigns the address of a secure device in secure mode (under its tool key) is not captured.
+On a device in secure mode ETS runs the same steps under the tool key (the Jung 400021SE and the GVS
+AMMA, with and without the programming button pressed), and on the Jung with Data Secure off in the
+project under the FDSK, which the unit then holds as its tool key. Without the button ETS asks
+`A_IndividualAddressSerialNumber_Read`, plain, instead of the PID 11 read of step 1. A connection to
+the new address follows: a plain descriptor read (`FFFF` from a unit in secure mode, read again
+secured after the Sync) and `PID_MAX_APDU_LENGTH`, the Sync with the serial field zero, then with
+Data Secure on the security mode switched on, the tool key written again (the same key) and the
+sending sequence (PID 59), with it off the security mode read twice, then the serial (PID 11) and a
+secured confirmed restart. Busforge sends these frames ([commissioning.md](commissioning.md#a-data-secure-device)).
 
-**ETS sets the device's sending sequence when it activates a reset device again.** In that download,
-right after the tool key and under it, ETS writes PID 59 of the security object (one 6-octet element):
-the value of the millisecond clock its tool sequence starts at. The device answers that write, and
-every later frame, from that sequence on, and ETS records it as the device's sequence number in the
-project. ETS writes no PID 59 when it activates a device for the first time (the Jung and the GVS
-AMMA). Busforge does the same in its [activation](#activation-from-the-device-certificate), taking
-"activated before" from a key on file that the device has been seen under. ETS's run with the write
-also gave the device its address by serial; whether the write belongs to the re-activation or to that
-is not separated by a capture.
+**ETS sets the device's sending sequence at every address assignment with Data Secure on.** Right
+after the tool key and under it, ETS writes PID 59 of the security object (one 6-octet element): the
+value of the millisecond clock its tool sequence starts at. The device answers that write, and every
+later frame, from that sequence on, and ETS records it as the device's sequence number in the
+project. It does so with and without a re-activation (the Jung and the GVS AMMA), not with Data Secure
+off, and not when it activates a device for the first time or switches a device's security mode on
+again with a new key in a download. Busforge writes it in its secured address assignment, and in its
+[activation](#activation-from-the-device-certificate) where a key was on file and the device opened
+only under its FDSK (reset since its activation): ETS's run that showed it there also gave the device
+its address by serial, and whether a re-activation without an assignment writes it is not captured.
 
 ## Programming a secure device
 
@@ -635,7 +647,7 @@ then does what ETS does (`activateSecureDevice` in `packages/knx/src/activation.
    write is never retried: a retry would go out under a key the device may not hold. Where a tool key
    was on file and the device opened only under its FDSK (reset since its activation), its sending
    sequence (PID 59) is set next, under the new key, from Busforge's tool-sequence clock and never
-   below a sequence the device has sent in the session, as ETS does
+   below a sequence the device has sent in the session, as ETS's run of that case does
    ([above](#individual-address-assignment)): a receiver drops a sender whose counter goes back.
 5. A new session under the new key must open and report security mode on (`ACTIVATION_UNCONFIRMED`
    otherwise, the key stays on file for the next run).
