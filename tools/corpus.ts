@@ -210,6 +210,7 @@ export const CORPUS_FILES: readonly string[] = [
     "mdtui-ets6log-partial-params.txt",
     "mdtui-ets6log-partial-revert.txt",
     "mdtui-unit-config.json",
+    "meanwell-busforge-fulldownload.log",
     "meanwell-ets-fulldownload.log",
     "meanwell-ets-links.log",
     "meanwell-ets-params.log",

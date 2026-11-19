@@ -7,7 +7,7 @@ import { buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, classify, clas
 import { getDeviceModules, getDeviceParams } from "../../apps/server/src/db/deviceparams.ts";
 import { CollectedUnit, asDevice, type Collection } from "../../packages/product/test/collected-unit.ts";
 import { captureText, catalogueXml, corpusPath, inServiceCollection, IN_SERVICE_COLLECTIONS } from "../corpus.ts";
-import { iaToNum } from "../../packages/knx/src/index.ts";
+import { gaToNum, iaToNum } from "../../packages/knx/src/index.ts";
 import { memoryImage, parseCapture } from "../etsdiff.ts";
 import { corpusDescribe } from "../corpus-test.ts";
 import { runInService, planInService, memorySnapshot, type InServiceIo, type InServiceOptions } from "./inservice.ts";
@@ -136,7 +136,6 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
     const readBack = (assume?: { paramRefId: string; value: string }[], compareHidden?: boolean) => settle<DeviceReadbackInfo | null>(`${d}/read-back`, false, { ...(assume ? { assume } : {}), ...(compareHidden ? { compareHidden } : {}) });
     // The runner's own client, its requests answered by this server.
     const ensureGa = (ga: string) => withServer(state, () => new Client("http://x").ensureGa(pid, ga));
-    const gaRaw = (ga: string) => { const [M, m, s] = ga.split("/").map(Number); return (M << 11) | (m << 8) | s; };
     const written = (r: FlashResult) => ({ structural: r.structural === true, result: r });
     return {
       api: {
@@ -146,7 +145,7 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
         setParam: (paramRefId, value) => call(state, "PUT", `${d}/params`, { paramRefId, value, lang: "de" }),
         ensureGa,
         hasGa: (ga) => withServer(state, () => new Client("http://x").hasGa(pid, ga)),
-        setGaPlain: async (ga) => { await call(state, "PATCH", `/api/projects/${pid}/group-addresses/${gaRaw(ga)}`, { security: "off" }); },
+        setGaPlain: async (ga) => { await call(state, "PATCH", `/api/projects/${pid}/group-addresses/${gaToNum(ga)}`, { security: "off" }); },
         setLinks: (comObjRefId, gaRaws) => call(state, "PUT", `${d}/links`, { comObjRefId, gaRaws, lang: "de" }),
         flashDry: () => settle<FlashResult>(`${d}/flash?dry=1`, false),
         flashGaDry: () => settle<FlashResult>(`${d}/flash-ga?dry=1`, false),
@@ -161,8 +160,8 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
       chan: {
         name: "api",
         setParam: async (paramRefId, value) => { await call(state, "PUT", `${d}/params`, { paramRefId, value, lang: "de" }); },
-        link: async (obj, ga) => { await ensureGa(ga); await call(state, "PUT", `${d}/links`, { comObjRefId: obj.refId, gaRaws: [gaRaw(ga)], lang: "de" }); },
-        addLink: async (obj, ga, own) => { await ensureGa(ga); await call(state, "PUT", `${d}/links`, { comObjRefId: obj.refId, gaRaws: [...own, gaRaw(ga)], lang: "de" }); },
+        link: async (obj, ga) => { await ensureGa(ga); await call(state, "PUT", `${d}/links`, { comObjRefId: obj.refId, gaRaws: [gaToNum(ga)], lang: "de" }); },
+        addLink: async (obj, ga, own) => { await ensureGa(ga); await call(state, "PUT", `${d}/links`, { comObjRefId: obj.refId, gaRaws: [...own, gaToNum(ga)], lang: "de" }); },
         flashParams: async () => written(await wait(`${d}/flash`)),
         flashLinks: async () => written(await wait(`${d}/flash-ga`)),
         fullDownload: async () => written(await wait(`${d}/download`)),
@@ -176,14 +175,14 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
         // The emulated witness answers when the unit's own tables, decoded by the real read, associate
         // the address with an object, with the value the spec expects (else 00): what an emulator can
         // show, nothing about the device's behaviour.
-        groupRead: async (ga) => ((await classify(cfg).readState(asDevice(dev), dev.mask, { liveParams: new Map() })).links.some((l) => l.gaRaws.includes(gaRaw(ga))) ? answer : null),
+        groupRead: async (ga) => ((await classify(cfg).readState(asDevice(dev), dev.mask, { liveParams: new Map() })).links.some((l) => l.gaRaws.includes(gaToNum(ga))) ? answer : null),
         // An object answers a read of any of its addresses on its first association (findings.md §36).
         groupReadAnsweredOn: async (readGa, ownGas) => {
           const calm = CALM.get(readGa);
           if (calm !== undefined) return { value: calm, unattributable: false };
           const links = (await classify(cfg).readState(asDevice(dev), dev.mask, { liveParams: new Map() })).links;
-          const holder = links.find((l) => l.gaRaws.includes(gaRaw(readGa)));
-          return { value: holder && holder.gaRaws[0] === gaRaw(ownGas[0]) ? answer : null, unattributable: false };
+          const holder = links.find((l) => l.gaRaws.includes(gaToNum(readGa)));
+          return { value: holder && holder.gaRaws[0] === gaToNum(ownGas[0]) ? answer : null, unattributable: false };
         },
         listen: async () => null,
         reboot: async () => {
