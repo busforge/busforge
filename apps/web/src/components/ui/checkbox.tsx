@@ -14,15 +14,24 @@ function Checkbox({
   className,
   indeterminate = false,
   onChange,
+  ref,
   ...props
-}: Omit<React.ComponentProps<"input">, "type" | "ref"> & { indeterminate?: boolean }) {
-  const ref = React.useRef<HTMLInputElement>(null)
+}: Omit<React.ComponentProps<"input">, "type"> & { indeterminate?: boolean }) {
+  const inner = React.useRef<HTMLInputElement | null>(null)
+  const setRef = React.useCallback(
+    (node: HTMLInputElement | null) => {
+      inner.current = node
+      if (typeof ref === "function") ref(node)
+      else if (ref) ref.current = node
+    },
+    [ref]
+  )
   React.useLayoutEffect(() => {
-    if (ref.current) ref.current.indeterminate = indeterminate
+    if (inner.current) inner.current.indeterminate = indeterminate
   })
   return (
     <input
-      ref={ref}
+      ref={setRef}
       type="checkbox"
       data-slot="checkbox"
       onChange={(e) => {
@@ -34,7 +43,7 @@ function Checkbox({
         "hover:not-disabled:border-ring hover:not-disabled:bg-accent",
         "checked:border-primary checked:bg-primary indeterminate:border-primary indeterminate:bg-primary hover:not-disabled:checked:bg-primary/85 hover:not-disabled:indeterminate:bg-primary/85",
         "focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50",
-        "aria-invalid:border-destructive aria-invalid:ring-destructive/30",
+        "aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40",
         "cursor-pointer disabled:cursor-not-allowed disabled:opacity-50",
         className
       )}

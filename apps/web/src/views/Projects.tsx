@@ -233,7 +233,7 @@ export function ProjectsScreen() {
             <AlertDialogDescription>{t("projects.ownKeysBody")}</AlertDialogDescription>
           </AlertDialogHeader>
           <label className="flex items-start gap-2 text-sm">
-            <Checkbox className="mt-0.5" checked={keysExported} onChange={(e) => setKeysExported(e.target.checked)} data-testid="keys-exported" />
+            <Checkbox className="mt-0.5 pointer-coarse:mt-0" checked={keysExported} onChange={(e) => setKeysExported(e.target.checked)} data-testid="keys-exported" />
             <span>{t("projects.ownKeysAck")}</span>
           </label>
           <AlertDialogFooter>

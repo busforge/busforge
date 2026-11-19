@@ -160,6 +160,27 @@
   }
 }
 
+/* Forced colors replace every author fill and drop the focus ring's box-shadow: system colours keep checked
+   and indeterminate apart from empty and give keyboard focus an outline.
+   Outside the layers, so these win over the box's utility classes. */
+@media (forced-colors: active) {
+  [data-slot="checkbox"]:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+  [data-slot="checkbox"]:checked,
+  [data-slot="checkbox"]:indeterminate {
+    forced-color-adjust: none;
+    background: Highlight;
+    border-color: Highlight;
+  }
+  [data-slot="checkbox"]:checked::before,
+  [data-slot="checkbox"]:indeterminate::before {
+    forced-color-adjust: none;
+    background: HighlightText;
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
