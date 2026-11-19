@@ -729,9 +729,12 @@ for its content.
 - **Switching security mode on takes three octets**, reserved, service 0 and mode 1, exactly as ETS
   sends them. Two octets are refused with return code `0xF2`.
 
-A master reset over the bus (A_Restart, erase codes 0x02 and 0x07, secured) is neither answered nor
-carried out by this device; its only way back to the factory key is physical: bus voltage on with the
-programming button held (slow blinking), release, hold again for 5 s (fast blinking).
+Busforge's master reset over the bus (A_Restart, erase codes 0x02 and 0x07, secured) is neither
+answered nor carried out by this device. ETS's secured confirmed restart with erase code 0x07, which it
+sends when the project switches the unit's Data Secure off, is answered without error and restarts the
+unit, which then still opens under its tool key; ETS switches the security mode off itself afterwards.
+The only way back to the factory key shown is physical: bus voltage on with the programming button held
+(slow blinking), release, hold again for 5 s (fast blinking).
 
 ## 20. A secure device answers no secured group read from a sender it does not list
 

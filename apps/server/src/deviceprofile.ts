@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { KnxDevice, KnxUsbTransport, PID, STATE, lsmState, SecureSession, iaToNum, assignIndividualAddress, readProgModeDevices, activateSecureDevice, readSecurityMode, type SecurityModeReading, type AssignIaResult, type ActivationResult } from "@busforge/knx";
 import {
-  classify, parseAppConfig, sameMask, planForMask, resolveModuleInstances, type ComObjectLink, type ComObjInstanceOverride, programIdStamp, maskInfo, isMemoryMappedLsm, progModeEndFor,
+  classify, parseAppConfig, sameMask, planForMask, resolveModuleInstances, type ComObjectLink, type ComObjInstanceOverride, programIdStamp, maskInfo, isMemoryMappedLsm,
   buildDeviceConfig, deviceComObjOverrideRows, placeComObjOverrides, type AppConfig,
   type FlashResult, type DeviceReadback, type ParamFlashCtx, type GaFlashCtx, type FullDownloadCtx, type StructureFlashCtx, type ReadStateCtx,
   type PersistBackups, type ProgressFn, type ConstantDifference,
@@ -476,19 +476,16 @@ export async function activateDevice(
 // usable address yet, so there is no address to open a session to and no mask gate to pass.
 // It therefore drives the raw transport. All the safety lives in assignIndividualAddress
 // (@busforge/knx): exactly one device in programming mode, the target address must be free,
-// and the result is proven by talking to the device on its new address. Programming mode ends on
-// the route the device's mask takes (progModeEndFor). Hardware-verified on a virgin device through
-// this endpoint (docs/status.md).
-// `projectMask`: the mask of the application the project holds for the device, for a device that does not
-// show its own on the bus.
+// and the result is proven by talking to the device on its new address. Programming mode ends with
+// A_Restart, as ETS ends it. Hardware-verified on a virgin device through this endpoint (docs/status.md).
 export async function assignDeviceAddress(
-  connection: Connection, ia: string, onProgress?: ProgressFn, projectMask?: string,
+  connection: Connection, ia: string, onProgress?: ProgressFn,
 ): Promise<AssignIaResult> {
   const tun = makeTransport(connection);
   onProgress?.("connect");
   await tun.connect();
   try {
-    return await assignIndividualAddress(tun, ia, { onProgress: (phase) => onProgress?.(phase), progModeEnd: (mask) => progModeEndFor(mask, projectMask) });
+    return await assignIndividualAddress(tun, ia, { onProgress: (phase) => onProgress?.(phase) });
   } finally {
     await tun.disconnect();
   }

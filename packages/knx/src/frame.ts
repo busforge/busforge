@@ -1,5 +1,5 @@
 // KNXnet/IP + cEMI + TPCI/APCI byte handling. See ../../../docs/findings.md.
-import { formatGa, type Levels } from "./ga.ts";
+import { formatGa, gaFromLevels, parseGa, type Levels } from "./ga.ts";
 import { KnxError } from "./errors.ts";
 
 export const KNXPORT = 3671;
@@ -210,10 +210,10 @@ export function parseApdu(tpdu: Buffer): ParsedApdu {
 // --- group address (multicast) ---
 export const gaToNum = (s: string) => { const [m, mid, sub] = s.split("/").map(Number); return (m << 11) | (mid << 8) | sub; };
 
-// The single level-aware GA formatter lives in the dependency-free ./ga module (so the
-// browser can import it too via the "@busforge/knx/ga" subpath); re-exported here for the
-// node callers that import it from frame.
-export { formatGa, type Levels };
+// The level-aware GA formatter and the three-level parser live in the dependency-free ./ga
+// module (so the browser can import them too via the "@busforge/knx/ga" subpath); re-exported
+// here for the node callers that import them from frame.
+export { formatGa, gaFromLevels, parseGa, type Levels };
 // The bus-log / no-project-context default is three-level.
 export const numToGa = (n: number) => formatGa(n, 3);
 export function cemiLDataGroup(src: number, ga: number, tpdu: Buffer): Buffer {

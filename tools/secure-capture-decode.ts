@@ -4,7 +4,7 @@
 //   GROUP_KEYS="2/1/7=<32 hex>,..."       optional, for the other secured group frames (three-level addresses)
 //   bun run tools/secure-capture-decode.ts <capture.log>
 import { readFileSync } from "node:fs";
-import { numToGa as ga, numToIa as ia } from "../packages/knx/src/frame.ts";
+import { numToGa as ga, numToIa as ia, parseGa } from "../packages/knx/src/frame.ts";
 import { SecureCaptureDecoder, addKeys, emptyKeys, parseKeyList } from "./secure-capture.ts";
 
 const file = process.argv[2];
@@ -13,10 +13,9 @@ if (!file) throw new Error("usage: secure-capture-decode.ts <capture.log>");
 const keys = emptyKeys();
 // A group key's name is its three-level address; anything else is refused rather than tried on another address.
 function groupAddress(name: string): number {
-  const m = name.match(/^(\d+)\/(\d+)\/(\d+)$/);
-  const [main, mid, sub] = m ? m.slice(1).map(Number) : [];
-  if (!m || main > 31 || mid > 7 || sub > 255) throw new Error(`GROUP_KEYS: ${name} is not a three-level group address`);
-  return (main << 11) | (mid << 8) | sub;
+  const n = parseGa(name);
+  if (n === null) throw new Error(`GROUP_KEYS: ${name} is not a three-level group address`);
+  return n;
 }
 addKeys(keys, parseKeyList(process.env.KEYS), parseKeyList(process.env.GROUP_KEYS).map((k) => ({ raw: groupAddress(k.name), key: k })));
 const decoder = new SecureCaptureDecoder(keys);

@@ -342,23 +342,37 @@ where they are required; raw acquisition is not a way around access control. Wha
 
 - **The security object on System 7.** Only System B loads it; the others refuse a secure device's
   GA flash and full download.
-- **Individual-address assignment of a secure device in Data Secure.** Busforge assigns it plain. ETS
-  sends the serial-number write as a secured broadcast after a broadcast Sync to `0/0/0`; captured for a
-  reset device under its FDSK ([knx-secure.md](knx-secure.md#individual-address-assignment)), not for a
-  device in secure mode under its tool key, which a bench capture has to show before it is built.
+- **Individual-address assignment of a secure device as ETS does it.** Busforge assigns it plain, and a
+  unit in Data Secure mode ignores the plain `A_Restart` that ends programming mode, so it stays in it.
+  ETS finds the unit by its serial (`A_SystemNetworkParameter_Read` of PID 11 while it is in programming
+  mode, `A_IndividualAddressSerialNumber_Read` without), Syncs to `0/0/0` and sends the serial-number
+  write as a secured broadcast, under the FDSK on a reset unit
+  ([knx-secure.md](knx-secure.md#individual-address-assignment)) and under its tool key otherwise, with
+  Data Secure on or off in the project (captured on the Jung 400021SE with it on and off, on the GVS AMMA
+  with it on). On the secured
+  connection that follows it switches the security mode on, writes the tool key and the sending sequence
+  (PID 59) where the project has Data Secure on, reads the security mode where it is off, reads the serial
+  number and ends with a secured confirmed restart ([commissioning.md](commissioning.md)).
 - **Repeat a secured write that fails at the long size at 40 octets,** as ETS does ("switching to
   shorter frames"), and then size secured writes up to the interface's full length as ETS does. Until
   then a secured write uses the interface's announced length only on the interface's own line and
   within the 55 octets shown answered, and a path that carries less than its interface announces fails
   the write.
-- **What makes ETS set a device's sending sequence (PID 59).** Its one capture with the write was both a
-  re-activation of a reset device and an address assignment by serial; Busforge writes it on a
-  re-activation. An ETS download that re-activates a reset device whose address was assigned by its
-  programming button separates the two.
+- **The sending sequence (PID 59) at an address assignment.** ETS writes it at every address assignment
+  of a unit the project runs in Data Secure, also where nothing is re-activated (the Jung 400021SE and the
+  GVS AMMA). Busforge writes it on a re-activation only; its address assignment is plain (above).
 - **A master reset before downloading a secure-capable application over another one.** Reported for
-  ETS (erase code 7 on such a device, none on a fresh one or one holding the same application); not in
-  Busforge's captures, and the Jung 400021SE ignores a secured master reset. Needs an ETS capture of
-  such a download before anything is built.
+  ETS (erase code 7 on such a device, none on a fresh one or one holding the same application); not
+  captured, as the bench's secure units have one application each. ETS sends a secured confirmed restart
+  with erase code 7 when the project switches a secured unit's Data Secure off, then switches the security
+  mode off itself and writes the FDSK as the tool key; the Jung 400021SE answers that restart without error
+  and restarts, and still opens under its tool key afterwards. Needs an ETS capture of such a download
+  before anything is built.
+- **Busforge's secured master reset is not answered where ETS's is.** On the Jung 400021SE Busforge's
+  secured A_Restart with erase code 7 gets no answer and resets nothing, ETS's secured confirmed restart
+  with erase code 7 is answered without error and restarts the unit ([findings.md](findings.md) §19). What
+  differs between the two frames is not explained; Busforge's frame held against ETS's from its ETS6.log
+  settles it.
 - **A smoke behaviour on a fresh address Busforge secures,** to show the device acting on a
   Busforge-generated key, not only holding it.
 - **Sending:** read the interface's L_Data.con over UDP, extended frames for values longer than
