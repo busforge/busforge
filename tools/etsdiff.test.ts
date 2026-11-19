@@ -3,7 +3,7 @@ import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { iaToNum, numToIa, gaToNum, LSM, planSecurityObjectLoad, GROUP_KEY_ENTRY, ownedRuns, planSystemBGaFlash, fillAllocatedRuns, differingRuns, type LoadPlan } from "../packages/knx/src/index.ts";
-import { parseAppConfig, classify, parseLoadProcedures, relParamFillByte, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, differingFF, leaveUnreadUnchanged, buildDeviceConfig, buildComObjectTable, buildGroupTables, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosing, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, withInstanceOverrides, fullDownloadImageCoverage, planSystem1Download, MV0012_DEFAULT_LOAD, absoluteBuildInstances, checkedStamps, buildSecurityObject, writtenGroupKeys, relativeParWriteSet, relativeComObjWriteSet, constantParams, differingConstants, comObjectTableChanges, decodeParameterImage, type KnxIpDevice, type ModuleInstance, type ComObjInstanceOverride, type ImageStamp } from "../packages/product/src/index.ts";
+import { parseAppConfig, classify, parseLoadProcedures, relParamFillByte, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, differingFF, leaveUnreadUnchanged, buildDeviceConfig, buildComObjectTable, buildGroupTables, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosing, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, withInstanceOverrides, fullDownloadImageCoverage, planSystem1Download, MV0012_DEFAULT_LOAD, absoluteBuildInstances, checkedStamps, buildSecurityObject, writtenGroupKeys, relativeParWriteSet, relativeComObjWriteSet, constantParams, differingConstants, comObjectTableChanges, decodeParameterImage, fullDownloadImageDigest, type KnxIpDevice, type ModuleInstance, type ComObjInstanceOverride, type ImageStamp } from "../packages/product/src/index.ts";
 import { catalogueDir, catalogueXml, captureText, capturePath, listCatalogue } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { tempDir } from "./test-temp.ts";
@@ -2455,6 +2455,9 @@ corpusDescribe("Theben MIX 2 (M-0048_A-493B-21-B471) against ETS", () => {
         expect(systemBPlanBracket(full.plan)).toEqual(ets);
         expect(ets.slice(0, 5)).toEqual(["unload:5", "unload:4", "unload:3", "unload:2", "unload:1"]);
         expect(ets.at(-1)).toBe("restart:810100");
+        // The segments written in ETS's order, the parameter segment first.
+        const writes = (steps: string[]) => steps.filter((x) => x.startsWith("write:"));
+        expect(writes(planOrder(full.plan))).toEqual(writes(etsOrder(`mix2-${p.tag}-ets6log-fulldownload.txt`)));
         expect(ets.slice(-5)).toEqual(["read:1/27:1:1", "read:2/27:1:1", "read:3/27:1:1", "read:4/27:1:2", "restart:810100"]);
         // Busforge besides reads the load states of the three tables there and switches verify mode off
         // (skipped where its writes are confirmed, as on this device); no pause, no new connection.
@@ -3159,6 +3162,49 @@ corpusDescribe("MEAN WELL KNX-40E-1280D (M-0162_A-0004-11-F245) against ETS", ()
   });
 });
 
+// The steps ETS executed and the plan's, in one vocabulary: the tables' load-state machines, the security object's
+// (`sec`), each table written, each security property ETS sent elements of (a WriteProp with Count 0 sends none).
+// Read from the "Executing:" lines directly: etsLog takes only self-closing steps, and the PID 54 step carries an
+// <OnError> child.
+const etsOrder = (file: string) => captureText(file).split(/\r?\n/).flatMap((l): string[] => {
+  const m = l.match(/ - Executing: <(\w+)([^>]*?)\s*\/?>/);
+  if (!m) return [];
+  const st = { verb: m[1], attrs: Object.fromEntries([...m[2].matchAll(/(\w+)="([^"]*)"/g)].map((x) => [x[1], x[2]])) };
+  const a = st.attrs, sec = a.ObjType === "17";
+  if (st.verb === "LdCtrlUnload") return [sec ? "sec:unload" : `unload:${a.LsmIdx}`];
+  if (st.verb === "LdCtrlLoad") return [sec ? "sec:load" : `load:${a.LsmIdx}`];
+  if (st.verb === "LdCtrlLoadCompleted") return [sec ? "sec:loadCompleted" : `loadCompleted:${a.LsmIdx}`];
+  if (st.verb === "LdCtrlRelSegment") return [`alloc:${a.LsmIdx}:${a.Size}`];
+  if (st.verb === "LdCtrlWriteRelMem") return [`write:${a.ObjIdx}`];
+  if (st.verb === "LdCtrlWriteProp" && sec) return a.Count === "0" ? [] : [`sec:prop:${a.PropId}`];
+  if (st.verb === "LdCtrlMasterReset") return ["restart"];
+  return [];
+});
+// The runs a plan writes one segment in (fillAllocatedRuns) are one step of ETS's, one LdCtrlWriteRelMem.
+const planOrder = (plan: LoadPlan) => plan.flatMap((st): string[] => {
+  if (st.op === "unload" || st.op === "load" || st.op === "loadCompleted") return [`${st.op}:${st.lsm}`];
+  if (st.op === "alloc") return [`alloc:${st.lsm}:${st.size}`];
+  if (st.op === "writeSegment" || st.op === "writeSegmentOwned") return [`write:${st.lsm}`];
+  if (st.op === "securityLsm") return [st.event === LSM.UNLOAD ? "sec:unload" : st.event === LSM.LOAD ? "sec:load" : "sec:loadCompleted"];
+  if (st.op === "writeSecurityProp") return [`sec:prop:${st.pid}`];
+  if (st.op === "restart") return ["restart"];
+  return [];
+}).filter((s, i, xs) => !(s.startsWith("write:") && xs[i - 1] === s));
+// The security object's elements ETS wrote: [PID, element, data as hex].
+const etsSecurity = (file: string) => {
+  const out: [number, number, string][] = [];
+  for (const l of captureText(file).split(/\r?\n/)) {
+    const m = l.match(/Sending Sec_req .*InnerTelegram=PropertyExtValue_WriteCon_req .*ObjectType=17 Instance=1 PID=(\d+) NumberOfElements=(\d+) StartIndex=(\d+) Data=([0-9A-F ]+?) succeeded/);
+    if (!m) continue;
+    const [pid, n, start] = [Number(m[1]), Number(m[2]), Number(m[3])];
+    const data = m[4].replace(/ /g, "").toLowerCase(), size = data.length / 2 / n;
+    for (let k = 0; k < n; k++) out.push([pid, start + k, data.slice(2 * size * k, 2 * size * (k + 1))]);
+  }
+  return out;
+};
+const planSecurity = (plan: LoadPlan) => plan.flatMap((st): [number, number, string][] => (st.op !== "writeSecurityProp" ? []
+  : Array.from({ length: st.data.length / st.elementSize }, (_, k): [number, number, string] => [st.pid, st.start + k, st.data.subarray(k * st.elementSize, (k + 1) * st.elementSize).toString("hex")])));
+
 // ETS 6 downloads of the MDT IP Interface/Router with e-mail and time server (M-0083_A-0137, System B, Data Secure),
 // private corpus captures/mdt-router-*: a full download of the application (the project had never loaded it into the
 // unit), a partial download without a change, one after the device name P-162 went from its 30-character default to a
@@ -3169,7 +3215,7 @@ corpusDescribe("MDT IP Interface/Router (M-0083_A-0137-20-7EB2) against ETS", ()
   const xml = catalogueXml("M-0083_A-0137-20-7EB2.xml.gz");
   const cfg = parseAppConfig(xml);
   const proc = parseLoadProcedures(xml);
-  const fx = JSON.parse(captureText("mdt-router-unit-config.json")) as { params: [string, string][] };
+  const fx = JSON.parse(captureText("mdt-router-unit-config.json")) as { ia: string; params: [string, string][]; links: { comObjRefId: string; gaRaws: number[] }[] };
   const A = "M-0083_A-0137-20-7EB2";
   const DEFAULT_NAME = "MDT IP Interface mit IPRouting";
   // The shorter name: "MDT " and the text ETS wrote from the field's fifth byte up to its first zero byte.
@@ -3239,6 +3285,59 @@ corpusDescribe("MDT IP Interface/Router (M-0083_A-0137-20-7EB2) against ETS", ()
     expect([...seg].filter(([o, b]) => full.bytes[o] !== b)).toEqual([]);
     expect([...full.bytes].map((b, o) => [o, b]).filter(([o, b]) => !seg.has(o) && b !== 0)).toEqual([]);
     expect(logBracket("mdt-router-ets6log-fulldownload.txt")).toContain("alloc:4:3972:1:0");
+  });
+
+  // ETS's full download, whole. The unit describes its association table (object 2, PID 23) as PDT_GENERIC_02: one byte
+  // for group index and object number, the width the download takes from the unit (FullDownloadInputs.assocEntryBytes).
+  // The project's links are objects 2 to 4 on plain addresses, so the security object carries no group key. The
+  // instance holds no KNXnet/IP settings (the box's System 1 application does), and ETS touches no property of the
+  // KNXnet/IP parameter object (type 11).
+  const FULL = "mdt-router-ets6log-fulldownload.txt";
+  const links = fx.links.map((l) => ({ comObjNum: Number(l.comObjRefId.match(/^O-(\d+)_/)![1]), gaRaws: l.gaRaws }));
+  const planned = (assocEntryBytes?: 2 | 4) => classify(cfg).planFullDownload(cfg.mask, { ia: fx.ia, params, links, proc, security: { groupKeys: new Map() }, assocEntryBytes });
+  const build = planned(2);
+  const segment = (lsm: number) => build.segments.find((s) => s.lsm === lsm)!.image;
+
+  test("full download: ETS read the association table's description first, PDT_GENERIC_02, and accessed no KNXnet/IP property", () => {
+    const log = captureText(FULL);
+    expect(log.match(/PropertyDescription_Response_ind <- [\d.]+ \([^)]*\) ObjectIndex=2 PID=23 PropertyIndex=\d+ DataType=(\w+)/)?.[1]).toBe("PDT_GENERIC_02");
+    expect(log.split(/\r?\n/).filter((l) => /InnerTelegram=Property\w*_req .*ObjectType=11\b/.test(l))).toEqual([]);
+    expect(classify(cfg).capabilities().fullDownload).toBe(true);
+  });
+
+  test("full download: Busforge's four segments are ETS's image, byte for byte, the association table in its short form", () => {
+    const ets = relImage(FULL);
+    for (const lsm of [4, 3, 2, 1]) expect([lsm, sorted(new Map([...segment(lsm)].map((b, i) => [i, b] as [number, number])))]).toEqual([lsm, sorted(ets.get(lsm)!)]);
+    expect([segment(2).length, planned(4).segments.find((s) => s.lsm === 2)!.image.length]).toEqual([2 + 2 * 3, 2 + 4 * 3]);
+  });
+
+  test("full download: every byte ETS sent inside its secured telegrams is Busforge's, and Busforge sends no other", () => {
+    const list = innerWriteList(FULL);
+    const ours = new Map<number, number>();
+    const base = new Map([4, 3, 2, 1].map((lsm) => [lsm, inferBase(segment(lsm), list)!] as [number, number]));
+    expect([...base.values()]).toEqual([0x14ea, 0x1402, 0x1202, 0x1002]);
+    for (const st of build.plan) if (st.op === "writeSegment") st.bytes.forEach((b, i) => ours.set(base.get(st.lsm)! + (st.offset ?? 0) + i, b));
+    expect(sorted(ours)).toEqual(sorted(innerWrites(FULL)));
+  });
+
+  test("full download: ETS's steps in ETS's order, the parameter segment written first and the security object after the tables", () => {
+    expect(planOrder(build.plan)).toEqual(etsOrder(FULL));
+    expect(systemBPlanBracket(build.plan)).toEqual(logBracket(FULL));
+    expect(etsOrder(FULL).filter((s) => s.startsWith("write:"))).toEqual(["write:4", "write:3", "write:2", "write:1"]);
+  });
+
+  test("full download: the security object's elements ETS wrote, no group key", () => {
+    expect(planSecurity(build.plan)).toEqual(etsSecurity(FULL));
+    expect(etsSecurity(FULL).filter(([pid]) => pid === 53)).toEqual([]);
+  });
+
+  // The unit as ETS's link download left it (a read-only collection): the download asks it for its association
+  // table's description and builds the short form; the dry run reports that image.
+  test("full download: the dry run on the unit takes the short form the unit describes", async () => {
+    const unit = new CollectedUnit(JSON.parse(captureText("mdt-router-unit-collect-nach-ets-ga-link.json")) as Collection);
+    const ctx = { deviceId: "router", ia: fx.ia, appXml: xml, params, links, security: { groupKeys: new Map() }, dryRun: true, persistBackups: () => "" };
+    const r = await classify(cfg).downloadFull(asDevice(unit), unit.mask, ctx);
+    expect(r).toMatchObject({ kind: "dryRun", imageBytes: build.imageBytes, imageDigest: fullDownloadImageDigest(build.segments) });
   });
 
   // The web interface password P-278 (20 bytes at offset 40) reads back FF after any write. ETS's full download writes
@@ -3325,47 +3424,6 @@ corpusDescribe("MDT IP Interface/Router (M-0083_A-0137-20-7EB2): group-address d
     const plan = withClosing(withConfirmedRestart(planSystemBGaFlash({ addr, assoc, comObj, comObjKept: { owned, keptAt: 0x1402 } }, true, false, security), proc.secureEnabled), proc, "grp");
     return { comObj, addr, assoc, owned, plan };
   };
-  // The steps ETS executed and the plan's, in one vocabulary: the tables' load-state machines, the security object's
-  // (`sec`), each table written, each security property ETS sent elements of (a WriteProp with Count 0 sends none).
-  // Read from the "Executing:" lines directly: etsLog takes only self-closing steps, and the PID 54 step carries an
-  // <OnError> child.
-  const etsOrder = (file: string) => captureText(file).split(/\r?\n/).flatMap((l): string[] => {
-    const m = l.match(/ - Executing: <(\w+)([^>]*?)\s*\/?>/);
-    if (!m) return [];
-    const st = { verb: m[1], attrs: Object.fromEntries([...m[2].matchAll(/(\w+)="([^"]*)"/g)].map((x) => [x[1], x[2]])) };
-    const a = st.attrs, sec = a.ObjType === "17";
-    if (st.verb === "LdCtrlUnload") return [sec ? "sec:unload" : `unload:${a.LsmIdx}`];
-    if (st.verb === "LdCtrlLoad") return [sec ? "sec:load" : `load:${a.LsmIdx}`];
-    if (st.verb === "LdCtrlLoadCompleted") return [sec ? "sec:loadCompleted" : `loadCompleted:${a.LsmIdx}`];
-    if (st.verb === "LdCtrlRelSegment") return [`alloc:${a.LsmIdx}:${a.Size}`];
-    if (st.verb === "LdCtrlWriteRelMem") return [`write:${a.ObjIdx}`];
-    if (st.verb === "LdCtrlWriteProp" && sec) return a.Count === "0" ? [] : [`sec:prop:${a.PropId}`];
-    if (st.verb === "LdCtrlMasterReset") return ["restart"];
-    return [];
-  });
-  const planOrder = (plan: LoadPlan) => plan.flatMap((st): string[] => {
-    if (st.op === "unload" || st.op === "load" || st.op === "loadCompleted") return [`${st.op}:${st.lsm}`];
-    if (st.op === "alloc") return [`alloc:${st.lsm}:${st.size}`];
-    if (st.op === "writeSegment" || st.op === "writeSegmentOwned") return [`write:${st.lsm}`];
-    if (st.op === "securityLsm") return [st.event === LSM.UNLOAD ? "sec:unload" : st.event === LSM.LOAD ? "sec:load" : "sec:loadCompleted"];
-    if (st.op === "writeSecurityProp") return [`sec:prop:${st.pid}`];
-    if (st.op === "restart") return ["restart"];
-    return [];
-  });
-  // The security object's elements ETS wrote: [PID, element, data as hex].
-  const etsSecurity = (file: string) => {
-    const out: [number, number, string][] = [];
-    for (const l of captureText(file).split(/\r?\n/)) {
-      const m = l.match(/Sending Sec_req .*InnerTelegram=PropertyExtValue_WriteCon_req .*ObjectType=17 Instance=1 PID=(\d+) NumberOfElements=(\d+) StartIndex=(\d+) Data=([0-9A-F ]+?) succeeded/);
-      if (!m) continue;
-      const [pid, n, start] = [Number(m[1]), Number(m[2]), Number(m[3])];
-      const data = m[4].replace(/ /g, "").toLowerCase(), size = data.length / 2 / n;
-      for (let k = 0; k < n; k++) out.push([pid, start + k, data.slice(2 * size * k, 2 * size * (k + 1))]);
-    }
-    return out;
-  };
-  const planSecurity = (plan: LoadPlan) => plan.flatMap((st): [number, number, string][] => (st.op !== "writeSecurityProp" ? []
-    : Array.from({ length: st.data.length / st.elementSize }, (_, k): [number, number, string] => [st.pid, st.start + k, st.data.subarray(k * st.elementSize, (k + 1) * st.elementSize).toString("hex")])));
   const asMap = (img: Buffer) => [...img].map((b, i) => [i, b] as [number, number]);
   const sorted = (m: Map<number, number>) => [...m].sort(([a], [b]) => a - b);
 
@@ -3651,11 +3709,19 @@ corpusDescribe("System B full download: the bytes ETS writes, and no other", () 
       const ets = memoryImage(cap.writes);
       expect(ours.size).toBeGreaterThan(0);
       expect([...ours].sort((x, y) => x[0] - y[0])).toEqual([...ets].sort((x, y) => x[0] - y[0]));
+      // The segments in the order written: ETS writes the parameter segment first on each; so does Busforge, but on
+      // thelsing/OpenKNX, where it writes the three tables first (planSystemBFullDownload).
+      const lsmAt = (addr: number) => build.segments.find((s) => addr >= at(s.lsm) && addr < at(s.lsm) + s.image.length)!.lsm;
+      const order = (lsms: number[]) => lsms.filter((l, i) => lsms[i - 1] !== l);
+      const etsOrder = order(cap.writes.map((w) => lsmAt(w.addr)));
+      const ourOrder = order(build.plan.flatMap((st) => (st.op === "writeSegment" ? [st.lsm] : [])));
+      expect(etsOrder).toEqual([4, 3, 2, 1]);
+      expect(ourOrder).toEqual(c.name === "OpenKNX RaumController" ? [3, 2, 1, 4] : etsOrder);
     }, "timeout" in c ? c.timeout : undefined);
   }
 
-  // The MDT IP Interface/Router's full download is refused (its tunnelling addresses, declaresTunnelingEntries), so its
-  // parameter segment is held against ETS's secured writes with the rule alone: <Data> images the segment whole.
+  // The MDT IP Interface/Router's parameter segment held against ETS's secured writes with the rule alone: <Data> images
+  // the segment whole. Its whole full download is held against ETS in its own describe above.
   test("MDT IP Interface/Router: the parameter segment's bytes ETS wrote inside its secured telegrams", () => {
     const xml = catalogueXml("M-0083_A-0137-20-7EB2.xml.gz");
     const cfg = parseAppConfig(xml);

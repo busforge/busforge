@@ -3,9 +3,9 @@ import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { iaToNum, numToGa, formatGa, SENDER_ENTRY } from "@busforge/knx";
 import { extractAppPrograms, type Project, type DroppedLink, type DroppedLinkReason } from "@busforge/project";
-import { parseAppConfig, buildDeviceConfig, annotateCalculations, buildSecurityObject, hardwareRefusals, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, effectiveComObjFlags, ProductError, imageWritableType, resolveParamRef, sameParamValue, type SameParamValue, takesValue, type EffectiveComObjFlags, type ComObjInstanceOverride, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
+import { parseAppConfig, buildDeviceConfig, annotateCalculations, buildSecurityObject, hardwareRefusals, knxIpRefusals, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, effectiveComObjFlags, ProductError, imageWritableType, resolveParamRef, sameParamValue, type SameParamValue, takesValue, type EffectiveComObjFlags, type ComObjInstanceOverride, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
 import { getAppProgram, putAppProgram, catalogBaggageNames, pictureType } from "./db/catalog.ts";
-import { getDeviceParams, getDeviceParamBase, getDeviceParamAssumed, getDeviceModules, getDeviceAppProgramId, getDeviceProductRef, getDeviceForFlash, deviceHasApplication, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps, getDeviceComObjOverrides, getDeviceComObjOverrideBase } from "./db/deviceparams.ts";
+import { getDeviceParams, getDeviceParamBase, getDeviceParamAssumed, getDeviceModules, getDeviceAppProgramId, getDeviceProductRef, getDeviceForFlash, deviceHasApplication, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps, getDeviceComObjOverrides, getDeviceComObjOverrideBase, getDeviceKnxIp } from "./db/deviceparams.ts";
 import { deviceCompatibility } from "./compatibility.ts";
 import { isUntestedAcknowledged } from "./db/untestedAcks.ts";
 import { projectExists, getGaMeta } from "./db/projects.ts";
@@ -403,10 +403,11 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
   // A secure device's group tables and commissioning also need its security object, which only
   // some memory models load; on the others the UI must not offer either.
   view.capabilities = isSecureDevice(db, projectId, deviceId) && !classify(app).loadsSecurityObject ? { ...caps, flashLinks: false, fullDownload: false, structuralFlash: false } : caps;
-  // What the hardware keeps Busforge from (a PEI program), whatever its application allows.
-  const hardware = hardwareRefusals(app, device);
-  for (const op of Object.keys(hardware) as (keyof typeof hardware)[]) view.capabilities = { ...view.capabilities, [op]: false };
-  const refusals = { ...classify(app).operationRefusals(), ...hardware };
+  // What the hardware (a PEI program) and the device's KNXnet/IP settings in the project keep Busforge
+  // from, whatever its application allows.
+  const ofDevice = { ...knxIpRefusals(app, getDeviceKnxIp(db, projectId, deviceId)), ...hardwareRefusals(app, device) };
+  for (const op of Object.keys(ofDevice) as (keyof typeof ofDevice)[]) view.capabilities = { ...view.capabilities, [op]: false };
+  const refusals = { ...classify(app).operationRefusals(), ...ofDevice };
   view.refusals = Object.fromEntries(Object.entries(refusals).map(([op, r]) => [op, r.code]));
   view.fullDownloadLoadsApplication = view.capabilities.fullDownload && classify(app).fullDownloadLoadsApplication();
   const productRef = getDeviceProductRef(db, projectId, deviceId);

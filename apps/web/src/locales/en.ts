@@ -290,7 +290,7 @@ const en = {
     IA_INVALID: "That is not a valid individual address. Use area.line.device, for example 1.2.3.",
     IA_TAKEN: "Another device in this project already uses that address.",
     IA_REQUIRED: "An individual address is required.",
-    FULL_DOWNLOAD_TUNNELING_ENTRIES: "This IP interface serves tunnelling connections from addresses Busforge does not write yet. A full download would reallocate the interface without them, so Busforge refuses it. Parameter and group-address flash stay available.",
+    FULL_DOWNLOAD_TUNNELING_ENTRIES: "The project gives this IP interface tunnelling addresses or an IP configuration, which ETS writes into its KNXnet/IP parameter object when it downloads it. Busforge's full download does not write them and would reallocate the interface without them, so Busforge refuses it. Parameter and group-address flash stay available.",
     FULL_DOWNLOAD_UNSUPPORTED: "Commissioning this device from scratch is not supported yet: its memory model has never been proven to survive a full download, so Busforge refuses rather than half-write it.",
     COM_OBJECT_SIZE_UNKNOWN: "A communication object declares a datapoint size Busforge cannot express as a KNX value field type. It refuses to write a com-object table with a guessed size.",
     COM_OBJECT_TABLE_EMPTY: "This application declares no communication object numbered 1 or higher, so its com-object table would hold no entry (object 0 has none: its place is the count). No ETS capture shows such a table written, so Busforge refuses to write it.",

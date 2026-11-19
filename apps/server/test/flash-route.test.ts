@@ -509,15 +509,39 @@ describe("POST /flash: a family that cannot full-download", () => {
 });
 
 
-// MDT IP Interface/Router (A-0137) declares tunnelling entries no Busforge path writes, so its full
-// download is refused with its own code; the surgical flashes stay, and a never-programmed one is not
-// sent to the download it cannot run.
+// MDT IP Interface/Router (A-0137) declares tunnelling entries, and its instance holds no KNXnet/IP settings (the box's
+// System 1 application holds them): its full download runs as ETS's. Where the project gives an instance of it an IP
+// configuration or tunnelling addresses, which ETS writes into its KNXnet/IP parameter object and no System B path of
+// Busforge writes, the full download is refused with its own code; the surgical flashes stay, and a never-programmed
+// one is not sent to the download it cannot run.
 corpusDescribe("an IP interface with tunnelling entries", () => {
   const a0137 = catalogueXml("M-0083_A-0137-20-7EB2.xml.gz");
+  const IP_SETTINGS = { instanceName: "", productName: "IP Interface/Router", productNameTranslations: [], ipConfig: { Assign: "Fixed", IPAddress: "192.0.2.3" }, additionalAddresses: [], securityAttributes: [], toolKeyLoaded: false, busInterfaces: 0, installation: {} };
+  const withIpSettings = (state: AppState, projectId: string, deviceId: string) =>
+    state.db.run("INSERT INTO device_knxip (project_id, device_id, settings) VALUES (?, ?, ?)", [projectId, deviceId, JSON.stringify(IP_SETTINGS)]);
+  const view = async (state: AppState, projectId: string, deviceId: string) =>
+    (await (await handleApi(req(`/api/projects/${projectId}/devices/${deviceId}/config`), state))!.json()) as any;
 
-  test("the download route refuses with FULL_DOWNLOAD_TUNNELING_ENTRIES and never reaches the download", async () => {
+  test("without KNXnet/IP settings on its instance the download is offered and the route reaches it", async () => {
     const state = freshState();
     const { projectId, deviceId } = await projectWithApp(state, a0137);
+    const v = await view(state, projectId, deviceId);
+    expect([v.capabilities.fullDownload, v.capabilities.structuralFlash, v.refusals?.fullDownload]).toEqual([true, false, undefined]);
+    let reached = 0;
+    downloadImpl = async () => { reached++; throw new Error("stop"); };
+    try {
+      const body = (await (await post(state, `/api/projects/${projectId}/devices/${deviceId}/download?dry=1`))!.json()) as any;
+      if (body.id) await state.queue.wait(body.id);
+      expect(reached).toBe(1);
+    } finally { downloadImpl = realDownload; }
+  });
+
+  test("with an IP configuration on its instance the page withholds the download, and the route refuses with FULL_DOWNLOAD_TUNNELING_ENTRIES before it", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await projectWithApp(state, a0137);
+    withIpSettings(state, projectId, deviceId);
+    const v = await view(state, projectId, deviceId);
+    expect([v.capabilities.fullDownload, v.refusals?.fullDownload]).toEqual([false, "FULL_DOWNLOAD_TUNNELING_ENTRIES"]);
     downloadImpl = async () => { throw new Error("the full download must not be reached"); };
     try {
       for (const route of ["download", "download?dry=1"]) {
@@ -572,9 +596,27 @@ corpusDescribe("an IP interface with tunnelling entries", () => {
     } finally { paramFlashImpl = realParamFlash; }
   });
 
-  test("a never-programmed one keeps its parameter and group-address flash", async () => {
+  // As every device whose full download Busforge runs, a never-programmed one without KNXnet/IP settings is
+  // commissioned by the download first.
+  test("a never-programmed one without KNXnet/IP settings is sent to the download", async () => {
     const state = freshState();
     const { projectId, deviceId } = await projectWithApp(state, a0137);
+    state.db.run("UPDATE devices SET never_programmed = 1 WHERE project_id = ? AND instance_id = ?", [projectId, deviceId]);
+    paramFlashImpl = async () => { throw new Error("the surgical flash must not be reached"); };
+    gaFlashImpl = async () => { throw new Error("the GA flash must not be reached"); };
+    try {
+      for (const route of ["flash?dry=1", "flash-ga?dry=1"]) {
+        const res = (await post(state, `/api/projects/${projectId}/devices/${deviceId}/${route}`))!;
+        expect(res.status).toBe(400);
+        expect(((await res.json()) as any).error.code).toBe("NEVER_PROGRAMMED_USE_DOWNLOAD");
+      }
+    } finally { paramFlashImpl = realParamFlash; gaFlashImpl = realGaFlash; }
+  });
+
+  test("a never-programmed one with KNXnet/IP settings keeps its parameter and group-address flash", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await projectWithApp(state, a0137);
+    withIpSettings(state, projectId, deviceId);
     state.db.run("UPDATE devices SET never_programmed = 1 WHERE project_id = ? AND instance_id = ?", [projectId, deviceId]);
     const reached: string[] = [];
     paramFlashImpl = async (o) => { reached.push("params"); expect([o.dryRun, o.neverProgrammed]).toEqual([true, true]); return { kind: "dryRun", mask: "MV-07B0", imageBytes: 1, diffBytes: 1, backup: "x" }; };
@@ -586,11 +628,13 @@ corpusDescribe("an IP interface with tunnelling entries", () => {
     expect(reached).toEqual(["params", "links"]);
   });
 
-  // Its parameters live in the device, so a verified group-address flash, which writes none of them, leaves it never
-  // programmed, and the parameter flash after it is still told so; that flash's verified result ends the state.
-  test("a never-programmed one stays so after a verified group-address flash, and its parameter flash ends it", async () => {
+  // With KNXnet/IP settings its surgical flashes are the way it is programmed. Its parameters live in the device, so a
+  // verified group-address flash, which writes none of them, leaves it never programmed, and the parameter flash after
+  // it is still told so; that flash's verified result ends the state.
+  test("a never-programmed one with KNXnet/IP settings stays so after a verified group-address flash, and its parameter flash ends it", async () => {
     const state = freshState();
     const { projectId, deviceId } = await projectWithApp(state, a0137);
+    withIpSettings(state, projectId, deviceId);
     state.db.run("UPDATE devices SET never_programmed = 1 WHERE project_id = ? AND instance_id = ?", [projectId, deviceId]);
     const np = () => (state.db.query("SELECT never_programmed AS n FROM devices WHERE instance_id = ?").get(deviceId) as { n: number }).n;
     const told: boolean[] = [];

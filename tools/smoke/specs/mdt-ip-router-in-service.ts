@@ -2,8 +2,9 @@ import type { DeviceSpec } from "../spec.ts";
 
 // The MDT IP Interface/Router SCN-IP000.03 (System B, MV-07B0, KNX Data Secure) as a unit in service:
 // the run takes its configuration by read-back and writes one parameter flash and one GA flash, each
-// reverted (inservice.ts). The product offers no full download (its application declares tunnelling
-// entries, FULL_DOWNLOAD_TUNNELING_ENTRIES) and no structural flash. Its GA flash is ETS's group-address
+// reverted (inservice.ts), and a full download of its own configuration only with --full-download (otherwise
+// reported unproven). Its full download is ETS's capture of it, step for step and byte for byte; no
+// structural flash is offered. Its GA flash is ETS's group-address
 // download of this product, byte for byte and step for step (tools/etsdiff.test.ts): the association
 // table in the short form the unit describes, the address table after the security object. Refs pinned
 // verbatim from the application's device configuration, taken offline from its catalogue; the run refuses
@@ -48,6 +49,7 @@ export const mdtIpRouterInService: DeviceSpec = {
     // "Operation" (DPST-1-11, read + transmit), unlinked in the application's default configuration,
     // linked to the run's test address while the run reads it.
     link: { comObjRefId: "M-0083_A-0137-20-7EB2_O-1_R-142" },
+    fullDownload: true,
   },
   configure: [],
   behaviours: [
