@@ -130,7 +130,8 @@ function Section({ icon, title, entries, projectId, emptyHint, onNavigate }: {
 // One linked com-object of a group address: its device, number, texts and flags (where they are the
 // device's), linking to its row on the device's page (`co` in the page's URL), or to the page where
 // its configuration hides it. `direction` adds whether it sends or receives on the
-// address, where the list does not say it by its section; `sameDevice` marks an object of the device
+// address, where the list does not say it by its section, and like the flags only where they are the
+// device's; `sameDevice` marks an object of the device
 // the list is shown from.
 export function ComObjRow({ projectId, entry: e, onNavigate, direction, sameDevice }: {
   projectId: string;
@@ -140,7 +141,8 @@ export function ComObjRow({ projectId, entry: e, onNavigate, direction, sameDevi
   sameDevice?: boolean;
 }) {
   const { t } = useTranslation();
-  const letters = flagsKnown(e) ? flagLetters(e.flags, t) : "";
+  const known = flagsKnown(e);
+  const letters = known ? flagLetters(e.flags, t) : "";
   return (
     <Link
       to="/projects/$projectId/devices/$deviceId"
@@ -153,8 +155,8 @@ export function ComObjRow({ projectId, entry: e, onNavigate, direction, sameDevi
       <span className="flex min-w-0 items-center gap-1.5">
         <DeviceLabel name={e.deviceName} ia={e.ia} className="min-w-0 max-w-full" />
         {sameDevice && <Badge tone="outline" size="sm">{t("gaDevices.sameDevice")}</Badge>}
-        {direction?.sends && <Badge size="sm" className="ml-auto" data-testid="co-row-sends"><ArrowUpFromLine /> {t("gaDevices.sends")}</Badge>}
-        {direction?.receives && <Badge size="sm" className={cn(!direction.sends && "ml-auto")} data-testid="co-row-receives"><ArrowDownToLine /> {t("gaDevices.receives")}</Badge>}
+        {known && direction?.sends && <Badge size="sm" className="ml-auto" data-testid="co-row-sends"><ArrowUpFromLine /> {t("gaDevices.sends")}</Badge>}
+        {known && direction?.receives && <Badge size="sm" className={cn(!direction.sends && "ml-auto")} data-testid="co-row-receives"><ArrowDownToLine /> {t("gaDevices.receives")}</Badge>}
       </span>
       <span className="flex min-w-0 items-baseline gap-1.5 pl-1 text-xs text-muted-foreground">
         <span className="shrink-0 font-mono tabular-nums">{e.comObjNumber}</span>
@@ -164,7 +166,7 @@ export function ComObjRow({ projectId, entry: e, onNavigate, direction, sameDevi
         {letters && <span className="shrink-0 font-mono" title={t("gaDevices.flags")}>{letters}</span>}
       </span>
       {e.hidden && <span className="pl-1 text-xs text-amber-700 dark:text-amber-300" data-testid="ga-object-hidden">{t("gaDevices.hidden")}</span>}
-      {e.flagsRefused && <span className="pl-1 text-xs text-amber-700 dark:text-amber-300" data-testid="ga-flags-refused">{t("gaDevices.flagsRefused")}</span>}
+      {e.flagsRefused && <span className="pl-1 text-xs text-amber-700 dark:text-amber-300" data-testid="ga-flags-refused">{t(direction ? "linkedObjects.flagsRefused" : "gaDevices.flagsRefused")}</span>}
     </Link>
   );
 }

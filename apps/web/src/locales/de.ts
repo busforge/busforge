@@ -986,6 +986,7 @@ const de: Messages = {
     title: "Verknüpfte Objekte",
     none: "Kein anderes Objekt an dieser Adresse.",
     sendingAddress: "seine Sendeadresse",
+    flagsRefused: "Seine eigenen Flags im Projekt lassen sich nicht zuordnen; daher sind weder sie noch Senden oder Empfangen hier angezeigt.",
     targetFiltered: "Objekt {{number}} ist durch den Filter ausgeblendet.",
     targetNotShown: "Objekt {{number}} wird von der aktuellen Konfiguration dieses Geräts nicht gezeigt.",
   },

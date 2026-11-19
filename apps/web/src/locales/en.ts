@@ -987,6 +987,7 @@ const en = {
     title: "Linked objects",
     none: "No other object on this address.",
     sendingAddress: "its sending address",
+    flagsRefused: "Its own flags in the project cannot be placed, so neither they nor whether it sends or receives here are shown.",
     targetFiltered: "Object {{number}} is hidden by the filter.",
     targetNotShown: "Object {{number}} is not shown by this device's current configuration.",
   },

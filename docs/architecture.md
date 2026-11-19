@@ -477,8 +477,10 @@ Conventions that hold across views:
   `/group-addresses/:raw/devices` views the group-address overlay shows. Each object in either list
   leads to its row on its device's page (`?co=`), which scrolls to it and marks it; the open list is
   in the URL too (`?links=`), so back returns to it. An object its device's configuration hides is
-  marked as such (`hidden`), and a page whose configuration hides or whose filter drops the object
-  named in the URL says so instead of landing nowhere.
+  marked as such (`hidden`) and leads to its device's page only, since its number can be that of the
+  object shown. Neither its flags nor its direction are listed, as for an object whose own flags
+  cannot be placed. A page whose configuration hides or whose filter drops the object named in
+  the URL says so, and scrolls to it once a filter or parameter change shows it.
 - **Flags are the ones the project gives.** The device page and the group-address overlay show each
   object's flags with the project's own overrides laid over the application's, resolved where the
   writes resolve them (`effectiveComObjFlags`, [load-procedures.md](load-procedures.md#project-level-com-object-flags));

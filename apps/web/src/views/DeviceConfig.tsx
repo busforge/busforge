@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import { AlertTriangle, ChevronDown, ChevronLeft, ChevronsUpDown, Cpu, HardDriveDownload, Info, KeyRound, Loader2, MapPin, MessageSquareWarning, MoreVertical, Puzzle, RadioTower, Repeat2, RotateCcw, Search, ShieldCheck, Stethoscope, X } from "lucide-react";
-import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
+import { Link, useNavigate, useParams, useRouter, useSearch } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -403,29 +403,52 @@ export function DeviceConfig() {
 
   // A com-object's row scrolled into view, or said why the page has none for it.
   const coRows = useRef(new Map<number, HTMLElement>());
+  const whyNoRow = useCallback((number: number) =>
+    view?.blocks.some((b) => b.items.some((i) => i.kind === "comObject" && i.comObject.number === number))
+      ? "linkedObjects.targetFiltered" : "linkedObjects.targetNotShown", [view]);
   const showObject = useCallback((number: number) => {
     const el = coRows.current.get(number);
-    if (el) { scrollToSection(el); return; }
-    const inView = !!view?.blocks.some((b) => b.items.some((i) => i.kind === "comObject" && i.comObject.number === number));
-    toast.warning(t(inView ? "linkedObjects.targetFiltered" : "linkedObjects.targetNotShown", { number }));
-  }, [view, t]);
-  // The object the URL names, shown once the configuration is: the one a link led to (co), or on
-  // arriving at the page with a list of linked objects open (links: back, reload) its row. Opening a
-  // list on the page scrolls nothing.
+    if (el) scrollToSection(el);
+    else toast.warning(t(whyNoRow(number), { number }));
+  }, [whyNoRow, t]);
+  // The object the URL names: the one a link led to (co), or on arriving at the page with a list of
+  // linked objects open (links: back, reload) its row; opening a list on the page names none. It is
+  // scrolled to once its row is shown, also after a filter or parameter change brings it; until then
+  // the page says once per reason why it has no row.
+  const router = useRouter();
   const arrivedAt = useRef<string | null>(null);
-  const shownTarget = useRef<string | null>(null);
+  const namedTarget = useRef<string | null>(null);
+  const pendingTarget = useRef<{ number: number; told?: string } | null>(null);
+  const awaitingRender = useRef<(() => void) | null>(null);
+  useEffect(() => () => awaitingRender.current?.(), []);
   useEffect(() => {
     if (!view) return;
     const arriving = arrivedAt.current !== assumeKey;
     arrivedAt.current = assumeKey;
+    if (arriving) pendingTarget.current = null;
     const target = search.co ?? (arriving ? search.links : undefined);
-    if (target == null) return;
-    const key = `${assumeKey}/${target}`;
-    if (shownTarget.current === key) return;
-    shownTarget.current = key;
-    // A frame later: the router resets the scroll of a navigation in its root's effect, after this one.
-    requestAnimationFrame(() => showObject(target));
-  }, [search.co, search.links, view, assumeKey, showObject]);
+    const key = target == null ? null : `${assumeKey}/${target}`;
+    if (target != null && namedTarget.current !== key) { namedTarget.current = key; pendingTarget.current = { number: target }; }
+    const pending = pendingTarget.current;
+    if (!pending) return;
+    if (coRows.current.has(pending.number)) {
+      pendingTarget.current = null;
+      awaitingRender.current?.();
+      awaitingRender.current = null;
+      const go = () => scrollToSection(coRows.current.get(pending.number));
+      // The router resets the scroll of a navigation once it has rendered it, which can be after this
+      // effect: then the scroll waits for that.
+      const { location, resolvedLocation } = router.state;
+      if (resolvedLocation?.href === location.href) go();
+      else {
+        const off = router.subscribe("onRendered", () => { off(); awaitingRender.current = null; go(); });
+        awaitingRender.current = off;
+      }
+      return;
+    }
+    const why = whyNoRow(pending.number);
+    if (pending.told !== why) { pending.told = why; toast.warning(t(why, { number: pending.number })); }
+  }, [search.co, search.links, view, assumeKey, filteredGroups, whyNoRow, t, router]);
   const setLinksOpen = (number: number, open: boolean) =>
     void navigate({ search: (p) => ({ ...p, links: open ? number : undefined }), replace: true, resetScroll: false });
 
