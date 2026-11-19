@@ -539,6 +539,20 @@ advertise communication. The consequence for a group-address flash is in
 [findings.md](findings.md) §7: writing only L1+L2 to link an object whose L3 still says
 `comm=0` produces a link that verifies green and is functionally dead.
 
+This holds for what the captures show: applications that name **no ETS download plugin**,
+on products whose catalogue entry carries **no factory image** (`Hardware2Program/@LoadedImage`).
+Every application in the test corpus is such an application. ETS downloads an application that
+names a plugin (`<Static><Extension EtsDownloadPlugin="{GUID}">`, a non-empty value) through
+that plugin, and no capture shows what it writes into the com-object table. For such an
+application Busforge refuses the full download and every group-address flash that writes the
+table, and with them the structural flash, before anything is sent
+(`COM_OBJECT_TABLE_DOWNLOAD_PLUGIN`); the parameter flash, which leaves the table as the device
+holds it, stays offered on a device the project has programmed, and a device it never programmed
+is pointed at ETS (`NEVER_PROGRAMMED_USE_ETS`). A factory image that holds
+the com-object table is not yet detected: the catalogue attribute does not reach the write
+path, so such a product is written by the rule above ([roadmap.md](roadmap.md)). No product
+in the test corpus carries one.
+
 ### MV-0705 layout: manufacturer template plus overlay
 
 Property-mapped System 7 uses a different layout, and it is **not** rebuilt from scratch:

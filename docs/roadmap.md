@@ -181,6 +181,15 @@ depends on is hardware-proven.
   that disagree, `Delay`, `MapError`, `InvokeFunctionProp`, `MasterReset`, `TaskPtr`, `TaskCtrl2`,
   property writes inside the load, `DeclarePropDesc`, `CompareRelMem`, `<choose>` in a procedure: what is
   shown of each and what settles it is in [load-procedures.md](load-procedures.md#steps-refused-until-a-capture-shows-them).
+- **The com-object table of an application with an ETS download plugin, or a product with a factory
+  image.** The communication flag of an object without a group address is shown cleared only for
+  applications without a download plugin on products without a factory image
+  ([device-memory-model.md](device-memory-model.md#the-communication-flag-on-unlinked-objects)). An
+  application that names a plugin is refused the writes of the table (`COM_OBJECT_TABLE_DOWNLOAD_PLUGIN`).
+  A factory image is not yet detected: `Hardware2Program/@LoadedImage` has to be taken from the catalogue
+  at import and reach the write path, as the PEI program does, so that a product whose factory image
+  holds the com-object table is refused the same writes. An ETS capture of a download of either kind
+  settles what the table holds; no product in the test corpus is of either kind.
 - **Prove a non-TP device.** One read-back on real powerline, RF or IP hardware promotes that row
   from extrapolation to proof. Hardware verification help is welcome.
 - **OpenKNX surgical flashes under an automated run.** The device-in-service spec

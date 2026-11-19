@@ -191,7 +191,10 @@ table (L3)".
 
 ### 2. Unlinked objects must have their Communication flag cleared
 
-ETS clears the Communication flag on every com-object without a group-address link. Matching
+ETS clears the Communication flag on every com-object without a group-address link, for an
+application that names no ETS download plugin on a product without a factory image (one that names
+a plugin is refused the writes of the table, `COM_OBJECT_TABLE_DOWNLOAD_PLUGIN`, see
+[device-memory-model.md](device-memory-model.md#the-communication-flag-on-unlinked-objects)). Matching
 that is not cosmetic: it is what makes a later group-address flash behave, and it is the
 difference between a link that works and one that reads back byte-perfect and is deaf. The
 full story is in [findings.md](findings.md) §7.

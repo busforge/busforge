@@ -400,7 +400,8 @@ implementation keeps the device's com-object table (L3) untouched: a link change
 removes no objects, so why rewrite L3?
 
 Because **L3 carries a per-object Communication flag, and ETS clears it on every object
-without a link** (byte-verified against an ETS-programmed device). So an object that was
+without a link** (byte-verified against an ETS-programmed device; shown for applications without an
+ETS download plugin on products without a factory image, see [device-memory-model.md](device-memory-model.md#the-communication-flag-on-unlinked-objects)). So an object that was
 **unlinked at the last full download holds `comm=0`** in the device's L3. Writing only L1+L2
 to link it then points a group address at an object whose L3 still says "does not
 communicate". The device happily **acknowledges telegrams** to that group address (the

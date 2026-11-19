@@ -203,6 +203,9 @@ export interface AppConfig {
   downloadInvisibleParameters?: string;
   // ApplicationProgram MinEtsVersion as declared ("4.0", "3.0d", ...); undefined where the application declares none.
   minEtsVersion?: string;
+  // <Static><Extension EtsDownloadPlugin>: the ETS plugin (a GUID) the application has ETS download it with;
+  // undefined where the attribute is absent, empty or blank, which names no plugin.
+  etsDownloadPlugin?: string;
   // <Options TextParameterZeroTerminate="true">: a text parameter's value is stored with a closing zero,
   // so it can take at most one character less than its field.
   textParameterZeroTerminate: boolean;
@@ -389,6 +392,8 @@ export function parseAppConfig(xml: string): AppConfig {
   const desc = appAttrs.VisibleDescription ?? "";
   const dca = /\bDCA\b/i.test(appAttrs.Name ?? "") || /\bDCA\b/i.test(desc) ? { hint: desc.trim() } : undefined;
   const calculations = calculationsOf(appKids);
+  const extensionNode = firstByTag(staticKids, "Extension");
+  const etsDownloadPlugin = extensionNode ? attrsOf(extensionNode).EtsDownloadPlugin?.trim() : undefined;
 
   return {
     id: appAttrs.Id,
@@ -405,6 +410,7 @@ export function parseAppConfig(xml: string): AppConfig {
     ...(optionsNode && attrsOf(optionsNode).TextParameterEncoding !== undefined ? { textParameterEncoding: attrsOf(optionsNode).TextParameterEncoding } : {}),
     ...(optionsNode && attrsOf(optionsNode).DownloadInvisibleParameters !== undefined ? { downloadInvisibleParameters: attrsOf(optionsNode).DownloadInvisibleParameters } : {}),
     ...(appAttrs.MinEtsVersion !== undefined ? { minEtsVersion: appAttrs.MinEtsVersion } : {}),
+    ...(etsDownloadPlugin ? { etsDownloadPlugin } : {}),
     defaultLanguage: appAttrs.DefaultLanguage ?? "en-US",
     languages,
     loadProcedures: loadProceduresOf(root),

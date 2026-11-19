@@ -4,7 +4,7 @@ import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTa
 import { refuseRawDataWrites } from "./rawdata.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { assertComObjectTableStable } from "./comobjtable.ts";
-import { buildComObjectTable, programIdStamp, withLinkedCommFlags, linkedBitObjects, refuseAppCommOffLinks, withInstanceOverrides, refuseUnwritableOverrides, decodeComObjectTable, decodeComObjectTableMv0705, comObjFlagsDiffering, refuseUnknownDeviceFlags, changedEntryBits, type ComObjInstanceOverride, type ObservedComObjFlags, type OverridableBit } from "./comobjbuild.ts";
+import { buildComObjectTable, programIdStamp, withLinkedCommFlags, linkedBitObjects, refuseAppCommOffLinks, downloadPluginRefusal, withInstanceOverrides, refuseUnwritableOverrides, decodeComObjectTable, decodeComObjectTableMv0705, comObjFlagsDiffering, refuseUnknownDeviceFlags, changedEntryBits, type ComObjInstanceOverride, type ObservedComObjFlags, type OverridableBit } from "./comobjbuild.ts";
 import { buildDeviceConfig, type DeviceCapabilities, type CfgComObjImage } from "./config.ts";
 import { decodeParameterImage, decodeAbsoluteImage, imageValueForm } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
@@ -1172,11 +1172,13 @@ export class SystemBProfile extends DeviceProfile {
     if (sizes) return { flashParams: sizes, flashLinks: sizes, fullDownload: sizes };
     const par = parRefusal(assessParCoverage(this.cfg.loadProcedures, "relative"), "parameter download");
     const grp = parRefusal({ blocked: unrunGrpSteps(this.cfg.loadProcedures), skipped: [], checks: [] }, "group-address flash");
-    const full = par ?? relativeFullDownloadRefusal(this.cfg, this.cfg.loadProcedures);
+    const plugin = downloadPluginRefusal(this.cfg);
+    const full = par ?? relativeFullDownloadRefusal(this.cfg, this.cfg.loadProcedures) ?? plugin;
+    const links = grp ?? plugin;
     return {
       ...(par ? { flashParams: par } : {}),
       ...(full && this.hasParamSegment() ? { fullDownload: full } : {}),
-      ...(grp ? { flashLinks: grp } : {}),
+      ...(links ? { flashLinks: links } : {}),
     };
   }
 
@@ -1981,6 +1983,13 @@ export class System7Profile extends DeviceProfile {
     const partial = declared && cfg.loadProcedures.preferPartialIfLoaded ? absoluteFullStepRefusal(cfg.loadProcedures, "partial") : declared;
     const full = (declared && partial) ?? (this.canAuthor() ? fullDownloadSegmentRefusal(cfg, cfg.loadProcedures) : null);
     if (full) out.fullDownload = full;
+    // Only the writes that put a com-object table into the device: a group-address flash with no table
+    // segment writes the group tables alone.
+    const plugin = downloadPluginRefusal(cfg);
+    if (plugin) {
+      if ("l3" in ga && ga.l3) out.flashLinks ??= plugin;
+      if (this.fullDownloadOffered()) out.fullDownload ??= plugin;
+    }
     return out;
   }
 
@@ -2323,7 +2332,7 @@ export class System7Profile extends DeviceProfile {
       throw new ProductError("FULL_DOWNLOAD_UNSUPPORTED",
         `property-mapped device (mask ${mask}) declares no <ComObjectTable CodeSegment>; cannot author its com-object table, refusing to write a manufacturer-default L3`);
     }
-    refuse(absoluteFullStepRefusal(proc, absoluteFullForm(proc, ctx.unitHoldsApplication ?? false)) ?? fullDownloadSegmentRefusal(cfg, proc));
+    refuse(absoluteFullStepRefusal(proc, absoluteFullForm(proc, ctx.unitHoldsApplication ?? false)) ?? fullDownloadSegmentRefusal(cfg, proc) ?? downloadPluginRefusal(cfg));
     refuseTunnelingEntries(cfg);
     const instances = cfg.hasModules ? (ctx.moduleInstances?.length ? ctx.moduleInstances : resolveModuleInstances(cfg, ctx.params)) : [];
     refuseColorWrites(cfg, ctx.params, instances, false);

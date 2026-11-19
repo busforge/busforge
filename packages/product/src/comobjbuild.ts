@@ -115,12 +115,14 @@ export function comObjectEntry(obj: CfgComObjImage): Buffer {
 // malformed count can never truncate an active entry.
 //
 // `linked` is the set of com-object numbers that carry a group-address link (the same objects the
-// association table connects). ETS clears the Communication flag on every object WITHOUT a link: an
-// object with no association cannot communicate, so the flag would be meaningless, and ETS leaves it
-// off. We match that byte for byte (hardware-verified against the ETS-programmed RaumController: the
-// only difference from ETS was this flag on the unlinked objects; clearing it made the table
-// identical). The object stays fully present (its size and every other flag), it just does not
-// advertise communication. All other flags come straight from the resolved declaration.
+// association table connects). ETS clears the Communication flag on every object WITHOUT a link, for
+// an application that names no ETS download plugin (the only kind any capture of ours shows; one that
+// names one is refused before this runs, downloadPluginRefusal): an object with no association cannot
+// communicate, so the flag would be meaningless, and ETS leaves it off. We match that byte for byte
+// (hardware-verified against the ETS-programmed RaumController: the only difference from ETS was this
+// flag on the unlinked objects; clearing it made the table identical). The object stays fully present
+// (its size and every other flag), it just does not advertise communication. All other flags come
+// straight from the resolved declaration.
 export function buildComObjectTable(active: Map<number, CfgComObjImage>, declaredCount: number, linked: ReadonlySet<number>): Buffer {
   // Object numbers are 1-based because entry 0 of the table IS the count. An object that resolved
   // to 0 therefore cannot be represented at all: dropping it would leave the association table
@@ -278,6 +280,19 @@ export function refuseAppCommOffLinks(app: ReadonlyMap<number, CfgComObjImage>, 
   if (off.length) {
     throw new ProductError("COM_OBJECT_APP_COMM_OFF_LINKED", `communication object(s) ${off.map((n) => `#${n}`).join(", ")} carry a group-address link while the application sets their communication flag off; no ETS capture shows what the System 7 com-object table holds for such an object, so refusing to write it`);
   }
+}
+
+// Why a write that authors the com-object table is refused for an application that names an ETS download
+// plugin (<Extension EtsDownloadPlugin>, a GUID). Every capture of ours is of an application without one, and
+// what they show (communication off on an object without a link, the System 7 linked bit) is what the table
+// builders write. ETS hands such an application's download to the plugin, which may write the table in
+// another shape; no capture shows one. Undefined where the application names none.
+export function downloadPluginRefusal(app: Pick<AppConfig, "etsDownloadPlugin">): { code: string; message: string } | undefined {
+  if (!app.etsDownloadPlugin) return undefined;
+  return {
+    code: "COM_OBJECT_TABLE_DOWNLOAD_PLUGIN",
+    message: `the application names the ETS download plugin ${app.etsDownloadPlugin}; ETS downloads it through that plugin, and no ETS capture shows what it writes into the com-object table (the communication flag of an object without a group address), so refusing the full download and a group-address flash that writes the table`,
+  };
 }
 
 // ── A device's own com-object flags (project level) ─────────────────────────

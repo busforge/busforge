@@ -96,7 +96,8 @@ function busOpPreamble(state: AppState, projectId: string, deviceId: string): { 
 // none, so it takes a full download first (the flash dialog offers it on this code). Where the
 // application's own load procedure keeps Busforge from downloading it in full, it is refused just the
 // same, pointing at ETS: its procedure declares no application check a surgical flash could run first,
-// and so is one whose hardware carries a PEI program (`peiProgram`, HARDWARE_PEI_PROGRAM_REFUSAL).
+// and so is one whose hardware carries a PEI program (`peiProgram`, HARDWARE_PEI_PROGRAM_REFUSAL) or whose
+// application names an ETS download plugin (COM_OBJECT_TABLE_DOWNLOAD_PLUGIN): ETS commissions those.
 // A family that cannot be downloaded in full for another reason keeps the surgical flash, the only way
 // it is programmed; its verified result then ends the state (gaEndsNever, paramsEndNever).
 const canDownloadFull = (app: AppConfig | null, peiProgram: boolean) => !peiProgram && !!app && classify(app).capabilities().fullDownload;
@@ -107,7 +108,7 @@ function refuseNeverProgrammed(dev: { neverProgrammed: boolean; peiProgram: bool
     throw new ApiError("NEVER_PROGRAMMED_USE_DOWNLOAD", "no configuration of this project has been verified on this device since it was placed or its product replaced; a full download commissions it first", 400);
   }
   if (onlyEtsDownloads(app, dev.peiProgram)) {
-    throw new ApiError("NEVER_PROGRAMMED_USE_ETS", "no configuration of this project has been verified on this device since it was placed or its product replaced, and Busforge cannot download this device in full (its application's load procedure or its hardware keeps it from that); commission it with ETS first", 400);
+    throw new ApiError("NEVER_PROGRAMMED_USE_ETS", "no configuration of this project has been verified on this device since it was placed or its product replaced, and Busforge cannot download this device in full (its application's load procedure, the ETS download plugin its application names, or its hardware keeps it from that); commission it with ETS first", 400);
   }
 }
 
@@ -206,7 +207,7 @@ function comObjectTableGuard(
   const caps = classify(app).capabilities();
   if (caps.structuralFlash) return "structural";
   if (canDownloadFull(app, dev.peiProgram)) return err("COM_OBJECT_TABLE_STALE_USE_DOWNLOAD", "this change alters the device's communication objects, which needs its com-object table rewritten; run a full download to apply it", 400);
-  if (onlyEtsDownloads(app, dev.peiProgram)) return err("COM_OBJECT_TABLE_STALE_USE_ETS", "this change alters the device's communication objects, which needs its com-object table rewritten; Busforge cannot download this device in full (its application's load procedure or its hardware keeps it from that), so apply it with ETS", 400);
+  if (onlyEtsDownloads(app, dev.peiProgram)) return err("COM_OBJECT_TABLE_STALE_USE_ETS", "this change alters the device's communication objects, which needs its com-object table rewritten; Busforge cannot download this device in full (its application's load procedure, the ETS download plugin its application names, or its hardware keeps it from that), so apply it with ETS", 400);
   return err("COM_OBJECT_TABLE_STALE", "this change alters the device's communication objects, which needs its com-object table rewritten; busforge cannot do that for this device family yet", 400);
 }
 

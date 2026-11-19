@@ -1097,6 +1097,7 @@ where it cannot do that faithfully:
 | one object set twice, differently | `COM_OBJECT_OVERRIDE_CONFLICT` |
 | System 7: read-on-init set differently from the application (the config byte has no read-on-init bit), or any override where the full download writes the application's own table (memory-mapped, no `<ComObjectTable CodeSegment>`) | `COM_OBJECT_OVERRIDE_UNWRITABLE` |
 | System 7, not an override: an object with a group address whose application itself sets communication off, in every write that authors the com-object table (no capture shows what ETS writes for it) | `COM_OBJECT_APP_COMM_OFF_LINKED` |
+| Not an override: an application that names an ETS download plugin, in the full download, every group-address flash that writes the table, and so the structural flash (no capture shows what ETS's plugin writes into the table) | `COM_OBJECT_TABLE_DOWNLOAD_PLUGIN` |
 
 The device page edits them per object (`PUT .../devices/:id/comobject-flags`): a flag or the priority
 set otherwise than the application is stored as the attribute ETS stores, set back to the
