@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Notice } from "@/components/ui/notice";
 import { useCatalog, useManufacturers, useVersion } from "../queries.ts";
 import { buildIssueDraft, REPORT_TEMPLATES, subjectOf, type ReportDevice, type ReportKind } from "../lib/issueReport.ts";
 import { cn } from "@/lib/utils";
@@ -97,7 +98,7 @@ export function ReportDialog({ open, onOpenChange, device }: { open: boolean; on
           </div>
 
           {draft && !draft.descriptionInUrl && (
-            <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400" data-testid="report-too-long">
+            <Notice className="flex items-start gap-2" data-testid="report-too-long">
               <ShieldAlert className="mt-0.5 size-4 shrink-0" />
               <div className="space-y-2">
                 <p>{t("report.tooLong", { field: descriptionLabel })}</p>
@@ -105,7 +106,7 @@ export function ReportDialog({ open, onOpenChange, device }: { open: boolean; on
                   className="w-full rounded-md border border-input bg-background px-2 py-1 font-mono text-xs text-foreground" />
                 <Button variant="outline" size="sm" onClick={() => void copy()} data-testid="report-copy"><Copy className="size-4" /> {t("report.copy")}</Button>
               </div>
-            </div>
+            </Notice>
           )}
 
           {kind === "problem" && device && <p className="text-xs text-muted-foreground" data-testid="report-diagnostic">{t("report.diagnostic")}</p>}

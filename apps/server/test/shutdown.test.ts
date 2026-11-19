@@ -1,10 +1,10 @@
-import { test, expect, describe, afterEach, setDefaultTimeout } from "bun:test";
+import { test, expect, describe, setDefaultTimeout } from "bun:test";
 import { Database } from "bun:sqlite";
-import { copyFileSync, existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { copyFileSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createState } from "../src/app.ts";
 import { closeDb } from "../src/db/schema.ts";
+import { tempDir } from "../../../tools/test-temp.ts";
 
 // Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 6.8 s with the
 // file alone (load 5-27) and up to 6.8 s with every workspace's tests in parallel (load 5-8). A full check on a busy
@@ -16,15 +16,6 @@ setDefaultTimeout(140_000);
 // in-process test of the queue alone cannot show.
 const FIXTURE = join(import.meta.dir, "fixtures", "shutdown-server.ts");
 const JOB_MS = 1500;
-
-// Each test removes its directories when it ends, so a run that is killed mid-file leaves at most the running test's.
-let tmps: string[] = [];
-afterEach(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); tmps = []; });
-function tempDir(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
-  tmps.push(dir);
-  return dir;
-}
 
 async function start(jobMs: number, env: Record<string, string> = {}) {
   const dataDir = tempDir("busforge-shutdown-");

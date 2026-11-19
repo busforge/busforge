@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { MASKS, maskInfo, type MaskInfo } from "../src/masks.ts";
+import { MASKS, maskInfo, progModeByProperty, type MaskInfo } from "../src/masks.ts";
 
 describe("mask registry", () => {
   test("every row is internally consistent (mask string matches hex)", () => {
@@ -65,5 +65,12 @@ describe("maskInfo lookup", () => {
   test("an unparseable mask does not throw", () => {
     expect(() => maskInfo("")).not.toThrow();
     expect(maskInfo("garbage").family).toBe("unknown");
+  });
+});
+
+describe("programming mode over a connection", () => {
+  test("System B and the property-mapped System 7 masks switch it by PID 54; memory-held and other families do not", () => {
+    for (const m of ["MV-07B0", "MV-0705", "MV-57B0", "MV-2705", "07b0"]) expect(progModeByProperty(m)).toBe(true);
+    for (const m of ["MV-0701", "MV-0700", "MV-0012", "MV-0010", "MV-0020", "MV-091A", "MV-FFFF", "garbage"]) expect(progModeByProperty(m)).toBe(false);
   });
 });

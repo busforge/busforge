@@ -1,13 +1,11 @@
-import { test, expect, describe, afterAll } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { test, expect, describe } from "bun:test";
 import { createState, handleApi, type AppState } from "../src/app.ts";
 import { getDeviceParams, getDeviceLinks, setDeviceLink, setDeviceParam, resetParamBase, resetLinkBase } from "../src/db/deviceparams.ts";
 import { putBaggage } from "../src/db/baggage.ts";
 import { putDeviceSecurity } from "../src/db/deviceSecurity.ts";
 import { createGroupAddress, createGroupRange } from "../src/db/groupedit.ts";
 import { storeZip } from "../../../packages/project/test/ziputil.ts";
+import { tempDir } from "../../../tools/test-temp.ts";
 
 // "Replace device": swap a project device's product for a catalog product, keeping
 // the device row's identity (IA, name, room) and migrating its GA links through an
@@ -15,11 +13,8 @@ import { storeZip } from "../../../packages/project/test/ziputil.ts";
 // server code on a fresh in-memory DB; the catalog is seeded via synthetic .knxprod
 // archives (manufacturer data is gitignored, so no real product XML appears here).
 
-const tmps: string[] = [];
-afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
 function freshState(): AppState {
-  const dir = mkdtempSync(join(tmpdir(), "busforge-replace-"));
-  tmps.push(dir);
+  const dir = tempDir("busforge-replace-");
   return createState({ dbPath: ":memory:", dataDir: dir, now: () => 1000 });
 }
 const req = (path: string, init?: RequestInit) => new Request(`http://x${path}`, init);

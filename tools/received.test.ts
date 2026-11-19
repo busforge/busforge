@@ -1,6 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { KnxDevice } from "../packages/knx/src/index.ts";
@@ -8,6 +7,7 @@ import { collectDevice, toDiagnosticPackage, type CollectPackage, type CollectRe
 import { SimSystemB } from "../packages/product/test/collect-sim.ts";
 import { corpusRoot } from "./corpus.ts";
 import { corpusTest } from "./corpus-test.ts";
+import { tempDir } from "./test-temp.ts";
 import {
   asReference, checkPackage, contentHoldsRun, distinctiveRuns, hexDigits, holdsRun, IntakeRefused, loadReceived, MAX_PACKAGE_BYTES, receive, removeReceived,
   trackedFiles, type IntakeDetails, type Provenance,
@@ -47,9 +47,7 @@ const DETAILS: IntakeDetails = {
   origin: { configuredBy: "ets", priorBusforgeWrites: "none" }, receivedAt: "2026-10-05",
 };
 
-let dirs: string[] = [];
-afterEach(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); dirs = []; });
-const temp = () => { const d = mkdtempSync(join(tmpdir(), "busforge-received-")); dirs.push(d); return d; };
+const temp = () => tempDir("busforge-received-");
 function file(content: Uint8Array | string): string {
   const p = join(temp(), "package.json");
   writeFileSync(p, content);

@@ -1,6 +1,5 @@
-import { test, expect, describe, afterAll } from "bun:test";
-import { readFileSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { test, expect, describe } from "bun:test";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readKeyring } from "@busforge/project";
 import { handleApi, createState } from "../src/app.ts";
@@ -8,19 +7,17 @@ import { putDeviceSecurity } from "../src/db/deviceSecurity.ts";
 import { putDeviceCertificate } from "../src/db/deviceCertificates.ts";
 import { putGroupKeys } from "../src/db/groupKeys.ts";
 import { putGroupSenders } from "../src/db/groupSenders.ts";
+import { tempDir } from "../../../tools/test-temp.ts";
 
 // POST /keyring: the project's Data Secure keys as an ETS keyring, read back here with the same
 // reader that checks the ETS known-answer files (packages/project/test/keyring.test.ts).
 type AppState = ReturnType<typeof createState>;
-const tmps: string[] = [];
-afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
 const fixture = readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures", "sample-config.knxproj"));
 const req = (path: string, init?: RequestInit) => new Request(`http://x${path}`, init);
 const post = (body: unknown): RequestInit => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 
 async function project(): Promise<{ state: AppState; projectId: string; devices: { id: string; ia: string }[] }> {
-  const dir = mkdtempSync(join(tmpdir(), "busforge-keyring-"));
-  tmps.push(dir);
+  const dir = tempDir("busforge-keyring-");
   const state = createState({ dbPath: ":memory:", dataDir: dir, now: () => Date.UTC(2026, 9, 2, 8, 0, 0) });
   const form = new FormData();
   form.set("file", new File([fixture], "ConfigDemo.knxproj"));

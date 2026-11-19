@@ -1,12 +1,12 @@
-import { test, expect, describe, afterAll } from "bun:test";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { test, expect, describe } from "bun:test";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { openDb } from "../src/db/schema.ts";
 import { createProject } from "../src/db/projects.ts";
 import { createState } from "../src/app.ts";
 import { seal, open, getMasterKey } from "../src/secrets.ts";
 import { putDeviceSecurity, getDeviceSecurity, listSecureDevices, setDeviceSequence } from "../src/db/deviceSecurity.ts";
+import { removeTempDir, tempDir } from "../../../tools/test-temp.ts";
 
 const KEY = Buffer.alloc(32, 7); // fixed, synthetic master key
 const OTHER = Buffer.alloc(32, 9);
@@ -49,14 +49,14 @@ describe("getMasterKey", () => {
   });
 
   test("creates and then reuses a master.key file when no env key is set", () => {
-    const dir = mkdtempSync(join(tmpdir(), "bf-mk-"));
+    const dir = tempDir("bf-mk-");
     try {
       delete process.env.BUSFORGE_MASTER_KEY;
       const k1 = getMasterKey(dir);
       expect(k1.length).toBe(32);
       expect(existsSync(join(dir, "master.key"))).toBe(true);
       expect(getMasterKey(dir)).toEqual(k1); // stable across calls
-    } finally { rmSync(dir, { recursive: true, force: true }); }
+    } finally { removeTempDir(dir); }
   });
 
   test("refuses a malformed env key", () => {
@@ -140,15 +140,10 @@ describe("device_security store", () => {
   });
 });
 
-const tmps: string[] = [];
-afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
-
 describe("master-key startup guard", () => {
   test("createState refuses to start when sealed keys exist but no master key is available", () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "bf-seed-"));
-    tmps.push(dataDir);
-    const empty = mkdtempSync(join(tmpdir(), "bf-empty-"));
-    tmps.push(empty);
+    const dataDir = tempDir("bf-seed-");
+    const empty = tempDir("bf-empty-");
     const dbPath = join(dataDir, "busforge.db");
     try {
       delete process.env.BUSFORGE_MASTER_KEY;
@@ -160,8 +155,8 @@ describe("master-key startup guard", () => {
       // never auto-generate a new key that cannot open the existing sealed rows.
       expect(() => createState({ dbPath, dataDir: empty })).toThrow(/master key/i);
     } finally {
-      rmSync(dataDir, { recursive: true, force: true });
-      rmSync(empty, { recursive: true, force: true });
+      removeTempDir(dataDir);
+      removeTempDir(empty);
     }
   });
 });
@@ -169,7 +164,7 @@ describe("master-key startup guard", () => {
 describe("a secured session's credentials", () => {
   test("record the sequence the device was seen to send into the device's own entry", async () => {
     const { secureCredsFor } = await import("../src/deviceservice.ts");
-    const dataDir = mkdtempSync(join(tmpdir(), "bf-seq-"));
+    const dataDir = tempDir("bf-seq-");
     try {
       const state = createState({ dbPath: ":memory:", dataDir });
       createProject(state.db, "proj", "P", 1);
@@ -182,7 +177,7 @@ describe("a secured session's credentials", () => {
       expect(getDeviceSecurity(state.db, "proj", "DI-2", state.masterKey)!.sequenceNumber).toBe("9");
       expect(secureCredsFor(state, "proj", "DI-none")).toBeUndefined();
     } finally {
-      rmSync(dataDir, { recursive: true, force: true });
+      removeTempDir(dataDir);
     }
   });
 });

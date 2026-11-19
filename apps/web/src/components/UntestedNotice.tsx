@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, type DeviceConfigView, type MatrixOperation } from "../api.ts";
 import { untestedOps, failedOps, orderOf, appVersionOf } from "../lib/untested.ts";
 import { Button } from "@/components/ui/button";
+import { Notice } from "@/components/ui/notice";
 import { errMsg } from "../lib/apiError.ts";
 
 // A write the server refused as untested means the view the dialog showed was stale (not loaded
@@ -40,11 +41,11 @@ export function UntestedNotice({ projectId, deviceId, view, ops }: {
       .finally(() => setBusy(false));
   };
   return (
-    <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300" data-testid="untested-notice">
+    <Notice className="flex items-start gap-2" data-testid="untested-notice">
       <AlertTriangle className="mt-0.5 size-4 shrink-0" />
       <div className="space-y-1.5">
         <p className="font-medium">{t(blocking.length > 0 ? "untested.title" : "untested.failedTitle")}</p>
-        <ul className="space-y-0.5 text-amber-700/90 dark:text-amber-300/90">
+        <ul className="space-y-0.5 text-warning/90">
           {open.map((op) => {
             const v = view!.compatibility![op];
             return (
@@ -64,6 +65,6 @@ export function UntestedNotice({ projectId, deviceId, view, ops }: {
           {busy && <Loader2 className="size-4 animate-spin" />} {t("untested.acknowledge")}
         </Button>}
       </div>
-    </div>
+    </Notice>
   );
 }

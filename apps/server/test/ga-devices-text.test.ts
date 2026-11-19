@@ -1,11 +1,9 @@
-import { test, expect, describe, afterAll } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { test, expect, describe } from "bun:test";
 import { createState, handleApi, type AppState } from "../src/app.ts";
 import { setDeviceLink, setDeviceParam } from "../src/db/deviceparams.ts";
 import { createGroupAddress, createGroupRange } from "../src/db/groupedit.ts";
 import { storeZip } from "../../../packages/project/test/ziputil.ts";
+import { tempDir } from "../../../tools/test-temp.ts";
 
 // The group-address device list names a linked com-object the configuration view does not reach
 // (hidden by a parameter) from the catalogue, like the view would: translated, with its
@@ -49,12 +47,8 @@ const hardware = `<?xml version="1.0"?>
   </Hardware></Hardware>
 </Manufacturer></ManufacturerData></KNX>`;
 
-const tmps: string[] = [];
-afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
-
 async function setup(): Promise<{ state: AppState; projectId: string; deviceId: string; raw: number }> {
-  const dir = mkdtempSync(join(tmpdir(), "busforge-gatext-"));
-  tmps.push(dir);
+  const dir = tempDir("busforge-gatext-");
   const state = createState({ dbPath: ":memory:", dataDir: dir, now: () => 1000 });
   const form = new FormData();
   form.set("file", new File([storeZip({ [`${M}/Hardware.xml`]: hardware, [`${M}/${A}.xml`]: appXml })], "prod.knxprod"));

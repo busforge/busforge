@@ -27,7 +27,7 @@ export function ReadsFFNote({ result }: { result: FlashResult }) {
   const { t } = useTranslation();
   const note = readsFFNote(result);
   if (!note) return null;
-  return <span className="text-amber-600 dark:text-amber-400" data-testid="flash-reads-ff"> {t("flash.readsFF", note)}</span>;
+  return <span className="text-warning" data-testid="flash-reads-ff"> {t("flash.readsFF", note)}</span>;
 }
 
 // Shown beside a verified write's success line, in the warning colour: these bytes are not read back.
@@ -35,5 +35,5 @@ export function ConfirmedOnlyNote({ result }: { result: FlashResult }) {
   const { t } = useTranslation();
   const note = confirmedOnlyNote(result);
   if (!note) return null;
-  return <span className="text-amber-600 dark:text-amber-400" data-testid="flash-confirmed-only">{t("flash.confirmedOnly", note)}</span>;
+  return <span className="text-warning" data-testid="flash-confirmed-only">{t("flash.confirmedOnly", note)}</span>;
 }

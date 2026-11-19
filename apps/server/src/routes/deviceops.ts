@@ -11,7 +11,7 @@ import { getDeviceCertificate, putDeviceCertificate } from "../db/deviceCertific
 import { getGroupKeys } from "../db/groupKeys.ts";
 import { sendersByGroup, nextSendSequence } from "../db/groupSenders.ts";
 import { decodeCertificate, groupValueRead, secureEncode, SCF, SECURE_APDU_OVERHEAD, numToIa, numToGa, toolSequenceNow } from "@busforge/knx";
-import { flashDeviceParameters, flashDeviceGroupAddresses, flashDeviceStructure, downloadDeviceFull, secureTablesUnsupported, readDeviceState, secureIdentify, activateDevice, classify, assignDeviceAddress, readDevicesInProgMode, type FlashResult } from "../deviceprofile.ts";
+import { flashDeviceParameters, flashDeviceGroupAddresses, flashDeviceStructure, downloadDeviceFull, secureTablesUnsupported, readDeviceState, secureIdentify, activateDevice, classify, assignDeviceAddress, readDevicesInProgMode, locateDevice, type FlashResult } from "../deviceprofile.ts";
 import { untestedStatus, missingApplication, loadApp, resolveAppXml, resolveDeviceLinks, resolveComObjOverrides, resolveComObjOverrideBase, changedComObjNumbers, deviceConfigRefs, readbackLinkBase, unwrittenParamRefs, paramValueSame, lookupAppXml, secureCredsFor, securityTablesWithFingerprint, setSecurityBase } from "../deviceservice.ts";
 import { ApiError } from "../errors.ts";
 import { runCollection } from "../collect.ts";
@@ -277,6 +277,9 @@ function structuralFlash(
   );
 }
 
+// The longest finding a device holds its programming LED on: the queue runs no other bus operation meanwhile.
+const LOCATE_MAX_SECONDS = 120;
+
 function secureTablesRefusal(): Response {
   const e = secureTablesUnsupported();
   return err(e.code, e.message, 400);
@@ -324,13 +327,44 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const task = state.queue.submit(
       { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "assign-ia", writes: true },
       async (progress) => {
-        const result = await assignDeviceAddress(conn, dev.ia, progress);
+        const sec = getDeviceSecurity(db, id, deviceId, state.masterKey);
+        const cert = getDeviceCertificate(db, id, deviceId, state.masterKey);
+        if (sec && cert && !sec.serialNumber.equals(cert.serialNumber)) {
+          throw new ApiError("CERTIFICATE_SERIAL_MISMATCH", `the certificate is for serial ${cert.serialNumber.toString("hex")}, the tool key on file for ${sec.serialNumber.toString("hex")}`, 409);
+        }
+        const serial = sec?.serialNumber ?? cert?.serialNumber;
+        const keys = serial ? { serial, toolKey: sec?.toolKey, fdsk: cert?.fdsk, onPeerSequence: (seq: bigint) => setDeviceSequence(db, id, deviceId, seq) } : undefined;
+        const result = await assignDeviceAddress(conn, dev.ia, progress, keys);
         // The address is everything a product without an application program takes, as ETS's
         // IndividualAddressLoaded is everything it records for one.
         // Only while the project still holds the address that was assigned.
         if (result.verified && !deviceHasApplication(db, id, deviceId) && getDeviceForFlash(db, id, deviceId)?.ia === result.assigned) clearNeverProgrammed(db, id, deviceId);
         return result;
       },
+    );
+    return json(task, 202);
+  }
+
+  // /api/projects/:id/devices/:deviceId/locate {seconds}  -> find the device physically: its programming
+  // LED on for `seconds` (1 to LOCATE_MAX_SECONDS), then off, read back. Answers 202 with the queued task. A cancel of the running
+  // task ends the hold early and still switches the mode off (TaskMeta.undoesOnCancel); a failure to
+  // show it off is the task's error (LOCATE_PROG_MODE_LEFT_ON). While it holds, the queue runs no other
+  // bus operation, so no address assignment of this server meets the device in programming mode.
+  if (seg.length === 6 && seg[3] === "devices" && seg[5] === "locate" && req.method === "POST") {
+    const deviceId = decodeURIComponent(seg[4]);
+    const dev = getDeviceForFlash(db, id, deviceId);
+    if (!dev) return err("DEVICE_NOT_FOUND", "device not found", 404);
+    const conn = getProjectConnection(db, id);
+    if (!isConnectionReady(conn)) return err("INTERFACE_NOT_SET", "configure a bus connection first");
+    const body = (await req.json().catch(() => ({}))) as { seconds?: unknown };
+    const seconds = body.seconds;
+    if (typeof seconds !== "number" || !Number.isInteger(seconds) || seconds < 1 || seconds > LOCATE_MAX_SECONDS) {
+      return err("LOCATE_DURATION_INVALID", `seconds must be a whole number from 1 to ${LOCATE_MAX_SECONDS}`, 400, { max: LOCATE_MAX_SECONDS });
+    }
+    const secure = secureCredsFor(state, id, deviceId);
+    const task = state.queue.submit(
+      { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "locate", writes: true, undoesOnCancel: true },
+      (progress, signal, _commit, enterWrites) => locateDevice(conn, dev.ia, secure, { holdMs: seconds * 1000, signal, onProgress: progress, enterWrites }),
     );
     return json(task, 202);
   }

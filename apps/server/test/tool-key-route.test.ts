@@ -1,9 +1,9 @@
 import { test, expect, describe, mock, afterAll } from "bun:test";
-import { readFileSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getDeviceSecurity, putDeviceSecurity } from "../src/db/deviceSecurity.ts";
 import { putDeviceCertificate } from "../src/db/deviceCertificates.ts";
+import { tempDir } from "../../../tools/test-temp.ts";
 
 // PUT /devices/:deviceId/tool-key: a tool key deposited by hand is stored only after the device
 // answered a secure Sync under it. The secure identification is stubbed; the route, the key store
@@ -19,15 +19,12 @@ const { handleApi, createState } = await import("../src/app.ts");
 type AppState = ReturnType<typeof createState>;
 afterAll(() => { identifyImpl = realIdentify; });
 
-const tmps: string[] = [];
-afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
 const fixture = readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures", "sample-config.knxproj"));
 const req = (path: string, init?: RequestInit) => new Request(`http://x${path}`, init);
 const jsonReq = (method: string, body: unknown): RequestInit => ({ method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 
 async function project(withConnection = true): Promise<{ state: AppState; projectId: string; deviceId: string }> {
-  const dir = mkdtempSync(join(tmpdir(), "busforge-toolkey-"));
-  tmps.push(dir);
+  const dir = tempDir("busforge-toolkey-");
   const state = createState({ dbPath: ":memory:", dataDir: dir, now: () => 1000 });
   const form = new FormData();
   form.set("file", new File([fixture], "ConfigDemo.knxproj"));
