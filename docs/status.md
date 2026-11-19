@@ -130,8 +130,12 @@ What each row does not show:
   KNX-wide rules ([load-procedures.md](load-procedures.md#the-rules-by-level)). Where a plan differs
   from the one the hardware cells above were shown with, it is capture-tested only (its steps and
   bytes equal ETS's capture, where one exists) and has not run on the device:
-  - **Auro M-0081_A-FE01, Theben TheLuxa P300, Theben Meteodata 140 S**: the full download runs the
-    declared form onto a unit that does not hold the application too; no capture or run shows that case.
+  - **Auro M-0081_A-FE01, Theben TheLuxa P300, Theben Meteodata 140 S, Gira M-0008**: the full download
+    runs the declared form onto a unit that does not hold the application too (the Gira's without its task
+    segment on LSM 5, which ETS sends in neither form); no capture or run of these products shows that case.
+  - **ABB US/U 4.2**: its declared form ran on a unit from factory state with the task segment on LSM 5
+    sent; the plan leaves that step out now, as ETS does ([load-procedures.md](load-procedures.md#the-rules-by-level),
+    R18), and has not run on the unit since. No capture shows ETS's declared form of this application.
   - **Theben Meteodata 140 S, ABB US/U 4.2** (memory-mapped): a parameter or structural flash reads
     the whole parameter image ETS reads (every byte a parameter covers) before it writes the blocks
     that differ, as ETS's captures show; the runs on the units read only the blocks of the changed
@@ -443,9 +447,7 @@ What each row does not show:
   ran on a unit in both channels, each verified after the restart and read back without drift, a
   channel that must never switch by itself checked to hold that configuration before the first write
   of each run.
-- **Gira M-0008 full download** is refused onto a unit that does not hold the application with
-  load-state machines 1, 2 and 3 loaded (`FULL_DOWNLOAD_APPLICATION_NOT_LOADED`): its declared form
-  sends a step after the restart that no capture shows. The Auro, Gira, TheLuxa and Meteodata count in the
+- The Auro, Gira, TheLuxa and Meteodata count in the
   compatibility matrix through their in-service smoke runs.
 - **Full download of the Steinel M-008E and the second Auro application `M-0081_A-FF31`** is refused
   before any write and not offered (`FULL_DOWNLOAD_SEGMENT_UNKNOWN`): a parameter segment without

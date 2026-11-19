@@ -9,7 +9,7 @@ import { buildDeviceConfig, type DeviceCapabilities, type CfgComObjImage } from 
 import { decodeParameterImage, decodeAbsoluteImage, imageValueForm } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
 import { assessParCoverage, declaredPropChecks, relParamFillByte, relParamFullMode, declaredMcbWrites, unrunGrpSteps, lsmIdx, stepAddress, type ParCoverage, type LoadProcedures, type McbWrite } from "./loadproc.ts";
-import { planAbsoluteParFlash, buildAbsoluteParFlash, absoluteStructuralBuild, planRelativeParFlash, planRelativeStructuralFlash, planRelativePartialFullDownload, changedOwned, differentialMask, declaredMcbRegions, type McbRegion, planAbsoluteStructuralFlash, absoluteStructuralImages, differingBytes, planAbsoluteFullDownload, absoluteFullStepRefusal, fullDownloadSegmentRefusal, absoluteFullForm, withClosing, withConfirmedRestart, planSystem7GaFlash, planSystem7TableBrackets, fullDownloadImageDigest, type AbsFullSegment } from "./deviceflash.ts";
+import { planAbsoluteParFlash, buildAbsoluteParFlash, absoluteStructuralBuild, planRelativeParFlash, planRelativeStructuralFlash, planRelativePartialFullDownload, changedOwned, differentialMask, declaredMcbRegions, type McbRegion, planAbsoluteStructuralFlash, absoluteStructuralImages, differingBytes, planAbsoluteFullDownload, absoluteFullStepRefusal, fullDownloadSegmentRefusal, absoluteFullForm, withClosing, withConfirmedRestart, planSystem7GaFlash, planSystem7TableBrackets, fullDownloadImageDigest, procedureSizeRefusal, relativeFullDownloadRefusal, type AbsFullSegment } from "./deviceflash.ts";
 import { maskInfo, isMemoryMappedLsm, type MemoryModel, type SystemFamily } from "./masks.ts";
 import { type AppConfig, type ModuleInstance } from "./appconfig.ts";
 import type { AppModel } from "./application.ts";
@@ -1157,10 +1157,14 @@ export class SystemBProfile extends DeviceProfile {
   // The group-address flash refuses a step named for it ("grp" or "all") that it does not run.
   override operationRefusals(): OperationRefusals {
     if (!this.cfg) return {};
+    const sizes = procedureSizeRefusal(this.cfg, this.cfg.loadProcedures);
+    if (sizes) return { flashParams: sizes, flashLinks: sizes, fullDownload: sizes };
     const par = parRefusal(assessParCoverage(this.cfg.loadProcedures, "relative"), "parameter download");
     const grp = parRefusal({ blocked: unrunGrpSteps(this.cfg.loadProcedures), skipped: [], checks: [] }, "group-address flash");
+    const full = par ?? relativeFullDownloadRefusal(this.cfg, this.cfg.loadProcedures);
     return {
-      ...(par ? { flashParams: par, ...(this.hasParamSegment() ? { fullDownload: par } : {}) } : {}),
+      ...(par ? { flashParams: par } : {}),
+      ...(full && this.hasParamSegment() ? { fullDownload: full } : {}),
       ...(grp ? { flashLinks: grp } : {}),
     };
   }
@@ -1176,6 +1180,7 @@ export class SystemBProfile extends DeviceProfile {
   }
 
   planFullDownload(mask: string, inputs: FullDownloadInputs): FullDownloadBuild {
+    refuse(this.operationRefusals().fullDownload);
     if (inputs.proc.preferPartialIfLoaded && inputs.unitHoldsApplication) {
       const { plan, segments, imageBytes } = this.planSystemBPartial(inputs);
       return { plan, segments, imageBytes };
@@ -1314,6 +1319,7 @@ export class SystemBProfile extends DeviceProfile {
   // table is built from the same active-configuration projection the read-back and the staleness
   // gate use, and the result is verified by reading it back off the device afterwards.
   async downloadFull(dev: KnxDevice, mask: string, ctx: FullDownloadCtx): Promise<FlashResult> {
+    refuse(this.operationRefusals().fullDownload);
     // The device's own declared pre-flight (hardware type / application id) still runs: a full
     // download to the wrong hardware is the most expensive mistake available here.
     const proc = this.requireCfg("full download").loadProcedures;
@@ -1550,6 +1556,7 @@ export class SystemBProfile extends DeviceProfile {
 
   async flashParameters(dev: KnxDevice, mask: string, ctx: ParamFlashCtx): Promise<FlashResult> {
     const cfg = this.requireCfg("parameter flash");
+    refuse(this.operationRefusals().flashParams);
     // The MergedProcedure fragments parameterize the proven base bracket; every
     // par-applicable fragment step must be dispositioned (executed/skip) or the flash
     // refuses. The declared CompareProp pre-flights run below, before any bus write.
@@ -1952,6 +1959,8 @@ export class System7Profile extends DeviceProfile {
   override operationRefusals(): OperationRefusals {
     const cfg = this.cfg;
     if (!cfg) return {};
+    const sizes = procedureSizeRefusal(cfg, cfg.loadProcedures);
+    if (sizes) return { flashParams: sizes, flashLinks: sizes, fullDownload: sizes };
     const out: OperationRefusals = {};
     const par = absoluteParRefusal(cfg.loadProcedures);
     if (par) out.flashParams = par;
@@ -2029,7 +2038,7 @@ export class System7Profile extends DeviceProfile {
   async flashParameters(dev: KnxDevice, mask: string, ctx: ParamFlashCtx): Promise<FlashResult> {
     const cfg = this.requireCfg("parameter flash");
     const proc = cfg.loadProcedures;
-    refuse(absoluteParRefusal(proc));
+    refuse(this.operationRefusals().flashParams);
     const coverage = assessParCoverage(proc, "absolute");
     // Same com-object-table staleness gate as System B: the absolute path keeps the device's
     // com-object table too, so a parameter that changes the active object set or its flags
@@ -2109,6 +2118,7 @@ export class System7Profile extends DeviceProfile {
   async flashGroupTables(dev: KnxDevice, mask: string, ctx: GaFlashCtx): Promise<FlashResult> {
     refuseSecureTables(ctx, this.family);
     const cfg = this.requireCfg("group address flash");
+    refuse(this.operationRefusals().flashLinks);
     const scope = system7GaScope(cfg, mask);
     if ("refusal" in scope) refuseWith(scope.refusal);
     // Same com-object staleness gate as System B: the flash keeps every config byte of the device's
@@ -2352,6 +2362,7 @@ export class System7Profile extends DeviceProfile {
   async downloadFull(dev: KnxDevice, mask: string, ctx: FullDownloadCtx): Promise<FlashResult> {
     refuseSecureTables(ctx, this.family);
     const cfg = this.requireCfg("full download");
+    refuse(this.operationRefusals().fullDownload);
     // Property-mapped System 7 (MV-0705) authors its com-object table (L3); memory-mapped MV-0700/0701
     // writes L3 as the manufacturer's static <Data>. The two paths share planAbsoluteFullDownload; the
     // difference is whether `comObjectTable` is supplied (see deviceflash.ts). ETS puts these devices

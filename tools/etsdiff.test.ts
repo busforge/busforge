@@ -2313,8 +2313,6 @@ corpusDescribe("Theben Meteodata 140 S (M-0048_A-140C-14-EB70) against ETS", () 
     const longer = fresh();
     const as4000 = longer.absoluteSegments.find((s) => s.address === 0x4000)!;
     as4000.data = Buffer.concat([as4000.data, Buffer.from([0x00])]);
-    as4000.size += 1;
-    as4000.mask = Buffer.concat([as4000.mask!, Buffer.from([0xff])]);
     expect(() => plan(longer)).toThrow(/reaches past the size its load procedure declares/);
   });
 

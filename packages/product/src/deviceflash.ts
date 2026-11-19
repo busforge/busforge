@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { AppConfig, CfgAbsSegment, ModuleInstance } from "./appconfig.ts";
 import { buildAbsoluteSegmentTargets, absoluteBuildInstances, mergeOwnedBits, wholeBytes, parameterMemoryBytes, differingConstants, type ConstantDifference, type DeviceSegmentTarget } from "./deviceimage.ts";
-import { flattenSteps, lsmIdx, stepAddress, stepSize, memType, segType, segAccess, segFlags, closingSteps, taskCtrl1Of, type LoadProcedures, type McbWrite, type ClosingStep, type ClosingOp } from "./loadproc.ts";
+import { flattenSteps, lsmIdx, stepAddress, stepSize, memType, segType, segAccess, segFlags, closingSteps, taskCtrl1Of, PEI_LSM, relativeFullStepRefusal, stepObject, type LoadProcedures, type McbWrite, type ClosingStep, type ClosingOp } from "./loadproc.ts";
 import { buildGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
 import { buildComObjectTableMv0705 } from "./comobjbuild.ts";
 import type { CfgComObjImage } from "./config.ts";
@@ -645,7 +645,15 @@ const ABS_FULL_STEP_ATTRS: Record<string, readonly string[]> = {
   LdCtrlRestart: [], LdCtrlConnect: [], LdCtrlDisconnect: [], LdCtrlCompareProp: [],
 };
 
-export interface StepRefusal { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED" | "FULL_DOWNLOAD_STEP_MALFORMED" | "FULL_DOWNLOAD_SEGMENT_UNKNOWN" | "LOAD_PROCEDURE_UNSUPPORTED"; message: string }
+export interface StepRefusal { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED" | "FULL_DOWNLOAD_STEP_MALFORMED" | "FULL_DOWNLOAD_SEGMENT_UNKNOWN" | "LOAD_PROCEDURE_UNSUPPORTED" | "PEI_PROGRAM_UNSUPPORTED" | "LOAD_PROCEDURE_SIZE_MISMATCH" | "TASK_SEGMENT_MANUFACTURER_UNSUPPORTED"; message: string }
+
+// A task segment on load-state machine 5 is never sent. ETS removes it from the procedure, logged as a
+// "legacy object table address announcement" (the ABB US/U 4.2 and Gira M-0008 captures, partial form),
+// and sends none in the declared form either, on MV-0701 and MV-0705 alike, at another address than the
+// com-object table's (the third-party synthetic captures, docs/testing.md). Any other step on LSM 5 no
+// capture shows.
+const LSM_5 = 5;
+const isLsm5TaskSegment = (s: ReturnType<typeof flattenSteps>[number]): boolean => s.verb === "LdCtrlTaskSegment" && lsmIdx(s) === LSM_5;
 
 // Why the absolute full download cannot run this declared procedure in `form`, or null when it can. The
 // planner refuses with exactly this, and capabilities() offers the full download only where one form
@@ -656,9 +664,12 @@ export function absoluteFullStepRefusal(procedure: LoadProcedures, form: AbsFull
     return { code: "LOAD_PROCEDURE_UNSUPPORTED", message: `the application declares no full-download procedure of its own (load procedure style ${procedure.style}); refusing to commission it from a recipe Busforge would have to invent` };
   }
   try { closingSteps(procedure, "full"); } catch (e) { return { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: (e as Error).message }; }
+  const lsm5 = steps.find((s) => stepObject(s) === LSM_5 && !isLsm5TaskSegment(s));
+  if (lsm5) return { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: `the load procedure declares ${lsm5.verb} LsmIdx ${LSM_5}; no ETS capture shows what ETS sends for a step on load-state machine 5 other than its task segment, refusing to send it or to leave it out` };
   if (form === "partial") return partialStepRefusal(steps);
   const restartAt = steps.findIndex((s) => s.verb === "LdCtrlRestart");
   for (const [i, s] of steps.entries()) {
+    if (isLsm5TaskSegment(s)) continue;
     if (restartAt >= 0 && i > restartAt && s.verb !== "LdCtrlDisconnect") {
       return { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: `the load procedure declares ${s.verb}${lsmIdx(s) !== undefined ? ` LsmIdx ${lsmIdx(s)}` : ""} after the restart, which no capture shows ETS sending; refusing to run a partial recipe` };
     }
@@ -683,7 +694,9 @@ export function absoluteFullStepRefusal(procedure: LoadProcedures, form: AbsFull
 //  - a parameter segment without <Data>, which has no default image: ETS computes the bytes no active
 //    parameter derives from defaults it does not ship (the Steinel M-008E's read-back keeps 4 such bytes
 //    Busforge cannot build), so writing the segment would write guessed bytes;
-//  - a segment declared in the procedure whose <Mask> is of a form no capture shows (segmentMask).
+//  - a segment declared in the procedure whose <Mask> is of a form no capture shows (segmentMask);
+//  - sizes the application declares for one segment that disagree (procedureSizeRefusal), and a task
+//    segment manufacturer no capture shows (taskSegmentManufacturerRefusal).
 export function fullDownloadSegmentRefusal(app: AppConfig, procedure: LoadProcedures): StepRefusal | null {
   const dataLess = app.absoluteSegments.find((sg) => sg.data.length === 0 && [...app.params.values()].some((p) => p.codeSegment === sg.id && p.offset !== undefined));
   if (dataLess) return { code: "FULL_DOWNLOAD_SEGMENT_UNKNOWN", message: `parameter segment ${dataLess.id} declares no <Data>, so the bytes no active parameter derives cannot be built; refusing to write a guessed image` };
@@ -691,8 +704,81 @@ export function fullDownloadSegmentRefusal(app: AppConfig, procedure: LoadProced
   for (const sg of app.absoluteSegments.filter((x) => declared.has(x.address))) {
     try { segmentMask(sg); } catch (e) { return { code: "FULL_DOWNLOAD_SEGMENT_UNKNOWN", message: (e as Error).message }; }
   }
+  return procedureSizeRefusal(app, procedure) ?? taskSegmentManufacturerRefusal(app, procedure);
+}
+
+// The sizes an application declares for one segment, which must agree before anything is planned: the
+// segment's own Size against every LdCtrlAbsSegment / LdCtrlRelSegment that declares it, an
+// LdCtrlWriteRelMem against the whole segment (the System B download writes the whole parameter segment,
+// as every captured procedure declares it), and a group table's capacity by its MaxEntries (3 + 2 per
+// address, 1 + 2 per association) against its segment, or, with DynamicTableManagement, both against
+// the region of both. ETS takes the procedure's sizes where they disagree (the third-party synthetic
+// captures, docs/testing.md: it allocates and writes the procedure's part of a segment), and Busforge
+// builds each segment's image to the segment's own size, so such an application is refused. Each captured
+// case is refused by another rule as well, which following the procedure's sizes would have to lift first.
+// A relative step without its Size is refused here too: the System B download would take the segment's.
+export function procedureSizeRefusal(app: AppConfig, procedure: LoadProcedures): StepRefusal | null {
+  const steps = [...new Set([...flattenSteps(procedure, "full"), ...flattenSteps(procedure, "par")])];
+  const disagree = (what: string) => ({ code: "LOAD_PROCEDURE_SIZE_MISMATCH" as const, message: `${what}; the application declares two sizes for one segment, and Busforge builds the image to the segment's where ETS takes the procedure's, refusing before anything is written` });
+  for (const s of steps) {
+    const size = stepSize(s);
+    if (s.verb === "LdCtrlAbsSegment") {
+      const sg = app.absoluteSegments.find((x) => x.address === stepAddress(s));
+      // a missing Size is refused as malformed where the step is run (absoluteFullStepRefusal, tablePlacement)
+      if (sg && size !== undefined && size !== sg.size) return disagree(`LdCtrlAbsSegment at ${s.attrs.Address} declares ${s.attrs.Size} bytes, the segment ${sg.id} ${sg.size}`);
+    }
+    if (s.verb === "LdCtrlRelSegment" || s.verb === "LdCtrlWriteRelMem") {
+      const lsm = Number(s.verb === "LdCtrlRelSegment" ? s.attrs.LsmIdx ?? 4 : s.attrs.ObjIdx ?? 4);
+      const sg = app.segments.find((x) => x.lsm === lsm);
+      if (!sg) continue;
+      const offset = Number(s.attrs.Offset ?? 0);
+      if (size === undefined) return { code: "LOAD_PROCEDURE_SIZE_MISMATCH", message: `${s.verb} on LSM ${lsm} declares no Size; refusing to take the segment's (${sg.id}, ${sg.size} bytes) before anything is written` };
+      if (offset !== 0) return { code: "LOAD_PROCEDURE_SIZE_MISMATCH", message: `${s.verb} on LSM ${lsm} declares a write of ${s.attrs.Size} bytes at offset ${offset} into the ${sg.size}-byte segment ${sg.id}; the download writes the whole segment, as every captured procedure declares it, refusing before anything is written` };
+      if (size !== sg.size) return disagree(`${s.verb} on LSM ${lsm} declares ${s.attrs.Size} bytes, the segment ${sg.id} ${sg.size}`);
+    }
+  }
+  const g = app.groupTables;
+  const seg = (id: string | undefined) => app.absoluteSegments.find((x) => x.id === id);
+  const addr = seg(g.addressSegment), assoc = seg(g.associationSegment);
+  const addrCap = g.addressMaxEntries === undefined ? 0 : 3 + 2 * g.addressMaxEntries;
+  const assocCap = g.associationMaxEntries === undefined ? 0 : 1 + 2 * g.associationMaxEntries;
+  if (addr && assoc && procedure.dynamicTables) {
+    if (addrCap + assocCap > addr.size + assoc.size) return disagree(`the group tables' MaxEntries take ${addrCap} + ${assocCap} bytes, the region of their segments ${addr.size + assoc.size}`);
+  } else {
+    if (addr && addrCap > addr.size) return disagree(`the address table's MaxEntries take ${addrCap} bytes, its segment ${addr.id} ${addr.size}`);
+    if (assoc && assocCap > assoc.size) return disagree(`the association table's MaxEntries take ${assocCap} bytes, its segment ${assoc.id} ${assoc.size}`);
+  }
   return null;
 }
+
+// The manufacturer a System 7 task segment carries: the application's own, the manufacturer of its id,
+// for an OEM application too (Gira M-0008_A-10D7-…-O000A writes 0008), and with
+// <Options LegacyPatchManufacturerIdInTaskSegment="true"> where the application names no other
+// OriginalManufacturer (ABB US/U 4.2: 0002). The leads say ETS puts the OriginalManufacturer there when the
+// application declares the option and names one; no capture of ours shows that, so it is refused.
+export function taskSegmentManufacturerRefusal(app: AppConfig, procedure: LoadProcedures): StepRefusal | null {
+  const own = appManufacturerNumber(app);
+  const original = procedure.originalManufacturer === undefined ? undefined : Number.parseInt(procedure.originalManufacturer.replace("M-", ""), 16);
+  if (!procedure.legacyTaskSegmentManufacturer || original === undefined || original === own) return null;
+  return { code: "TASK_SEGMENT_MANUFACTURER_UNSUPPORTED", message: `the application declares LegacyPatchManufacturerIdInTaskSegment with the original manufacturer ${procedure.originalManufacturer}; no ETS capture shows which manufacturer its task segments carry then, refusing to declare them with a guessed one` };
+}
+
+// What keeps a System B full download, in either form, from running, besides what keeps the parameter
+// download from it and sizes that disagree (both checked first, SystemBProfile.operationRefusals): a
+// segment of the application on another load-state machine than the parameter segment's (on LSM 5 the
+// PEI program; the download loads only the parameter segment and the tables, and its full form unloads
+// the PEI program first), a full-download step it does not run (relativeFullStepRefusal).
+export function relativeFullDownloadRefusal(app: AppConfig, procedure: LoadProcedures): StepRefusal | null {
+  const other = app.segments.find((sg) => sg.lsm === PEI_LSM) ?? app.segments.find((sg) => sg.lsm !== 4);
+  if (other?.lsm === PEI_LSM) return { code: "PEI_PROGRAM_UNSUPPORTED", message: `the application carries a segment for the PEI program (${other.id}, LSM ${PEI_LSM}); the System B full download loads only the parameter segment and the tables, and no ETS capture shows how ETS loads such a program, refusing to leave it unloaded or out of date` };
+  if (other) return { code: "FULL_DOWNLOAD_SEGMENT_UNKNOWN", message: `the application carries a segment on load-state machine ${other.lsm} (${other.id}); the System B full download loads only the parameter segment (LSM 4) and the tables, refusing to leave it unloaded` };
+  return relativeFullStepRefusal(procedure);
+}
+const taskSegmentManufacturer = (app: AppConfig, procedure: LoadProcedures): number => {
+  const r = taskSegmentManufacturerRefusal(app, procedure);
+  if (r) throw new ProductError(r.code, r.message);
+  return appManufacturerNumber(app);
+};
 const isAfterLastLoadCompleted = (steps: ReturnType<typeof flattenSteps>, i: number): boolean =>
   i > steps.findLastIndex((s) => s.verb === "LdCtrlLoadCompleted");
 
@@ -706,7 +792,7 @@ const PARTIAL_STEPS: { verb: string; lsms?: readonly number[]; what: string }[] 
   { verb: "LdCtrlUnload", lsms: [1, 2, 3], what: "sent for the tables, not for the application" },
   { verb: "LdCtrlLoad", lsms: [1, 2, 3], what: "sent" }, { verb: "LdCtrlLoadCompleted", lsms: [1, 2, 3], what: "sent" },
   { verb: "LdCtrlAbsSegment", lsms: [1, 2, 3], what: "declared for the tables (tablePlacement); for the application, its data written" },
-  { verb: "LdCtrlTaskSegment", lsms: [1, 2, 3, 5], what: "sent for the tables, not for the application or LSM 5" },
+  { verb: "LdCtrlTaskSegment", lsms: [1, 2, 3, 5], what: "sent for the tables, not for the application, never on LSM 5 (isLsm5TaskSegment)" },
   { verb: "LdCtrlTaskCtrl1", lsms: [3], what: "not sent" }, { verb: "LdCtrlLoadImageProp", what: "a closing read" },
 ];
 
@@ -783,7 +869,7 @@ export function planSystem7TableBrackets(app: AppConfig, procedure: LoadProcedur
     if (!params) throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `a parameter in segment ${seg.id} has a type of no known width, so the bytes the download writes there cannot be told; refusing to guess`);
     if (params.some(Boolean)) throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `a parameter's memory lies in the table segment ${seg.id}; no ETS capture shows which bytes it writes there, refusing to guess`);
   }
-  const manufacturer = appManufacturerNumber(app);
+  const manufacturer = taskSegmentManufacturer(app, procedure);
   const writes: System7Tables["writes"] = [];
   const data = opts.withData ? tableSegmentData(app, p, tables) : [];
   const bracket = (d: AbsDecl, at: number, size: number, task: number, bytes: Buffer, extra: { address: number; image: Buffer }[]): LoadStep[] => {
@@ -867,7 +953,7 @@ export function planAbsoluteFullDownload(
   const { addr, assoc } = buildGroupTablesMv0705(links, ownIa);
   const paramTargets = new Map(buildAbsoluteSegmentTargets(app, values, opts).map((t) => [t.address, t]));
   const segByAddr = new Map(app.absoluteSegments.map((s) => [s.address, s]));
-  const manufacturer = appManufacturerNumber(app);
+  const manufacturer = taskSegmentManufacturer(app, procedure);
 
   // The bytes a segment of the application carries, or null to declare the segment in the LSM bracket but
   // write NOTHING to it (a property-mapped device fills its own computed segments, e.g. the RAM/system
@@ -962,7 +1048,9 @@ export function planAbsoluteFullDownload(
         const lsm = need(l, s.verb, "LsmIdx"), a = need(stepAddress(s), s.verb, "Address"), sz = need(stepSize(s), s.verb, "Size");
         if (isTable) { plan.push(...bracketOf(lsm).filter((st) => st.op !== "taskSegment")); break; }
         plan.push({ op: "absSegment", lsm, segType: segType(s), address: a, size: sz, access: segAccess(s), memType: memType(s) ?? 0, segFlags: segFlags(s), ...via });
-        const built = imageFor(a, sz);
+        // A RAM segment (MemType 2) without <Data> ETS declares and neither reads nor writes, on MV-0701 too
+        // (the third-party synthetic 0701 captures, docs/testing.md; on MV-0705 the Auro's).
+        const built = memType(s) === 2 && segByAddr.get(a)?.data.length === 0 ? null : imageFor(a, sz);
         if (!built) break;
         const seg = segByAddr.get(a);
         if (!seg) throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `the load procedure declares a segment at ${a} the application does not define; refusing to write an image we cannot build`);
@@ -975,6 +1063,7 @@ export function planAbsoluteFullDownload(
       }
       case "LdCtrlTaskSegment": {
         const lsm = need(l, s.verb, "LsmIdx");
+        if (isLsm5TaskSegment(s)) break;
         if (isTable) { plan.push(...bracketOf(lsm).filter((st) => st.op === "taskSegment")); break; }
         plan.push({ op: "taskSegment", lsm, address: need(stepAddress(s), s.verb, "Address"), peiType: app.appPeiType, manufacturer, appNumber: app.appNumber, version: app.appVersion, ...via });
         break;

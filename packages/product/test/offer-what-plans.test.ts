@@ -188,10 +188,11 @@ corpusDescribe("the System 7 group-address flash holds the declared steps addres
 });
 
 // Which form of the full download runs follows the unit (deviceflash.ts absoluteFullForm). The Gira M-0008
-// runs only in ETS's partial form, on a unit holding it, loaded; the Auro and the TheLuxa run their declared
-// procedure on any unit, as ETS reads no load state first. A unit holding another application, another
-// version of this one included, is refused either way.
-for (const [file, programId, otherVersion, declared] of [["M-0008_A-10D7-11-2783-O000A.xml.gz", "000810d711", "000810d710", false], ["M-0081_A-FE01-11-75D9.xml.gz", "0081fe0111", "0081fe0110", true], ["M-0048_A-107E-12-5B58.xml.gz", "0048107e12", "0048107e11", true]] as const) {
+// runs ETS's partial form on a unit holding it, loaded, and its declared procedure (without the task segment
+// on LSM 5, R18) on any other; the Auro and the TheLuxa run their declared procedure on any unit, as ETS
+// reads no load state first. A unit holding another application, another version of this one included, is
+// refused either way.
+for (const [file, programId, otherVersion, declared] of [["M-0008_A-10D7-11-2783-O000A.xml.gz", "000810d711", "000810d710", true], ["M-0081_A-FE01-11-75D9.xml.gz", "0081fe0111", "0081fe0110", true], ["M-0048_A-107E-12-5B58.xml.gz", "0048107e12", "0048107e11", true]] as const) {
   corpusDescribe(`the ${file} full download, by the unit it meets`, () => {
     const xml = catalogueXml(file);
     const cfg = parseAppConfig(xml);

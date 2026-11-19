@@ -108,7 +108,7 @@ reports success.
 | **executed (pre-flight)** | `CompareProp` with inline data | read the declared property (hardware type, application id) and compare before any write; a mismatch aborts with `LOAD_PROC_CHECK_FAILED`, as ETS checks it |
 | **caller** | `Connect`, `Disconnect` | the session owns the lifecycle |
 | **skipped (documented)** | absolute: `Unload`, `TaskSegment`, `TaskCtrl1` (full-download erase/allocation) | deliberately not executed, each with hardware or capture evidence |
-| **blocked, refuse** | everything else: unknown verbs, a closing step that cannot be executed as declared (`LoadImageProp` to another property, a `WriteProp` with a `Count` above 1 or data that is not hex), a `WriteProp` outside the closing steps (but the relative path's PID 27), allocation variants (`RelSegment` mode ≠ 0), element-addressed `CompareProp`, and any `Load`/`Unload`/`RelSegment`/`WriteRelMem` on the relative path addressed to an LSM other than 4 | unmodeled; refusing beats a silent partial recipe |
+| **blocked, refuse** | everything else: unknown verbs, a closing step that cannot be executed as declared (`LoadImageProp` to another property, a `WriteProp` with a `Count` above 1 or data that is not hex), a `WriteProp` outside the closing steps (but the relative path's PID 27), allocation variants (`RelSegment` mode ≠ 0), element-addressed `CompareProp`, any `Load`/`Unload`/`RelSegment`/`WriteRelMem` on the relative path addressed to an LSM other than 4, and on the absolute path any step on LSM 5 but its task segment | unmodeled; refusing beats a silent partial recipe |
 
 PID 27 is the memory-control-block table: per region of a segment, its size, a control byte and
 a CRC the device computes. A System B application may declare the regions of its parameter
@@ -143,6 +143,42 @@ the filled one.
 The full `LdCtrl` vocabulary present in the catalogue (15 verbs) is parsed and pinned by a
 coverage test, so a new device introducing an unknown verb fails the build instead of
 flashing blind.
+
+The **System B full download** holds every step it applies to (`full`, `all`, `auto`) to the same
+dispositions, not only the steps a parameter download shares with it (`relativeFullStepRefusal`):
+the mask's base bracket runs them, and a step it does not run refuses the download
+(`FULL_DOWNLOAD_STEP_UNSUPPORTED`) instead of vanishing from it. Its one step of its own is the
+parameter segment's allocation for the full download, `RelSegment` on LSM 4, whose fill it reads and
+whose mode must be the filled one, as every captured application declares it. It runs the checks
+the parameter download declares, so a `CompareProp` declared for the full download alone refuses it.
+An unload of the **PEI program** (LSM 5) is the base bracket's own first step ([R9](#the-rules-by-level));
+any other step on it, and a segment of the application on it, refuses the download
+(`PEI_PROGRAM_UNSUPPORTED`): the download loads only the parameter segment and the tables, and no
+capture shows how ETS loads such a program. A segment of the application on another load-state
+machine than 4 or 5 refuses it too (`FULL_DOWNLOAD_SEGMENT_UNKNOWN`). Every write checks these refusals itself before it asks the device
+anything, as the routes do before they queue it (`operationRefusals`).
+
+**Sizes are checked before anything is planned** (`procedureSizeRefusal`): every size an
+application declares for one segment must agree, the segment's own `Size` with each
+`AbsSegment` and `RelSegment` that declares it, a `WriteRelMem` with the whole segment at offset 0
+(the System B download writes the whole parameter segment, as every captured procedure declares
+it), and a group table's capacity by its `MaxEntries` (3 + 2 bytes per address, 1 + 2 per
+association) with its segment, or with `DynamicTableManagement` both with the region of both. An
+application whose sizes disagree is refused every write (`LOAD_PROCEDURE_SIZE_MISMATCH`), named in
+`operationRefusals` and so before the device is asked anything, and so is a relative step that declares
+no `Size`. ETS takes the procedure's sizes where they disagree (the synthetic captures,
+[below](#steps-refused-until-a-capture-shows-them)), while Busforge builds each segment's image to the
+segment's own size; each captured case is refused by another rule as well, so the check takes no
+download that would run otherwise. Every application of the catalogue fixtures declares agreeing sizes.
+
+**The manufacturer a System 7 task segment carries** is the application's own, the manufacturer of
+its id, for an OEM application too (the Gira M-0008, whose original manufacturer is `M-000A`,
+writes `0008`), and where the application declares
+`<Options LegacyPatchManufacturerIdInTaskSegment="true">` without naming another original
+manufacturer (the ABB US/U 4.2: its captured task segments carry `0002`). An application that
+declares the option and names an `OriginalManufacturer` of another maker is refused every write that
+declares a task segment, the full download and the group-address flash
+(`TASK_SEGMENT_MANUFACTURER_UNSUPPORTED`), until a capture shows which manufacturer ETS sends there.
 
 ### The closing steps, run as declared
 
@@ -194,6 +230,34 @@ ProductProcedure and MergedProcedure of the catalogue fixtures except one class,
 
 - **DefaultProcedure devices** (legacy BCU1/BCU2, nothing in the XML), refused as the explicit
   gap named in the styles table above, except the System 1 download below.
+
+### Steps refused until a capture shows them
+
+Each step below is refused today, coded, before anything is written. The count is of the 17
+catalogue fixtures, whose verbs the coverage test in `packages/product/test/loadproc.test.ts` pins. The
+third column says what is shown and how: **synthetic
+capture** means an ETS 6 download of a fabricated product into a device simulator
+([third-party test data](testing.md#third-party-test-data)), reference evidence for what ETS sends
+and none for what a device does; **reported** means another tool describes it and it is **unproven**
+here. It is the lead for the next step, not a description of what Busforge sends. Nothing of it is
+implemented.
+
+| Step | In the 19 applications | Shown so far | What settles it |
+| --- | --- | --- | --- |
+| A step on LSM 5 other than its task segment, System 7 (`FULL_DOWNLOAD_STEP_UNSUPPORTED`) | 0 | none | an ETS download of an application declaring one |
+| The PEI program (LSM 5) on System B: a segment of the application or a full-download step on it (`PEI_PROGRAM_UNSUPPORTED`) | 0 | reported, on a two-application Busch-Jaeger unit (MV-07B0): the mask's form that loads every program, unload 5 to 1, LSM 5 loaded and allocated (34 bytes, filled), device-object property writes in the middle of the load, the PEI segment written by memory write, the application id in object 5 PID 13, then the tables | an ETS download of a two-application System B unit |
+| `LegacyPatchManufacturerIdInTaskSegment` with an `OriginalManufacturer` of another maker (`TASK_SEGMENT_MANUFACTURER_UNSUPPORTED`) | 0 (the ABB declares the option without one) | reported: the task segment carries the original manufacturer | an ETS download of such an OEM application (a Busch-Jaeger application is reported) |
+| Sizes of one segment that disagree (`LOAD_PROCEDURE_SIZE_MISMATCH`) | 0 | synthetic capture: ETS takes the load procedure's sizes, not the segment's; it allocates and writes 128 of a 256-byte segment, writes inside a write's `Size` up to the last byte that differs from the fill, and leaves the bytes between two declared parts of a segment untouched | lifting what refuses each captured product besides (a Mode 0 allocation for the full download, a Mode 1 allocation declared for the parameter download too, a segment only the procedure declares), then building the image from the procedure's sizes, pinned to those captures |
+| `LdCtrlDelay` (`LOAD_STEP_UNSUPPORTED`, `FULL_DOWNLOAD_STEP_UNSUPPORTED`) | 0 | synthetic capture: a pause, nothing on the wire (200 ms before the restart) | the pause in the planner, pinned to the capture; Hager and Berker MV-0701 are reported to declare it |
+| `LdCtrlMapError` beyond the mask's own PEI unload | 0 | synthetic capture: nothing on the wire; what ETS does when the device answers the mapped error is not shown | an ETS download onto a device that answers it; Siemens MV-07B0 applications are reported to declare it |
+| `LdCtrlInvokeFunctionProp` | 0 | reported: `A_FunctionPropertyCommand` (by object index) or its extended form (by object type), return code 00 for success, the description of PID 53 read after each call | an ETS download of one of the Berker or Hager MV-0701 applications, or a Gira application, reported to declare it |
+| `LdCtrlMasterReset` | 0 | synthetic capture: `A_Restart` master reset with the declared erase code and channel, then a new connection; reported for a Hager MV-0701 application: `A_FunctionPropertyCommand` to object 5 PID 52 instead | an ETS download onto a device, to tell when ETS takes which |
+| `LdCtrlWriteProp` before the last `LoadCompleted` (other than System B's PID 27) | 0 | synthetic capture: written at its declared place, inside the load bracket too; reported: after `A_PropertyDescription_Read`, one element of the width the description gives, the inline data zero-extended (object 5 PID 51, `01` before the unloads, `02` before the restart) | Hager and Berker MV-0701 |
+| `LdCtrlDeclarePropDesc` with `LdCtrlWriteProp Count` (parameters placed in properties) | 0 | reported: nothing on the wire for the declaration; the write's inline data is a template the parameters overlay, at most 15 elements per write, the current elements read first | Hager TX/TY devices (MV-07B0) |
+| `LdCtrlTaskPtr`, `LdCtrlTaskCtrl2` | 0 | synthetic capture: PID 5 `03 03` InitPtr, SavePtr, SerialPtr, zero to 10 bytes; `03 05` Callback, Address, Seg0, Seg1; each in declared order | the encodings in the planner, pinned to the captures |
+| `LdCtrlCompareRelMem` | 0 | not described | two MDT applications are reported to declare it |
+| `<choose>` inside a load procedure | 0 | synthetic capture: only the branch the parameter values select reaches the wire | the branch selection in the planner, pinned to the captures; an MDT time switch (MV-0705) is reported to declare it |
+| `LdCtrlWriteMem` | 0 (an MDT IP router's application, MV-091A, in a house project export declares it, refused as a coupler anyway) | reported: a plain memory write | a coupler download |
 
 ### System 1: the MV-0012 download
 
@@ -266,10 +330,14 @@ form, on a unit holding an application that declares `PreferPartialDownloadIfApp
 reloads the tables and writes into the loaded application. Any step a form cannot execute refuses
 that form (`FULL_DOWNLOAD_STEP_UNSUPPORTED`; a step missing an attribute it needs,
 `FULL_DOWNLOAD_STEP_MALFORMED`; no full-download steps at all, `LOAD_PROCEDURE_UNSUPPORTED`), and so
-does a step after the restart other than `Disconnect`, which no capture shows ETS sending. Of the
-catalogue fixtures this leaves the Gira M-0008, whose procedure declares a `TaskSegment` 5 after its
-restart, with the partial form only: its full download runs on a unit holding the application, and
-refuses any other (`FULL_DOWNLOAD_APPLICATION_NOT_LOADED`). The segments refuse the download too
+does a step after the restart other than `Disconnect`, which no capture shows ETS sending. A RAM
+segment the procedure declares (`MemType="2"`) without `<Data>` is declared and neither read nor
+written, on the memory-mapped masks too (the synthetic MV-0701 captures). A
+`TaskSegment` on LSM 5 is left out in both forms, wherever the procedure declares it
+([R18](#the-rules-by-level)); any other step on LSM 5 refuses both (`FULL_DOWNLOAD_STEP_UNSUPPORTED`). An
+application whose declared form is refused while its partial form runs downloads only onto a unit
+holding it, and refuses any other (`FULL_DOWNLOAD_APPLICATION_NOT_LOADED`); none of the catalogue
+fixtures is such an application. The segments refuse the download too
 where they leave its bytes unknown (`FULL_DOWNLOAD_SEGMENT_UNKNOWN`): a parameter segment without
 `<Data>` (the Steinel presence detector M-008E, whose read-back keeps bytes no active parameter
 derives) and a `<Mask>` of a form no capture shows (the second Auro application `M-0081_A-FF31`,
@@ -296,7 +364,7 @@ application nothing checks. A parameter change that alters the com-object table 
 `COM_OBJECT_TABLE_STALE_USE_ETS`. Both are route-tested offline on `M-0081_A-FF31`. Applications
 that are offered their full download send such a device to it instead
 (`NEVER_PROGRAMMED_USE_DOWNLOAD`, `COM_OBJECT_TABLE_STALE_USE_DOWNLOAD`); where only the partial form
-runs (the Gira M-0008), that download refuses a unit that does not hold the application with
+runs, that download refuses a unit that does not hold the application with
 load-state machines 1, 2 and 3 loaded. An application whose full download is refused for another
 reason (the tunnelling entries of an IP interface,
 [device-support.md](device-support.md#known-gaps)) keeps its surgical flashes.
@@ -327,7 +395,7 @@ which device is in [status.md](status.md).
 | R6 | **A table segment's `<Data>` that no table can reach** (non-FF bytes past 3 + 2 × MaxEntries of the address table, 1 + 2 × MaxEntries of the association table, marked by the segment's `<Mask>` where it declares one) is written by the full download; inside that capacity the segment is table area and only the built table is written; the group-address download writes none of it (`tableSegmentData`) | catalogue | `<Data>`, `<Mask>`, `AddressTable@MaxEntries`, `AssociationTable@MaxEntries` | Meteodata (bytes 511-512 of `AS-4000` written); Gira and TheLuxa (non-FF `<Data>` inside the capacity, not written) |
 | R7 | **The device's own individual address** (address-table bytes 1-2) is never written by a download, whatever the `<Mask>` says | family System 7 | the table layout | Auro, Gira, TheLuxa, Meteodata, MDT BE-02001.02, MDT BE-06001.02 |
 | R8 | **The association order**: each object's first link (by object number), then the further links by object number and group index (`associations`) | KNX-wide | none (the table build) | Every object's first link ahead of any object's second, where an object below the highest linked one has two or more: MV-0705: Gira M-0008 (objects 0 and 2 with three each), Theben TheLuxa P300; System B: Theben MIX 2 HMG 6 T and JMG 4 T, Theben DALI-Gateway (nine objects with three each), in ETS's downloads and in units ETS programmed. The sending address first within an object: MDT BE-02001.02 (above and below the object's other address). No capture contradicts it. Not shown on MV-0701: no capture of an MV-0701 unit (Theben Meteodata 140 S, ABB US/U 4.2) has an object with two links, so no capture there tells this order from the order by object |
-| R9 | **The System B full download first unloads the PEI program** (LSM 5), an error there ignored; not its partial form (R1) | family System B | the MV-07B0 master data's `Load ap1` (wrapped in `LdCtrlMapError`) | Theben MIX 2, Jung 400021SE, GVS AMMA, Theben DALI-Gateway, OpenKNX RaumController, MEAN WELL power supply |
+| R9 | **The System B full download first unloads the PEI program** (LSM 5), an error there ignored; not its partial form (R1). An application with a segment or a full-download step on LSM 5 is refused (`PEI_PROGRAM_UNSUPPORTED`) | family System B | the MV-07B0 master data's `Load ap1` (wrapped in `LdCtrlMapError`) | Theben MIX 2, Jung 400021SE, GVS AMMA, Theben DALI-Gateway, OpenKNX RaumController, MEAN WELL power supply |
 | R10 | **The closing restart** is the confirmed restart (A_Restart type 1, erase code 1, channel 0: `81 01 00`) where the application runs ETS's secure procedure variant, the plain A_Restart otherwise (System B, `withConfirmedRestart`) | catalogue | `ApplicationProgram@IsSecureEnabled="true"` | confirmed: Theben MIX 2, Jung 400021SE, GVS AMMA; plain: Theben DALI-Gateway, MEAN WELL power supply |
 | R11 | **Every declared `LdCtrlLoadImageProp`** is a read of the property (PID 27) after the last `LoadCompleted`, in every download, as many elements per request as one response carries on the device (its maximum APDU length); the restart follows on the same connection at once ([closing steps](#the-closing-steps-run-as-declared)) | KNX-wide (load procedure) | `LdCtrlLoadImageProp` | Gira (one element per request), Theben MIX 2, Jung 400021SE (two in one request), GVS AMMA, Theben DALI-Gateway, MEAN WELL power supply |
 | R12 | **A declared `LdCtrlWriteProp` to a property other than PID 27** after the last `LoadCompleted` is written as declared, at its place before the restart, its echo checked where `Verify="true"` | KNX-wide (load procedure) | `LdCtrlWriteProp` | GVS AMMA (full and partial download); no other fixture declares one |
@@ -336,6 +404,7 @@ which device is in [status.md](status.md).
 | R15 | **A parameter change and a link change in one partial download** go in one bracket set, the structural bracket ([Structural flash](#structural-flash)) | family (System 7, System B) | the family's bracket | Jung 400021SE and MDT BE-02001.02 (a change that reshapes the com-object table); the reverts of a parameter and a link change on the Auro, Gira, TheLuxa, Meteodata and the Theben MIX 2's three products, the Theben DALI-Gateway, the MDT BE-06001.02 and the MEAN WELL power supply |
 | R16 | **What a differential download sends into a segment the unit keeps**, region by region of the segment's memory-control block (PID 27): where the region's CRC-control byte is 0, the bytes that differ from the unit; where it is not 0, past the regions, or on a segment that reports none, every byte the image carries. The application's regions are the ones it declares (its `LdCtrlWriteProp` to PID 27), the com-object table's the ones the unit reports. It holds for the partial form of the full download, the parameter download and the group-address download (whose com-object table is a segment the unit keeps). ETS compares against its own record of the last download, Busforge against the unit it reads, so the two send the same bytes whenever that record equals the unit (`differentialMask`). The verify reads the whole segment back (in the partial form of the full download only where the segment's CRCs do not prove that it holds exactly the bytes meant for it) and checks every owned bit against the configuration and every other bit against the unit's read, except the `Access="None"` bytes the device sets itself | KNX-wide (System B) | the memory-control block's CRC-control byte | Jung 400021SE: the application's 7700-byte region (control 0) only where it changed, its declared one-byte region (control 1) in every download, the com-object table (control 0) only when it changed, one byte; Theben DALI-Gateway: the com-object table (control 1) whole although unchanged, the application (control 0) unchanged and not reloaded; OpenKNX RaumController parameter downloads: the application (control 0) differential, the com-object table (no memory-control block) whole; MEAN WELL power supply group-address download: the com-object table (control 0) one byte, the record's stamps equal and its download a full one |
 | R17 | **A download marker the unit clears is no change.** An `Access="None"` parameter that holds the same value in every configuration (every ParameterRef the same value, no `<Assign>` targets one, placed outside every `choose` and module, no other parameter on its bits) is written by every download, and the unit may clear it once it has seen one. ETS compares with its record, which holds the value; Busforge compares with the unit, so a unit that differs from the configuration only in such bits holds it: the parameter flash and its dry run (and System B's structural flash) report `unchanged` and write nothing, but name every such parameter the unit differs in (`constantsDiffer`), so that a difference that is no download marker (a value another tool or application left) is seen: the flash preview shows them, the task list for a write that finds the device unchanged, and the device page after a read-back that compares the image (of a device never programmed from this project, or with assumed values) and finds it matching; with any other change the bits are written with it (`constantParams`). An `Access="None"` parameter a configuration does set (an assigned one, one a `<ParameterCalculation>` reads or sets, one inside a `choose`) differs as a change, and an application whose dynamic tree holds an element Busforge does not parse has no constant parameter. A full download writes the marker whether or not anything else changed, and System 7's structural flash counts it as a change | KNX-wide | the parameter's `Access`, its refs' values, its placement | Theben TheLuxa P300 and Meteodata 140 S (`P-2228`, `$AA`, read back `00` after each of ETS's downloads), Theben MIX 2 (`P-199`, bit `0x80`, cleared): every parameter download writes the marker with the change; Jung 400021SE (`P-1`, cleared to `00`): the download with no change writes it alone and restarts |
+| R18 | **A task segment on LSM 5 is never sent.** ETS removes it from the procedure, its log naming it a "legacy object table address announcement", and sends nothing in its place, in the declared and the partial form, wherever the procedure declares it (inside the application's bracket or after the restart, at the com-object table's or another segment's address) | family System 7 | `LdCtrlTaskSegment LsmIdx="5"` | ABB US/U 4.2 and Gira M-0008 (partial form, ETS's log); the synthetic captures of an MV-0701 and an MV-0705 product (declared form, at the parameter segment's address) |
 
 **Which bytes of a data segment**, the rule behind R1 and R2 ([below](#which-bytes-ets-writes)):
 a segment ETS loads afresh carries the bytes its `<Mask>` marks and every byte a parameter covers
@@ -533,7 +602,7 @@ The ABB US/U 4.2 shows the same form on a memory-mapped mask ([below](#which-byt
 | `TaskSegment` 1, 2 | at the table's address |
 | `AbsSegment` 3 (seven segments, one a RAM segment without `<Data>`), `TaskSegment` 3, `TaskCtrl1` 3 | not sent: `Load` 3, the data segments written, `LoadCompleted` 3 |
 | `LoadImageProp` 1, 2, 3 (`Count="6"`), PID 27 | after the last `LoadCompleted`: `PropertyValue_Read` 1/27, 2/27, 3/27 elements 1 to 6; nothing written |
-| `TaskSegment` 5 (after `Restart`) | not sent |
+| `TaskSegment` 5 (after `Restart`, at the com-object table's address) | not sent: ETS's log removes it as a "legacy object table address announcement" |
 
 The parameter download is `Load` 3, the changed bytes, `LoadCompleted` 3, the stamp reads, the
 restart; the group-address download re-declares the two tables as above, writes the com-object

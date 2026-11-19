@@ -127,6 +127,7 @@ export const CORPUS_FILES: readonly string[] = [
     "gira-m0008-ets-partial-links.log",
     "gira-m0008-ets-partial-params.log",
     "gira-m0008-ets-partial-revert.log",
+    "gira-m0008-ets6log-fulldownload.txt",
     "gvs-amma-ets-fulldownload-defaults.log",
     "gvs-amma-ets-partial-links.log",
     "gvs-amma-ets6log-keytable-add.txt",
@@ -269,6 +270,8 @@ export const CORPUS_FILES: readonly string[] = [
     bussardCapture(p, v), bussardCapture(p, v, "requests.txt"), ...(base ? [bussardCapture(p, v, "base.pcapng"), bussardCapture(p, v, "base-requests.txt")] : []),
   ]),
   ...BUSSARD_SYNTHETIC_TESTED.map(([p, a]) => bussardApplication(p, a)),
+  // The applications packages/product/test/load-procedure-refusals.test.ts reads besides.
+  ...[["syn-s7-lsm5", "280F-11"], ["syn-s7-lsm5-0705", "2820-10"], ["syn-writerelmem-size", "2717-10"], ["syn-s7-static-split", "2889-10"]].map(([p, a]) => bussardApplication(p, `M-00FA_A-${a}-0000`)),
 ];
 
 // Bun loads the .env files of the directory a process starts in: `bun run check` those of the

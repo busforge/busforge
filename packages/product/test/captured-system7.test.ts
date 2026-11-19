@@ -67,6 +67,13 @@ class GiraDevice {
 }
 const asDev = (d: GiraDevice) => d as unknown as KnxDevice;
 const STAMPS = ["read 1/27#1", "read 2/27#1", ...[1, 2, 3, 4, 5, 6].map((i) => `read 3/27#${i}`)];
+// The M-0008 with a step after its restart that no capture shows ETS sending, in place of its task segment
+// on LSM 5 (which ETS leaves out): its declared form is refused, only its partial form runs.
+const withoutDeclaredForm = (xml: string): string => {
+  const restartThenTask = /(<LdCtrlRestart \/>\s*)<LdCtrlTaskSegment LsmIdx="5" Address="16869" \/>/;
+  expect(restartThenTask.test(xml)).toBe(true);
+  return xml.replace(restartThenTask, '$1<LdCtrlTaskSegment LsmIdx="3" Address="16869" />');
+};
 
 corpusDescribe("the captured M-0008 downloads, run against an emulated device", () => {
   const xml = catalogueXml("M-0008_A-10D7-11-2783-O000A.xml.gz");
@@ -99,7 +106,9 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
     expect((await dev.memRead(0x4009, 9)).toString("hex")).toBe("040100020203000302");
   }, 100_000);
 
+  // These three on the M-0008 whose declared form is refused (withoutDeclaredForm).
   test("a device without this application is refused, untouched", async () => {
+    const cfg = parseAppConfig(withoutDeclaredForm(xml));
     const dev = new GiraDevice(cfg);
     dev.state.set(3, STATE.UNLOADED);
     expect(await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links: twoObjects }).catch((e: unknown) => e)).toMatchObject({ code: "FULL_DOWNLOAD_APPLICATION_NOT_LOADED" });
@@ -123,6 +132,7 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
   });
 
   test("a unit whose address table is not loaded is refused, untouched, though it holds the application", async () => {
+    const cfg = parseAppConfig(withoutDeclaredForm(xml));
     const dev = new GiraDevice(cfg);
     dev.state.set(1, STATE.UNLOADED);
     expect(await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links: twoObjects }).catch((e: unknown) => e))
@@ -133,6 +143,7 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
   // A broken-off application bracket leaves LSM 3 LOADING with this program id: no capture shows what
   // ETS sends to such a unit, so it is refused too, and ETS restores it.
   test("a unit whose application is LOADING, with this program id, is refused as well", async () => {
+    const cfg = parseAppConfig(withoutDeclaredForm(xml));
     const dev = new GiraDevice(cfg);
     dev.state.set(3, STATE.LOADING);
     expect(await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links: twoObjects }).catch((e: unknown) => e)).toMatchObject({ code: "FULL_DOWNLOAD_APPLICATION_NOT_LOADED" });
@@ -428,8 +439,8 @@ corpusDescribe("a memory-mapped System 7 parameter flash, run against an emulate
 });
 
 corpusDescribe("the way back for a captured application's unit without its application is ETS", () => {
-  test("the M-0008 full download is offered, but does not load the application; the MDT's does", () => {
-    const gira = classify(parseAppConfig(catalogueXml("M-0008_A-10D7-11-2783-O000A.xml.gz")));
+  test("an M-0008 whose declared form is refused is offered its full download, which does not load the application; the MDT's does", () => {
+    const gira = classify(parseAppConfig(withoutDeclaredForm(catalogueXml("M-0008_A-10D7-11-2783-O000A.xml.gz"))));
     expect(gira.capabilities().fullDownload).toBe(true);
     expect(gira.fullDownloadLoadsApplication()).toBe(false);
     const mdt = classify(parseAppConfig(catalogueXml("M-0083_A-00B6-32-9642.xml.gz")));

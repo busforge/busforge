@@ -1,6 +1,7 @@
 import { XMLParser } from "fast-xml-parser";
 import { type ONode, tagOf, attrsOf, kidsOf, childrenByTag } from "./onode.ts";
 import { ProductError } from "./errors.ts";
+import type { StepRefusal } from "./deviceflash.ts";
 
 // Parse a KNX ApplicationProgram's <LoadProcedures> into a generic, executable step
 // model. The load procedure is the device's own declared programming recipe: which
@@ -52,6 +53,12 @@ export interface LoadProcedures {
   dynamicTables: boolean;
   secureEnabled: boolean;
   extendedMemoryServices: boolean;
+  //  - legacyTaskSegmentManufacturer: <Options LegacyPatchManufacturerIdInTaskSegment="true">, with
+  //    originalManufacturer (ApplicationProgram@OriginalManufacturer, "M-xxxx") where the application names
+  //    one: together they decide whether a System 7 task segment's manufacturer is one no capture shows
+  //    (taskSegmentManufacturerRefusal, deviceflash.ts).
+  legacyTaskSegmentManufacturer?: true;
+  originalManufacturer?: string;
 }
 
 // The LdCtrl vocabulary the executor models. Sourced from the full inventory of the
@@ -117,6 +124,8 @@ export function loadProceduresOf(root: ONode[]): LoadProcedures {
     dynamicTables: appAttrs.DynamicTableManagement === "true",
     secureEnabled: appAttrs.IsSecureEnabled === "true",
     extendedMemoryServices: (options ? attrsOf(options).SupportsExtendedMemoryServices : undefined) === "true",
+    ...((options ? attrsOf(options).LegacyPatchManufacturerIdInTaskSegment : undefined) === "true" ? { legacyTaskSegmentManufacturer: true as const } : {}),
+    ...(appAttrs.OriginalManufacturer !== undefined ? { originalManufacturer: appAttrs.OriginalManufacturer } : {}),
   };
 }
 
@@ -363,6 +372,10 @@ export function assessParStep(step: LdStep, model: "absolute" | "relative", lp?:
     }
   }
   if (model === "absolute") {
+    // A task segment on LSM 5 is skipped below with the others; any other step on it no capture shows.
+    if (stepObject(step) === PEI_LSM && step.verb !== "LdCtrlTaskSegment") {
+      return { kind: "blocked", detail: `${step.verb} on load-state machine ${PEI_LSM}, which no capture shows` };
+    }
     switch (step.verb) {
       case "LdCtrlLoad":
       case "LdCtrlLoadCompleted":
@@ -457,6 +470,37 @@ export function assessParCoverage(lp: LoadProcedures, model: "absolute" | "relat
     else if (step.verb === "LdCtrlCompareProp") checks.push(comparePropCheck(step));
   }
   return { blocked, skipped, checks };
+}
+
+// The PEI program's load-state machine on System B: interface object 5 on MV-07B0.
+export const PEI_LSM = 5;
+
+// Every step a System B full download applies, held to a disposition as the parameter download's are
+// (assessParStep): the download runs the mask's base bracket parameterized by them, and a step it does
+// not run must refuse it, not vanish. The one step of its own is the parameter segment's allocation for
+// the full download (LdCtrlRelSegment on LSM 4, whose Mode and Fill relParamFullMode and relParamFillByte
+// read; it must be the filled one, Mode 1, as every captured application declares it). The checks it runs
+// are the parameter download's (assessParCoverage), so a CompareProp declared for the full download alone
+// is refused. An unload of the PEI program (LSM 5) is the base bracket's own first step (rule R9); any other
+// step on it is refused with PEI_PROGRAM_UNSUPPORTED: no ETS capture shows a System B download that loads it.
+export function relativeFullStepRefusal(lp: LoadProcedures): StepRefusal | null {
+  for (const s of flattenSteps(lp, "full")) {
+    if (s.verb === "LdCtrlCompareProp") {
+      if (stepApplies(s, "par")) continue;
+      return { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: `the load procedure declares an LdCtrlCompareProp for the full download alone (${JSON.stringify(s.attrs)}); the System B full download runs the checks the parameter download declares, refusing to skip this one` };
+    }
+    if (stepObject(s) === PEI_LSM) {
+      if (s.verb === "LdCtrlUnload") continue;
+      return { code: "PEI_PROGRAM_UNSUPPORTED", message: `the load procedure declares ${s.verb} on the PEI program (load-state machine ${PEI_LSM}) for the full download; no ETS capture shows a System B download that loads that program, refusing to run the step or to leave it out` };
+    }
+    if (s.verb === "LdCtrlRelSegment" && (s.attrs.LsmIdx ?? "4") === "4") {
+      if ((s.attrs.Mode ?? "0") === "1") continue;
+      return { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: `the full download allocates the parameter segment with LdCtrlRelSegment Mode=${s.attrs.Mode ?? "0"}; no ETS capture shows which bytes a download writes into a segment allocated so` };
+    }
+    const d = assessParStep(s, "relative", lp);
+    if (d.kind === "blocked") return { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: `the load procedure declares a step the full download cannot execute yet (${d.detail}); refusing to run a partial recipe` };
+  }
+  return null;
 }
 
 // Build the app-id / hardware pre-flight a single LdCtrlCompareProp step declares. The Mask

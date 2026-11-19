@@ -157,6 +157,11 @@ depends on is hardware-proven.
 
 ## Device coverage
 
+- **Load-procedure steps refused until a capture shows them, or until Busforge follows one.** Steps on
+  LSM 5 other than its task segment, the PEI program on System B, OEM task segments, segment sizes
+  that disagree, `Delay`, `MapError`, `InvokeFunctionProp`, `MasterReset`, `TaskPtr`, `TaskCtrl2`,
+  property writes inside the load, `DeclarePropDesc`, `CompareRelMem`, `<choose>` in a procedure: what is
+  shown of each and what settles it is in [load-procedures.md](load-procedures.md#steps-refused-until-a-capture-shows-them).
 - **Prove a non-TP device.** One read-back on real powerline, RF or IP hardware promotes that row
   from extrapolation to proof. Hardware verification help is welcome.
 - **OpenKNX surgical flashes under an automated run.** The device-in-service spec
