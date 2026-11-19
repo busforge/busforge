@@ -1,4 +1,4 @@
-import { test, expect, setDefaultTimeout } from "bun:test";
+import { test, expect, afterAll, setDefaultTimeout } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -7,6 +7,9 @@ import { resolveDataDir, resolvePort } from "../src/app.ts";
 setDefaultTimeout(60_000);
 
 const serverEntry = join(import.meta.dir, "..", "src", "index.ts");
+
+const tmps: string[] = [];
+afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
 
 test("the data directory defaults to apps/server/data and BUSFORGE_DATA_DIR replaces it", () => {
   expect(resolveDataDir({})).toBe(resolve(import.meta.dir, "..", "data"));
@@ -43,6 +46,7 @@ test("the server entry point refuses to start on an empty BUSFORGE_DATA_DIR or a
 
 test("the server entry point opens its database in BUSFORGE_DATA_DIR on the port PORT names", async () => {
   const dir = mkdtempSync(join(tmpdir(), "busforge-data-dir-"));
+  tmps.push(dir);
   const child = Bun.spawn(["bun", "run", serverEntry], {
     env: { ...process.env, BUSFORGE_DATA_DIR: join(dir, "nested"), PORT: "0" },
     stdout: "pipe",

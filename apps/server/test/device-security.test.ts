@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, afterAll } from "bun:test";
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -140,10 +140,15 @@ describe("device_security store", () => {
   });
 });
 
+const tmps: string[] = [];
+afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
+
 describe("master-key startup guard", () => {
   test("createState refuses to start when sealed keys exist but no master key is available", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "bf-seed-"));
+    tmps.push(dataDir);
     const empty = mkdtempSync(join(tmpdir(), "bf-empty-"));
+    tmps.push(empty);
     const dbPath = join(dataDir, "busforge.db");
     try {
       delete process.env.BUSFORGE_MASTER_KEY;

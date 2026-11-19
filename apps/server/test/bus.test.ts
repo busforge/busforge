@@ -95,9 +95,13 @@ const { createGroupAddress, createGroupRange } = await import("../src/db/grouped
 const { openSecureGroupTpdu } = await import("@busforge/knx");
 const { createConnection } = await import("../src/db/connections.ts");
 
+const tmps: string[] = [];
+afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
+
 for (const type of ["usb", "ip"] as const) {
   test(`${type}: API monitor connect refuses while a management job owns the interface`, async () => {
     const dir = mkdtempSync(join(tmpdir(), "bus-owner-"));
+    tmps.push(dir);
     const state = createState({ dbPath: ":memory:", dataDir: dir });
     const release = Promise.withResolvers<void>();
     const entered = Promise.withResolvers<void>();
@@ -317,8 +321,6 @@ describe("Bus: secured group telegrams", () => {
 
 describe("sending group telegrams through the monitor connection", () => {
   const key = Buffer.alloc(16, 0x5a);
-  const tmps: string[] = [];
-  afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
   async function setup(opts: { secured?: boolean; sender?: string } = {}) {
     const dir = mkdtempSync(join(tmpdir(), "bus-send-"));
     tmps.push(dir);

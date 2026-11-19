@@ -1,4 +1,4 @@
-import { test, expect, setDefaultTimeout } from "bun:test";
+import { test, expect, afterAll, setDefaultTimeout } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -111,9 +111,13 @@ test("a download that does not answer, or fails, is refused, naming the address 
   expect(String(f)).toMatch(/github\.com\/OpenKNX\/.*failed: Unable to connect.*--openknx/);
 });
 
+const tmps: string[] = [];
+afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
+
 // Build `demo` into a fresh in-process instance and check what it holds.
 async function buildAndCheck(demo: Demo, dbs: ProductDb[], manufacturers: number) {
   const dir = mkdtempSync(join(tmpdir(), "busforge-demo-"));
+  tmps.push(dir);
   const state = createState({ dataDir: dir });
   const api: DemoApi = async (path, init) => (await handleApi(new Request(`http://demo${path}`, init), state))!;
   const call = async (path: string) => (await api(path)).json();
@@ -150,10 +154,11 @@ async function buildAndCheck(demo: Demo, dbs: ProductDb[], manufacturers: number
 
 test("a product database that lacks a demo's application is refused before any project is made", async () => {
   const dir = mkdtempSync(join(tmpdir(), "busforge-demo-"));
+  tmps.push(dir);
   const state = createState({ dataDir: dir });
   const api: DemoApi = async (path, init) => (await handleApi(new Request(`http://demo${path}`, init), state))!;
   try {
-    const e = await buildDemoProject(api, OPEN_DEMO, []).then(() => null, (err: unknown) => err);
+    const e =await buildDemoProject(api, OPEN_DEMO, []).then(() => null, (err: unknown) => err);
     expect(String(e)).toMatch(/lack M-00FA_H-0xA602-1_P-OpenKnxSwitchActuator with application/);
     expect(await (await api("/api/projects")).json()).toEqual([]);
   } finally {
