@@ -370,9 +370,11 @@ rather than writing a wrong-sized value.
 A DPT-9 value is encoded as ETS writes it: the smallest exponent whose mantissa fits, the
 mantissa rounded once, at that exponent, from the exact decimal value. 1000 Lux is `36 1A`
 (100000 / 2^6 = 1562.5 → 1562); ETS's download of an MDT BE-02001.02 shows it. 10000 is
-`4F A1` (1953.125 → 1953). A tie goes to the even mantissa; every tie ETS has shown had an even
-lower neighbour, so a tie like 20.51 (1025.5) is not yet backed by a capture. A mantissa one
-step off passes a read-back unseen, since the device holds what was written.
+`4F A1` (1953.125 → 1953). A tie goes to the even mantissa, up or down, and a negative value
+rounds its magnitude the same way: ETS writes 20.51 as `0C 02` (1025.5 → 1026), 20.53 as `0C 02`
+(1026.5 → 1026) and -20.51 and -20.53 both as `8B FE` (-1026), and rounds 41.03 (1025.75) to `14 02`
+rather than truncating it, shown by ETS's downloads of the same MDT input. A mantissa one step
+off passes a read-back unseen, since the device holds what was written.
 
 A DPT-9 value outside -671088.64 to 670433.28 is refused
 (`PARAM_VALUE_OUT_OF_RANGE`), not saturated: `7F FF` is DPT 9's "invalid data", so a saturated maximum
