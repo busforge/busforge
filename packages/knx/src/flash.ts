@@ -257,8 +257,8 @@ export async function compareDeclaredProp(dev: KnxDevice, obj: number, pid: numb
 // outside the image are left to the allocation, which already set them to the fill; the distance counts
 // the bytes outside the image. Shown by ETS's wire on the OpenKNX RaumController, the three Theben MIX 2
 // products, the Theben DALI-Gateway, the MDT IP Interface/Router, the Jung 400021SE and the GVS AMMA
-// (largest gap bridged 30, smallest left out 31). The device's own CRC over the finished segment
-// (readSegmentCrc) still proves every byte.
+// (largest gap bridged 30, smallest left out 31). The device's own CRCs over the finished segment
+// (mcbProves), or the segment read back where they do not match, still prove every byte.
 //
 // A byte off the fill outside the image is written all the same (none is on those applications), so
 // the segment ends as the buffer holds it. Writing the whole 21601-byte OpenKNX segment instead makes
@@ -319,9 +319,9 @@ export function planSystemBFullDownload(tables: {
   const mcbFor = (obj: number): LoadStep[] => mcb.filter((m) => m.obj === obj).map((m) => ({ op: "writeProp", obj, pid: PID.MCB_TABLE, start: m.element, data: m.data, echoPrefix: m.echoPrefix }));
   return [
     // The application's load procedure declares `LdCtrlWriteRelMem ... Verify="true"`, and this is
-    // what that means: the device answers every memory write with what actually landed. Without
-    // it a write that the device drops is silent, and we would find out (if at all) a thousand
-    // telegrams later, with no idea which one it was.
+    // what that means: the device answers every memory write. Without it a write that the device
+    // drops is silent, and we would find out a thousand telegrams later, with no idea which one it
+    // was. The answer is no proof of storage (VERIFY_MODE); the segment CRCs after the restart are.
     { op: "verifyMode", on: true },
     // Everything goes back to unloaded first: a device that was half-programmed by a previous
     // attempt must not contribute leftovers to this one. `unloadPei`: the PEI program's machine
@@ -351,7 +351,7 @@ export function planSystemBFullDownload(tables: {
     { op: "writeSegment", lsm: D, bytes: tables.addr, echo: true, verify: false },
     // Of a filled segment the runs ETS writes (fillAllocatedRuns); the allocation set every other byte
     // to the fill. Every chunk is echo-checked as it is written (verify mode, above), and the device's
-    // CRC over the finished segment proves the whole segment at the end.
+    // CRCs over the finished segment (or its read-back) prove the whole segment after the restart.
     ...fillAllocatedRuns(tables.params, tables.paramsInImage, fillByte).map((r): LoadStep => ({ op: "writeSegment", lsm: P, offset: r.offset, bytes: r.bytes, echo: true, verify: false })),
     ...(security ? planSecurityObjectLoad(security) : []),
     { op: "stampAppId", lsm: P, data: tables.programId },
@@ -411,7 +411,7 @@ export function planSystemBFullDownload(tables: {
 // The CRC a System B device computes over a loaded segment, and hands out through PID_MCB_TABLE
 // (property 27) once the segment is LOADED. This is what the device's own load procedure means by
 // `LdCtrlLoadImageProp ObjIdx=4 PropId=27`, and it is how a 21601-byte parameter image is verified
-// with ONE property read instead of eighteen hundred memory reads (which, at KNX speeds, is the
+// with one property read per region instead of eighteen hundred memory reads (which, at KNX speeds, is the
 // difference between a download that takes two minutes and one that takes ten).
 //
 // Transcribed from the firmware that produces it (thelsing/knx bits.cpp crc16Ccitt): CRC-16-CCITT,
@@ -447,12 +447,55 @@ export function crc16CcittFalse(data: Buffer): number {
   return crc & 0xffff;
 }
 
-// Read a loaded segment's size and CRC straight from the device (PID_MCB_TABLE, 8 bytes:
-// [size u32 BE][crc control][access][crc16 u16 BE]). The device only answers once the segment is
-// LOADED, so this belongs after the load-completed bracket. Returns null when the device declines,
-// which the caller must treat as "not verified" and fall back on, never as "verified".
-export async function readSegmentCrc(dev: KnxDevice, lsm: number): Promise<{ size: number; crc: number } | null> {
-  const mcb = await dev.propRead(lsm, PID.MCB_TABLE);
-  if (mcb.length < 8) return null;
-  return { size: mcb.readUInt32BE(0), crc: mcb.readUInt16BE(6) };
+// One region of a loaded segment's memory-control block (PID_MCB_TABLE, one element per region:
+// [size u32 BE][crc control][access][crc16 u16 BE]). A segment may be split into several regions
+// (Jung 400021SE: 7700 bytes and 1; Theben MIX 2: 1642 and 361), each with the CRC the device reports
+// over its own bytes.
+export const MCB_ELEMENT_BYTES = 8;
+export interface McbEntry { size: number; control: number; crc: number }
+
+// Read a loaded object's memory-control block, element by element until its regions cover `size`
+// bytes or the device answers no further element (when `size` is not known, only the latter ends it).
+// The device only answers once the segment is LOADED, so this belongs after the load-completed bracket.
+// Null where the object reports no region, or more than MCB_MAX_ELEMENTS without either end: a block
+// read only in part would be taken for the whole one.
+const MCB_MAX_ELEMENTS = 16;
+export async function readMcbTable(dev: KnxDevice, obj: number, size = Infinity): Promise<McbEntry[] | null> {
+  const entries: McbEntry[] = [];
+  for (let element = 1, covered = 0; covered < size; element++) {
+    if (element > MCB_MAX_ELEMENTS) return null;
+    const e = await dev.propRead(obj, PID.MCB_TABLE, element);
+    if (e.length < MCB_ELEMENT_BYTES) break;
+    entries.push({ size: e.readUInt32BE(0), control: e[4], crc: e.readUInt16BE(6) });
+    covered += e.readUInt32BE(0);
+  }
+  return entries.length ? entries : null;
+}
+
+// Which regions of a segment the device's CRCs prove to hold exactly their slice of `bytes`: a region
+// whose CRC equals the CRC over its slice, in the one convention every matching region shares
+// (crc16Ccitt or crc16CcittFalse). Null, proving no region, where the regions do not cover exactly
+// `bytes.length` or where regions match in different conventions.
+//
+// What a match stands on: at the close of every ETS full download captured (Jung 400021SE, the three
+// Theben MIX 2 products, GVS AMMA, OpenKNX RaumController, Theben DALI-Gateway, MEAN WELL power supply)
+// the CRC each region of each object reports is the CRC over the bytes ETS wrote there
+// (tools/mcb-crc.test.ts). That the device computes it from its memory again after a restart is shown
+// on the Jung (the one-byte region it clears after the download reports the CRC over the cleared byte in
+// the next session) and on thelsing/knx (its firmware computes it on every read); on the others a CRC
+// kept from the load would also match a segment that lost a byte at the restart.
+export function mcbProvenRegions(entries: McbEntry[] | null, bytes: Buffer): boolean[] | null {
+  if (!entries || entries.reduce((n, e) => n + e.size, 0) !== bytes.length) return null;
+  const [aug, plain] = [crc16Ccitt, crc16CcittFalse].map((crc) => {
+    let at = 0;
+    return entries.map((e) => crc(bytes.subarray(at, (at += e.size))) === e.crc);
+  });
+  if (!plain.some(Boolean)) return aug;
+  if (!aug.some(Boolean) || aug.every((m, i) => m === plain[i])) return plain;
+  return null;
+}
+
+// Whether the device's CRCs prove a whole segment holds exactly `bytes` (every region, mcbProvenRegions).
+export function mcbProves(entries: McbEntry[] | null, bytes: Buffer): boolean {
+  return mcbProvenRegions(entries, bytes)?.every(Boolean) ?? false;
 }

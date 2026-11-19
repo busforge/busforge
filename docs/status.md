@@ -79,7 +79,12 @@ All hardware verification is on **twisted pair**.
 
 ## Devices driven on real hardware
 
-Read-back means our built image was compared byte-for-byte against the device's own memory. A
+Read-back means our built image was compared byte-for-byte against the device's own memory. A System
+B full download takes in its place, region by region, the CRC the device reports after the restart
+(`PID_MCB_TABLE`) where it equals the CRC over the bytes written, and reads back every other region
+([load-procedures.md](load-procedures.md#full-download-coverage)). That is a CRC-16, not a byte
+compare, and only on the Jung 400021SE and thelsing/knx is the CRC shown to be computed from the
+memory again after the restart. A
 `verified` write proves that read-back for every owned byte, except the bytes a device written with
 the confirmed extended write does not give back: those rest on its write confirmation alone, are named
 in the result (`confirmedOnly`) and are accepted only under the conditions in

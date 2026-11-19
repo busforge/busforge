@@ -7,7 +7,7 @@ import { buildComObjectTableMv0705 } from "./comobjbuild.ts";
 import type { CfgComObjImage } from "./config.ts";
 import { ProductError } from "./errors.ts";
 import { isMemoryMappedLsm } from "./masks.ts";
-import { OBJ, planSecurityObjectLoad, securityUnload, type LoadPlan, type LoadStep, type SecurityObjectTables } from "@busforge/knx";
+import { OBJ, MCB_ELEMENT_BYTES, planSecurityObjectLoad, securityUnload, type LoadPlan, type LoadStep, type SecurityObjectTables } from "@busforge/knx";
 
 // Plan an MV-0705 (absolute-segment) parameter download as a SURGICAL memory write.
 //
@@ -170,8 +170,6 @@ export function withConfirmedRestart(plan: LoadPlan, confirmed: boolean): LoadPl
   return confirmed ? plan.map((st) => (st.op === "restart" ? { ...st, confirmed: true } : st)) : plan;
 }
 
-// The PID 27 element of a memory-control block: region size (4), control (2), CRC (2).
-const MCB_ELEMENT_BYTES = 8;
 
 // The load steps of a download's closing steps (loadproc.ts closingSteps).
 export function closingLoadSteps(steps: ClosingStep[]): LoadStep[] {

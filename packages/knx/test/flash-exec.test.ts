@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { planSystemBGaFlash, planSystemBFullDownload, appId, compareDeclaredProp, crc16Ccitt, crc16CcittFalse, fillAllocatedRuns, FILL_RUN_SKIPPED, STATE } from "../src/flash.ts";
+import { planSystemBGaFlash, planSystemBFullDownload, appId, compareDeclaredProp, crc16Ccitt, crc16CcittFalse, mcbProves, mcbProvenRegions, readMcbTable, fillAllocatedRuns, FILL_RUN_SKIPPED, STATE } from "../src/flash.ts";
 import { KnxDevice, ERASE, RESTART_MASTER } from "../src/device.ts";
 import { runLoadPlan, leftUnloaded, type LoadPlan, type LoadStep } from "../src/loadrunner.ts";
 import { KnxError } from "../src/errors.ts";
@@ -476,14 +476,55 @@ describe("segment CRC (how a 21601-byte image is verified with one property read
       expect(crc16CcittFalse(data)).not.toBe(crc16Ccitt(data));
     }
   });
+
+  // mcbProves: the regions of a memory-control block have to cover the bytes exactly, and every region's
+  // CRC has to match in the same convention.
+  describe("mcbProves", () => {
+    const bytes = Buffer.from(Array.from({ length: 40 }, (_, i) => (i * 13) & 0xff));
+    const regions = (crc: (b: Buffer) => number, sizes: number[]) => {
+      let at = 0;
+      return sizes.map((size) => ({ size, control: 0, crc: crc(bytes.subarray(at, (at += size))) }));
+    };
+    test("every region matching in either convention proves the bytes", () => {
+      expect(mcbProves(regions(crc16Ccitt, [40]), bytes)).toBe(true);
+      expect(mcbProves(regions(crc16CcittFalse, [39, 1]), bytes)).toBe(true);
+    });
+    test("a region that does not match, regions that cover more or less, or none prove nothing", () => {
+      const wrong = regions(crc16Ccitt, [30, 10]); wrong[1].crc ^= 1;
+      expect(mcbProves(wrong, bytes)).toBe(false);
+      expect(mcbProves(regions(crc16Ccitt, [30]), bytes)).toBe(false);
+      expect(mcbProves(regions(crc16Ccitt, [30, 10]), Buffer.concat([bytes, Buffer.from([0])]))).toBe(false);
+      expect(mcbProves(null, bytes)).toBe(false);
+    });
+    test("regions matching only in different conventions prove nothing", () => {
+      const mixed = [regions(crc16Ccitt, [30, 10])[0], regions(crc16CcittFalse, [30, 10])[1]];
+      expect(mcbProves(mixed, bytes)).toBe(false);
+      expect(mcbProvenRegions(mixed, bytes)).toBeNull();
+    });
+    test("readMcbTable reads until the regions cover the size or the device answers no further element, and takes no block read only in part", async () => {
+      const answering = (n: number) => ({ propRead: async (_o: number, _p: number, element: number) => {
+        if (element > n) return Buffer.alloc(0);
+        const b = Buffer.alloc(8); b.writeUInt32BE(10, 0); b.writeUInt16BE(element, 6); return b;
+      } }) as unknown as KnxDevice;
+      expect((await readMcbTable(answering(3), 4))?.map((e) => e.crc)).toEqual([1, 2, 3]);
+      expect((await readMcbTable(answering(3), 4, 20))?.length).toBe(2);
+      expect(await readMcbTable(answering(0), 4)).toBeNull();
+      expect(await readMcbTable(answering(17), 4)).toBeNull(); // more elements than it reads: no size from it
+    });
+    test("mcbProvenRegions names each region a CRC proves, and leaves the others to be read", () => {
+      const some = regions(crc16CcittFalse, [30, 9, 1]); some[1].crc ^= 1;
+      expect(mcbProvenRegions(some, bytes)).toEqual([true, false, true]);
+      expect(mcbProvenRegions(regions(crc16Ccitt, [30]), bytes)).toBeNull();
+    });
+  });
 });
 
 describe("writes in the device's verify mode (what LdCtrlWriteRelMem Verify=true asks for)", () => {
   // A device that silently drops a memory write is the failure mode that cost us a device: the
   // download ran on for a thousand more telegrams and the loss surfaced far from where it
   // happened, by which point the device had given up on its own configuration. In verify mode the
-  // device answers every write with what actually landed, so a drop fails immediately, at the
-  // chunk, with its address (thelsing/knx BauSystemB::memoryWriteIndication).
+  // device answers every write, so a drop fails immediately, at the chunk, with its address. The answer
+  // is no proof of storage (VERIFY_MODE); the check after the restart is.
   const deviceWith = (opts: { control?: number; dropsAt?: number } = {}) => {
     const mem = new Map<number, number>();
     const propWrites: { obj: number; pid: number; data: Buffer }[] = [];
@@ -496,8 +537,9 @@ describe("writes in the device's verify mode (what LdCtrlWriteRelMem Verify=true
       if (obj === 0 && pid === 14) control = data[0];
       return Buffer.alloc(0);
     };
-    // The real request machine is what memWrite drives; stub it at the frame level so the echo is
-    // built from the device's ACTUAL memory, exactly as the firmware answers it.
+    // The real request machine is what memWrite drives; stub it at the frame level. The echo is built
+    // from the mock's memory, as a firmware that reads its memory back would answer; thelsing/knx answers
+    // with the request data instead, so on it only a dropped or misaddressed answer shows here.
     dev.request = async (build: (seq: number) => Buffer, expectResponse: boolean) => {
       const tpdu = build(0);
       const addr = (tpdu[2] << 8) | tpdu[3];
@@ -524,7 +566,7 @@ describe("writes in the device's verify mode (what LdCtrlWriteRelMem Verify=true
     expect(d.control()).toBe(0x01); // and removed again, still not touching programming mode
   });
 
-  test("an echoed write that the device did not store fails AT that chunk, naming the address", async () => {
+  test("an echo that differs from the written bytes fails AT that chunk, naming the address", async () => {
     const d = deviceWith({ dropsAt: 0x1004 }); // the device silently ignores this one byte
     const err = await d.dev.memWrite(0x1000, Buffer.alloc(24, 0xa5), { chunk: 4, echo: true, verify: false })
       .then(() => null, (e) => e);
@@ -535,7 +577,7 @@ describe("writes in the device's verify mode (what LdCtrlWriteRelMem Verify=true
     expect(d.mem.has(0x1008)).toBe(false);
   });
 
-  test("an echoed write the device stores is accepted with no second pass over the segment", async () => {
+  test("an echo equal to the written bytes is accepted with no second pass over the segment", async () => {
     const d = deviceWith();
     await d.dev.memWrite(0x1000, Buffer.alloc(24, 0xa5), { chunk: 4, echo: true, verify: false });
     expect(await d.dev.memRead(0x1000, 24)).toEqual(Buffer.alloc(24, 0xa5));

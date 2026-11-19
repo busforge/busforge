@@ -111,8 +111,16 @@ depends on is hardware-proven.
   segment base the device assigned, would catch that class of bug without a capture.
 - **`tools/readback.ts` cannot read MV-0705 devices**; the server's read-back can. The tool should
   use the same absolute-segment path.
-- **Verify large absolute segments by a device-provided checksum,** if these masks expose one, with
-  the byte read-back as fallback. The read-back stays the evidence behind `verified`.
+- **Verify System 7 segments by the device's CRCs, as System B's full download does.** ETS reads the
+  memory-control block (PID 27) on MV-0705 too (Gira M-0008: six regions on its application object);
+  whether each region's CRC is the CRC over the bytes ETS wrote there is not yet compared against the
+  captures. Until it is, the System 7 full download reads every write back.
+- **Show that System B devices compute their segment CRC again after the restart.** The full
+  download takes a region's CRC in place of its read-back. That the device computes it from its memory
+  after the restart, and does not keep the one of the load, is shown on the Jung 400021SE (a capture)
+  and thelsing/knx (its source); on the GVS AMMA, the Theben MIX 2, the Theben DALI-Gateway and the MEAN
+  WELL power supply the CRC is shown at the close of the download only. A capture of a later session
+  where a byte the device changes itself shows in its CRC, or a bench check, settles it per device.
 - **Traffic capture in the gateway process.** The tap points and decoders exist; the `--capture`
   flag that writes a decoded transaction log does not.
 - **A com-object flag a device holds otherwise than its project, read back off the bus.** The bench

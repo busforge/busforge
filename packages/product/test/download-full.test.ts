@@ -62,6 +62,12 @@ corpusDescribe("full download against the real M-0162 application", () => {
     // byte-correct. A fixed { size, crc } forces a specific convention (or a bogus value); null makes
     // the device decline to report (< 8 bytes).
     mcb?: "actual" | { size: number; crc: number } | null;
+    // With mcb "actual": the region sizes the parameter segment's MCB splits it into, one element each
+    // (Jung 400021SE: 7700 and 1). Default: one region over the whole segment.
+    mcbRegions?: number[];
+    // The group tables that report their MCB (one region over the allocated table, the CRC of what it
+    // holds): true for all three.
+    tableMcb?: boolean | number[];
     seedTableCount?: Partial<Record<number, number>>; // count header to seed a group table's region with
     onRestart?: (mem: Map<number, number>) => void;   // mutate memory on restart (simulate a lost write)
   }
@@ -72,10 +78,15 @@ corpusDescribe("full download against the real M-0162 application", () => {
     events: string[] = [];
     private addrs: Record<number, number>;
     private mcb: "actual" | { size: number; crc: number } | null;
+    private mcbRegions: number[];
+    private tableMcb: number[];
+    private allocated = new Map<number, number>();
     onRestart?: (mem: Map<number, number>) => void; // settable after construction too (a test can break the device only on a LATER restart)
     constructor(opts: MockOpts = {}) {
       this.addrs = opts.addrs ?? A;
       this.mcb = opts.mcb === undefined ? "actual" : opts.mcb; // an explicit null means "device declines"
+      this.mcbRegions = opts.mcbRegions ?? [target.size];
+      this.tableMcb = opts.tableMcb === true ? [OBJ.ADDR, OBJ.ASSOC, OBJ.COMOBJ] : opts.tableMcb || [];
       this.onRestart = opts.onRestart;
       // Seed the device's CURRENT (pre-download) state: an all-zero parameter segment and empty
       // group tables, i.e. an already-programmed device. Group-table count headers seed to 0 unless
@@ -90,7 +101,8 @@ corpusDescribe("full download against the real M-0162 application", () => {
     async connect() {}
     async disconnect() {}
     async deviceDescriptor() { return "MV-07B0"; }
-    async restart() { this.events.push("restart"); this.onRestart?.(this.mem); }
+    readsAtRestart = 0;
+    async restart() { this.events.push("restart"); this.readsAtRestart = this.reads.length; this.onRestart?.(this.mem); }
     async setVerifyMode() {}
     async tableAddr(obj: number) { return this.addrs[obj] ?? 0; }
     async memRead(addr: number, len: number) {
@@ -112,20 +124,30 @@ corpusDescribe("full download against the real M-0162 application", () => {
       for (let i = 0; i < data.length; i++) this.mem.set(addr + i, data[i]);
       if (opts.verify || opts.echo) { const back = await this.memRead(addr, data.length); if (!back.equals(data)) throw new Error("verify mismatch"); }
     }
-    // The parameter segment's bytes as the device currently holds them (for the "actual" MCB CRC).
-    private segBytes(): Buffer {
-      const b = Buffer.alloc(target.size);
-      for (let i = 0; i < target.size; i++) b[i] = this.mem.get(this.addrs[OBJ.LSM] + i) ?? 0;
+    // A segment's bytes as the device currently holds them (for the "actual" MCB CRC).
+    private segBytes(obj: number, from: number, size: number): Buffer {
+      const b = Buffer.alloc(size);
+      for (let i = 0; i < size; i++) b[i] = this.mem.get(this.addrs[obj] + from + i) ?? 0;
       return b;
     }
     // The association table described as the long form (PDT_GENERIC_04), as the tables this unit holds.
     async propertyDescription(obj: number, pid: number) { return { objectIndex: obj, pid, propertyIndex: 0, writable: true, pdt: 0x14, maxElements: 1, readLevel: 3, writeLevel: 3 }; }
-    async propRead(obj: number, pid: number) {
+    // PID 27 answers element by element; an element past the last region answers with nothing.
+    async propRead(obj: number, pid: number, element = 1) {
       if (pid === PID_LSM) return Buffer.from([this.state.get(obj) ?? STATE.LOADED]);
       if (pid === PID_MCB && obj === OBJ.LSM) {
         if (this.mcb === null) return Buffer.alloc(0); // device declines to report its segment size
-        if (this.mcb === "actual") return mcbBuf(target.size, crc16Ccitt(this.segBytes()));
-        return mcbBuf(this.mcb.size, this.mcb.crc);
+        if (this.mcb === "actual") {
+          const size = this.mcbRegions[element - 1];
+          if (size === undefined) return Buffer.alloc(0);
+          const from = this.mcbRegions.slice(0, element - 1).reduce((n, r) => n + r, 0);
+          return mcbBuf(size, crc16Ccitt(this.segBytes(OBJ.LSM, from, size)));
+        }
+        return element === 1 ? mcbBuf(this.mcb.size, this.mcb.crc) : Buffer.alloc(0);
+      }
+      if (pid === PID_MCB && this.tableMcb.includes(obj) && element === 1 && this.allocated.has(obj)) {
+        const size = this.allocated.get(obj)!;
+        return mcbBuf(size, crc16Ccitt(this.segBytes(obj, 0, size)));
       }
       if (pid === PID_DEVCTRL) return Buffer.from([0]);
       return Buffer.alloc(0);
@@ -140,6 +162,7 @@ corpusDescribe("full download against the real M-0162 application", () => {
           // AdditionalLoadControls: allocate relative segment. Byte 6 = fill flag, byte 7 = fill byte.
           // Zero (or fill) the allocated region so the following sparse writes reconstruct the image.
           const size = data.readUInt32BE(2), fill = data[6], fb = data[7];
+          this.allocated.set(obj, size);
           if (fill) for (let i = 0; i < size; i++) this.mem.set(this.addrs[obj] + i, fb);
         }
       }
@@ -327,6 +350,61 @@ corpusDescribe("full download against the real M-0162 application", () => {
       expect(dev.events).toContain("write");
       expect((await dev.memRead(A[OBJ.LSM], target.size)).equals(target.bytes)).toBe(true);
     }, 70_000);
+
+    // The memory-control block of a segment may hold several regions, each with its own CRC (the Jung
+    // 400021SE: 7700 bytes and 1; the Theben MIX 2: 1642 and 361). Every region has to be read and
+    // match: the first alone covers less than the segment and proves nothing about the rest.
+    const twoRegions = [target.size - 1, 1];
+
+    test("a segment the device splits into two MCB regions is proven by both regions' CRCs, without a read-back", async () => {
+      const dev = new MockDevice({ mcb: "actual", mcbRegions: twoRegions });
+      const res = await classify(cfg).downloadFull(asDev(dev), cfg.mask, ctxFor(dev).ctx);
+      expect(res.kind === "flashed" && res.verified).toBe(true);
+      expect(dev.reads.filter((r) => r.addr === A[OBJ.LSM] && r.len === target.size).length).toBe(0);
+    }, 70_000);
+
+    test("TEETH: a lost write in the second MCB region fails that region's CRC, and reading that region back catches it", async () => {
+      const last = target.size - 1; // the one byte of the second region
+      const dev = new MockDevice({
+        mcb: "actual", mcbRegions: twoRegions,
+        onRestart: (mem) => { mem.set(A[OBJ.LSM] + last, target.bytes[last] ^ 0xff); },
+      });
+      const res = await classify(cfg).downloadFull(asDev(dev), cfg.mask, ctxFor(dev).ctx);
+      expect(res.kind === "flashed" && res.verified).toBe(false);
+      // Only the unproven region is read; the first stays proven by its CRC.
+      expect(dev.reads.some((r) => r.addr === A[OBJ.LSM] + last && r.len === 1)).toBe(true);
+      expect(dev.reads.filter((r) => r.addr === A[OBJ.LSM] && r.len === target.size).length).toBe(0);
+    }, 100_000);
+
+    // The reads of the group tables after the restart, i.e. by the verify (the mock reads each echoed
+    // write back while the download writes).
+    const tableReads = (dev: MockDevice) => dev.reads.slice(dev.readsAtRestart).filter((r) => [A[OBJ.ADDR], A[OBJ.ASSOC], A[OBJ.COMOBJ]].includes(r.addr)).length;
+
+    test("group tables the device proves by their own CRCs are not read back", async () => {
+      const dev = new MockDevice({ mcb: "actual", tableMcb: true });
+      const res = await classify(cfg).downloadFull(asDev(dev), cfg.mask, ctxFor(dev).ctx);
+      expect(res.kind === "flashed" && res.verified).toBe(true);
+      expect(tableReads(dev)).toBe(0);
+    }, 70_000);
+
+    test("a table whose block proves nothing is read back, and a com-object table its CRC proves is not", async () => {
+      const dev = new MockDevice({ mcb: "actual", tableMcb: [OBJ.ASSOC, OBJ.COMOBJ] }); // no block for the address table
+      const res = await classify(cfg).downloadFull(asDev(dev), cfg.mask, ctxFor(dev).ctx);
+      expect(res.kind === "flashed" && res.verified).toBe(true);
+      const after = dev.reads.slice(dev.readsAtRestart);
+      expect(after.some((r) => r.addr === A[OBJ.ADDR])).toBe(true);
+      expect(after.some((r) => r.addr === A[OBJ.COMOBJ])).toBe(false);
+    }, 70_000);
+
+    test("TEETH: a com-object table that lost a byte fails its CRC, is read back, and fails the verify", async () => {
+      const dev = new MockDevice({
+        mcb: "actual", tableMcb: true,
+        onRestart: (mem) => { mem.set(A[OBJ.COMOBJ] + 2, comObjTable[2] ^ 0xff); },
+      });
+      const res = await classify(cfg).downloadFull(asDev(dev), cfg.mask, ctxFor(dev).ctx);
+      expect(res.kind === "flashed" && res.verified).toBe(false);
+      expect(tableReads(dev)).toBeGreaterThan(0);
+    }, 100_000);
   });
 
   // The GA flash must rewrite the com-object table (L3), not just the group tables. ETS (and

@@ -18,11 +18,11 @@ export const PID = {
   MCB_TABLE: 27,         // memory control block (per-segment CRC bookkeeping)
 } as const;
 // PID_DEVICE_CONTROL bit 2. With it set, the device answers EVERY A_Memory_Write with an
-// A_Memory_Response carrying what actually ended up in its memory (thelsing/knx
-// BauSystemB::memoryWriteIndication: `if (_deviceObj.verifyMode()) memoryReadIndication(...)`).
-// This is what a load procedure's `LdCtrlWriteRelMem Verify="true"` asks for, and it is the only
-// way to learn that a write did NOT land at the moment it happens rather than a thousand
-// telegrams later.
+// A_Memory_Response for the written address. This is what a load procedure's `LdCtrlWriteRelMem
+// Verify="true"` asks for, and it stops a download at the chunk a device dropped or answered for
+// another address. It does not prove the bytes are stored: thelsing/knx answers with a copy of the
+// request data (BauSystemB::memoryWriteIndication passes the request's `data` to the response), so
+// the device's CRCs or a read-back after the restart are the proof.
 export const VERIFY_MODE = 0x04;
 
 // Chunk sizes (data bytes per request) for the A_MemoryExtended path. Classic memory is stuck at 12
@@ -1221,10 +1221,10 @@ export class KnxDevice {
       const slice = data.subarray(pos, pos + n);
       const a = addr + pos;
       const tail = Buffer.concat([Buffer.from([(a >> 8) & 0xff, a & 0xff]), slice]);
-      // `echo`: the device is in verify mode and answers each write with what actually landed in
-      // its memory. Checking that HERE is what turns a dropped write into an immediate, located
-      // failure instead of a silent one discovered (or not) at the end. It also paces us to the
-      // speed the device can really absorb, which a fire-and-forget T_ACK does not.
+      // `echo`: the device is in verify mode and answers each write (see VERIFY_MODE: an answer, not
+      // proof of storage). Checking it HERE turns a dropped write, or one the device reports
+      // otherwise, into an immediate, located failure instead of one found at the end. It also paces
+      // us to the speed the device can really absorb, which a fire-and-forget T_ACK does not.
       if (opts.echo) {
         const r = await this.request((s) => apdu(s, APCI.MEMORY_WRITE, tail, n), true);
         // The response echoes the address it is about. Checking it is what stops a stale or

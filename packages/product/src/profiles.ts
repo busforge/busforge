@@ -1,4 +1,4 @@
-import { KnxDevice, KnxError, OBJECT_TYPE_KNXNETIP, type LoadPlan, type SecurityObjectTables, SENDER_ENTRY, planSystemBGaFlash, planSystemBFullDownload, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, assocFormOf, ASSOC_TABLE_DESCRIPTION, type AssocForm, loadedTableAddr, crc16Ccitt, crc16CcittFalse, readSegmentCrc, GroupTableUnreadable, OBJ, PID, lsmState, STATE } from "@busforge/knx";
+import { KnxDevice, KnxError, OBJECT_TYPE_KNXNETIP, type LoadPlan, type SecurityObjectTables, SENDER_ENTRY, planSystemBGaFlash, planSystemBFullDownload, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, assocFormOf, ASSOC_TABLE_DESCRIPTION, type AssocForm, loadedTableAddr, readMcbTable, mcbProves, mcbProvenRegions, MCB_ELEMENT_BYTES, type McbEntry, GroupTableUnreadable, OBJ, PID, lsmState, STATE } from "@busforge/knx";
 import { toAppModel, unmappedParamRefs } from "./application.ts";
 import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, differingFF, leaveUnreadUnchanged, verifyMaskedBytes, confirmedMatch, type ConfirmedOnlyRange, buildAbsoluteSegmentTargets, wholeBytes, refuseColorWrites, differingConstants, type ConstantDifference } from "./deviceimage.ts";
 import { resolveModuleInstances } from "./modules.ts";
@@ -411,17 +411,42 @@ function system7GaScope(cfg: AppConfig, mask: string): { l3: { address: number; 
   return { l3 };
 }
 
-// The memory-control-block regions a loaded segment reports (PID 27), element by element until they
-// cover `size` bytes; null where the object reports none.
-async function readMcbRegions(dev: KnxDevice, obj: number, size: number): Promise<McbRegion[] | null> {
-  const regions: McbRegion[] = [];
-  for (let element = 1, covered = 0; covered < size && element <= 16; element++) {
-    const e = await dev.propRead(obj, PID.MCB_TABLE, element);
-    if (e.length < 8) break;
-    regions.push({ size: e.readUInt32BE(0), control: e[4] });
-    covered += e.readUInt32BE(0);
+// A loaded object's memory-control block as a download's verify reads it (readMcbTable). A read the
+// device refuses or answers for another property proves nothing and leaves the segment to the read-back;
+// a lost link stops the verify, which opens the link again (verifyAfterRestart).
+async function verifyMcb(dev: KnxDevice, obj: number, size: number): Promise<McbEntry[] | null> {
+  try { return await readMcbTable(dev, obj, size); }
+  catch (e) { if (isLinkError(e)) throw e; return null; }
+}
+
+// What a loaded segment holds, as a download's verify compares it: each region whose CRC proves its
+// slice of `expected` (mcbProvenRegions) stands as that slice, every other region is read from the
+// device at `at`, and a segment whose CRCs prove nothing is read whole. These are the blocks ETS reads
+// at the close of every download; a few property reads in place of one memory read per twelve bytes.
+async function segmentContent(dev: KnxDevice, obj: number, expected: Buffer, at: number, onProgress?: (done: number, total: number) => void): Promise<Buffer> {
+  const entries = await verifyMcb(dev, obj, expected.length);
+  const proven = mcbProvenRegions(entries, expected);
+  if (!entries || !proven) return dev.memRead(at, expected.length, undefined, onProgress);
+  const held = Buffer.from(expected);
+  let offset = 0;
+  for (const [i, e] of entries.entries()) {
+    if (!proven[i]) held.set(await dev.memRead(at + offset, e.size), offset);
+    offset += e.size;
   }
-  return regions.length ? regions : null;
+  return held;
+}
+
+// What the group tables hold, as a download's verify compares them: a table whose CRCs prove it holds
+// exactly the bytes in `t` (mcbProves) stands as those bytes, every other is read from the device. The
+// small address and association tables are read whenever any table is not proven (readGroupTables reads
+// them together: the association table's form is told from the address table's count), the com-object
+// table only where its own CRC proves nothing.
+async function groupTablesContent(dev: KnxDevice, t: { addr: Buffer; assoc: Buffer; comObj: Buffer }, assocForm: AssocForm): Promise<{ addr: Buffer; assoc: Buffer; comObj: Buffer }> {
+  const proven = async (obj: number, bytes: Buffer) => mcbProves(await verifyMcb(dev, obj, bytes.length), bytes);
+  const addr = await proven(OBJ.ADDR_TABLE, t.addr), assoc = await proven(OBJ.ASSOC_TABLE, t.assoc), comObj = await proven(OBJ.COMOBJ_TABLE, t.comObj);
+  if (addr && assoc && comObj) return t;
+  const read = await readGroupTables(dev, assocForm, undefined, comObj);
+  return { addr: addr ? t.addr : read.addr, assoc: assoc ? t.assoc : read.assoc, comObj: comObj ? t.comObj : read.comObj };
 }
 
 // Run the procedure's declared CompareProp pre-flights (the hardware/application check
@@ -471,7 +496,6 @@ export type FlashResult = (
 // `written`: the download wrote that object's segment, so its image held it (a parameter flash writes only the
 // application's).
 export interface ImageStamp { obj: number; element: number; hex: string; written?: true }
-const MCB_ELEMENT_BYTES = 8;
 function stampCollector(wrote: readonly number[]): { stamps: ImageStamp[]; onRead: (obj: number, pid: number, start: number, data: Buffer) => void } {
   const stamps: ImageStamp[] = [];
   return {
@@ -1296,7 +1320,7 @@ export class SystemBProfile extends DeviceProfile {
       const id = await dev.propRead(OBJ.APP_PROGRAM, PID.PROGRAM_ID);
       if (id.equals(programIdStamp(cfg)) && await allLoaded(dev, [OBJ.APP_PROGRAM, OBJ.COMOBJ_TABLE, OBJ.ASSOC_TABLE, OBJ.ADDR_TABLE])) {
         const size = images().target.size;
-        const paramsMcb = await readMcbRegions(dev, LSM, size);
+        const paramsMcb = await readMcbTable(dev, LSM, size);
         if (paramsMcb && paramsMcb.reduce((n, r) => n + r.size, 0) === size) return this.downloadPartialForm(dev, mask, ctx, proc, images, paramsMcb, assocForm);
       }
     }
@@ -1326,17 +1350,16 @@ export class SystemBProfile extends DeviceProfile {
         // write. A device programmed (by ETS or by us) with a LARGER parameter segment than our new
         // image has a tail the unload is about to destroy; sizing this backup by `target.size` would
         // silently omit exactly those bytes and produce a "backup" that cannot restore what it
-        // replaced. The parameter segment reports its loaded size in its MCB (PID_MCB_TABLE); the
-        // group tables report theirs in their count header. If either cannot be determined, refuse the
-        // whole download rather than back up a guessed length.
+        // replaced. The parameter segment reports its loaded size in its MCB (PID_MCB_TABLE), as the sum
+        // of its regions; the group tables report theirs in their count header. If either cannot be
+        // determined, refuse the whole download rather than back up a guessed length.
         let size: number;
         if (obj === LSM) {
-          const mcb = await readSegmentCrc(dev, LSM);
-          if (mcb === null || mcb.size === 0) {
+          size = (await readMcbTable(dev, LSM))?.reduce((n, e) => n + e.size, 0) ?? 0;
+          if (size === 0) {
             throw new ProductError("SEGMENT_SIZE_UNKNOWN",
               `the device will not report the size of its loaded parameter segment (PID_MCB_TABLE); refusing the full download rather than back up a guessed length and let the unload destroy the remainder`);
           }
-          size = mcb.size;
         } else {
           size = await tableByteLength(dev, obj, at);
         }
@@ -1365,40 +1388,33 @@ export class SystemBProfile extends DeviceProfile {
       write: async () => {
         await runLoadPlan(dev, plan, { onWrite: (d, t) => ctx.onProgress?.("write", d, t), onRead: fullStamps.onRead });
       },
-      // The firmware accepts any bytes it is handed (it validates nothing on LoadCompleted), so
-      // this read-back is the ONLY thing standing between a wrong table and a device that silently
-      // mis-communicates. The three tables are small and are compared byte for byte. The parameter
-      // image is 21601 bytes, i.e. 1800 memory reads, so it is checked against the CRC the device
-      // itself computes over the loaded segment (PID_MCB_TABLE) instead: the very thing the
-      // device's own load procedure declares `LdCtrlLoadImageProp ObjIdx=4 PropId=27` for.
+      // The firmware accepts any bytes it is handed (it validates nothing on LoadCompleted), so this
+      // check is the ONLY thing standing between a wrong table and a device that silently
+      // mis-communicates. Each segment (the parameter image and the three tables) is checked against
+      // the CRCs the device reports per region in its memory-control block (PID_MCB_TABLE), the blocks
+      // ETS reads at the close of a download: a few property reads where reading the bytes back is one
+      // memory read per twelve bytes (1800 for a 21601-byte image). The convention differs by firmware
+      // (thelsing/knx augments the CCITT CRC with 16 zero bits, GVS K-BUS does not), so either is taken
+      // (mcbProvenRegions).
       //
-      // If the device declines to report a CRC, that is NOT a pass: fall back to reading the whole
-      // segment. Slow, but the alternative would be calling a download verified because we could
-      // not check it.
+      // A region whose CRC does not match, or a segment whose device reports none, is read back and
+      // compared as every read-back is: the tables whole, the parameter image in the bytes a parameter
+      // covers, less the markers the device sets itself (wholeBytes). No match is NOT a pass and NOT a
+      // failure verdict, only no proof.
       verify: async () => {
         ctx.onProgress?.("verify");
-        // The device reports its segment CRC via PID_MCB_TABLE, but which CRC-16 convention it uses
-        // is firmware-specific: thelsing/knx (OpenKNX) augments the CCITT CRC with 16 zero bits,
-        // other System B firmware (GVS K-BUS) does not. Both are legitimate; accept EITHER. Only when
-        // the reported CRC matches neither convention (or the device reports none) do we read the
-        // whole segment back and compare byte for byte — the ultimate truth, but slow, so it is the
-        // fallback and not the default. A CRC that matches nothing is NOT itself a failure verdict.
-        const wantAug = crc16Ccitt(target.bytes);        // thelsing / OpenKNX (augmented)
-        const wantPlain = crc16CcittFalse(target.bytes); // GVS and other CCITT-FALSE firmware
         const { ok } = await verifySettled(
           async () => {
-            const gt = await readGroupTables(dev, assocForm);
-            const mcb = await readSegmentCrc(dev, LSM);
-            const crcOk = mcb !== null && mcb.size === target.size && (mcb.crc === wantAug || mcb.crc === wantPlain);
-            const img = crcOk ? null : await dev.memRead(await loadedTableAddr(dev, LSM, "parameter segment"), target.size);
+            const gt = await groupTablesContent(dev, { addr, assoc, comObj }, assocForm);
+            const img = await segmentContent(dev, LSM, target.bytes, await loadedTableAddr(dev, LSM, "parameter segment"));
             // This form reads no security object before it writes, so a key table the read refuses is
             // only met here, after the write: it leaves the download unverified rather than unloaded.
             const sec = security ? await readSecurityObject(dev, security).catch((e: unknown) => { if (e instanceof ProductError && e.code === "SECURE_KEY_TABLE_UNPROVEN") return null; throw e; }) : null;
-            return { gt, crcOk, img, sec };
+            return { gt, img, sec };
           },
-          ({ gt, crcOk, img, sec }) => {
+          ({ gt, img, sec }) => {
             const tablesOk = gt.addr.equals(addr) && gt.assoc.equals(assoc) && gt.comObj.equals(comObj);
-            const paramsOk = crcOk || (img !== null && verifyMaskedBytes(img, target.bytes, wholeBytes(target.verify, target.markers)));
+            const paramsOk = verifyMaskedBytes(img, target.bytes, wholeBytes(target.verify, target.markers));
             const securityOk = !security || (sec !== null && sameSecurityObject(sec, security));
             return tablesOk && paramsOk && securityOk;
           },
@@ -1420,7 +1436,7 @@ export class SystemBProfile extends DeviceProfile {
     const comObjAt = await loadedTableAddr(dev, OBJ.COMOBJ_TABLE, "com-object table");
     const unitMemory: RelativeUnitMemory = {
       params: current, paramsAt, paramsMcb,
-      comObj: cur.comObj, comObjAt, comObjMcb: await readMcbRegions(dev, OBJ.COMOBJ_TABLE, cur.comObj.length),
+      comObj: cur.comObj, comObjAt, comObjMcb: await readMcbTable(dev, OBJ.COMOBJ_TABLE, cur.comObj.length),
     };
     const { plan, params, target, comObj, addr, assoc, security, segments, imageBytes, changedBytes } = this.planSystemBPartial({ ...ctx, proc, unitHoldsApplication: true, unitMemory }, images);
     const curSecurity = security ? await readSecurityObject(dev, security) : undefined;
@@ -1447,12 +1463,14 @@ export class SystemBProfile extends DeviceProfile {
         const paramMask = target.owned.map((m, i) => (~m | target.verify[i]) & 0xff);
         const verifyAt = await dev.tableAddr(LSM);
         const match = confirmedOnlyMatch(dev, verifyAt, params, paramMask, verifyAt === paramsAt ? current : null);
+        // Where the device's CRCs prove the bytes this download meant a segment to hold, those bytes stand
+        // in for its read-back (segmentContent, groupTablesContent).
         const { value, ok } = await verifySettled(
           async () => ({
             app: await lsmState(dev, OBJ.APP_PROGRAM),
             tablesLoaded: await allLoaded(dev, [OBJ.COMOBJ_TABLE, OBJ.ASSOC_TABLE, OBJ.ADDR_TABLE]),
-            back: await dev.memRead(verifyAt, params.length, undefined, (d, t) => ctx.onProgress?.("verify", d, t)),
-            tables: await readGroupTables(dev, assocForm),
+            back: await segmentContent(dev, LSM, params, verifyAt, (d, t) => ctx.onProgress?.("verify", d, t)),
+            tables: await groupTablesContent(dev, { addr, assoc, comObj }, assocForm),
             sec: security ? await readSecurityObject(dev, security) : null,
           }),
           ({ app, tablesLoaded, back, tables, sec }) => app === STATE.LOADED && tablesLoaded && match(back) !== null

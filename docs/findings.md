@@ -281,15 +281,30 @@ rather than burning past the device's ~6 s connection timeout and killing the se
    before sending.
 3. **`A_Memory_Read` addresses are big-endian.** Sent little-endian, the device reads the
    wrong location (it echoed `A=0010` for a request to `0x1000`).
-4. **Verify mode is a trade, not a default.** For a surgical write of a handful of chunks it
-   is cleaner to write ack-only and read the owned bytes back. For a full download of a
-   21 KB segment a full read-back is roughly 1800 extra telegrams, and there verify mode
-   (object 0, `PID_DEVICE_CONTROL` bit 2) earns its keep: the device echoes every write with
-   what actually landed, so a dropped write fails at the chunk instead of surfacing a
-   thousand telegrams later, and the whole segment can then be confirmed with one
-   `PID_MCB_TABLE` CRC read. ETS enables it with a read-modify-write on the device object
-   (it reads `0x01` SAFE_STATE on a stopped virgin device and writes `0x05`). Busforge keeps
-   read-back verification instead, which is the mechanism its proven paths rest on.
+4. **A full download is proven by the device's own CRCs, not by reading it back.** Reading a
+   21 KB segment back is roughly 1800 memory reads. ETS reads no memory back; at the close of a
+   download it reads the memory-control blocks (`PID_MCB_TABLE`, PID 27) its load procedure
+   names (`LdCtrlLoadImageProp`; on the OpenKNX RaumController the application's only): one
+   8-byte entry per region of the segment (size, CRC control, access, CRC-16), and a segment may
+   have several (Jung 400021SE: 7700 bytes and 1; Theben MIX 2: 1642 and 361). In every ETS full
+   download captured, each region's CRC is the CRC over exactly the bytes ETS wrote there, for
+   the application and the tables alike. That the device computes it from its memory again after
+   a restart is shown on the Jung, whose one-byte region reports the CRC over the byte it clears
+   after every download in the next session, and on thelsing/knx, which computes it on every read;
+   on the others it is shown at the close of the download only. Busforge's full download (both
+   forms) reads the blocks after the restart: a region whose CRC matches is proven, every other
+   region is read back (item 7). A CRC-16 lets a wrong region through with odds of about one in
+   32 000 (two conventions accepted); a byte read-back lets none through.
+
+   Classic writes go out in verify mode (object 0, `PID_DEVICE_CONTROL` bit 2, set by a
+   read-modify-write, as ETS does: it reads `0x01` SAFE_STATE on a stopped virgin device and
+   writes `0x05`), and every chunk's answer is checked, so a dropped write stops the download at
+   that chunk. The answer is not proof that the bytes are stored: thelsing/knx answers with a
+   copy of the request data (§16), so the CRC or the read-back after the restart is the proof.
+   An `A_MemoryExtended_Write` takes no verify mode; its answer is a return code and the
+   address. The protocol has a return code for a success that carries a CRC of the written
+   data (thelsing/knx defines it and never sends it); every one of the extended-write answers
+   in the ETS captures is `00` without a CRC.
 5. **Authorize.** Devices with an access level set need `A_Authorize_Request` (key
    `0xFFFFFFFF` for default/free access) before the load procedure. Devices with no key
    configured accept unauthenticated management.
@@ -306,9 +321,9 @@ rather than burning past the device's ~6 s connection timeout and killing the se
    send completion.
 7. **A CRC-16 "mismatch" may be a convention difference.** Firmware reporting a segment CRC
    via `PID_MCB_TABLE` may use CCITT augmented with 16 zero bits (thelsing/knx) or plain
-   CCITT-FALSE. Both are legitimate. Accept either, and only fall back to a full read-back
-   when the reported value matches neither. A CRC that matches nothing is not by itself a
-   failure verdict.
+   CCITT-FALSE. Both are legitimate. Accept either (every region of a segment in the same
+   one), and only fall back to a full read-back when the reported values match neither. A CRC
+   that matches nothing is not by itself a failure verdict.
 8. **Chunk sizes are a property of the transport, not of the service.** Over a KNX-USB HID
    interface a request is one report with no fragmentation, so a read (whose data comes back
    in the response) tolerates a much larger chunk than a write (whose data is in the

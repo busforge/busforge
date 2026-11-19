@@ -103,7 +103,9 @@ Ownership is per bit: a sub-byte parameter owns only its own bits of the byte it
 parameter flash carries the byte's other bits over from the device and the read-back compares
 only the owned ones ([findings.md](findings.md) §12). When a union switches branch, the other bits
 of a shared byte therefore keep the device's value, as unowned whole bytes always did. The full
-download writes and reads back every byte a parameter touches. Only owned bits are compared, because the
+download writes every byte a parameter touches and checks the whole segment: by the CRCs the device
+reports over its regions where they match the image exactly, else by reading it back
+([load-procedures.md](load-procedures.md#full-download-coverage)). In a read-back only owned bits are compared, because the
 unowned ones are not under our authority: an
 ETS-computed object-link table or an unused erased-flash region is carried over from the
 device rather than proven (see [device-memory-model.md](device-memory-model.md)). A narrower

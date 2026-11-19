@@ -1,5 +1,5 @@
 import { test, expect, setDefaultTimeout } from "bun:test";
-import { LSM, STATE, type KnxDevice } from "@busforge/knx";
+import { LSM, STATE, crc16CcittFalse, type KnxDevice } from "@busforge/knx";
 import {
   parseAppConfig, classify, buildDeviceConfig, buildComObjectTable, buildRelativeSegmentTarget, buildGroupTables, programIdStamp, declaredPropChecks, type ComObjectLink,
 } from "@busforge/product";
@@ -34,12 +34,18 @@ corpusDescribe("System B full download on a unit holding the application (mock u
 
   // `confirmed`: the unit is written with the confirmed extended write (it keeps the log KnxDevice keeps);
   // `hidden`: addresses it stores but always reads as FF, a field it does not give back.
-  interface UnitOpts { programId?: Buffer; states?: Partial<Record<number, number>>; appMcb?: Buffer[]; comObjControl?: number; onRestart?: (mem: Map<number, number>) => void; confirmed?: boolean; hidden?: Set<number> }
+  // `crc`: every memory-control block carries the CRC of what the unit holds there (CCITT-FALSE, as the
+  // Theben DALI-Gateway reports it), over the application and com-object regions and the size each table
+  // was allocated with; without it each reports a CRC of 0, which proves nothing.
+  interface UnitOpts { programId?: Buffer; states?: Partial<Record<number, number>>; appMcb?: Buffer[]; comObjControl?: number; onRestart?: (mem: Map<number, number>) => void; confirmed?: boolean; hidden?: Set<number>; crc?: boolean }
   class MockUnit {
     mem = new Map<number, number>();
     state = new Map<number, number>();
     events: string[] = [];
     writes: number[] = []; // every memory address written
+    reads: number[] = [];  // the start address of every memory read
+    readsAtRestart = 0;
+    allocated = new Map<number, number>([[OBJ.ADDR, base.addr.length], [OBJ.ASSOC, base.assoc.length]]);
     log: { address: number; bytes: Buffer }[] = [];
     constructor(readonly o: UnitOpts = {}) {
       const put = (at: number, b: Buffer) => b.forEach((x, i) => this.mem.set(at + i, x));
@@ -51,7 +57,7 @@ corpusDescribe("System B full download on a unit holding the application (mock u
     }
     async connect() {}
     async disconnect() {}
-    async restart() { this.events.push("restart"); this.o.onRestart?.(this.mem); }
+    async restart() { this.events.push("restart"); this.readsAtRestart = this.reads.length; this.o.onRestart?.(this.mem); }
     async setVerifyMode() {}
     async deviceDescriptor() { return "MV-07B0"; }
     async tableAddr(obj: number) { return AT[obj] ?? 0; }
@@ -63,7 +69,8 @@ corpusDescribe("System B full download on a unit holding the application (mock u
     acceptUnprovenRestart() {}
     async propValueDataMax() { return 10; }
     async propReadCounted(obj: number, pid: number, start: number, count = 1) { return { objectIndex: obj, pid, count, start, value: Buffer.alloc(8 * count) }; }
-    async memRead(addr: number, len: number) { return Buffer.from(Array.from({ length: len }, (_, i) => (this.o.hidden?.has(addr + i) ? 0xff : this.mem.get(addr + i) ?? 0xff))); }
+    async memRead(addr: number, len: number) { this.reads.push(addr); return this.held(addr, len); }
+    held(addr: number, len: number) { return Buffer.from(Array.from({ length: len }, (_, i) => (this.o.hidden?.has(addr + i) ? 0xff : this.mem.get(addr + i) ?? 0xff))); }
     async memWrite(addr: number, data: Buffer, opts: { verify?: boolean } = {}) {
       data.forEach((b, i) => { this.mem.set(addr + i, b); this.writes.push(addr + i); });
       if (this.o.confirmed) { this.log.push({ address: addr, bytes: Buffer.from(data) }); return; }
@@ -76,8 +83,18 @@ corpusDescribe("System B full download on a unit holding the application (mock u
       if (check) return check.expect; // the hardware type the application declares, as the unit reports it
       if (pid === PID_LSM) return Buffer.from([this.state.get(obj) ?? STATE.UNLOADED]);
       if (pid === PID_PROGRAM_ID && obj === OBJ.APP) return this.o.programId ?? programIdStamp(cfg);
-      if (pid === PID_MCB && obj === OBJ.APP) return (this.o.appMcb ?? [mcbEntry(base.target.size, 0)])[start - 1] ?? Buffer.alloc(0);
-      if (pid === PID_MCB && obj === OBJ.COMOBJ) return start === 1 ? mcbEntry(base.comObj.length, this.o.comObjControl ?? 1) : Buffer.alloc(0);
+      if (pid === PID_MCB) {
+        const entry = obj === OBJ.APP ? (this.o.appMcb ?? [mcbEntry(base.target.size, 0)])[start - 1]
+          : obj === OBJ.COMOBJ ? (start === 1 ? mcbEntry(base.comObj.length, this.o.comObjControl ?? 1) : undefined)
+          : start === 1 && this.o.crc && this.allocated.has(obj) ? mcbEntry(this.allocated.get(obj)!, 0) : undefined;
+        if (!entry) return Buffer.alloc(0);
+        const answer = Buffer.from(entry);
+        if (this.o.crc) {
+          const from = obj === OBJ.APP ? (this.o.appMcb ?? []).slice(0, start - 1).reduce((n, e) => n + e.readUInt32BE(0), 0) : 0;
+          answer.writeUInt16BE(crc16CcittFalse(this.held(AT[obj] + from, answer.readUInt32BE(0))), 6);
+        }
+        return answer;
+      }
       return Buffer.alloc(0);
     }
     async propWrite(obj: number, pid: number, data: Buffer) {
@@ -86,7 +103,7 @@ corpusDescribe("System B full download on a unit holding the application (mock u
         if (ev === LSM.LOAD) { this.state.set(obj, STATE.LOADING); this.events.push(`load:${obj}`); }
         else if (ev === LSM.LOAD_COMPLETED) { this.state.set(obj, STATE.LOADED); this.events.push(`loadCompleted:${obj}`); }
         else if (ev === LSM.UNLOAD) { this.state.set(obj, STATE.UNLOADED); this.events.push(`unload:${obj}`); }
-        else if (data[0] === 0x03 && data[1] === 0x0b) this.events.push(`alloc:${obj}${data[6] ? " filled" : ""}`);
+        else if (data[0] === 0x03 && data[1] === 0x0b) { this.events.push(`alloc:${obj}${data[6] ? " filled" : ""}`); this.allocated.set(obj, data.readUInt32BE(2)); }
         return Buffer.alloc(0);
       }
       if (pid === PID_PROGRAM_ID) this.events.push(`programId:${obj}`);
@@ -211,5 +228,28 @@ corpusDescribe("System B full download on a unit holding the application (mock u
     const flip = base.target.verify.findIndex(Boolean);
     const unit = new MockUnit({ onRestart: (mem) => mem.set(AT[OBJ.APP] + flip, base.target.bytes[flip] ^ 0xff) });
     expect((await run(unit)).verified).toBe(false);
+  }, 100_000);
+
+  // The reads of the application segment and the group tables after the restart, i.e. by the verify.
+  const verifyReads = (unit: MockUnit) => unit.reads.slice(unit.readsAtRestart).filter((a) => [OBJ.APP, OBJ.ADDR, OBJ.ASSOC, OBJ.COMOBJ].some((o) => a === AT[o])).length;
+
+  test("a unit whose memory-control blocks prove every segment is not read back after the restart", async () => {
+    const unit = new MockUnit({ crc: true });
+    expect((await run(unit, changedParams()!)).verified).toBe(true);
+    expect(verifyReads(unit)).toBe(0);
+  }, 70_000);
+
+  test("TEETH: a parameter byte lost on the restart fails the application's CRC, and the read-back that follows catches it", async () => {
+    const flip = base.target.verify.findIndex(Boolean);
+    const unit = new MockUnit({ crc: true, onRestart: (mem) => mem.set(AT[OBJ.APP] + flip, base.target.bytes[flip] ^ 0xff) });
+    expect((await run(unit)).verified).toBe(false);
+    expect(verifyReads(unit)).toBeGreaterThan(0);
+  }, 100_000);
+
+  test("TEETH: a com-object table byte lost on the restart fails its CRC, and the tables read back fail the verify", async () => {
+    const at = AT[OBJ.COMOBJ] + 2; // the first entry, past the count
+    const unit = new MockUnit({ crc: true, onRestart: (mem) => mem.set(at, base.comObj[2] ^ 0xff) });
+    expect((await run(unit)).verified).toBe(false);
+    expect(unit.reads.slice(unit.readsAtRestart)).toContain(AT[OBJ.COMOBJ]);
   }, 100_000);
 });

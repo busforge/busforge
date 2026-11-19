@@ -56,9 +56,9 @@ export type LoadStep =
   // planner cannot precompute it the way absolute writeMem steps can. Always read-back
   // verified (like every memory write in the engine).
   // `verify: false` skips the per-write read-back of the whole segment. Only ever correct when
-  // something else proves the bytes (the full download echo-checks every chunk as it writes it and
-  // then compares the device's own segment CRC); a write nobody verifies is a write that did not
-  // happen. `echo` requires the device to be in verify mode (see the verifyMode op).
+  // something else proves the bytes (the full download echo-checks every chunk as it writes it and,
+  // after the restart, compares the device's own segment CRCs or reads the segment back); a write
+  // nobody verifies is a write that did not happen. `echo` requires the device to be in verify mode (see the verifyMode op).
   // `offset`: where in the segment these bytes go. A full download allocates the segment with
   // fill, so the device has already zeroed it and only the bytes that are NOT zero need to be
   // sent (see planSystemBFullDownload).
@@ -68,8 +68,8 @@ export type LoadStep =
   // a bit mask per byte), as ETS does; if the allocation moved it, nothing there is the old content,
   // so the whole image is written. Every write is read back before the bracket closes.
   | { op: "writeSegmentOwned"; lsm: number; image: Buffer; owned: ReadonlyArray<number>; keptAt: number }
-  // Put the device into (or out of) verify mode, in which it answers every memory write with what
-  // actually landed in its memory. A download's `LdCtrlWriteRelMem Verify="true"` asks for this.
+  // Put the device into (or out of) verify mode, in which it answers every memory write (VERIFY_MODE).
+  // A download's `LdCtrlWriteRelMem Verify="true"` asks for this.
   | { op: "verifyMode"; on: boolean }
   // Wait for the device to be able to talk again. After a long segment write it commits its flash,
   // and a small MCU can be gone for seconds doing it. See the executor for why this is not

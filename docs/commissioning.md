@@ -203,27 +203,33 @@ sparsely.
 ### 6. Every write is confirmed, one way or another
 
 A dropped write is silent, and without confirmation it surfaces (if at all) a thousand
-telegrams away from where it happened. There are two equivalent guarantees:
+telegrams away from where it happened. Two mechanisms catch it:
 
 - **Read-back verify**: `memWrite` reads every write back. This is what every surgical flash and
   the System 7 full download do, on both memory models, and it is the mechanism those proven
   flash paths rest on.
-- **Verify mode**: `PID_DEVICE_CONTROL` bit 2, in which the device echoes every memory write
-  with what actually landed. Some applications ask for it explicitly
-  (`LdCtrlWriteRelMem Verify="true"`), and ETS enables it with a read-modify-write on the
-  device object before a download. The **System B full download** takes that route: it switches
-  verify mode on as its first step and off as its last, and every table and every
-  parameter run is echo-checked as it is written instead of being read back
-  (`planSystemBFullDownload`). No other path enables it.
+- **Verify mode**: `PID_DEVICE_CONTROL` bit 2, in which the device answers every memory write.
+  Some applications ask for it explicitly (`LdCtrlWriteRelMem Verify="true"`), and ETS enables it
+  with a read-modify-write on the device object before a download. The **System B full download**
+  takes that route: it switches verify mode on as its first step and off as its last, and every
+  table and every parameter run is echo-checked as it is written instead of being read back
+  (`planSystemBFullDownload`). No other path enables it. The answer stops the download at a
+  dropped chunk but is no proof of storage (thelsing/knx answers with a copy of the request data,
+  [findings.md](findings.md) §5); after the restart the device's CRCs over each segment, or the
+  segment read back, prove it ([load-procedures.md](load-procedures.md#full-download-coverage)).
 
 A device whose application declares `SupportsExtendedMemoryServices` and that declares
 `PID_MAX_APDU_LENGTH` is written with the confirmed `A_MemoryExtended_Write` instead
-([device-memory-model.md](device-memory-model.md)) and is not put into verify mode, as ETS does not. Its return code says a chunk was accepted, not what was stored,
-so where the plan asks for the echo the written range is read back instead.
+([device-memory-model.md](device-memory-model.md)) and is not put into verify mode, as ETS does not.
+Its return code says a chunk was accepted, not what was stored, and it is not read back before the
+restart (on thelsing/OpenKNX a read then still shows the flash's old bytes, [findings.md](findings.md)
+§16); the operation's check after the restart proves what was stored.
 
 For a large segment, reading everything back is thousands of extra telegrams, so the System B
-full download verifies the parameter image against the device's own segment CRC instead and
-falls back to a full read-back when the device reports no usable CRC.
+full download verifies each segment (the parameter image and the three tables) region by region
+against the CRCs the device reports in its memory-control block, and reads back every region whose
+CRC does not match or that the device does not report
+([load-procedures.md](load-procedures.md#full-download-coverage)).
 
 ### 7. A wrong byte can pass every check
 
