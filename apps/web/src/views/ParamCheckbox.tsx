@@ -1,6 +1,6 @@
-import { useLayoutEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 
 interface Props {
   value: string;
@@ -16,16 +16,11 @@ interface Props {
 export function ParamCheckbox({ value, label, disabled, onChange, testId }: Props) {
   const { t } = useTranslation();
   const outside = value !== "0" && value !== "1";
-  const ref = useRef<HTMLInputElement>(null);
-  // React does not hold `indeterminate`, and a click clears it before the new value arrives (or a refused
-  // write leaves the value as it was), so it is set again after every render and every click.
-  useLayoutEffect(() => { if (ref.current) ref.current.indeterminate = outside; });
   return (
     <span className="flex h-9 w-full items-center gap-2 pointer-coarse:h-11">
-      <input
-        ref={ref} type="checkbox" checked={value === "1"} disabled={disabled} aria-label={label}
-        onChange={(e) => { onChange(e.target.checked ? "1" : "0"); e.currentTarget.indeterminate = outside; }}
-        className="size-4 shrink-0 accent-primary pointer-coarse:size-5" data-testid={testId}
+      <Checkbox
+        checked={value === "1"} indeterminate={outside} disabled={disabled} aria-label={label}
+        onChange={(e) => onChange(e.target.checked ? "1" : "0")} data-testid={testId}
       />
       {outside ? <Badge tone="danger" data-testid={`${testId}-outside`}>{t("device.noOption", { value })}</Badge> : null}
     </span>

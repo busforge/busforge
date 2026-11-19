@@ -105,8 +105,9 @@ Two families, loaded from Google Fonts in `index.html`.
 - **Dark, instrument-like.** Slate surfaces, hairline `border`, generous use of `muted-foreground` for secondary info.
 - **Amber is focal.** Reserve `primary` for the brand, the active/primary action, selection, and the dots that show where the user's pending work is (on an edited value, a section, a floor or room with devices to program). A mark that states a device's state is a badge in its tone, a warning one `warning`, not amber (see [Tone of a badge](#tone-of-a-badge)); a warning in running text is `text-warning`, a boxed one a `Notice`, never a raw amber or yellow shade. Overuse erases the signal: devices, group addresses and range numbers are neutral slate marks, never amber, and so is a row's room picker, also for a device without a room (its section says so).
 - **Touch screens:** controls grow to a tap target (see the sizes under [Components](#components)). The add, rename and delete actions of a row or heading (`RowActions`) are icon buttons a mouse reveals on hover; a touch screen has no hover, so there one always-visible menu button opens them with their labels. The device header's icon actions (revert, read back, diagnostic) are labelled items of the device menu there. Tooltips on info marks open on a tap.
+- **Project tabs** (devices, group addresses, bus monitor): an icon and a label each. Below the `sm` breakpoint the icons go and the tabs grow to share the bar's width, so all three labels stay readable on a 320 px phone in either language; the bar still scrolls where even that is too narrow.
 - **Radius:** base `0.5rem` (`--radius`); see the radius scale under [Components](#components).
-- **Tooltips** (Radix): instant, multiline; hide secondary detail (DPT/flags) there rather than inline.
+- **Tooltips** (Radix): instant, multiline; hide secondary detail (DPT/flags) there rather than inline. Text cut with an ellipsis (`TruncatedText`) opens one with the whole text only while it is cut, and only then is it a tab stop, so a keyboard reaches the whole text too.
 - **State in the URL:** filter/search/selection state is URL-encoded so views are shareable and reload-safe.
 - **Header lockup:** amber mark tile + `BUSFORGE` (Archivo 800, `0.2em`) + mono tagline (`common.tagline`), as in `Projects.tsx`.
 
@@ -123,6 +124,7 @@ The primitives live in `apps/web/src/components/ui/`. Views use them instead of 
 | `Badge` | A status or label mark that does nothing on click | Tones `neutral`, `outline`, `primary`, `ok`, `info`, `warning`, `danger`; sizes `sm` 20 px, `md` 24 px; `mono` for bus data; `tapHeight` where it sits among `BadgeButton`s, so it grows with them on a touch screen |
 | `BadgeButton` | The same mark when it opens a detail (popover, dialog) | As `Badge`, plus the states of a control; 32 px high on a touch screen |
 | `Notice` | A boxed note in a dialog or on a page: a warning (what is left out, unproven or about to be exposed), or with `tone="info"` a derived state that is no warning (the DCA notice) | The `warning` (default) or `info` tone as a block; the caller lays out its icon and text |
+| `Checkbox` | Every tick box: a flag, a confirmation, a parameter drawn as a checkbox | A native input with the control border; amber box with a dark tick when checked, a dash when `indeterminate` (a value that is neither checked nor unchecked, kept after a click), 16 px (20 px on a touch screen). The pointer, an `accent` hover and the focus ring as every control, 50 % opacity when disabled; in forced-colors mode checked and indeterminate take the system highlight and keyboard focus an outline. Label it with a wrapping `<label>` or `aria-label` |
 | `Chip` | A filter toggle or one choice among a few (IP/USB, transport) | `active`, announced as `aria-pressed` |
 | `Dialog` | A task in a window: a form, a preview, a running read | `backdropClose`, `dismissible` |
 | `AlertDialog` | A question before an action (delete, restore, write) | `backdropClose`, `dismissible`; the cancel button takes the initial focus |
@@ -137,7 +139,7 @@ One radius per role, so neighbours line up:
 
 | Radius | Where |
 |---|---|
-| `rounded-sm` (4 px) | Inside a control: segments of a segmented control, menu items, swatches |
+| `rounded-sm` (4 px) | Inside a control: segments of a segmented control, menu items, swatches, the box of a checkbox |
 | `rounded-md` (6 px) | **Every control and mark**: buttons, icon buttons, inputs, selects, badges, tags, chips, list rows, tooltips, popovers and menus |
 | `rounded-lg` (8 px) | Dialogs |
 | `rounded-xl` (12 px) | Cards and page containers |
@@ -176,12 +178,12 @@ A state mark that has a remedy is a `BadgeButton` where the page offers that rem
 
 Two rows:
 
-1. **Who the device is and what stands against it:** back, the device name as the page title with its individual address in mono, then its marks in one run: the programming state ("never programmed" or "not downloaded in ETS"; or "N changes" and a security mark, either or both; or "programmed"), the compatibility badge, and the standing warnings. All marks `md`, one height (32 px on a touch screen), one font, a short label each; what a mark means in full is in its popover or tooltip, never in its label.
+1. **Who the device is and what stands against it:** back, the device name as the page title with its individual address in mono, then its marks in one run, directly after the address. A long name gives way, never the marks: it ends in an ellipsis (`TruncatedText`), and while it is cut a hover (a tap on a touch screen) shows it in full in a tooltip. The name keeps at least about 20rem of title beside the marks; where the marks do not fit beside that, they move under the name as one row at full width and wrap there, never into a column of single marks. The marks are: the programming state ("never programmed" or "not downloaded in ETS"; or "N changes" and a security mark, either or both; or "programmed"), the compatibility badge, and the standing warnings. All marks `md`, one height (32 px on a touch screen), one font, a short label each; what a mark means in full is in its popover or tooltip, never in its label.
    - The compatibility badge names what it describes and the axis it shows, shortly: "Product: Transfer tested", not "all tested", since the evidence belongs to the product, not to this unit, and the green state is the transfer axis only. Its popover says it in full (tested for every operation Busforge supports for the device).
    - A standing warning about the device (what the comparison with the device does not cover, what Busforge does not write, settings it does not support, links the page cannot show, links the import did not take over) is a `warning` `BadgeButton` with a short label and its count where the count is known; its popover carries the full title and the points.
 2. **What can be done with it:** the parameter filter on the left, the actions right-aligned as one group (Flash, revert, read back, diagnostic, the menu). Flash is the amber `default` button, every other action an `outline` one; a disabled action is told by its disabled state, not by a lighter variant.
 
-On a wide window the header stays pinned below the project bar while the parameters scroll, so the device, its state and its actions stay in view; the section index sits below it, and a jump lands each section just under it. On a narrow window the header scrolls with the page and both rows wrap: the marks under the name, then the filter at full width, then the action group on its own line, where Flash takes the free width. Below the header, next to what they act on, stay what concerns single parameters or a read: values to assume, unresolved objects, why a device stays never programmed after a read, values assumed and not yet proven, and the DCA notice.
+On a wide window the header stays pinned below the project bar while the parameters scroll, so the device, its state and its actions stay in view; the section index sits below it, and a jump lands each section just under it. On a narrow window the header scrolls with the page and both rows wrap: the marks under the name (which stays on one line, cut as above), then the filter at full width, then the action group on its own line, where Flash takes the free width. Below the header, next to what they act on, stay what concerns single parameters or a read: values to assume, unresolved objects, why a device stays never programmed after a read, values assumed and not yet proven, and the DCA notice.
 
 ### Filters
 
