@@ -48,22 +48,26 @@ describe("the links an import did not take over", () => {
   test("the list puts the entries that cannot be restored in their own group, each with its reason", () => {
     const html = renderToStaticMarkup(<DroppedLinksList links={[gone, open, stray]} />);
     const group = /data-testid="dropped-unrecoverable"[\s\S]*$/.exec(html)?.[0] ?? "";
-    expect(html.indexOf("Object 1")).toBeLessThan(html.indexOf('data-testid="dropped-unrecoverable"'));
+    expect(html.indexOf("Switch")).toBeGreaterThan(-1);
+    expect(html.indexOf("Switch")).toBeLessThan(html.indexOf('data-testid="dropped-unrecoverable"'));
     expect(group).toContain("Cannot be restored");
     expect(group).toContain("The device&#x27;s configuration has no such module instance");
     expect(group).toContain("The device&#x27;s application program has no such object");
     expect(group).not.toContain("Switch");
   });
 
-  test("an object the configuration does not place is called by the number its ETS ref names, never by the raw ref", () => {
+  test("an object the configuration does not place is called by what its ETS ref names, never by the raw ref", () => {
     const nameless = (comObjRefId: string, unresolved: DroppedLink["unresolved"], unrecoverable: boolean) =>
       entry({ comObjRefId, comObjNumber: null, comObjName: null, functionText: null, unresolved, refusal: unresolved === "refused" ? "PARAM_TEST_UNSUPPORTED" : null, unrecoverable });
     const html = renderToStaticMarkup(<DroppedLinksList links={[
-      nameless("O-7_R-7", "notInApplication", true), nameless("MD-1_M-1_MI-2_O-3_R-3", "moduleInstanceGone", true),
+      nameless("O-7_R-7", "notInApplication", true), nameless("MD-14_M-40_MI-3_O-2-5_R-19", "moduleInstanceGone", true),
       nameless("O-5_R-5", "noApplication", true), nameless("O-6_R-6", "refused", true), nameless("O-4", "notInConfiguration", false),
     ]} />);
-    for (const n of [7, 3, 5, 6, 4]) expect(html).toContain(`>Object ${n}</span>`);
-    expect(html).not.toMatch(/>[^<]*O-\d+(_R-\d+)?<\/span>/);
+    for (const n of [7, 5, 6, 4]) expect(html).toContain(`>Object ${n}</span>`);
+    // A module object's number in its ref is no object number: only the instance is named.
+    expect(html).toContain(">Module instance 3</span>");
+    expect(html).not.toContain(">Object 2<");
+    expect(html).not.toMatch(/>[^<]*O-\d+[-_\dR]*<\/span>/);
   });
 
   test("a ref of an unknown shape is shown as it is", () => {
@@ -77,9 +81,16 @@ describe("the links an import did not take over", () => {
     for (const unresolved of ["noApplication", "refused", "moduleInstanceGone", "notInApplication"] as const) {
       const html = renderToStaticMarkup(<DroppedLinksList links={[lost(unresolved)]} />);
       expect(html).not.toContain(imported);
-      expect(html).toContain("An address is not in the project.");
+      expect(html).toContain("An address is not in the project; the object&#x27;s other links are kept, never programmed.");
     }
     expect(renderToStaticMarkup(<DroppedLinksList links={[open]} />)).toContain(imported);
+  });
+
+  test("a module-instance reason is told as of the import, so it holds where the instance exists now", () => {
+    const now = entry({ comObjRefId: "MD-1_M-1_MI-2_O-1_R-1", comObjNumber: null, unresolved: "notInApplication", unrecoverable: true, reason: "moduleInstanceGone" });
+    const html = renderToStaticMarkup(<DroppedLinksList links={[now]} />);
+    expect(html).toContain("At import the device had no module instance for this object");
+    expect(html).not.toContain("no longer has");
   });
 
   test("a list of open entries only has no such group", () => {

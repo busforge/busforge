@@ -119,6 +119,7 @@ const de: Messages = {
       hint: "Jedes Kommunikationsobjekt mit den Gruppenadressen, die es in ETS hatte; die erste ist die, auf der es sendet. Objekte, die das Gerät noch hat, auf seiner Seite von Hand neu verknüpfen.",
       open: "Ein Objekt verlässt diese Liste, sobald die Konfiguration des Geräts es zeigt, es die Adressen aus ETS hat, die im Projekt sind, und insgesamt so viele Adressen wie in ETS.",
       object: "Objekt {{number}}",
+      moduleInstance: "Modulinstanz {{number}}",
       objectUnknown: "Objekt nicht in der aktuellen Konfiguration des Geräts",
       objectModuleInstanceGone: "Die Konfiguration des Geräts hat diese Modulinstanz nicht",
       objectNotInApplication: "Das Applikationsprogramm des Geräts hat dieses Objekt nicht",
@@ -133,11 +134,12 @@ const de: Messages = {
         addressNotInProject: "Eine Adresse ist nicht im Projekt; die übrigen Verknüpfungen des Objekts wurden übernommen.",
         senderNotInProject: "Die Adresse, auf der das Objekt sendet, ist nicht im Projekt; keine seiner Verknüpfungen wurde übernommen.",
         noSingleSender: "ETS nennt keine oder mehrere Adressen, auf denen das Objekt sendet; keine seiner Verknüpfungen wurde übernommen.",
-        moduleInstanceGone: "Das Gerät hat die Modulinstanz des Objekts nicht mehr; seine Verknüpfungen bleiben gespeichert und werden nie programmiert.",
+        moduleInstanceGone: "Beim Import hatte das Gerät keine Modulinstanz für dieses Objekt; seine Verknüpfungen bleiben gespeichert.",
       },
       // Die Gründe, die für ein Objekt, das keine Verknüpfung in Busforge erreicht, anders lauten; die übrigen gelten unverändert.
       reasonUnrecoverable: {
-        addressNotInProject: "Eine Adresse ist nicht im Projekt.",
+        addressNotInProject: "Eine Adresse ist nicht im Projekt; die übrigen Verknüpfungen des Objekts bleiben gespeichert und werden nie programmiert.",
+        moduleInstanceGone: "Beim Import hatte das Gerät keine Modulinstanz für dieses Objekt; seine Verknüpfungen bleiben gespeichert und werden nie programmiert.",
       },
     },
   },

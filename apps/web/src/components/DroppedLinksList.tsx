@@ -15,12 +15,18 @@ const UNRESOLVED_TEXT = {
   notInConfiguration: "import.dropped.objectUnknown",
 } as const;
 
-// The object number an ETS com-object ref names ("O-7_R-7", "MD-1_M-1_MI-2_O-1_R-1" and "O-4" are 7, 1 and 4): all
-// there is to call an object by where the configuration does not place it. Null for a ref of another shape.
-const refNumber = (comObjRefId: string): number | null => {
-  const m = /(?:^|_)O-(\d+)(?:_R-\d+)?$/.exec(comObjRefId);
-  return m ? Number(m[1]) : null;
-};
+// What an ETS com-object ref names of an object the configuration does not place, all there is to call it by.
+// An object of the application itself ("O-7_R-7", "O-4") is named by the number of its ETS id, which is not
+// guaranteed to be the object's own Number (the tooltip carries the ref). A module object's
+// number in the ref is relative to its module and lacks the instance's base number, so only its module
+// instance ("MD-14_M-40_MI-3_O-2-5_R-19") is named. A ref of another shape is shown as it is.
+function RefLabel({ comObjRefId }: { comObjRefId: string }) {
+  const { t } = useTranslation();
+  const instance = /_MI-(\d+)_/.exec(comObjRefId);
+  if (instance) return <>{t("import.dropped.moduleInstance", { number: Number(instance[1]) })}</>;
+  const object = /^O-(\d+)(?:_R-\d+)?$/.exec(comObjRefId);
+  return <>{object ? t("import.dropped.object", { number: Number(object[1]) }) : comObjRefId}</>;
+}
 
 // The project's links not taken over, as a mark in a page header: a warning counting the entries a link made
 // by hand can still close; where every entry is one no link reaches, a plain mark without a count, so the list
@@ -94,7 +100,7 @@ function ObjectsByDevice({ links, projectId, showDevice, testId }: { links: Drop
                   </>
                 : <>
                     <span className="shrink-0 font-mono text-xs text-muted-foreground" title={o.comObjRefId}>
-                      {refNumber(o.comObjRefId) !== null ? t("import.dropped.object", { number: refNumber(o.comObjRefId) }) : o.comObjRefId}
+                      <RefLabel comObjRefId={o.comObjRefId} />
                     </span>
                     <span className="text-muted-foreground">
                       {o.unresolved === "refused"
@@ -110,7 +116,7 @@ function ObjectsByDevice({ links, projectId, showDevice, testId }: { links: Drop
                     {t("import.dropped.gaMissing")} <span className="font-mono opacity-80">{g.address ?? g.etsId}</span>
                   </Badge>)}
             </div>
-            <p className="text-xs text-muted-foreground">{t(o.unrecoverable && o.reason === "addressNotInProject" ? "import.dropped.reasonUnrecoverable.addressNotInProject" : `import.dropped.reason.${o.reason}`)}</p>
+            <p className="text-xs text-muted-foreground">{t(o.unrecoverable && (o.reason === "addressNotInProject" || o.reason === "moduleInstanceGone") ? `import.dropped.reasonUnrecoverable.${o.reason}` : `import.dropped.reason.${o.reason}`)}</p>
           </li>
         ))}
       </ul>

@@ -118,6 +118,7 @@ const en = {
       hint: "Each com-object with the group addresses ETS linked it to, the first being the one it sends on. Link the objects the device still has again by hand on its page.",
       open: "An object leaves this list once the device's configuration shows it, it holds the addresses ETS linked it to that the project has, and as many addresses in all as in ETS.",
       object: "Object {{number}}",
+      moduleInstance: "Module instance {{number}}",
       objectUnknown: "Object not shown by the device's current configuration",
       objectModuleInstanceGone: "The device's configuration has no such module instance",
       objectNotInApplication: "The device's application program has no such object",
@@ -132,11 +133,12 @@ const en = {
         addressNotInProject: "An address is not in the project; the object's other links were imported.",
         senderNotInProject: "The address the object sends on is not in the project; none of its links was imported.",
         noSingleSender: "ETS names no address or several for the object to send on; none of its links was imported.",
-        moduleInstanceGone: "The device no longer has this object's module instance; its links are kept, never programmed.",
+        moduleInstanceGone: "At import the device had no module instance for this object; its links are kept.",
       },
       // The reasons that read differently for an object no link made in Busforge reaches; the others hold as they are.
       reasonUnrecoverable: {
-        addressNotInProject: "An address is not in the project.",
+        addressNotInProject: "An address is not in the project; the object's other links are kept, never programmed.",
+        moduleInstanceGone: "At import the device had no module instance for this object; its links are kept, never programmed.",
       },
     },
   },
