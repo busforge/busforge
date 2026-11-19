@@ -504,13 +504,14 @@ corpusDescribe("readState records settings that only the device's configuration 
   });
 });
 
-// A text value the codec refuses (a character beyond ASCII: no ETS capture shows its bytes) leaves its field unowned
-// in the read-back's build. A project value there must not fold as "in sync" just because the device and the image
-// both still hold the segment's <Data>: the field keeps the baseline it had.
+// A text value the codec refuses (a character beyond ISO 8859-1 where the application declares no encoding: no ETS
+// capture shows its bytes) leaves its field unowned in the read-back's build. A project value there must not fold as
+// "in sync" just because the device and the image both still hold the segment's <Data>: the field keeps the baseline
+// it had.
 corpusDescribe("System B readState: a text field the codec refuses is compared neither way", () => {
   const cfg = app("M-0083_A-0137-20-7EB2.xml.gz");
   const REF = "M-0083_A-0137-20-7EB2_P-162_R-162"; // device name, 30-byte text, <Data> "MDT KNX IP-Interface"
-  const liveParams = new Map([[REF, "Küche"]]);
+  const liveParams = new Map([[REF, "Kosten in €"]]);
   const target = buildRelativeSegmentTarget(cfg, liveParams, APP_PROGRAM, { textRefusals: "skip" })!;
   const PARAM_BASE = 0x4000;
   const GT = PARAM_BASE + target.size + 0x1000;

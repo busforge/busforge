@@ -50,12 +50,13 @@ limit, because it records drift only for the refs the view exposes.
 | `TypeRestriction` (enumeration) | full | dropdown, options ordered by `DisplayOrder` |
 | `TypeNumber` | full | number input; `Increment` becomes the spinner step, `UIHint="Slider"` renders a bounded range slider |
 | `TypeFloat` | full | decimal input; the codec takes its width from `Encoding` (KNX 2-byte DPT-9, or IEEE-754 Single) and refuses an unknown width |
-| `TypeText` | full | text input; the image writes its ASCII characters and zero bytes to the end of the field (a value as long as the field without a zero), and refuses what no capture shows ([device-memory-model.md](device-memory-model.md#which-parameter-types-reach-the-image-at-all)) |
+| `TypeText` | full | text input; the image writes its characters in the application's `TextParameterEncoding` (ISO 8859-1 where it declares none, UTF-8 for `utf-8`) and zero bytes to the end of the field (a value as long as the field without a zero), and refuses what no capture shows ([device-memory-model.md](device-memory-model.md#which-parameter-types-reach-the-image-at-all)) |
 | `TypeTime` | full | raw integer count of the type's `Unit`; rendered as an `hh:mm:ss` duration for second-based units, else number plus unit |
 | `TypeIPAddress` | full | validated dotted quad, 4-byte codec |
 | `TypeColor` (RGB) | full on System B (bytes pinned to ETS's captures, not yet written by Busforge onto a device), edit only elsewhere | native colour picker, stores `#RRGGBB` in the project; on a relative segment (System B) the image writes and the read-back reads its red, green and blue bytes, as ETS's downloads write them; on a System 7 device programming a colour in use is refused, no capture shows one there ([device-memory-model.md](device-memory-model.md#which-parameter-types-reach-the-image-at-all)) |
 | `TypeNone` (named) | full | display-only caption, rendered read-only; a nameless one is a pure layout spacer and is dropped |
 | `TypeRestriction` `Base="BinaryValue"` | not editable | badge; the image writes the bytes of the enumeration its value names (`Access="None"` object-link tables of the Theben MIX 2) |
+| `TypeRawData` | not supported | badge; the image writes nothing, and programming one away from its default or from the configuration the device holds is refused (`PARAM_RAW_DATA_UNSUPPORTED`): no capture shows its bytes |
 | `TypeColor` (HSV and any other space) | not supported | badge; an sRGB picker would mis-encode a non-sRGB register, and programming one in use is refused (`PARAM_COLOR_UNSUPPORTED`): no capture shows its bytes |
 | `TypePicture` | full | display only: the image alone across its row, aligned by `HorizontalAlignment`, as ETS shows it. The file comes from the product's baggage (`M-XXXX/Baggages.xml` and `Baggages/`) in the imported `.knxproj` or `.knxprod` and is kept with the catalogue; where the catalogue holds no file (a plain manufacturer XML carries none) the row says the image is not in the catalogue |
 
@@ -78,6 +79,8 @@ Read and honoured:
 | `ParameterRef` | `Text`, `SuffixText` | shown instead of its `Parameter`'s, as the parameter's label and unit and as the heading of a block named by `ParamRefId`; see [Parameter labels](#parameter-labels) |
 | `ParameterBlock` | `Access="None"` / `"Read"` | a hidden block is not rendered, but its `Assign` side effects still gate later conditions |
 | `ComObject` | `ReadOnInitFlag` | the sixth flag, alongside C/R/W/T/U |
+| `Parameter` | `InitialValue` | a device placed in Busforge, or given another product, starts a text parameter at it, translated into the client's language; other forms refuse the placement where they reach the device ([device-memory-model.md](device-memory-model.md#which-parameter-types-reach-the-image-at-all)) |
+| `Options` | `TextParameterEncoding` | the bytes of a text parameter's characters beyond ASCII |
 | `TypeNumber` | `Increment`, `UIHint="Slider"` | spinner step and slider |
 | `Parameter` | `LegacyPatchAlways` | parsed; the parameter is built and owned like any other, because ETS always writes its value over the `<Data>` byte (see [findings.md](findings.md) §8) |
 | `ParameterBlock` (item-less) | self-closing collector blocks | a reached childless header renders as an empty navigable section; headers inside an inactive `choose` branch stay hidden |
@@ -87,7 +90,6 @@ Not read, with the reason:
 | Where | Attribute | Why it is still open |
 |---|---|---|
 | `ParameterBlock` | `ShowInComObjectTree` | a com-object grouping signal; the com-object list is flat today |
-| `Parameter` | `InitialValue` | present once in the catalogues, on a hidden `Access="None"` parameter and equal to `Value`. Honouring it would have zero visible effect. It matters only for "unchanged since factory" detection, which Busforge does not do. Left unread deliberately. |
 | `Parameter` | `BaseValue` | on read-only mirror parameters inside modules, pointing at a module `Argument`. The per-instance numbering it describes is resolved through the module offset path instead. |
 
 Safe to ignore: `InternalDescription`, `Tag`, `DefaultUnionParameter`, `Inline`, `Icon`,

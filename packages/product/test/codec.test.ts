@@ -95,7 +95,7 @@ describe("types not represented in the image are neither written nor decoded", (
   });
 });
 
-// A text parameter's field holds its ASCII characters and zero bytes to the end; a value as long as the field
+// A text parameter's field holds its characters and zero bytes to the end; a value as long as the field
 // fills it without a closing zero; the segment's <Data> is overwritten. Evidence (private corpus captures/):
 // ETS's image of the Theben DALI-Gateway KNX plus's full download, admin password "dali" in 8 bytes =
 // 64 61 6c 69 00 00 00 00 (dali-ets6log-fulldownload-real.txt l. 581; on the wire dali-ets-fulldownload-real.log
@@ -124,10 +124,10 @@ describe("text parameters", () => {
   test("decode returns what encode wrote", () => {
     expect(roundtrip(m(), { "R-Ptext": "admin", "R-Pempty": "x", "R-Pnum": "1.2.3" })).toMatchObject({ "R-Ptext": "admin", "R-Pempty": "x", "R-Pnum": "1.2.3" });
   });
-  test("a field with a byte beyond ASCII, or with bytes behind the zero, decodes to nothing", () => {
+  test("a field with a byte in 80-9F, or with bytes behind the zero, decodes to nothing", () => {
     const img = Buffer.alloc(68);
     img.write("ab\0xyz", 38, "latin1");
-    img.write("K\xfcche", 8, "latin1");
+    img.write("K\x84che", 8, "latin1");
     const out = decodeParameterImage(m(), 4, img);
     expect(out.has("R-Pempty")).toBe(false);
     expect(out.has("R-Pnum")).toBe(false);
@@ -149,9 +149,35 @@ describe("text parameters", () => {
     expect(() => buildParameterImage(z, 4, new Map([["R-P", "12345678"]]))).toThrow(/at most 7/);
     expect(decodeParameterImage(z, 4, Buffer.from("12345678", "latin1")).has("R-P")).toBe(false);
   });
-  test("a character beyond ASCII, or a zero character, is refused", () => {
-    expect(() => buildParameterImage(m(), 4, new Map([["R-Ptext", "Küche"]]))).toThrow(/beyond ASCII/);
+  test("a zero character is refused", () => {
     expect(() => buildParameterImage(m(), 4, new Map([["R-Ptext", "a\0b"]]))).toThrow(/zero character/);
+  });
+  // bussard's ETS 6.4.1 downloads of its synthetic products (private corpus captures/external/bussard-synthetic/;
+  // tools/bussard-synthetic.test.ts holds Busforge's images against them): an application declaring no
+  // TextParameterEncoding gets "Störung" as 53 74 F6 72 75 6E 67 (syn-text-undeclared), one declaring "utf-8" its
+  // text in UTF-8 (syn-text-initialvalue, "Süd" = 53 C3 BC 64). What no capture shows is refused.
+  describe("a character beyond ASCII", () => {
+    const enc = (textEncoding?: string) => mk({ T: { base: "Text", sizeInBit: 64, ...(textEncoding ? { textEncoding } : {}) } }, { P: { type: "T", offset: 0, value: "" } }, [{ id: "S", lsm: 4, size: 8, data: Buffer.alloc(8) }]);
+    const bytes = (model: ReturnType<typeof enc>, v: string) => buildParameterImage(model, 4, new Map([["R-P", v]])).toString("hex");
+    test("without a declared encoding: ISO 8859-1, and decodes back", () => {
+      expect(bytes(enc(), "Küche")).toBe("4bfc636865000000");
+      expect(roundtrip(enc(), { "R-P": "Störung" })["R-P"]).toBe("Störung");
+    });
+    test("without a declared encoding: a character in 80-9F or above FF, where ISO 8859-1 and Windows-1252 part, is refused", () => {
+      expect(() => bytes(enc(), "5 €")).toThrow(/Windows-1252/);
+      expect(() => bytes(enc(), "a\x85")).toThrow(/Windows-1252/);
+    });
+    test("declared utf-8: UTF-8, counted in bytes, and decodes back", () => {
+      expect(bytes(enc("utf-8"), "Süd")).toBe("53c3bc6400000000");
+      expect(roundtrip(enc("utf-8"), { "R-P": "Tür €" })["R-P"]).toBe("Tür €");
+      expect(() => bytes(enc("utf-8"), "Küchetür")).toThrow(/takes 10 bytes, the field holds 8/);
+      expect(decodeParameterImage(enc("utf-8"), 4, Buffer.from("4bfc636865000000", "hex")).has("R-P")).toBe(false);
+    });
+    test("another declared encoding is refused, while ASCII is written as ever", () => {
+      expect(() => bytes(enc("iso-8859-15"), "Küche")).toThrow(/text encoding "iso-8859-15"/);
+      expect(bytes(enc("iso-8859-15"), "Kueche")).toBe("4b75656368650000");
+      expect(decodeParameterImage(enc("iso-8859-15"), 4, Buffer.from("4bfc636865000000", "hex")).has("R-P")).toBe(false);
+    });
   });
   // MDT A-0137's <Data> holds "Statuselement00" where P-249's value is "", and "Bit Alarm 2" where P-82's is
   // "Bit Alarm 1"; ETS's image holds the values: 30 zero bytes at +1194, "Bit Alarm 1" and zeros at +338

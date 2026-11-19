@@ -633,7 +633,7 @@ function BuildingCombobox({ buildings, value, onChange }: {
 function AddDeviceDialog({
   open, onOpenChange, projectId,
 }: { open: boolean; onOpenChange: (o: boolean) => void; projectId: string }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [q, setQ] = useState("");
@@ -647,7 +647,7 @@ function AddDeviceDialog({
   }, [catalog, q]);
 
   const add = useMutation({
-    mutationFn: (p: CatalogProduct) => api.addDevice(projectId, p.appRef, p.productRef),
+    mutationFn: (p: CatalogProduct) => api.addDevice(projectId, p.appRef, p.productRef, i18n.language),
     onSuccess: (res, p) => {
       void qc.invalidateQueries({ queryKey: qk.project(projectId) });
       toast.success(t("catalog.added", { name: p.name }));

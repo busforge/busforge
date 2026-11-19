@@ -224,6 +224,7 @@ device's behaviour. `tools/bussard-synthetic.test.ts` checks the pcap conversion
 holds Busforge's images for these products against ETS's bytes; `tools/bussard-user-memory.test.ts`
 holds Busforge's `A_UserMemory_Write` requests against ETS's, frame by frame. The set's README in the corpus names
 the commit it was taken from and carries bussard's licence.
+`tools/bussard-text.test.ts` holds the bytes of two products' text parameters beyond ASCII against ETS's.
 
 ### The capture index
 

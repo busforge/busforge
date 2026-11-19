@@ -229,9 +229,10 @@ export const api = {
     return jsonOrThrow<{ products: number; programs: number }>(await fetch("/api/catalog/import", { method: "POST", body: form }));
   },
 
-  // Place a catalog product into a project as a new device (server allocates the IA).
-  addDevice: (id: string, appRef: string, productRef: string, name?: string): Promise<{ id: string; ia: string }> =>
-    fetch(`/api/projects/${id}/devices`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ appRef, productRef, name }) }).then((r) => jsonOrThrow<{ id: string; ia: string }>(r)),
+  // Place a catalog product into a project as a new device (server allocates the IA). `lang` is the language
+  // the device's parameters start in, as in an ETS project of that language.
+  addDevice: (id: string, appRef: string, productRef: string, lang: string, name?: string): Promise<{ id: string; ia: string }> =>
+    fetch(`/api/projects/${id}/devices`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ appRef, productRef, name, lang }) }).then((r) => jsonOrThrow<{ id: string; ia: string }>(r)),
 
   // Re-import a .busforge project artifact (the export's inverse) as a new project.
   // A password is only needed for an encrypted artifact (ignored otherwise).

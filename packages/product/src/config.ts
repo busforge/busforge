@@ -1,5 +1,6 @@
 import type { ConstantDifference } from "./deviceimage.ts";
 import type { AppConfig, CfgParam, CfgParamRef, CfgType, ComObjFlags, ComObjPriority, DcaInfo, DynNode, DynWhen, ModuleDefModel, ModuleInstance } from "./appconfig.ts";
+import { resolveParamRef } from "./appconfig.ts";
 import { resolveModuleInstances, moduleArgNumber } from "./modules.ts";
 import { ProductError } from "./errors.ts";
 import type { MatrixOperation, OperationVerdict } from "./compatibility.ts";
@@ -284,6 +285,69 @@ export function resolveLanguage(app: AppConfig, requested?: string): string {
     all.find((l) => l.toLowerCase().split("-")[0] === prefix) ??
     app.defaultLanguage
   );
+}
+
+// The values ETS gives a device's parameters when it is added to a project in `lang`, where they differ from the
+// defaults, by ParameterRef id: a text parameter's InitialValue, translated into the language like every other
+// translated attribute (the untranslated text in the application's default language). Shown by ETS 6.4.1 on
+// bussard's syn-text-initialvalue (private corpus captures/external/bussard-synthetic/), added to a de-DE project:
+// the Parameter's Value and InitialValue "Buzzard nest", its de-DE InitialValue "Bussardhorst Süd", which ETS
+// wrote. An InitialValue no capture shows ETS taking refuses the placement where it differs from the default and
+// its parameter reaches the device (memory, a property, the test of a <choose>, an <Assign> into one that does): on a
+// parameter of another type, on a ParameterRef (a translated InitialValue there, or a Value of its own beside the
+// Parameter's InitialValue), and on a parameter of a module definition, whose instances are made after the device
+// is placed. One that reaches no device byte keeps its default: the Jung 400021SE translates the InitialValues of
+// memoryless ParameterRefs its <Assign>s set and read among themselves, which only name its pages in the view.
+export function initialValues(app: AppConfig, lang?: string): Map<string, string> {
+  const language = resolveLanguage(app, lang);
+  const translated = (id: string, base: string | undefined) =>
+    language === app.defaultLanguage ? base : app.translations.get(language)?.get(id)?.get("InitialValue") ?? base;
+  const paramOf = (refId: string | undefined) => (refId ? resolveParamRef(app, refId)?.param : undefined);
+  const tested = new Set<string>(); // Parameter ids a <choose> tests
+  const assigns = new Map<string, Set<string>>(); // Parameter id -> the Parameter ids <Assign>s set from it
+  const walk = (nodes: DynNode[]) => {
+    for (const n of nodes) {
+      if (n.kind === "choose") { const p = paramOf(n.paramRefId); if (p) tested.add(p.id); }
+      if (n.kind === "assign") {
+        const from = paramOf(n.source), to = paramOf(n.target);
+        if (from && to) assigns.set(from.id, (assigns.get(from.id) ?? new Set()).add(to.id));
+      }
+      if (n.kind === "block" || n.kind === "container") walk(n.children);
+      else if (n.kind === "choose") for (const w of n.whens) walk(w.children);
+    }
+  };
+  walk(app.dynamic);
+  for (const d of app.moduleDefs.values()) walk(d.dynamic);
+  // Whether a parameter's value reaches the device: in memory, in a property, tested by a <choose>, or set by an
+  // <Assign> into one that does.
+  const reaching = new Map<string, boolean>();
+  const reaches = (id: string): boolean => {
+    const known = reaching.get(id);
+    if (known !== undefined) return known;
+    reaching.set(id, false); // a cycle of <Assign>s adds nothing
+    const p = app.params.get(id);
+    const r = !!p && (p.hasMemory || !!p.onProperty || tested.has(id) || [...assigns.get(id) ?? []].some(reaches));
+    reaching.set(id, r);
+    return r;
+  };
+  const out = new Map<string, string>();
+  for (const ref of app.refs.values()) {
+    const param = app.params.get(ref.paramId);
+    if (!param) continue;
+    const def = ref.value ?? param.value ?? "";
+    const ofParam = translated(param.id, param.initialValue);
+    const ofRef = translated(ref.id, undefined);
+    const shown = ofRef === undefined && ofParam !== undefined && ref.value === undefined && !param.moduleDefId && !ref.moduleDefId
+      && app.types.get(param.typeId)?.base === "Text";
+    const start = ofRef ?? ofParam;
+    if (start === undefined || start === def) continue;
+    if (shown) { out.set(ref.id, start); continue; }
+    if (!reaches(param.id)) continue;
+    const why = ofRef !== undefined ? "the InitialValue is the ParameterRef's" : ref.value !== undefined ? "the ParameterRef has a Value of its own"
+      : param.moduleDefId || ref.moduleDefId ? "it is a parameter of a module definition" : "it is no text parameter";
+    throw new ProductError("PARAM_INITIAL_VALUE_UNSUPPORTED", `parameter ${ref.id} starts in ${language} at "${start}", not at its default "${def}", and ${why}; no ETS capture shows which value ETS gives it there. Refusing to place the device rather than start it at a value ETS may not give; add it with ETS and import the project`);
+  }
+  return out;
 }
 
 // Some manufacturer texts carry escaped numeric entities (e.g. "&#xA;" for a

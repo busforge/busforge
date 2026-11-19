@@ -1,6 +1,7 @@
 import { KnxDevice, KnxError, OBJECT_TYPE_KNXNETIP, type LoadPlan, type SecurityObjectTables, SENDER_ENTRY, planSystemBGaFlash, planSystemBFullDownload, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, assocFormOf, ASSOC_TABLE_DESCRIPTION, type AssocForm, loadedTableAddr, readMcbTable, mcbProves, mcbProvenRegions, MCB_ELEMENT_BYTES, type McbEntry, GroupTableUnreadable, OBJ, PID, lsmState, STATE } from "@busforge/knx";
 import { toAppModel, unmappedParamRefs } from "./application.ts";
 import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, differingFF, leaveUnreadUnchanged, verifyMaskedBytes, confirmedMatch, type ConfirmedOnlyRange, buildAbsoluteSegmentTargets, wholeBytes, refuseColorWrites, refuseCalculationWrites, differingConstants, type ConstantDifference } from "./deviceimage.ts";
+import { refuseRawDataWrites } from "./rawdata.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { assertComObjectTableStable } from "./comobjtable.ts";
 import { buildComObjectTable, programIdStamp, withLinkedCommFlags, linkedBitObjects, refuseAppCommOffLinks, withInstanceOverrides, refuseUnwritableOverrides, decodeComObjectTable, decodeComObjectTableMv0705, comObjFlagsDiffering, refuseUnknownDeviceFlags, changedEntryBits, type ComObjInstanceOverride, type ObservedComObjFlags, type OverridableBit } from "./comobjbuild.ts";
@@ -1034,13 +1035,14 @@ function refuseSystem7UnknownFlags(baseline: () => BaselineObjects, ctx: FlagBas
   refuseUnknownDeviceFlags(comObjFlagsDiffering(observed, baseline(), ctx.comObjectOverrideBase, changed), observed);
 }
 
-// A parameter or structural flash whose change Busforge cannot encode: a colour parameter (refuseColorWrites),
-// or a changed parameter of a <ParameterCalculation> (refuseCalculationWrites); each configuration's module
-// instances resolved as moduleAwareModel does.
+// A parameter or structural flash whose change Busforge cannot encode: a colour parameter (refuseColorWrites), a
+// raw-data parameter (refuseRawDataWrites), or a changed parameter of a <ParameterCalculation>
+// (refuseCalculationWrites); each configuration's module instances resolved as moduleAwareModel does.
 function refuseUnencodableChange(cfg: AppConfig, ctx: { params: Map<string, string>; baseParams: Map<string, string>; moduleInstances?: ModuleInstance[] }, rgbWritten: boolean): void {
   const at = (values: Map<string, string>) => moduleAwareModel(cfg, values, ctx.moduleInstances ?? []).instances;
   const instances = at(ctx.params), base = { values: ctx.baseParams, instances: at(ctx.baseParams) };
   refuseColorWrites(cfg, ctx.params, instances, rgbWritten, base);
+  refuseRawDataWrites(cfg, ctx.params, instances, base);
   refuseCalculationWrites(cfg, ctx.params, instances, base);
 }
 
@@ -1271,6 +1273,7 @@ export class SystemBProfile extends DeviceProfile {
     // allocation's fill. The partial form merges the owned bytes into the unit's segment.
     const target = buildRelativeSegmentTarget(cfg, ctx.params, LSM, { moduleInstances: instances, ownIdleUnionDefaults: true });
     if (!target || target.size === 0) throw new ProductError("EMPTY_IMAGE", "built an empty parameter image; refusing to download");
+    refuseRawDataWrites(cfg, ctx.params, instances);
 
     const view = buildDeviceConfig(cfg, ctx.params, undefined, instances);
     // A link whose com-object this configuration does not activate cannot be programmed: the
@@ -2307,6 +2310,7 @@ export class System7Profile extends DeviceProfile {
     const orphans = ctx.links.filter((l) => !active.has(l.comObjNum));
     if (orphans.length) {
       throw new ProductError("LINK_COM_OBJECT_INACTIVE",
+    refuseRawDataWrites(cfg, ctx.params, instances);
         `${orphans.length} group-address link(s) target communication objects this configuration does not activate (e.g. #${orphans[0].comObjNum}); the device would ignore them, so refusing to report them as programmed`);
     }
     // The com-object table is authored on both LSM styles where the application names its segment:
@@ -2535,6 +2539,7 @@ export class System1Profile extends DeviceProfile {
   // after the security object's load completed; a unit without it is refused here), the friendly name (its
   // language is kept) and the other KNXnet/IP properties: the backup, the change count, the precondition ETS
   // reads and the settings the capture does not show. A change of the address settings (PID 55, 60-62, 53) is
+    refuseRawDataWrites(cfg, params, []);
   // refused: the capture writes the values the unit holds, and the link this download runs over may be the
   // unit's own tunnel, which such a change would move. Always written, never reported unchanged: the download
   // also writes state it does not read (the secured service families, the security object, 0x00CE-0x00DF).

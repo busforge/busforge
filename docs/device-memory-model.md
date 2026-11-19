@@ -350,13 +350,13 @@ rather than writing a wrong-sized value.
 ## Which parameter types reach the image at all
 
 Only `Value` (enum/restriction), `Number`, `Float`, `IPAddress`, `Text` and an RGB `Color` are
-encoded into the parameter image. Time-of-day, a colour in any other space and unrecognised bases
-write nothing and therefore own nothing. Where no capture shows how ETS encodes a colour (any space
+encoded into the parameter image. Time-of-day, a colour in any other space, raw data and unrecognised
+bases write nothing and therefore own nothing. Where no capture shows how ETS encodes a colour (any space
 but RGB, and every colour on an absolute segment, System 7), a parameter or structural flash refuses
 (`PARAM_COLOR_UNSUPPORTED`) when a colour in use differs from the configuration the device was last
 programmed with, or comes into use, and a full download refuses any colour in use: it knows no
 configuration the device holds, and would leave either the segment's `<Data>` or the unit's bytes
-where the colour lies. Five type details are easy to get wrong:
+where the colour lies. Seven type details are easy to get wrong:
 
 - **An RGB `TypeColor` is three bytes, red, green, blue** (System B). The type declares no
   `SizeInBit`; the value `#RRGGBB` goes into the three bytes at the parameter's offset in that order,
@@ -366,7 +366,7 @@ where the colour lies. Five type details are easy to get wrong:
   image changes. A colour that does not start at a byte, a value that is no `#RRGGBB`, and a colour in
   an application with little-endian parameters are refused.
 
-- **`TypeText` is its ASCII characters, then zero bytes to the end of the field** (System B and
+- **`TypeText` is its characters, then zero bytes to the end of the field** (System B and
   System 7). A value as long as its field fills it without a closing zero, and on System B the
   segment's `<Data>` does not enter: ETS writes the parameter's value over whatever `<Data>` holds there. ETS's images
   show it on three products: the Theben DALI-Gateway KNX plus holds its admin password "dali" in its
@@ -377,13 +377,37 @@ where the colour lies. Five type details are easy to get wrong:
   Meteodata 140 S (System 7) the partial download that switches a threshold channel on writes "20,0"
   into its 5-byte field as `32 30 2c 30 00` over a `<Data>` byte `32`, and "1,0" into its 4-byte field
   as `31 2c 30 00` over a `<Data>` byte `19`. A text value is text, never a number: "123" is
-  `31 32 33 00…`. What no capture shows is refused (`PARAM_TEXT_UNSUPPORTED`,
-  `PARAM_TEXT_TOO_LONG`): a character beyond ASCII, a value longer than its field, a value as long as
+  `31 32 33 00…`. A character beyond ASCII takes the bytes of the application's
+  `<Options TextParameterEncoding>`, which ETS's downloads of two synthetic System B products show
+  (bussard's, MIT): where the application declares none, ISO 8859-1, "Störung" as
+  `53 74 F6 72 75 6E 67 00…`; where it declares `utf-8`, UTF-8, "Süd" as `53 C3 BC 64`, the field's
+  size counted in bytes. The encoding is the application's, so System 7 takes the same bytes; no
+  System 7 capture shows a character beyond ASCII. What no capture shows is refused
+  (`PARAM_TEXT_UNSUPPORTED`, `PARAM_TEXT_TOO_LONG`): where the application declares no encoding a
+  character outside ISO 8859-1 or in its range `80`-`9F` (there it and Windows-1252 differ, and the
+  euro sign is one of them), a character beyond ASCII under any other declared encoding (an OpenKNX
+  application declares `iso-8859-15`), a zero character, a value longer than its field, a value as long as
   its field where the application declares `<Options TextParameterZeroTerminate="true">` and on any
   System 7 application (no System 7 capture shows a field filled), on System 7 a zero over a non-zero
   `<Data>` byte (the Meteodata's `<Data>` holds zeros behind the characters), a field that is not
   whole bytes from bit 0, and any text parameter of a System 1 application. A read-back leaves such a
   field out of its comparison instead of refusing the whole read.
+
+- **A device placed in Busforge, or given another product, starts its text parameters at their
+  `InitialValue`**, translated into the language the client works in, as ETS does for a device added to a project of that
+  language: ETS's download of a synthetic product (bussard's) added to a German project wrote the
+  de-DE `InitialValue` "Bussardhorst Süd", not the `Value` "Buzzard nest". A device imported from
+  ETS keeps the values ETS stored. An `InitialValue` in a form no capture shows (on a `ParameterRef`,
+  beside a `ParameterRef`'s own `Value`, on a parameter that is no text, in a module definition)
+  refuses the placement (`PARAM_INITIAL_VALUE_UNSUPPORTED`) where it differs from the default and its
+  parameter reaches the device: in memory, in a property, tested by a `<choose>`, or set by an
+  `<Assign>` into one that does. The Jung 400021SE translates such `InitialValue`s on memoryless
+  module texts its `<Assign>`s pass among themselves to name its pages; they keep their default.
+
+- **`TypeRawData` writes nothing.** No ETS download shows its layout, so the segment's `<Data>` or
+  the unit's bytes stay where it lies. A raw-data parameter in use away from its default (a full
+  download) or from the configuration the device was last programmed with (a parameter or structural
+  flash) refuses the operation (`PARAM_RAW_DATA_UNSUPPORTED`).
 
 - **`TypeTime` is a raw unsigned integer**, a count of its `Unit` (seconds, milliseconds),
   and ETS stores it exactly that way (hardware-confirmed: a 60-second duration is stored as

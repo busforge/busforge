@@ -1,8 +1,8 @@
 import { join } from "node:path";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { buildDeviceConfig, editComObjOverride, resolveParamRef, takesValue, type ComObjFlags, type ComObjOverrideEdit } from "@busforge/product";
+import { buildDeviceConfig, editComObjOverride, initialValues, resolveParamRef, takesValue, type ComObjFlags, type ComObjOverrideEdit } from "@busforge/product";
 import { addDevice, setDeviceAddress, renameDevice, projectExists, getGaMeta } from "../db/projects.ts";
-import { getAppProgram, getCatalogProduct } from "../db/catalog.ts";
+import { getCatalogProduct } from "../db/catalog.ts";
 import { getDeviceBaggage, projectHasBaggage } from "../db/baggage.ts";
 import { getDeviceParams, setDeviceParam, deleteDeviceParam, getDeviceModules, setDeviceLink, getDeviceForFlash, deviceHasApplication, getDeviceLinks, replaceDeviceProduct, revertDevice, revertDeviceParam, revertDeviceLink, getDeviceComObjOverrides, getDeviceComObjOverrideBase, setDeviceComObjOverride, revertDeviceComObjFlags } from "../db/deviceparams.ts";
 import { appProgramId } from "@busforge/project";
@@ -21,14 +21,25 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
   const id = seg[2];
 
   // /api/projects/:id/devices  (POST: place a catalog product as a new device)
+  // The device starts at the values ETS gives a device added to a project (initialValues), in the language the
+  // placing client works in, which stands in for ETS's project language.
   if (seg.length === 4 && seg[3] === "devices" && req.method === "POST") {
     if (!projectExists(db, id)) return err("PROJECT_NOT_FOUND", "project not found", 404);
-    const body = (await req.json().catch(() => ({}))) as { appRef?: string; productRef?: string; name?: unknown };
+    const body = (await req.json().catch(() => ({}))) as { appRef?: string; productRef?: string; name?: unknown; lang?: unknown };
     if (!body.appRef || !body.productRef) return err("DEVICE_FIELDS_REQUIRED", "appRef and productRef required");
     const product = getCatalogProduct(db, body.appRef, body.productRef);
     if (!product) return err("CATALOG_PRODUCT_NOT_FOUND", "product not in catalog", 404);
-    if (product.hasApplication && !getAppProgram(db, product.appProgramId)) return err("APP_PROGRAM_MISSING", "application program not in catalog", 404);
-    const device = addDevice(db, id, product, text(body.name));
+    let start = new Map<string, string>();
+    if (product.hasApplication) {
+      const app = loadCatalogApp(state, product.appProgramId);
+      if (!app) return err("APP_PROGRAM_MISSING", "application program not in catalog", 404);
+      start = initialValues(app, typeof body.lang === "string" ? body.lang : undefined);
+    }
+    const device = db.transaction(() => {
+      const placed = addDevice(db, id, product, text(body.name));
+      for (const [refId, value] of start) setDeviceParam(db, id, placed.id, refId, value);
+      return placed;
+    })();
     return json(device, 201);
   }
 
@@ -207,7 +218,12 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
       getDeviceLinks(db, id, deviceId),
       body.mapping as ReplaceMappingEntry[],
     );
-    replaceDeviceProduct(db, id, deviceId, product, newLinks);
+    // The device starts at the new application's values for a device added to a project (initialValues).
+    const start = initialValues(newApp, body.lang);
+    db.transaction(() => {
+      replaceDeviceProduct(db, id, deviceId, product, newLinks);
+      for (const [refId, value] of start) setDeviceParam(db, id, deviceId, refId, value);
+    })();
     return json(buildDeviceView(state, id, deviceId, body.lang));
   }
 

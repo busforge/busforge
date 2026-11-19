@@ -73,6 +73,7 @@ export const BUSSARD_SYNTHETIC_TESTED: readonly (readonly [product: string, appl
   ["syn-object-size-ref", "2729-10"], ["syn-param-calculation", "270B-10"], ["syn-product-07b0", "2725-10"], ["syn-property-param", "271E-10"],
   ["syn-union-bitfields", "271D-10"], ["syn-union-default-range", "2705-10"], ["syn-user-memory-extmem", "2796-10"], ["syn-writerelmem-tail", "272A-10"],
   ["syn-s7-0701", "2801-10"], ["syn-s7-no-comobjects", "281A-10"], ["syn-s7-pei80", "2810-10"],
+  ["syn-text-undeclared", "2706-10"], ["syn-text-initialvalue", "2718-10"],
 ].map(([p, a]) => [p, `M-00FA_A-${a}-0000`] as const);
 export const bussardCapture = (product: string, variant: string, file = "ets.pcapng") => `${BUSSARD_SYNTHETIC_DIR}/captures/${product}/${variant}/${file}`;
 export const bussardApplication = (product: string, application: string) => `${BUSSARD_SYNTHETIC_DIR}/products/${product}/xml/M-00FA/${application}.xml`;

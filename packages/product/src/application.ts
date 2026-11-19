@@ -17,9 +17,11 @@ export type ParamBase = "Value" | "BinaryValue" | "Number" | "Float" | "Text" | 
 // littleEndian: the application declares <Options ParameterByteOrder="LittleEndian">; a multi-byte
 // value is then stored least significant byte first.
 // zeroTerminate: a Text type of an application that declares <Options TextParameterZeroTerminate="true">.
+// textEncoding: for a Text type, the application's <Options TextParameterEncoding>, lower-cased; absent where
+// it declares none.
 // binaryValues: for a BinaryValue type, each enumeration value's bytes (absent where an enumeration
 // declares none).
-export interface ParamType { id: string; base: ParamBase; sizeInBit: number; signed: boolean; littleEndian?: boolean; zeroTerminate?: boolean; binaryValues?: Map<number, Buffer>; }
+export interface ParamType { id: string; base: ParamBase; sizeInBit: number; signed: boolean; littleEndian?: boolean; zeroTerminate?: boolean; textEncoding?: string; binaryValues?: Map<number, Buffer>; }
 export interface Param { id: string; typeId: string; value?: string; codeSegment?: string; offset?: number; bitOffset: number; }
 export interface ParamRef { id: string; paramId: string; value?: string; }
 export interface Segment { id: string; lsm: number; size: number; data: Buffer; }
@@ -77,6 +79,7 @@ function paramType(app: AppConfig, t: CfgType): ParamType {
     // A TypeColor declares no SizeInBit; an RGB colour is three bytes.
     id: t.id, base, sizeInBit: base === "Color" ? 24 : t.sizeInBit, signed: t.signed, ...(app.parameterByteOrder === "LittleEndian" ? { littleEndian: true } : {}),
     ...(base === "Text" && app.textParameterZeroTerminate ? { zeroTerminate: true } : {}),
+    ...(base === "Text" && app.textParameterEncoding !== undefined ? { textEncoding: app.textParameterEncoding.toLowerCase() } : {}),
     ...(base === "BinaryValue" ? { binaryValues: new Map(t.enums.flatMap((e) => (e.binary ? [[e.value, e.binary] as [number, Buffer]] : []))) } : {}),
   };
 }

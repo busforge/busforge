@@ -143,7 +143,7 @@ export const IMAGE_WRITABLE_BASES: ReadonlySet<string> = new Set(["Value", "Bina
 export const imageWritableType = (t: { base: string; colorSpace?: string }): boolean =>
   IMAGE_WRITABLE_BASES.has(t.base) || (t.base === "Color" && t.colorSpace === "RGB");
 
-// A text parameter's field: the value's ASCII characters, then zero bytes to the end of the field; a
+// A text parameter's field: the value's characters, then zero bytes to the end of the field; a
 // value as long as the field fills it without a closing zero. The segment's <Data> does not enter: ETS
 // writes the parameter's value over it. Shown by ETS's images (private corpus captures/):
 //  - Theben DALI-Gateway KNX plus, full download: "dali" in an 8-byte field no <Data> covers as
@@ -154,13 +154,44 @@ export const imageWritableType = (t: { base: string; colorSpace?: string }): boo
 //    "MDT IP Interface mit IPRouting" fills its 30-byte field. Its parameter downloads write
 //    the name's 4 changed characters and 22 zeros (mdt-router-ets6log-partial-name.txt) and the 30 characters without a zero
 //    (mdt-router-ets6log-partial-name-revert.txt) into that field.
-// No capture shows a character beyond ASCII, a field that is not whole bytes from bit 0, or a
-// field-length value in an application declaring TextParameterZeroTerminate: those are refused.
+// A character beyond ASCII takes the bytes of the application's <Options TextParameterEncoding>. Shown by
+// ETS 6.4.1's downloads of bussard's synthetic products (private corpus captures/external/bussard-synthetic/,
+// System B, parameter segment +3):
+//  - syn-text-undeclared, no encoding declared: "Störung" as 53 74 F6 72 75 6E 67 and zeros to the 14-byte
+//    field, so ISO 8859-1. It and Windows-1252 differ only in 80-9F, which no capture shows: a character
+//    there or above FF is refused.
+//  - syn-text-initialvalue, "utf-8": "Bussardhorst Süd" as 42 75 … 53 C3 BC 64 and zeros to the 20-byte field.
+// No capture shows another declared encoding (an OpenKNX application declares "iso-8859-15") with a
+// character beyond ASCII, a zero character, a field that is not whole bytes from bit 0, or a field-length
+// value in an application declaring TextParameterZeroTerminate: those are refused.
+function textChars(type: ParamType, where: string, valStr: string): Buffer {
+  const refuse = (why: string): never => { throw new ProductError("PARAM_TEXT_UNSUPPORTED", `a ${where}: "${valStr}" ${why}`); };
+  if (valStr.includes("\0")) refuse("holds a zero character, whose bytes no ETS image shows");
+  const codes = Array.from(valStr, (c) => c.codePointAt(0)!);
+  if (codes.every((c) => c <= 0x7f)) return Buffer.from(valStr, "latin1");
+  if (type.textEncoding === undefined) {
+    if (!codes.every((c) => c <= 0x7f || (c >= 0xa0 && c <= 0xff))) refuse("holds a character outside ISO 8859-1 or in its range 80-9F, where it and Windows-1252 differ; no ETS image shows which an application declaring no encoding gets");
+    return Buffer.from(valStr, "latin1");
+  }
+  if (type.textEncoding === "utf-8") {
+    if (!valStr.isWellFormed()) refuse("holds a lone surrogate, which UTF-8 cannot encode");
+    return Buffer.from(valStr, "utf8");
+  }
+  return refuse(`holds a character beyond ASCII, and no ETS image shows the bytes of the application's text encoding "${type.textEncoding}"`);
+}
+
+// The inverse of textChars: undefined where encode would not write these bytes.
+function textOfChars(type: ParamType, chars: Buffer): string | undefined {
+  if (chars.every((b) => b <= 0x7f)) return chars.toString("latin1");
+  if (type.textEncoding === undefined) return chars.some((b) => b >= 0x80 && b < 0xa0) ? undefined : chars.toString("latin1");
+  if (type.textEncoding !== "utf-8") return undefined;
+  try { return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(chars); } catch { return undefined; }
+}
+
 export function textBytes(type: ParamType, offset: number, bit: number, valStr: string): Buffer {
   const where = `text parameter type ${type.id} at offset ${offset}`;
   if (bit !== 0 || type.sizeInBit % 8 !== 0) throw new ProductError("PARAM_TEXT_UNSUPPORTED", `a ${where}: a ${type.sizeInBit}-bit field at bit ${bit} has no known byte layout`);
-  if (Array.from({ length: valStr.length }, (_, i) => valStr.charCodeAt(i)).some((c) => c === 0 || c > 0x7f)) throw new ProductError("PARAM_TEXT_UNSUPPORTED", `a ${where}: "${valStr}" holds a character beyond ASCII or a zero character, whose bytes no ETS image shows`);
-  const chars = Buffer.from(valStr, "latin1");
+  const chars = textChars(type, where, valStr);
   const size = type.sizeInBit / 8;
   if (chars.length > size) throw new ProductError("PARAM_TEXT_TOO_LONG", `a ${where}: "${valStr}" takes ${chars.length} bytes, the field holds ${size}`);
   if (chars.length === size && type.zeroTerminate) throw new ProductError("PARAM_TEXT_TOO_LONG", `a ${where}: "${valStr}" fills the ${size}-byte field of an application that stores its texts with a closing zero; it holds at most ${size - 1} characters`);
@@ -299,8 +330,8 @@ function decode(img: Buffer, offset: number, bit: number, type: ParamType): stri
   }
   if (type.base === "Text") {
     // The characters before the first zero byte, every byte after it zero, or a field of characters
-    // without a zero where the application does not terminate its texts; any other field (a byte
-    // beyond ASCII, bytes behind the zero) decodes to nothing, as encode would not write it.
+    // without a zero where the application does not terminate its texts; any other field (bytes its
+    // text encoding does not take, bytes behind the zero) decodes to nothing, as encode would not write it.
     const size = type.sizeInBit / 8;
     if (bit !== 0 || !Number.isInteger(size) || offset + size > img.length) return undefined;
     const field = img.subarray(offset, offset + size);
@@ -308,8 +339,7 @@ function decode(img: Buffer, offset: number, bit: number, type: ParamType): stri
     if (zero < 0 && type.zeroTerminate) return undefined;
     const end = zero < 0 ? size : zero;
     if (field.subarray(end).some((b) => b !== 0)) return undefined;
-    const chars = field.subarray(0, end);
-    return chars.some((b) => b > 0x7f) ? undefined : chars.toString("latin1");
+    return textOfChars(type, field.subarray(0, end));
   }
   if (type.base === "BinaryValue") {
     if (type.littleEndian || bit !== 0) return undefined; // mirror encode's refusal

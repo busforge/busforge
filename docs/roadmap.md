@@ -44,12 +44,26 @@ depends on is hardware-proven.
 - **The System B partial form of the full download under the stamp record.** It writes the owned bytes
   that differ from the unit's read, without a stamp check; every ETS capture of the partial form ran with
   matching stamps, so what ETS writes there without a record is not shown. The unit ends the same.
-- **Text parameters beyond what ETS's images show.** Characters beyond ASCII, a value that fills its
-  field where the application declares `TextParameterZeroTerminate` (the GVS AMMA), and text on
+- **Text parameters beyond what ETS's images show.** Characters beyond ASCII that ETS's captures do not
+  show (outside ISO 8859-1 or in its range `80`-`9F` where the application declares no encoding, any
+  under a declared encoding other than `utf-8`; next capture: a download of an application declaring
+  `iso-8859-15` with such a text), a value that fills its field where the application declares
+  `TextParameterZeroTerminate` (the GVS AMMA), and text on
   System 7 applications beyond what ETS's captures show (the Steinel M-008E; on the Meteodata 140 S a
   value that fills its field or meets a non-zero `<Data>` byte) are refused until a capture shows them. The editor does not check a text against its field when it is saved: the
   refusal comes at the flash
   ([device-memory-model.md](device-memory-model.md#which-parameter-types-reach-the-image-at-all)).
+- **Raw-data parameters (`TypeRawData`).** No ETS download shows the layout of one, so the image writes
+  none and an operation that would have to write one away from its default or from what the device
+  holds is refused (`PARAM_RAW_DATA_UNSUPPORTED`); next capture: an ETS download of an application with a
+  raw-data parameter changed in the editor
+  ([device-memory-model.md](device-memory-model.md#which-parameter-types-reach-the-image-at-all)).
+- **`InitialValue` forms ETS's captures do not show.** A device placed in Busforge, or given another
+  product, starts a text parameter at its `Parameter`'s translated `InitialValue`; one on a
+  `ParameterRef`, beside a ref's own `Value`, on another type or in a module definition refuses the
+  placement where it reaches the device (`PARAM_INITIAL_VALUE_UNSUPPORTED`); next capture: ETS adding
+  such a product to a project and downloading it. Busforge has no project language: the client's
+  language stands in for it.
 - **Colour parameters beyond RGB on System B.** An RGB colour on a relative segment is written as
   ETS writes it; an HSV colour (the DALI-Gateway's and the MDT BE-06001.02's), any other space, and a
   colour on a System 7 device are refused (`PARAM_COLOR_UNSUPPORTED`) until an ETS download of one in

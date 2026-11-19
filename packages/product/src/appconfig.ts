@@ -40,6 +40,9 @@ export interface CfgType {
 // byte-identical to the legacy image parser).
 export interface CfgParam {
   id: string; typeId: string; text: string; name?: string; suffix?: string; value?: string; access?: string; hasMemory: boolean;
+  // The parameter's InitialValue: the value ETS gives it when the device is added to a project, translated
+  // into the project's language (initialValues in deviceimage.ts). Absent where the parameter declares none.
+  initialValue?: string;
   // Located in an interface object property (<Property>) instead of memory: also held by the device.
   onProperty?: true;
   offset?: number; bitOffset?: number; codeSegment?: string; union?: boolean; moduleDefId?: string;
@@ -200,6 +203,9 @@ export interface AppConfig {
   // <Options TextParameterZeroTerminate="true">: a text parameter's value is stored with a closing zero,
   // so it can take at most one character less than its field.
   textParameterZeroTerminate: boolean;
+  // <Options TextParameterEncoding>: the character encoding of a text parameter's bytes, as declared
+  // ("utf-8", "iso-8859-15", ...); undefined where the application declares none.
+  textParameterEncoding?: string;
   defaultLanguage: string;
   languages: string[];
   types: Map<string, CfgType>;
@@ -393,6 +399,7 @@ export function parseAppConfig(xml: string): AppConfig {
       : /^\d+$/.test(appAttrs.AdditionalAddressesCount) ? Number(appAttrs.AdditionalAddressesCount) : NaN,
     parameterByteOrder,
     textParameterZeroTerminate: optionsNode ? attrsOf(optionsNode).TextParameterZeroTerminate === "true" : false,
+    ...(optionsNode && attrsOf(optionsNode).TextParameterEncoding !== undefined ? { textParameterEncoding: attrsOf(optionsNode).TextParameterEncoding } : {}),
     ...(optionsNode && attrsOf(optionsNode).DownloadInvisibleParameters !== undefined ? { downloadInvisibleParameters: attrsOf(optionsNode).DownloadInvisibleParameters } : {}),
     defaultLanguage: appAttrs.DefaultLanguage ?? "en-US",
     languages,
@@ -519,6 +526,7 @@ function parseParams(staticKids: ONode[], unionScope: string): { params: Map<str
     params.set(a.Id, {
       ...(firstByTag(kidsOf(pa), "Property") ? { onProperty: true as const } : {}),
       id: a.Id, typeId: a.ParameterType, text: a.Text ?? "", ...(a.Name ? { name: a.Name } : {}), suffix: a.SuffixText, value: a.Value, access: a.Access,
+      ...(a.InitialValue !== undefined ? { initialValue: a.InitialValue } : {}),
       hasMemory: unionMem ? unionMem.CodeSegment !== undefined : !!mem,
       offset: unionMem ? Number(unionMem.Offset) + Number(a.Offset ?? 0) : ma ? Number(ma.Offset) : undefined,
       bitOffset: unionMem ? Number(unionMem.BitOffset ?? 0) + Number(a.BitOffset ?? 0) : ma ? Number(ma.BitOffset ?? 0) : undefined,
