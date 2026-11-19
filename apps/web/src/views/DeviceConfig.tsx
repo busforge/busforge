@@ -982,18 +982,18 @@ export function DeviceConfig() {
       </AlertDialog>
 
       {view?.dca && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-sky-500/40 bg-sky-500/10 px-3 py-1.5 text-sm text-sky-700 dark:text-sky-300" data-testid="dca-notice">
+        <Notice tone="info" className="flex flex-wrap items-center gap-x-3 gap-y-1 py-1.5" data-testid="dca-notice">
           <Puzzle className="size-4 shrink-0" />
           <span className="font-medium">{view.dca.module ? view.dca.module.category : t("device.dcaTitle")}</span>
           {view.dca.module && (
-            <span className="text-xs text-sky-700/70 dark:text-sky-300/70">
+            <span className="text-xs text-info/70">
               {view.dca.module.displayName} · {t("dca.version", { version: view.dca.module.deviceVersion })}
             </span>
           )}
           {view.dca.module && (
             <span className="ml-auto"><DcaModuleDialog projectId={projectId} deviceId={deviceId} module={view.dca.module} /></span>
           )}
-        </div>
+        </Notice>
       )}
 
       {!!read?.unplaced.length && assumable.length > 0 && (
