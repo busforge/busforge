@@ -537,16 +537,36 @@ integer parameters whose width is a whole number of bytes. A float, or a little-
 does not start on a byte boundary, is refused: no capture shows how ETS places one, and reversing
 it by guess would write a plausible wrong value.
 
-## 11. A choose on a union member nothing places takes its default branch
+## 11. A choose on a ParameterRef nothing places takes no default branch
+
+A `<choose>` whose ParameterRef no active branch places (no reached `ParameterRefRef` names it, and no
+reached `ParameterBlock` names it as its `ParamRefId`) still evaluates its tests, but its
+`<when default="true">` is not taken. ETS's full downloads of two synthetic products show it (bussard's
+syn-choose-never-shown and syn-choose-per-ref, [third-party test data](testing.md#third-party-test-data)):
+a com-object in the only, default branch of a choose on a parameter no block shows, or on the second
+ParameterRef of a shown parameter that only an untaken branch places, gets no entry in the com-object
+table (`00 00`). With that second ref placed (its parameter set so that the branch placing it is taken),
+ETS writes the object's entry.
+
+The tests still count. The Jung 400021SE's choose on its unplaced `R-1` (§9) and the OpenKNX
+RaumController's chooses on internal values no branch places take the branches their tests match, as
+ETS's downloads of both show. A page parameter (`TypeNone`, no value) that a choose tests heads a
+reached block on every product the captures show (Gira Tastsensor 3, Theben Meteodata 140 S, ABB
+US/U 4.2), and ETS takes those chooses' default branches.
 
 Unions overlay several parameters on the same bytes; only the member an active branch places is
 meaningful. On the GVS AMMA a choose tests a union member that no active branch places. Evaluated
 with that member's default, it takes a branch that activates three com-objects (5, 6, 8); ETS
 leaves them out (partial-download capture). So a choose on a union member that is not placed and
-has no stored value takes only its default branch. A stored value on such a member still counts;
-the capture shows only the case without one, so that half is an assumption. The rule is narrow on
-purpose: a broader variant (every unplaced ref) changes the image of another bundled application at
-its defaults, with no capture to justify it.
+has no stored value matches none of its tests, and, its ref unplaced, takes no default branch
+either. A stored value on such a member still counts; the capture shows only the case without one,
+so that half is an assumption.
+
+No ETS download shows a choose on an `Access="None"` ParameterRef no branch places, an internal value
+that applications assign and test but never place (OpenKNX), whose default branch decides something.
+Busforge builds such a configuration both ways; where the two readings make different bytes, it is
+refused (`CHOOSE_INTERNAL_DEFAULT_UNSETTLED`), and an ETS download of the application in that
+configuration settles it. Where they make the same bytes, the view shows the default branch taken.
 
 ## 12. A parameter owns bits, not the byte it shares
 

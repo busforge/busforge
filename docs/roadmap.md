@@ -190,14 +190,13 @@ depends on is hardware-proven.
   at import and reach the write path, as the PEI program does, so that a product whose factory image
   holds the com-object table is refused the same writes. An ETS capture of a download of either kind
   settles what the table holds; no product in the test corpus is of either kind.
-- **A `<choose>` on a ParameterRef no active branch places.** ETS's downloads of two of bussard's
-  synthetic products ([third-party test data](testing.md#third-party-test-data)) take no branch of such
-  a choose, not even its `default` one: the com-object in it gets no entry. Busforge takes the default
-  branch and writes the object's entry. One choose is on a parameter no block shows, the other on a
-  second ParameterRef of a shown parameter that only an untaken branch places. The rule has to agree
-  with the shown cases that read such a ref (the Merker rule and the Jung 400021SE in
-  [findings.md](findings.md)); until it is settled and pinned against these captures, real products
-  with such a choose are written with the default branch taken.
+- **The default branch of a `<choose>` on an `Access="None"` ParameterRef nothing places.** ETS takes no
+  default branch of a choose on a ParameterRef nothing places, as its downloads of shown parameters'
+  refs show ([findings.md](findings.md#11-a-choose-on-a-parameterref-nothing-places-takes-no-default-branch));
+  none shows an internal (`Access="None"`) ref, which OpenKNX applications assign and test but never place.
+  A configuration whose bytes depend on it is refused (`CHOOSE_INTERNAL_DEFAULT_UNSETTLED`). An ETS
+  download of such a configuration settles it. In every configuration the corpus checks build, the two
+  readings make the same bytes; on the OpenKNX RaumController the branch sets internal values without memory.
 - **Prove a non-TP device.** One read-back on real powerline, RF or IP hardware promotes that row
   from extrapolation to proof. Hardware verification help is welcome.
 - **OpenKNX surgical flashes under an automated run.** The device-in-service spec

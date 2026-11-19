@@ -646,9 +646,8 @@ report a device family as working on the strength of a passing test suite.
   ETS's partial form it is refused (`FULL_DOWNLOAD_STEP_UNSUPPORTED`).
 - **A System B com-object numbered 0 has run on no device.** Busforge writes the table ETS writes for
   one (no entry, its place is the count; its group addresses linked to object 0), offline against ETS's
-  downloads of bussard's synthetic products into a device simulator: the whole table on all but two of
-  them, and the count and object 1 on the two whose object 2 hangs on a choose Busforge does not decide
-  as ETS ([roadmap.md](roadmap.md#device-coverage)); the group tables on one with links
+  downloads of bussard's synthetic products into a device simulator: the whole table on each of
+  them; the group tables on one with links
   ([device-memory-model.md](device-memory-model.md#system-b-layout)). No manufacturer's application in
   the corpus numbers a System B object 0 outside a module. A project override of object 0's flags and a
   secured group address on it are refused.

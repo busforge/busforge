@@ -84,6 +84,11 @@ nor written to the image. This is the mechanism ETS uses and it mirrors what the
 does at runtime, where the controlling value routes execution down one path and the code for
 the other path is never entered.
 
+The `default` branch belongs to a controlling ParameterRef that is itself placed (a reached
+`ParameterRefRef`, or the `ParamRefId` heading a reached block): a choose on a ref nothing places
+takes only the branches its tests match, never its default
+([findings.md](findings.md#11-a-choose-on-a-parameterref-nothing-places-takes-no-default-branch)).
+
 `buildDeviceConfig` (`packages/product/src/config.ts`) walks the Dynamic tree with the
 current values and collects `imageValues`: the effective value of every parameter reached in
 the active branches. That includes `Access="None"` internal parameters, which ETS hides from

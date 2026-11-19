@@ -1,6 +1,6 @@
 import { resolveParamRef, sameParamValue, type AppConfig, type CfgParamRef, type DynNode, type ModuleInstance } from "./appconfig.ts";
 import { toAppModel, type Param, type ParamType } from "./application.ts";
-import { buildDeviceConfig, decodeTextEntities } from "./config.ts";
+import { buildDeviceConfig, decodeTextEntities, unsettledDefaultRefusal } from "./config.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { byteWidth, MAX_INT_BYTES, encode, textLength } from "./image.ts";
 import { ProductError } from "./errors.ts";
@@ -253,7 +253,7 @@ export const absoluteBuildInstances = (app: AppConfig, values: Map<string, strin
 export function buildAbsoluteSegmentTargets(
   app: AppConfig,
   values: Map<string, string>,
-  opts: { lang?: string; moduleInstances?: ModuleInstance[]; textRefusals?: TextRefusals } = {},
+  opts: { lang?: string; moduleInstances?: ModuleInstance[]; textRefusals?: TextRefusals; otherReading?: true } = {},
 ): DeviceSegmentTarget[] {
   // Module instances: the imported project's set when given, else re-run the allocators
   // for a from-scratch device so its channel parameters are placed at the same offsets
@@ -267,7 +267,8 @@ export function buildAbsoluteSegmentTargets(
   // ParameterRef id. This includes Access="None" internal parameters that ETS writes
   // to memory but hides from the UI, so it is the right source for the image (the
   // visible blocks alone would miss them).
-  const view = buildDeviceConfig(app, calculated, opts.lang, instances);
+  const taken = buildDeviceConfig(app, calculated, opts.lang, instances);
+  const view = opts.otherReading ? taken.otherReading! : taken;
   const active = view.imageValues;
   const treeOrder = treeOrderOf(app, active);
   // The parameters an active ref places: another ref of theirs is not a hidden parameter.
@@ -415,7 +416,12 @@ export function buildAbsoluteSegmentTargets(
     if (contested) for (const [i, c] of contested.entries()) { owned[i] &= ~c; verify[i] &= ~c; constant[i] &= ~c; }
     out.push({ id: segId, address: seg.address, size: seg.size, bytes: img, owned, verify, constant, constants: placements, hidden: hidden.map((h, i) => h & ~placed[i] & 0xff), dataBits });
   }
-  return out.sort((a, b) => a.address - b.address);
+  out.sort((a, b) => a.address - b.address);
+  if (taken.otherReading && !opts.otherReading) {
+    const other = buildAbsoluteSegmentTargets(app, values, { ...opts, otherReading: true });
+    if (other.length !== out.length || out.some((t, i) => t.address !== other[i].address || !t.bytes.equals(other[i].bytes) || t.owned.some((m, j) => m !== other[i].owned[j]))) throw unsettledDefaultRefusal(taken);
+  }
+  return out;
 }
 
 // The RelativeSegment (System B) parameter image as a SURGICAL target: the bytes plus
@@ -540,7 +546,7 @@ export function buildRelativeSegmentTarget(
   // ownIdleUnionDefaults: own the DefaultUnionParameter member of every union with no active member,
   // as ETS writes it in both its full and its parameter download (GVS AMMA captures).
   // The read-back model leaves it unset: it compares what the configuration derives.
-  opts: { lang?: string; moduleInstances?: ModuleInstance[]; ownIdleUnionDefaults?: boolean; textRefusals?: TextRefusals } = {},
+  opts: { lang?: string; moduleInstances?: ModuleInstance[]; ownIdleUnionDefaults?: boolean; textRefusals?: TextRefusals; otherReading?: true } = {},
 ): RelativeSegmentTarget | null {
   const instances = opts.moduleInstances?.length ? opts.moduleInstances : (app.hasModules ? resolveModuleInstances(app, values) : []);
   const model = toAppModel(app, { includeUnions: true, instances });
@@ -549,7 +555,8 @@ export function buildRelativeSegmentTarget(
   // The results of the <ParameterCalculation>s Busforge runs, stored on their parameters as ETS stores them.
   const calc = applyCalculations(app, values, instances);
   const calculated = calc.values;
-  const built = buildDeviceConfig(app, calculated, opts.lang, instances);
+  const taken = buildDeviceConfig(app, calculated, opts.lang, instances);
+  const built = opts.otherReading ? taken.otherReading! : taken;
   const active = built.imageValues;
   // The parameters an active ref places: another ref of theirs is not a hidden parameter.
   const shown = new Set([...active.keys()].map((r) => model.refs.get(r)?.paramId));
@@ -674,6 +681,10 @@ export function buildRelativeSegmentTarget(
     if (!written || !written.equals(img)) throw hiddenRefusal(u.refId, `offset ${u.param.offset} of the parameter segment (LSM ${lsm})`, u.reason);
   }
   if (contested) for (const [i, c] of contested.entries()) { owned[i] &= ~c; verify[i] &= ~c; markers[i] &= ~c; constant[i] &= ~c; }
+  if (taken.otherReading && !opts.otherReading) {
+    const other = buildRelativeSegmentTarget(app, values, lsm, { ...opts, otherReading: true })!;
+    if (!other.bytes.equals(img) || other.owned.some((m, i) => m !== owned[i])) throw unsettledDefaultRefusal(taken);
+  }
   return { lsm, size: seg.size, bytes: img, owned, verify, markers, constant, constants: placements, defaulted };
 }
 
