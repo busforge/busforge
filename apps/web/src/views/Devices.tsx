@@ -147,7 +147,7 @@ export function DevicesView() {
   const search = useSearch({ from: "/projects/$projectId/devices" });
   const q = search.q ?? "";
   const onlyChanged = search.changed ?? false;
-  const setQ = (val: string) => { void navigate({ search: (p) => ({ ...p, q: val || undefined }), replace: true }); };
+  const setQ = (val: string) => { void navigate({ search: (p) => ({ ...p, q: val || undefined }), replace: true, resetScroll: false }); };
   const toggleChanged = () => { void navigate({ search: (p) => ({ ...p, changed: p.changed ? undefined : true }), replace: true }); };
   const resetFilters = () => { void navigate({ search: withoutFilters, replace: true }); };
   const setBuilding = (id: string) => { void navigate({ search: (p) => ({ ...p, b: id || undefined }), replace: true }); };

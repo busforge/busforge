@@ -183,7 +183,7 @@ export function DeviceConfig() {
   // The page's own navigations (the filter, opening a list of linked objects) keep the com-object the
   // URL names; any other (a link, back, reload) names it anew.
   const ownNavigation = useRef(false);
-  const setQ = (val: string) => { ownNavigation.current = true; void navigate({ search: (p) => ({ ...p, q: val || undefined }), replace: true }); };
+  const setQ = (val: string) => { ownNavigation.current = true; void navigate({ search: (p) => ({ ...p, q: val || undefined }), replace: true, resetScroll: false }); };
   const qc = useQueryClient();
   const { data: project } = useProject(projectId);
   const device = project?.devices.find((d) => d.id === deviceId);
