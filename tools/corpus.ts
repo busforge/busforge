@@ -23,6 +23,12 @@ export const IN_SERVICE_COLLECTIONS = [
 ] as const;
 export const inServiceCollection = (specId: string) => `collections/in-service/${specId}.json`;
 
+// The bench's ETS project as ETS last exported it (password: the bench ETS project's). It holds the tool keys
+// of the two Data Secure bench units, the Jung 400021SE and the GVS AMMA, which the secure smoke specs import.
+// An ETS export taken before ETS last wrote a unit's tool key no longer opens that unit, so a new bench session
+// that does so replaces this path.
+export const BENCH_ETS_PROJECT = "internal/captures/progmode-end-2026-11-19/bench-x390-2026-11-19-end.knxproj";
+
 // The product databases of the manufacturer demo (tools/demo-project.ts): manufacturer data only
 // (hardware, application programs, their images), nothing of a project.
 export const DEMO_PRODUCT_FILES = ["demo/bench-products.knxprod", "demo/house-products.knxprod"] as const;

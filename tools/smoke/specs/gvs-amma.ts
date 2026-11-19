@@ -1,4 +1,5 @@
 import type { DeviceSpec } from "../spec.ts";
+import { BENCH_ETS_PROJECT } from "../../corpus.ts";
 
 // GVS AMMA 4-fold multifunction actuator (M-0085, MV-07B0, System B). A switch actuator with a
 // READABLE status object, so it is the spec that proves the device functionally ACTS: write the
@@ -18,7 +19,7 @@ export const gvsAmma: DeviceSpec = {
     productRef: "M-0085_H-AM22AA-16_P-AMMA.2D04.2F06.2ES",
     ia: "1.1.203",
     mask: "MV-07B0",
-    knxprod: "scratchpad/bench-jung-ets.knxproj",
+    knxprod: BENCH_ETS_PROJECT,
   },
   provision: "import-knxproj",
   // Baseline: Output 1&2 function = Switch, and enable Output 2. This reveals the switch + status

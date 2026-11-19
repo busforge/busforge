@@ -145,7 +145,7 @@ export interface DeviceSpec {
     productRef: string;  // ditto
     ia: string;          // target individual address on the bench bus
     mask: string;        // expected mask, asserted against FlashResult.mask
-    knxprod?: string;    // provision "import-knxproj": the ETS project file (repo-relative); otherwise an optional import path
+    knxprod?: string;    // provision "import-knxproj": the ETS project file, corpus-relative (tools/corpus.ts corpusPath)
   };
   // "skip-if-present": if the device already answers on its IA, skip assign-ia (unattended).
   // "require-prog-mode": the operator presses the programming button (semi-attended).
