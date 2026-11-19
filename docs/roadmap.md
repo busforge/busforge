@@ -193,8 +193,9 @@ depends on is hardware-proven.
 - **The default branch of a `<choose>` on an `Access="None"` ParameterRef nothing places.** ETS takes no
   default branch of a choose on a ParameterRef nothing places, as its downloads of shown parameters'
   refs show ([findings.md](findings.md#11-a-choose-on-a-parameterref-nothing-places-takes-no-default-branch));
-  none shows an internal (`Access="None"`) ref, which OpenKNX applications assign and test but never place.
-  A configuration whose bytes depend on it is refused (`CHOOSE_INTERNAL_DEFAULT_UNSETTLED`). An ETS
+  none shows an internal (`Access="None"`) ref, which OpenKNX applications assign and test but never place,
+  nor a parameter other than a page parameter that only heads a reached block.
+  A configuration whose bytes depend on it is refused (`CHOOSE_DEFAULT_UNSETTLED`). An ETS
   download of such a configuration settles it. In every configuration the corpus checks build, the two
   readings make the same bytes; on the OpenKNX RaumController the branch sets internal values without memory.
 - **Prove a non-TP device.** One read-back on real powerline, RF or IP hardware promotes that row

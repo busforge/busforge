@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseAppConfig } from "../src/appconfig.ts";
 import { buildDeviceConfig, matchTest, resolveLanguage, type CfgParamView, type CfgItem } from "../src/config.ts";
-import { buildRelativeSegmentTarget } from "../src/deviceimage.ts";
+import { buildAbsoluteSegmentTargets, buildRelativeSegmentTarget } from "../src/deviceimage.ts";
 
 const xml = readFileSync(join(import.meta.dir, "fixtures", "sample-app.xml"), "utf8");
 const app = parseAppConfig(xml);
@@ -698,8 +698,8 @@ test("a placement that never settles is refused, not picked", () => {
 // ref heading a reached block counts as placed (the Gira, Theben and ABB page parameters). For an Access="None"
 // ref no ETS download shows it: both readings are built, and a configuration they image differently is refused.
 describe("a choose on a ParameterRef nothing places", () => {
-  const xml = (opts: { access?: string; head?: boolean; place?: boolean; branch?: string } = {}) => `<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-TEST">
-    <ApplicationPrograms><ApplicationProgram Id="M-TEST_A-44" ApplicationNumber="44" ApplicationVersion="1" MaskVersion="MV-07B0" Name="Unplaced" DefaultLanguage="en-US">
+  const xml = (opts: { access?: string; head?: "page" | "gate"; place?: boolean; branch?: string; absolute?: boolean } = {}) => `<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-TEST">
+    <ApplicationPrograms><ApplicationProgram Id="M-TEST_A-44" ApplicationNumber="44" ApplicationVersion="1" MaskVersion="${opts.absolute ? "MV-0705" : "MV-07B0"}" Name="Unplaced" DefaultLanguage="en-US">
     <Static><ParameterTypes>
       <ParameterType Id="M-TEST_A-44_PT-N"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="9" /></ParameterType>
       <ParameterType Id="M-TEST_A-44_PT-Page"><TypeNone /></ParameterType>
@@ -712,15 +712,15 @@ describe("a choose on a ParameterRef nothing places", () => {
       <ParameterRef Id="M-TEST_A-44_P-Page_R-1" RefId="M-TEST_A-44_P-Page" />
       <ParameterRef Id="M-TEST_A-44_P-V_R-1" RefId="M-TEST_A-44_P-V" />
     </ParameterRefs>
-    <Code><RelativeSegment Id="M-TEST_A-44_RS-4" LoadStateMachine="4" Size="1"><Data>AA==</Data></RelativeSegment></Code>
+    <Code>${opts.absolute ? '<AbsoluteSegment Id="M-TEST_A-44_RS-4" Address="256" Size="1"><Data>AA==</Data></AbsoluteSegment>' : '<RelativeSegment Id="M-TEST_A-44_RS-4" LoadStateMachine="4" Size="1"><Data>AA==</Data></RelativeSegment>'}</Code>
     <ComObjectTable>
       <ComObject Id="M-TEST_A-44_O-1" Name="O1" Number="1" Text="Object 1" FunctionText="" ObjectSize="1 Bit" DatapointType="DPST-1-1" ReadFlag="Enabled" WriteFlag="Enabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled" />
     </ComObjectTable><ComObjectRefs><ComObjectRef Id="M-TEST_A-44_O-1_R-1" RefId="M-TEST_A-44_O-1" /></ComObjectRefs>
     </Static><Dynamic><ChannelIndependentBlock>
-      <ParameterBlock Id="M-TEST_A-44_PB-1" Name="m" Text="Main"${opts.head ? ' ParamRefId="M-TEST_A-44_P-Page_R-1"' : ""}>
+      <ParameterBlock Id="M-TEST_A-44_PB-1" Name="m" Text="Main"${opts.head ? ` ParamRefId="${opts.head === "page" ? "M-TEST_A-44_P-Page_R-1" : "M-TEST_A-44_P-G_R-1"}"` : ""}>
         <ParameterRefRef RefId="M-TEST_A-44_P-V_R-1" />
         ${opts.place ? '<ParameterRefRef RefId="M-TEST_A-44_P-G_R-1" />' : ""}
-        <choose ParamRefId="${opts.head ? "M-TEST_A-44_P-Page_R-1" : "M-TEST_A-44_P-G_R-1"}">
+        <choose ParamRefId="${opts.head === "page" ? "M-TEST_A-44_P-Page_R-1" : "M-TEST_A-44_P-G_R-1"}">
           <when test="7"><ParameterSeparator Id="M-TEST_A-44_PS-1" Text="seven" /></when>
           <when default="true">${opts.branch ?? '<ComObjectRefRef RefId="M-TEST_A-44_O-1_R-1" />'}</when>
         </choose>
@@ -741,12 +741,19 @@ describe("a choose on a ParameterRef nothing places", () => {
     expect(v.blocks.flatMap((b) => b.items).some((i) => i.kind === "separator" && i.text === "seven")).toBe(true);
   });
 
-  test("a ref heading a reached block is placed, so its choose takes the default branch", () => {
-    expect(objects(buildDeviceConfig(parseAppConfig(xml({ head: true })), new Map()))).toEqual([[1], 1]);
+  test("a page parameter heading a reached block is placed, so its choose takes the default branch", () => {
+    expect(objects(buildDeviceConfig(parseAppConfig(xml({ head: "page" })), new Map()))).toEqual([[1], 1]);
+  });
+
+  test("another parameter that only heads a reached block decides no default branch ETS shows: refused where it matters", () => {
+    expect(() => buildDeviceConfig(parseAppConfig(xml({ head: "gate" })), new Map())).toThrow(expect.objectContaining({ code: "CHOOSE_DEFAULT_UNSETTLED" }));
+    // Its tests still count, and its value is the one stored on it.
+    const v = buildDeviceConfig(parseAppConfig(xml({ head: "gate" })), new Map([["M-TEST_A-44_P-G_R-1", "7"]]));
+    expect(v.blocks.flatMap((b) => b.items).some((i) => i.kind === "separator" && i.text === "seven")).toBe(true);
   });
 
   test("an Access=\"None\" ref whose default branch changes the image is refused", () => {
-    expect(() => buildDeviceConfig(parseAppConfig(xml({ access: "None" })), new Map())).toThrow(expect.objectContaining({ code: "CHOOSE_INTERNAL_DEFAULT_UNSETTLED" }));
+    expect(() => buildDeviceConfig(parseAppConfig(xml({ access: "None" })), new Map())).toThrow(expect.objectContaining({ code: "CHOOSE_DEFAULT_UNSETTLED" }));
   });
 
   test("an Access=\"None\" ref whose default branch leaves the image as it is builds, with the branch shown", () => {
@@ -759,7 +766,14 @@ describe("a choose on a ParameterRef nothing places", () => {
   test("an Access=\"None\" ref whose default branch changes only a parameter's bytes is refused by the image build", () => {
     const app = parseAppConfig(xml({ access: "None", branch: '<Assign TargetParamRefRef="M-TEST_A-44_P-V_R-1" Value="9" />' }));
     expect(buildDeviceConfig(app, new Map()).imageValues.get("M-TEST_A-44_P-V_R-1")).toBe("9");
-    expect(() => buildRelativeSegmentTarget(app, new Map(), 4)).toThrow(expect.objectContaining({ code: "CHOOSE_INTERNAL_DEFAULT_UNSETTLED" }));
+    expect(() => buildRelativeSegmentTarget(app, new Map(), 4)).toThrow(expect.objectContaining({ code: "CHOOSE_DEFAULT_UNSETTLED" }));
+  });
+
+  test("the same on an absolute segment", () => {
+    const branch = (value: string) => `<Assign TargetParamRefRef="M-TEST_A-44_P-V_R-1" Value="${value}" />`;
+    expect(() => buildAbsoluteSegmentTargets(parseAppConfig(xml({ access: "None", absolute: true, branch: branch("9") })), new Map())).toThrow(expect.objectContaining({ code: "CHOOSE_DEFAULT_UNSETTLED" }));
+    // An Assign of the value the parameter holds anyway leaves the bytes as they are.
+    expect(buildAbsoluteSegmentTargets(parseAppConfig(xml({ access: "None", absolute: true, branch: branch("3") })), new Map())[0].bytes.toString("hex")).toBe("03");
   });
 });
 

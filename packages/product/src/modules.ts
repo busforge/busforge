@@ -24,11 +24,31 @@ export const moduleArgNumber = (value: string): number => (/^-?\d+$/.test(value)
 // binds an argument to an allocator takes the current counter and advances it by that
 // argument's `allocates`. A `<Repeat Count="k">` replays its body k times, so a six-channel
 // block yields six instances at start, start+allocates, ... A `choose` descends only into
-// the matching branch, so inactive device variants neither render nor allocate.
+// the matching branch, so inactive device variants neither render nor allocate. Its default branch only
+// where the configuration takes it (config.ts selectWhens): when the choose's ref is placed, by a reached
+// ParameterRefRef or as the page parameter heading a reached block, found by walking until the placement
+// settles. A module in a default branch no ETS download decides is refused (CHOOSE_DEFAULT_UNSETTLED).
 export function resolveModuleInstances(app: AppConfig, env: Map<string, string>): ModuleInstance[] {
+  // Rewritten ParameterRef ids: placed by a reached ParameterRefRef or page-block heading, and heading a reached
+  // block without being a page parameter.
+  let seen = { placed: new Set<string>(), heads: new Set<string>() };
+  const same = (a: Set<string>, b: Set<string>) => a.size === b.size && [...a].every((r) => b.has(r));
+  for (let pass = 0; ; pass++) {
+    const run = allocate(app, env, seen);
+    if (same(run.placed, seen.placed) && same(run.heads, seen.heads)) return run.out;
+    if (pass >= 50) throw new ProductError("CONFIG_NOT_RESOLVABLE", "the application's parameter visibility does not settle while its module instances are allocated");
+    seen = run;
+  }
+}
+
+const containsModule = (nodes: DynNode[]): boolean =>
+  nodes.some((n) => n.kind === "module" || ((n.kind === "block" || n.kind === "container") && containsModule(n.children)) || (n.kind === "choose" && n.whens.some((w) => containsModule(w.children))));
+
+function allocate(app: AppConfig, env: Map<string, string>, before: { placed: Set<string>; heads: Set<string> }): { out: ModuleInstance[]; placed: Set<string>; heads: Set<string> } {
   const alloc = new Map<string, number>();
   for (const a of app.allocators.values()) alloc.set(a.id, a.start);
   const out: ModuleInstance[] = [];
+  const placed = new Set<string>(), heads = new Set<string>();
   const miCount = new Map<string, number>(); // module-node id -> instances seen so far (for MI-n)
 
   const strip = (id: string) => (id.startsWith(`${app.id}_`) ? id.slice(app.id.length + 1) : id);
@@ -50,6 +70,7 @@ export function resolveModuleInstances(app: AppConfig, env: Map<string, string>)
     for (const n of nodes) {
       switch (n.kind) {
         case "block":
+          if (n.paramRefId) (app.types.get(app.params.get(app.refs.get(n.paramRefId)?.paramId ?? "")?.typeId ?? "")?.kind === "TypeNone" ? placed : heads).add(rewrite(n.paramRefId));
           walk(n.children, rewrite);
           break;
         case "container":
@@ -63,7 +84,15 @@ export function resolveModuleInstances(app: AppConfig, env: Map<string, string>)
           // set would diverge from ETS's.
           const v = effVal(n.paramRefId, rewrite);
           const matched = n.whens.filter((x) => !x.isDefault && x.test !== undefined && matchTest(x.test, v));
-          const branches = matched.length ? matched : n.whens.filter((x) => x.isDefault);
+          const def = n.whens.find((x) => x.isDefault);
+          const ref = app.refs.get(n.paramRefId);
+          const id = rewrite(n.paramRefId);
+          const open = !matched.length && !!def && !!ref && !before.placed.has(id)
+            && (before.heads.has(id) || (ref.access ?? app.params.get(ref.paramId)?.access) === "None");
+          if (open && containsModule(def.children)) {
+            throw new ProductError("CHOOSE_DEFAULT_UNSETTLED", `the module instances depend on whether the <choose> on ${id} takes its default branch: its ParameterRef is Access="None" and no active branch places it, or it only heads a reached block, and no ETS download shows which; an ETS download of this application in this configuration settles it`);
+          }
+          const branches = matched.length ? matched : def && (before.placed.has(id) || open) ? [def] : [];
           for (const w of branches) walk(w.children, rewrite);
           break;
         }
@@ -103,15 +132,17 @@ export function resolveModuleInstances(app: AppConfig, env: Map<string, string>)
           walk(def.dynamic, childRewrite);
           break;
         }
-        // Leaves. This walk exists to reproduce ETS's ALLOCATOR bookkeeping, and none of these
-        // carry children or consume an allocator, so there is nothing here to do. They are listed
-        // rather than left to a `default`, so that a node kind added later cannot be skipped
-        // silently by a walk that decides where a module's memory lands.
-        case "paramRef": case "comObjRef": case "separator": case "button": case "assign": case "unsupported":
+        // Leaves. None carries children or consumes an allocator; a ParameterRefRef places its ref, which
+        // decides a later pass's default branches. They are listed rather than left to a `default`, so that
+        // a node kind added later cannot be skipped silently by a walk that decides where a module's memory lands.
+        case "paramRef":
+          placed.add(rewrite(n.refId));
+          break;
+        case "comObjRef": case "separator": case "button": case "assign": case "unsupported":
           break;
       }
     }
   };
   walk(app.dynamic, (s) => s);
-  return out;
+  return { out, placed, heads };
 }

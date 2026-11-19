@@ -1,6 +1,6 @@
 import { sameParamValue, type AppConfig, type ModuleInstance } from "./appconfig.ts";
 import { toAppModel } from "./application.ts";
-import { buildDeviceConfig } from "./config.ts";
+import { buildDeviceConfig, readingsOf } from "./config.ts";
 import { paramKey } from "./calculations.ts";
 import { ProductError } from "./errors.ts";
 
@@ -19,7 +19,7 @@ export function refuseRawDataWrites(app: AppConfig, values: Map<string, string>,
   const rawValues = (vals: Map<string, string>, inst: ModuleInstance[]) => {
     const model = toAppModel(app, { includeUnions: true, instances: inst });
     const out = new Map<string, { ref: string; value: string }>();
-    for (const [refId, value] of buildDeviceConfig(app, vals, undefined, inst).imageValues) {
+    for (const view of readingsOf(buildDeviceConfig(app, vals, undefined, inst))) for (const [refId, value] of view.imageValues) {
       const ref = model.refs.get(refId);
       const p = ref ? model.params.get(ref.paramId) : undefined;
       const key = paramKey(app, refId);
