@@ -290,6 +290,15 @@ const TOP: Scope = {
   argValue: (argId) => { throw new ProductError("COMOBJ_ARG_UNRESOLVED", `com-object numbering references module argument ${argId} outside any module instance`); },
 };
 
+// The integer a module instance's argument holds, by the argument's full id: the base a module com-object's
+// number counts from. Undefined where the instance does not carry the argument or its value is no integer;
+// of two arguments with one id the last counts.
+export function moduleInstanceArgNumber(app: AppConfig, inst: ModuleInstance, fullArgId: string): number | undefined {
+  const arg = inst.args.findLast((a) => `${app.id}_${a.refId}` === fullArgId);
+  const value = arg ? moduleArgNumber(arg.value) : NaN;
+  return Number.isNaN(value) ? undefined : value;
+}
+
 // `test` grammar: space-separated tokens, OR-combined. A token is a bare integer
 // (equality) or one of =N, !=N, <N, >N, <=N, >=N. Compares the raw integer value.
 // This is ETS's own grammar for When/@test: `((-?\d+\s)*-?\d+)|((=|!=|>|<|>=|<=)-?\d+)`.
@@ -744,12 +753,10 @@ function buildDeviceConfigReading(
   const makeScope = (moduleNodeRefId: string, def: ModuleDefModel, inst: ModuleInstance): Scope => {
     const instFullId = `${app.id}_${inst.id}`;
     const textArgs = new Map<string, string>();
-    const argMap = new Map<string, number>();
     for (const a of inst.args) {
       const fullArgId = `${app.id}_${a.refId}`;
       const defArg = def.args.find((d) => d.id === fullArgId);
       if (defArg) textArgs.set(defArg.name, a.value); // any arg can appear in {{name}} text
-      argMap.set(fullArgId, moduleArgNumber(a.value)); // numeric base for com-object numbering (NaN for text args, unused)
     }
     return {
       // Match on the id boundary ("_") so MD-1 never wrongly captures MD-10's ids.
@@ -760,8 +767,8 @@ function buildDeviceConfigReading(
       // com-objects onto channel 1's numbers (colliding entries then overwrite each other
       // in the image tables). Unknown numbering must refuse, not guess.
       argValue: (argId) => {
-        const v = argMap.get(argId);
-        if (v === undefined || Number.isNaN(v)) {
+        const v = moduleInstanceArgNumber(app, inst, argId);
+        if (v === undefined) {
           throw new ProductError("COMOBJ_ARG_UNRESOLVED",
             `module instance ${inst.id}: com-object numbering needs argument ${argId}, which the instance does not carry (or it is not an integer)`);
         }

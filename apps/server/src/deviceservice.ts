@@ -3,7 +3,7 @@ import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { iaToNum, numToGa, formatGa, SENDER_ENTRY } from "@busforge/knx";
 import { extractAppPrograms, moduleInstanceOf, type Project, type DroppedLink, type DroppedLinkReason } from "@busforge/project";
-import { parseAppConfig, buildDeviceConfig, annotateCalculations, buildSecurityObject, hardwareRefusals, knxIpRefusals, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, effectiveComObjFlags, ProductError, imageWritableType, resolveParamRef, sameParamValue, type SameParamValue, takesValue, type EffectiveComObjFlags, type ComObjInstanceOverride, type AppConfig, type ModuleInstance, moduleArgNumber, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
+import { parseAppConfig, buildDeviceConfig, annotateCalculations, buildSecurityObject, hardwareRefusals, knxIpRefusals, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, effectiveComObjFlags, ProductError, imageWritableType, resolveParamRef, sameParamValue, type SameParamValue, takesValue, type EffectiveComObjFlags, type ComObjInstanceOverride, type AppConfig, type ModuleInstance, moduleInstanceArgNumber, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
 import { getAppProgram, putAppProgram, catalogBaggageNames, pictureType } from "./db/catalog.ts";
 import { getDeviceParams, getDeviceParamBase, getDeviceParamAssumed, getDeviceModules, getDeviceAppProgramId, getDeviceProductRef, getDeviceForFlash, deviceHasApplication, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps, getDeviceComObjOverrides, getDeviceComObjOverrideBase, getDeviceKnxIp } from "./db/deviceparams.ts";
 import { deviceCompatibility } from "./compatibility.ts";
@@ -669,23 +669,27 @@ function linkedAgain(link: DroppedLink, view: DroppedLinkView, linked: number[])
 }
 
 // An object the application declares, by its stored key (a module object's by its definition's, MD-x_O-…, the
-// configuration's instance dropped from the key): its number, with the base of its module instance where it
-// has one (null where `instances` has no such instance or the base is no integer), and its texts. The
-// configuration also places a ComObject by its own id where no ComObjectRef names it. Null where the
-// application does not declare the object.
-function declaredObject(app: AppConfig, comObjRefId: string, instances: ModuleInstance[], lang?: string): { number: number | null; name: string; functionText: string } | null {
+// configuration's instance dropped from the key): its number, as the configuration numbers it (a module
+// object's with the base its instance's argument holds), and its texts. The number is null where the
+// instance is not among `instances` (a refused configuration has none), lacks the base argument or holds no
+// integer in it. Texts are those of a top-level object a ComObjectRef names; a module object's texts
+// need its instance's text arguments and a ComObject the configuration places without a ComObjectRef has no
+// translated text here, so neither sends any. Null where the application does not declare the object; the
+// configuration also places a ComObject by its own id where no ComObjectRef names it.
+function declaredObject(app: AppConfig, comObjRefId: string, instances: ModuleInstance[], lang?: string): { number: number | null; name: string | null; functionText: string | null } | null {
+  const instance = moduleInstanceOf(comObjRefId);
   const key = fullRef(app.id, comObjRefId.replace(/_M-\d+_MI-\d+/, ""));
   const ref = app.comObjectRefs.get(key);
   const obj = ref ? app.comObjects.get(ref.refId) : app.comObjects.get(key);
   if (!obj) return null;
   let number: number | null = obj.number;
   if (obj.baseNumber) {
-    const arg = instances.find((i) => i.id === moduleInstanceOf(comObjRefId))?.args.find((a) => fullRef(app.id, a.refId) === obj.baseNumber);
-    const base = arg ? moduleArgNumber(arg.value) : NaN;
-    number = Number.isNaN(base) ? null : obj.number + base;
+    const inst = instances.find((i) => i.id === instance);
+    const base = inst ? moduleInstanceArgNumber(app, inst, obj.baseNumber) : undefined;
+    number = base === undefined ? null : obj.number + base;
   }
-  const texts = ref ? comObjectRefTexts(app, key, lang) : undefined;
-  return { number, name: texts?.name ?? (obj.text || obj.name), functionText: texts?.functionText ?? obj.functionText };
+  const texts = ref && instance === undefined ? comObjectRefTexts(app, key, lang) : undefined;
+  return { number, name: texts?.name ?? null, functionText: texts?.functionText ?? null };
 }
 
 // Why the configuration does not place an object the application declares: its parameters hide it, or it is

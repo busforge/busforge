@@ -250,16 +250,17 @@ describe("links an import does not take over, per com-object", () => {
     expect(await entries()).toEqual([["O-4", 4, null, false]]);
   });
 
-  test("an object the configuration does not place carries the application's number and texts, never the digit of its ETS id", async () => {
+  test("an object the configuration does not place carries the application's number, never the digit of its ETS id, and its texts only where they can be resolved", async () => {
     const state = freshState();
     const direct = appXml(`<ChannelIndependentBlock><ParameterBlock Id="${A}_PB-1" Name="Main" Text="Main"><ParameterRefRef RefId="${A}_P-1_R-1"/>
       <choose ParamRefId="${A}_P-1_R-1"><when test="1"><ComObjectRefRef RefId="${A}_O-4"/></when></choose>
     </ParameterBlock></ChannelIndependentBlock>`).replace("</ComObjectTable>", `${obj(4, "Scene", "Recall").replace(`Number="4"`, `Number="14"`)}</ComObjectTable>`);
     const project = xml0.replace(/<ComObjectInstanceRefs>[\s\S]*<\/ComObjectInstanceRefs>/, `<ComObjectInstanceRefs><ComObjectInstanceRef RefId="O-4" Links="GA-1 GA-9"/><ComObjectInstanceRef RefId="O-8_R-8" Links="GA-1 GA-9"/></ComObjectInstanceRefs>`);
     const imp = await post(state, "/api/projects/import", new File([knxprojWith(direct, project)], "Dropped.knxproj"));
-    // O-8 is no object of the application: nothing names its number, so none is sent.
+    // O-4 is a ComObject the configuration places without a ComObjectRef: no translated text to send. O-8 is no
+    // object of the application: nothing names its number.
     expect(((await listed(state, imp.id)) as any[]).map((l) => [l.comObjRefId, l.comObjNumber, l.comObjName, l.functionText, l.unresolved])).toEqual([
-      ["O-4", 14, "Scene", "Recall", "notInConfiguration"], ["O-8_R-8", null, null, null, "notInApplication"],
+      ["O-4", 14, null, null, "notInConfiguration"], ["O-8_R-8", null, null, null, "notInApplication"],
     ]);
   });
 
@@ -278,6 +279,19 @@ describe("links an import does not take over, per com-object", () => {
     expect(await entry()).toEqual([["MD-1_M-1_MI-2_O-1_R-1", 2, null, false]]);
   });
 
+  test("a refused configuration knows no instance, so a module object of it has no number", async () => {
+    const refused = moduleAppXml().replace(`<when test="1">`, `<when test="on">`);
+    const a = await post(freshState(), "/api/projects/analyze", new File([moduleKnxprojWith(refused)], "Dropped.knxproj"));
+    expect(a.droppedLinks.map((l: any) => [l.comObjRefId, l.comObjNumber, l.comObjName, l.unresolved, l.unrecoverable])).toEqual([["MD-1_M-1_MI-2_O-1_R-1", null, null, "refused", true]]);
+  });
+
+  test("a module object of an instance the configuration no longer has carries no number and no text", async () => {
+    const state = freshState();
+    const imp = await post(state, "/api/projects/import", new File([moduleKnxproj], "Dropped.knxproj"));
+    await put(state, imp.id, "params", { paramRefId: `${MA}_P-1_R-1`, value: "1" });
+    expect(((await listed(state, imp.id)) as any[]).map((l) => [l.comObjNumber, l.comObjName, l.functionText, l.unresolved])).toEqual([[null, null, null, "moduleInstanceGone"]]);
+  });
+
   test("a module object its parameters hide stays open, one its module does not declare can never be linked again", async () => {
     const state = freshState();
     // The channel's object shows while P-2 is 1, not at 2; channel 2 also carries an object its module has no such ref for.
@@ -287,7 +301,10 @@ describe("links an import does not take over, per com-object", () => {
     const entries = async () => ((await listed(state, imp.id)) as any[]).map((l) => [l.comObjRefId, l.comObjNumber, l.unresolved, l.unrecoverable]);
     expect(await entries()).toEqual([["MD-1_M-1_MI-2_O-1_R-1", 2, null, false], ["MD-1_M-1_MI-2_O-9_R-9", null, "notInApplication", true]]);
     await put(state, imp.id, "params", { paramRefId: `${MA}_P-2_R-1`, value: "2" });
-    // Hidden, the object keeps the number its instance's base gives it; the one its module lacks has none.
+    // Hidden, the object keeps the number its instance's base gives it, but no text: a module object's texts
+    // take its instance's arguments. The one its module lacks has no number.
+    const view = async () => ((await listed(state, imp.id)) as any[]).map((l) => [l.comObjName, l.functionText]);
+    expect(await view()).toEqual([[null, null], [null, null]]);
     expect(await entries()).toEqual([["MD-1_M-1_MI-2_O-1_R-1", 2, "notInConfiguration", false], ["MD-1_M-1_MI-2_O-9_R-9", null, "notInApplication", true]]);
   });
 
