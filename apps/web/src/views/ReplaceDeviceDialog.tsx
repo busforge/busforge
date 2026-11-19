@@ -192,7 +192,7 @@ export function ReplaceDeviceDialog({ open, onOpenChange, projectId, device, vie
 
             {hasCollision && (
               <Notice className="flex items-start gap-2">
-                <AlertTriangle className="mt-0.5 size-4 shrink-0" /> {t("replace.collision")}
+                <AlertTriangle className="mt-0.5 size-4 shrink-0" /><p>{t("replace.collision")}</p>
               </Notice>
             )}
             {!!replaceProduct.error && (

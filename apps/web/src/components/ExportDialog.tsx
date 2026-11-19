@@ -88,9 +88,11 @@ export function ExportDialog({ projectId, open: openProp, onOpenChange }: { proj
         {exposesKeys && (
           <Notice className="flex items-start gap-2" data-testid="export-keys-warning">
             <ShieldAlert className="mt-0.5 size-4 shrink-0" />
-            {secureDevices > 0
-              ? t("export.secretsWarning", { count: secureDevices })
-              : t("export.groupKeysWarning", { count: project?.groupKeyCount ?? 0 })}
+            <p>
+              {secureDevices > 0
+                ? t("export.secretsWarning", { count: secureDevices })
+                : t("export.groupKeysWarning", { count: project?.groupKeyCount ?? 0 })}
+            </p>
           </Notice>
         )}
 
