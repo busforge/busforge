@@ -7,7 +7,7 @@ import { downloadDeviceFull } from "../apps/server/src/deviceprofile.ts";
 import type { Connection } from "../apps/server/src/db/connections.ts";
 import { captureText, catalogueXml } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
-import { parseTunnelFrame } from "./etsdiff.ts";
+import { memWriteOf, parseTunnelFrame } from "./etsdiff.ts";
 import { startProxy } from "./knxproxy.ts";
 import { SimUnit, type SimProperty, type SimUnitModel } from "./sim-unit.ts";
 import { MEANWELL_KNX40E, newSimUnit } from "./sim-units.ts";
@@ -201,7 +201,7 @@ corpusDescribe("the simulated MEAN WELL KNX-40E-1280D", () => {
   // the same download into the unit (captures/meanwell-busforge-fulldownload.log) holds the frames of the
   // build that took it, whose download into this simulator gives that capture frame for frame (the corpus's
   // internal/ets-sweep/spike.md); the differences of this build's frames are Busforge's own, named below.
-  test("takes Busforge's full download through the KNXnet/IP server as the unit took it", async () => {
+  test("takes Busforge's full download through the KNXnet/IP server, every frame as the unit answered it", async () => {
     const dir = tempDir("busforge-sim-unit-");
     const sim = newSimUnit(MEANWELL_KNX40E);
     const port = await freePort();
@@ -228,22 +228,22 @@ corpusDescribe("the simulated MEAN WELL KNX-40E-1280D", () => {
       expect(result).toMatchObject({ kind: "flashed", verified: true, restartUnproven: true, stamps: [1, 2, 3, 4].map((obj) => ({ obj, hex: unitDownload.find((f) => f.dir === "<<" && f.tpdu.slice(2, 10) === `d60${obj}1b10`)!.tpdu.slice(12) })) });
 
       const unitPhases = phases(unitDownload), simPhases = phases(simDownload);
-      // The segments in the order written: this build writes the parameter segment before the three tables, as
-      // ETS's full download of the unit does; the captured build wrote the tables first.
+      // The segments in the order written: this build writes the parameter segment before the three tables, in
+      // ETS's order (held against ETS's capture of the unit in tools/etsdiff.test.ts); the captured build wrote the
+      // tables first.
       const writeOrder = (fs: Frame[]) => {
         const lsms = fs.flatMap((f) => {
           const t = Buffer.from(f.tpdu, "hex");
-          if (f.dir !== ">>" || t.length < 4 || ((((t[0] & 0x03) << 8) | t[1]) & 0x3c0) !== 0x280) return [];
-          const at = t.readUInt16BE(2);
-          return [[1, 2, 3, 4].find((lsm) => { const s = sim.segment(lsm)!; return at >= s.at && at < s.at + s.bytes.length; }) ?? 0];
+          const w = f.dir === ">>" && t.length >= 2 ? memWriteOf(t, ((t[0] & 0x03) << 8) | t[1]) : null;
+          if (!w) return [];
+          return [[1, 2, 3, 4].find((lsm) => { const s = sim.segment(lsm)!; return w.addr >= s.at && w.addr < s.at + s.bytes.length; }) ?? 0];
         });
         return lsms.filter((l, i) => lsms[i - 1] !== l);
       };
-      expect(writeOrder(frames(captureText("meanwell-ets-fulldownload.log"), "ETS"))).toEqual([4, 3, 2, 1]);
       expect(writeOrder(simPhases.bracket)).toEqual([4, 3, 2, 1]);
       expect(writeOrder(unitPhases.bracket)).toEqual([3, 2, 1, 4]);
       // From the first unload to the A_Restart: every request, every answer and every confirmation the unit's, the
-      // parameter segment's run (its two PID 7 reads and writes) taken before the tables'.
+      // parameter segment's run (object 4's two PID 7 reads and the segment's memory writes) taken before the tables'.
       expect(simPhases.bracket).toEqual(parameterSegmentFirst(unitPhases.bracket));
       // Before it this build also reads the association table's element form (object 2's PID 23 description).
       const at = simPhases.open.findIndex((f) => f.dir === ">>" && f.tpdu === "43d8021700");

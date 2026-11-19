@@ -2922,11 +2922,10 @@ corpusDescribe("MEAN WELL KNX-40E-1280D (M-0162_A-0004-11-F245) against ETS", ()
     expect(r.segments.map((s) => [s.lsm, s.divergences.length])).toEqual([[4, 0], [3, 0], [2, 0], [1, 0]]);
     expect(r.unattributed).toEqual([]);
     expect(sorted(planBytes(full.plan))).toEqual(sorted(wire("fulldownload")));
-    // The segments in the order written: the parameter segment first, as ETS writes them.
-    const lsmAt = (addr: number) => full.segments.find((s) => addr >= AT[s.lsm] && addr < AT[s.lsm] + s.image.length)!.lsm;
-    const order = (lsms: number[]) => lsms.filter((l, i) => lsms[i - 1] !== l);
-    expect(order(cap.writes.map((w) => lsmAt(w.addr)))).toEqual([4, 3, 2, 1]);
-    expect(order(full.plan.flatMap((st) => (st.op === "writeSegment" ? [st.lsm] : [])))).toEqual([4, 3, 2, 1]);
+    // The segments in ETS's order, the parameter segment first.
+    const writes = (steps: string[]) => steps.filter((s) => s.startsWith("write:"));
+    expect(writes(etsOrder(log("fulldownload")))).toEqual(["write:4", "write:3", "write:2", "write:1"]);
+    expect(writes(planOrder(full.plan))).toEqual(writes(etsOrder(log("fulldownload"))));
   });
 
   test("full download: ETS's bracket, the PEI program unloaded first, the application allocated with fill 0, the plain restart", () => {
