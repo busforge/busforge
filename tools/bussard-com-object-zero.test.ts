@@ -4,7 +4,7 @@ import { iaToNum } from "../packages/knx/src/index.ts";
 import { parseAppConfig, parseLoadProcedures, classify, buildDeviceConfig, buildComObjectTable, initialValues, resolveModuleInstances, type ComObjectLink } from "../packages/product/src/index.ts";
 import { BUSSARD_SYNTHETIC_TESTED, bussardApplication, bussardCapture, corpusPath } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
-import { etsAllocations, memoryImage, parseCapture, reportedTableReferences, type Capture } from "./etsdiff.ts";
+import { etsAllocations, memoryImage, parseCapture, parseGa, reportedTableReferences, type Capture } from "./etsdiff.ts";
 import { pcapToLog } from "./pcap.ts";
 
 // bussard's ETS 6.4.1 full downloads (MIT, Tom Bocklisch; the corpus's captures/external/bussard-synthetic/README.md)
@@ -15,8 +15,6 @@ import { pcapToLog } from "./pcap.ts";
 
 const DEVICE = iaToNum("1.1.1");
 const OBJ = { ADDR: 1, ASSOC: 2, COMOBJ: 3 } as const;
-// A three-level group address as the tables hold it: main 5 bits, middle 3, sub 8.
-const ga = (main: number, middle: number, sub: number) => (main << 11) | (middle << 8) | sub;
 const capture = (product: string, variant: string) => parseCapture(pcapToLog(readFileSync(corpusPath(bussardCapture(product, variant)))), DEVICE);
 // The bytes ETS wrote into the table of `obj`, at the base the simulator reported (PID 7), as long as ETS allocated it.
 const etsTable = (cap: Capture, obj: number): string => {
@@ -82,7 +80,7 @@ corpusDescribe("bussard's synthetic captures: the System B com-object table of p
   // three addresses and the association table (1, 0) (3, 1) (2, 0). Busforge's full download plans the same three.
   test("syn-minimal with both objects linked: the three tables ETS wrote", () => {
     const { xml, cfg } = products().find((p) => p.product === "syn-minimal")!;
-    const links: ComObjectLink[] = [{ comObjNum: 0, gaRaws: [ga(1, 0, 1), ga(1, 0, 2)] }, { comObjNum: 1, gaRaws: [ga(1, 0, 3)] }];
+    const links: ComObjectLink[] = [{ comObjNum: 0, gaRaws: [parseGa("1/0/1"), parseGa("1/0/2")] }, { comObjNum: 1, gaRaws: [parseGa("1/0/3")] }];
     const build = classify(cfg).planFullDownload(cfg.mask, { ia: "1.1.1", params: initialValues(cfg, "de-DE"), links, proc: parseLoadProcedures(xml) });
     const ours = (source: string) => build.segments.find((s) => s.source === source)!.image.toString("hex");
     const cap = capture("syn-minimal", "links");
