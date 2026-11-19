@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fillAllocatedRuns, iaToNum } from "../packages/knx/src/index.ts";
-import { parseAppConfig, classify, parseLoadProcedures, buildRelativeSegmentTarget, fullDownloadImageCoverage, relParamFillByte, resolveModuleInstances, refuseCalculationWrites } from "../packages/product/src/index.ts";
+import { parseAppConfig, classify, parseLoadProcedures, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, fullDownloadImageCoverage, relParamFillByte, resolveModuleInstances, refuseCalculationWrites } from "../packages/product/src/index.ts";
 import { BUSSARD_SYNTHETIC_DIR, BUSSARD_SYNTHETIC_TESTED, BUSSARD_SYNTHETIC_VARIANTS, bussardApplication, bussardCapture, corpusPath } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { compareSegments, etsAllocations, memoryImage, parseCapture, parseTunnelFrame, reportedTableReferences } from "./etsdiff.ts";
@@ -129,6 +129,44 @@ corpusDescribe("bussard's synthetic captures: System B parameter segments at def
       const ets = [...memoryImage(cap.writes)].filter(([a]) => a >= base && a < base + alloc.size);
       expect(ets.length).toBeGreaterThan(0);
       expect([...ours].sort((x, y) => x[0] - y[0])).toEqual(ets.sort((x, y) => x[0] - y[0]));
+    });
+  }
+});
+
+// System B (MV-07B0), MinEtsVersion 4.0, no DownloadInvisibleParameters: a 16-bit parameter in no block at +3 of a
+// 16-byte segment without <Data> (Mode 0, fill A5), default 12 34. ETS writes the segment up to that parameter's last
+// octet, 01 01 2C 00 00: the hidden parameter at the template's zeros, neither its default nor the fill. Busforge's
+// image holds the same five octets; how far ETS writes a segment without <Data> is not what this test holds.
+corpusDescribe("bussard's synthetic captures: a System B hidden parameter at MinEtsVersion 4 against ETS", () => {
+  test("syn-relseg-dataless-hidden: the hidden parameter left at the template's zeros", () => {
+    const cfg = parseAppConfig(app("syn-relseg-dataless-hidden"));
+    expect([cfg.mask, cfg.minEtsVersion, cfg.downloadInvisibleParameters]).toEqual(["MV-07B0", "4.0", undefined]);
+    const target = buildRelativeSegmentTarget(cfg, new Map(), 4, { ownIdleUnionDefaults: true })!;
+    const cap = capture("syn-relseg-dataless-hidden");
+    const base = reportedTableReferences(cap).get(4)!;
+    const ets = [...memoryImage(cap.writes)].filter(([a]) => a >= base && a < base + target.size).sort((x, y) => x[0] - y[0]);
+    expect(ets.map(([a, b]) => [a - base, b])).toEqual([[0, 0x01], [1, 0x01], [2, 0x2c], [3, 0x00], [4, 0x00]]);
+    expect(target.bytes.subarray(0, 5).toString("hex")).toBe("01012c0000");
+    expect(target.owned.slice(3, 5)).toEqual([0, 0]);
+  });
+});
+
+// System 7 (MV-0705) at application defaults, a 16-bit parameter in no block at +3 of the 64-byte parameter
+// segment at 0x4440, default 12 34 over the template FF FF, no DownloadInvisibleParameters: ETS writes the whole
+// segment, the hidden parameter at its default where the application declares MinEtsVersion 6.0 and at the template
+// where it declares 4.0 (in schema project/23 and project/11 alike). Busforge's image of the segment is ETS's, byte
+// for byte. Its full download refuses these programs before it builds anything (their RAM segment), so the image is
+// held against ETS here on its own.
+corpusDescribe("bussard's synthetic captures: System 7 hidden parameters by MinEtsVersion against ETS", () => {
+  for (const [product, minEts, hidden] of [["syn-s7-hidden-default", "6.0", "1234"], ["syn-s7-hidden-default-ets4", "4.0", "ffff"], ["syn-s7-hidden-default-p11", "4.0", "ffff"]]) {
+    test(`${product}: MinEtsVersion ${minEts}, the hidden parameter ${hidden}`, () => {
+      const cfg = parseAppConfig(app(product));
+      expect([cfg.mask, cfg.minEtsVersion, cfg.downloadInvisibleParameters]).toEqual(["MV-0705", minEts, undefined]);
+      const target = buildAbsoluteSegmentTargets(cfg, new Map()).find((t) => t.address === 0x4440)!;
+      const ets = [...memoryImage(capture(product).writes)].filter(([a]) => a >= 0x4440 && a < 0x4440 + target.size).sort((x, y) => x[0] - y[0]);
+      expect(ets.length).toBe(target.size);
+      expect(Buffer.from(ets.map(([, b]) => b)).toString("hex")).toBe(target.bytes.toString("hex"));
+      expect(target.bytes.subarray(3, 5).toString("hex")).toBe(hidden);
     });
   }
 });

@@ -13,7 +13,7 @@ import { corpusTest } from "../../../tools/corpus-test.ts";
 // exactly how the surgical model avoids clobbering values it cannot reconstruct.
 const xml = `<?xml version="1.0" encoding="utf-8"?>
 <KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0005"><ApplicationPrograms>
-<ApplicationProgram Id="M-0005_A-0001-01-0001" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-0705" DefaultLanguage="en-US" Name="Flash Plan">
+<ApplicationProgram Id="M-0005_A-0001-01-0001" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-0705" MinEtsVersion="4.0" DefaultLanguage="en-US" Name="Flash Plan">
 <Static>
 <ParameterTypes><ParameterType Id="M-0005_A-0001-01-0001_PT-8"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="255"/></ParameterType></ParameterTypes>
 <Parameters>
@@ -55,7 +55,7 @@ test("the plan writes only active-parameter bytes, never the inactive param or t
 // offset 0, P-2 an active numeric param at offset 4.
 const textXml = `<?xml version="1.0" encoding="utf-8"?>
 <KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0006"><ApplicationPrograms>
-<ApplicationProgram Id="M-0006_A-0001-01-0001" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-0705" DefaultLanguage="en-US" Name="Text On An Absolute Segment">
+<ApplicationProgram Id="M-0006_A-0001-01-0001" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-0705" MinEtsVersion="4.0" DefaultLanguage="en-US" Name="Text On An Absolute Segment">
 <Static>
 <ParameterTypes>
 <ParameterType Id="M-0006_A-0001-01-0001_PT-T"><TypeText SizeInBit="32"/></ParameterType>
@@ -275,7 +275,7 @@ test("the image's <Data> stands for hidden bits only: not for an active colour, 
   const P = "M-0007_A-0001-01-0001";
   const colourXml = (data: string) => `<?xml version="1.0" encoding="utf-8"?>
 <KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0007"><ApplicationPrograms>
-<ApplicationProgram Id="${P}" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-0705" DefaultLanguage="en-US" Name="Colour And Hidden">
+<ApplicationProgram Id="${P}" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-0705" MinEtsVersion="4.0" DefaultLanguage="en-US" Name="Colour And Hidden">
 <Static>
 <ParameterTypes>
 <ParameterType Id="${P}_PT-C"><TypeColor Space="RGB"/></ParameterType>

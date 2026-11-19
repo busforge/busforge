@@ -313,7 +313,8 @@ export interface AbsStructuralFlashPlan { plan: LoadPlan; changedBytes: number; 
 // What a System 7 structural flash compares against the device: the address and association tables,
 // the com-object table authored from its segment's template (as the full download authors it), and
 // the parameter segments' owned bytes. A parameter that was active in the programmed baseline
-// (`baseValues`) and is not in the new configuration goes back to its segment's <Data> template value,
+// (`baseValues`) and is not in the new configuration goes back to the image's value there (the segment's
+// <Data>, or its default where hiddenParameterRule has ETS write it),
 // as ETS writes it: ETS writes where its old image differs from its new one (MDT BE-02001.02, input
 // B's short/long settings). Only bits a baseline parameter owned and verifies are taken
 // this way, so a byte no parameter derives (a text, a value the codec cannot encode) and an
@@ -399,7 +400,8 @@ export function absoluteStructuralBuild(app: AppConfig, images: AbsStructuralIma
   };
 }
 
-// Where the configuration hides a parameter, ETS's image holds the segment's <Data> (parWriteSet), and ETS's
+// Where the configuration hides a parameter, ETS's image holds the segment's <Data> or, where
+// hiddenParameterRule says so, the parameter's default (parWriteSet), and ETS's
 // project always holds the values of the parameters without memory that decide what is hidden; no read-back
 // shows them. A project that is not known to hold them (`hiddenBytes` "refuse") may hide a parameter the unit
 // runs with: a hidden byte the unit holds otherwise than <Data> is then refused instead of overwritten.
@@ -409,7 +411,7 @@ function refuseHiddenBytes(segId: string, address: number, have: Buffer, image: 
   const at = Array.from(cov, (c, i) => (c && ((have[i] ^ image[i]) & (dataBits?.[i] ?? 0) & ~owned[i] & 0xff) !== 0 ? address + i : -1)).filter((a) => a >= 0);
   if (!at.length) return;
   const list = at.slice(0, 8).map((a) => `0x${a.toString(16)}`).join(", ") + (at.length > 8 ? ` and ${at.length - 8} more` : "");
-  throw new ProductError("PARAM_HIDDEN_BYTES_UNKNOWN", `segment ${segId}: the unit holds other values than the segment's <Data> at ${list}, bytes of parameters this configuration hides; ETS writes <Data> there, but the project is not known to hold the values of its parameters without memory (not taken from ETS, not all assumed by a read-back), so whether they are hidden on the unit is not known; refusing to overwrite them`);
+  throw new ProductError("PARAM_HIDDEN_BYTES_UNKNOWN", `segment ${segId}: the unit holds other values than the image at ${list}, bytes of parameters this configuration hides; ETS writes the image's <Data> or defaults there, but the project is not known to hold the values of its parameters without memory (not taken from ETS, not all assumed by a read-back), so whether they are hidden on the unit is not known; refusing to overwrite them`);
 }
 
 export function planAbsoluteStructuralFlash(
@@ -441,7 +443,7 @@ export function planAbsoluteStructuralFlash(
   const tableIds = new Set([addrImg.id, assocImg.id, comImg.id]);
   // The parameter bytes, as the parameter flash writes them (parWriteSet): once any differs from the
   // device, every byte a parameter covers in every parameter segment, with the image's value (a hidden
-  // parameter's bytes at the segment's <Data>), and checked back as such.
+  // parameter's bytes at the segment's <Data> or its default, as hiddenParameterRule says), and checked back as such.
   const params = images.filter((x) => !tableIds.has(x.id)).map((w) => {
     const have = current.get(w.address);
     if (!have || have.length !== w.image.length) {
@@ -497,7 +499,8 @@ export function planAbsoluteStructuralFlash(
 // the last byte that differs (Theben Meteodata 140 S, meteodata-140s-ets-partial-{params,revert,c14-on,
 // c14-off}.log; c14-on writes 0x49F1-0x49FB with three equal bytes in it), which the runner's read-compare
 // does with the same steps (differingRuns). A covered byte carries the image's value, also where no active
-// parameter owns it: ETS's image holds a hidden parameter's bytes at the segment's <Data>, whatever the
+// parameter owns it: ETS's image holds a hidden parameter's bytes at the segment's <Data> (or at its default
+// where hiddenParameterRule says so), whatever the
 // unit holds there (MDT BE-02001.02: input A's idle union at offsets 48-49 as 00 00 in its partial and full
 // downloads; Theben Meteodata 140 S: switching channel C14 off writes the channel's <Data> back over the
 // values the unit held, meteodata-140s-ets6log-partial-c14-off.txt). Where the application closes with image stamps

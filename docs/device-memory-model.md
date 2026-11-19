@@ -161,7 +161,8 @@ successful flash as failed.
 
 On System 7 a parameter or structural flash that changes anything writes, as ETS's parameter download
 does, every byte a parameter's memory covers, and the bits no active parameter lies on with the
-image's value, not the unit's: a hidden parameter's bytes at the segment's `<Data>`. ETS's images show
+image's value, not the unit's: a hidden parameter's bytes at the segment's `<Data>` where
+[R14](load-procedures.md#the-rules-by-level) keeps the template. ETS's images show
 it: the MDT BE-02001.02's partial and full downloads hold input A's idle union (offsets 48-49 of its
 parameter segment) as the `<Data>` `00 00`, so a unit found holding `00 0a` there is written back; the
 Theben Meteodata 140 S's download that switches a threshold channel off writes the channel's `<Data>`
@@ -287,8 +288,9 @@ not computed, with the reason, in warning tone where a change of them is refused
 The rules below are hardware-derived. They are the difference between a re-configuration
 that preserves a working device and one that corrupts a channel.
 
-- **A plain top-level memory parameter is owned at its effective default**, active or not.
-  ETS writes every such default and the device holds it: without this fallback, a freshly
+- **A plain top-level memory parameter is owned at its effective value when active, and at its
+  default when inactive where [R14](load-procedures.md#the-rules-by-level) has ETS write the
+  default.** ETS writes every such default and the device holds it: without this fallback, a freshly
   ETS-flashed power supply misses 51 bytes of its image.
 - **A `<Union>` member or a module-instance (`…_MI-…`) parameter is owned only when it is the
   ACTIVE branch.** Overlapping branches must not all be written.
@@ -302,14 +304,17 @@ that preserves a working device and one that corrupts a channel.
 - **An integer parameter wider than 6 bytes is never owned.** The integer codec caps there
   (`MAX_INT_BYTES`). A text parameter of any width is owned like a plain parameter and writes its
   characters (below).
-- **Where the application declares `<Options DownloadInvisibleParameters="None">`, an inactive plain
-  parameter in a branch the configuration rejects is not owned**: one every placement of which lies
-  in a `<when>` of a `choose` that was evaluated and not taken (a module slot left empty, a channel
-  function not chosen). ETS leaves its bytes at the allocation fill and out of its parameter download
-  (Theben MIX 2; the Jung 400021SE declares it too). A `choose` on a Merker no active branch places
-  rejects nothing; what it gates is written at its default. An application that does not declare it
-  gets such parameters written at their defaults, as the GVS AMMA's ETS downloads show
-  ([load-procedures.md](load-procedures.md#the-rules-by-level), R14).
+- **An inactive plain parameter is owned at its default, or left at the template, as the
+  application's `DownloadInvisibleParameters` option and `MinEtsVersion` decide**
+  ([load-procedures.md](load-procedures.md#the-rules-by-level), R14, `hiddenParameterRule`). Under
+  `"None"` one every placement of which lies in a `<when>` of a `choose` that was evaluated and not
+  taken (a module slot left empty, a channel function not chosen) is not owned: ETS leaves its bytes
+  at the allocation fill and out of its parameter download (Theben MIX 2; the Jung 400021SE declares
+  it too). A `choose` on a Merker no active branch places rejects nothing; the `LegacyPatchAlways`
+  parameter it gates on the MIX 2 is written at its default. An application without the option and
+  with `MinEtsVersion` 5 or later gets every such parameter written at its default, as the GVS AMMA's
+  ETS downloads show. A combination no ETS download shows is refused (`PARAM_HIDDEN_UNSUPPORTED`) where
+  the default and the template differ.
 - **A displaced channel variant is not owned.** A channel configured as a module occupies the
   memory of the simple-channel variant. The top-level variant's parameters still parse and
   still carry an offset there, but the memory belongs to the module instance, so an inactive

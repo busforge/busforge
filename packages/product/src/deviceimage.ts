@@ -1,5 +1,5 @@
 import { resolveParamRef, sameParamValue, type AppConfig, type CfgParamRef, type DynNode, type ModuleInstance } from "./appconfig.ts";
-import { toAppModel } from "./application.ts";
+import { toAppModel, type Param, type ParamType } from "./application.ts";
 import { buildDeviceConfig, decodeTextEntities } from "./config.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { byteWidth, MAX_INT_BYTES, encode, textLength } from "./image.ts";
@@ -18,9 +18,9 @@ const isTextRefusal = (e: unknown): boolean => e instanceof ProductError && e.co
 //
 // Unlike the RelativeSegment path (buildParameterImage), these devices store
 // parameters in one or more AbsoluteSegments at fixed addresses, and the correct
-// image is the manufacturer <Data> default overlaid with ONLY the VISIBLE/ACTIVE
-// parameters' effective values. Parameters hidden by the app's dynamic structure
-// (choose/when) keep the <Data> byte; writing their defaults would corrupt it.
+// image is the manufacturer <Data> default overlaid with the VISIBLE/ACTIVE parameters'
+// effective values. A parameter hidden by the app's dynamic structure (choose/when) keeps
+// the <Data> byte or takes its default as hiddenParameterRule says.
 //
 // The visible set and each parameter's effective value come from buildDeviceConfig
 // (the same resolver the UI uses); the byte placement reuses the proven encode
@@ -205,7 +205,7 @@ export interface DeviceSegmentImage { id: string; address: number; size: number;
 // unit differing from the image only there holds the configuration. `constants` names whose they are.
 // `hidden`: the bits of the parameters the configuration does not place, where none it places lies: the
 // image holds the segment's <Data> there (FF past the end of its <Data>, zero in a segment without
-// <Data>), and a write that places
+// <Data>), or the parameter's default where hiddenParameterRule has ETS write it, and a write that places
 // such a parameter writes its value there (a structural flash, which writes the image's bits back
 // once it hides the parameter again).
 export interface DeviceSegmentTarget extends DeviceSegmentImage { owned: number[]; verify: number[]; constant: number[]; constants: ConstantPlacement[]; hidden: number[]; dataBits?: number[] }
@@ -270,6 +270,9 @@ export function buildAbsoluteSegmentTargets(
   const view = buildDeviceConfig(app, calculated, opts.lang, instances);
   const active = view.imageValues;
   const treeOrder = treeOrderOf(app, active);
+  // The parameters an active ref places: another ref of theirs is not a hidden parameter.
+  const shown = new Set([...active.keys()].map((r) => model.refs.get(r)?.paramId));
+  const hiddenRules = hiddenRulesOf(app, model.refs.values(), view.rejectedRefs, shown);
 
   // Which absolute segments do <Memory> parameters target?
   const bySeg = new Map(app.absoluteSegments.map((s) => [s.id, s]));
@@ -307,6 +310,8 @@ export function buildAbsoluteSegmentTargets(
     const activeBits = new Array<number>(seg.size).fill(0);
     const unionWrites: UnionWrites = new Map();
     const contested = opts.textRefusals === "skip" ? new Array<number>(seg.size).fill(0) : null;
+    // The user-facing parameters the configuration does not show, decided once every active one is written.
+    const unshown: { refId: string; param: Param; type: ParamType; bits: number; plain: boolean; value?: string }[] = [];
     for (const ref of model.refs.values()) {
       const param = model.params.get(ref.paramId);
       if (!param || param.codeSegment !== segId || param.offset === undefined) continue;
@@ -315,11 +320,17 @@ export function buildAbsoluteSegmentTargets(
       const sized = !!type && Number.isFinite(type.sizeInBit) && type.sizeInBit > 0;
       if (sized) markOwned(v === undefined ? hidden : placed, [], param.offset, param.bitOffset, type!.sizeInBit, seg.size, false);
       const bits = type && type.base !== "Color" && sized ? type.sizeInBit : colorBits(app, param.typeId) ?? 8;
+      // A module instance's parameter and ref are the ModuleDef's, with the instance in their ids.
+      const cfgParam = app.params.get(ref.paramId.replace(INSTANCE, "")), access = app.refs.get(ref.id.replace(INSTANCE, ""))?.access;
+      if (v === undefined && type && cfgParam && cfgParam.access !== "None" && access !== "None" && !shown.has(ref.paramId)) {
+        const plain = sized && type.base !== "Color" && type.base !== "Text" && !cfgParam.union && !INSTANCE.test(ref.id);
+        unshown.push({ refId: ref.id, param, type, bits, plain, value: param.value ?? cfgParam.value });
+      }
       // An active parameter's bits, and those of one a <ParameterCalculation> sets (ETS computes it, Busforge
       // does not), are not the image's <Data> to write.
       // A module instance's ref is the ModuleDef's, as <ParameterCalculation> names it, with the instance in its id.
       if (v !== undefined || app.calculationRefs.has(ref.id) || app.calculationRefs.has(ref.id.replace(/_M-\d+_MI-\d+/, ""))) markOwned(activeBits, [], param.offset, param.bitOffset, bits, seg.size, false);
-      if (v === undefined) continue; // not visible / not active: keep the <Data> default
+      if (v === undefined) continue; // not visible / not active: decided below (`unshown`)
       if (!type || !sized) continue;
       // A colour on these segments: no ETS capture of a product with absolute segments shows one, so the
       // bytes stay unowned and refuseColorWrites refuses an operation that would have to write one.
@@ -375,8 +386,30 @@ export function buildAbsoluteSegmentTargets(
         placements.push({ paramRefId: ref.id, paramId: param.id, offset: param.offset, bitOffset: param.bitOffset ?? 0, sizeInBit: type.sizeInBit });
       }
     }
-    // The bits ETS's image holds at the segment's <Data> where no active parameter lies: a hidden
-    // parameter's, and those no parameter uses. Without <Data> (or past it) none: no capture shows what
+    // A parameter the configuration does not show, where no active one holds its bits: as hiddenParameterRule says.
+    // One written at its default stays unowned, like the <Data> bits around it: the image holds the value ETS
+    // writes there, and `dataBits` takes it (refuseHiddenBytes guards it as it guards <Data>). A union member, a
+    // module instance's parameter, a text and a colour are written at their default by no ETS download Busforge has.
+    // Two such defaults on the same bits that disagree are refused: which one ETS writes is not shown.
+    const defaulted = new Array<number>(seg.size).fill(0);
+    for (const u of unshown) {
+      const rule = hiddenRules.get(u.param.id)!;
+      if (rule === "template" || holdsBits(activeBits, u.param, u.bits)) continue;
+      const written = u.type.base === "Color" ? null : withValue(img, u.param, u.type, u.value);
+      if (rule === "default" && u.plain && written && !holdsBits(defaulted, u.param, u.bits)) {
+        written.copy(img);
+        markOwned(defaulted, [], u.param.offset!, u.param.bitOffset, u.bits, seg.size, false);
+        continue;
+      }
+      if (rule === "default" && u.plain && written?.equals(img)) continue;
+      if (opts.textRefusals !== "skip" && (!written || !written.equals(img))) {
+        throw hiddenRefusal(u.refId, `offset ${u.param.offset} of ${segId}`, rule !== "default" ? rule.refuse
+          : u.plain && written ? "another hidden parameter's default on the same bits differs, and no ETS download shows which of them ETS writes"
+          : "no ETS download shows whether ETS writes a hidden union member, module parameter, text or colour at its default");
+      }
+    }
+    // The bits of ETS's image where no active parameter lies: a hidden parameter's (at <Data>, or at its
+    // default as above), and those no parameter uses (at <Data>). Without <Data> (or past it) none: no capture shows what
     // ETS's partial download writes there, so a write keeps the unit's bits.
     const dataBits = activeBits.map((a, i) => (i < seg.data.length ? ~a & 0xff : 0));
     if (contested) for (const [i, c] of contested.entries()) { owned[i] &= ~c; verify[i] &= ~c; constant[i] &= ~c; }
@@ -392,10 +425,10 @@ export function buildAbsoluteSegmentTargets(
 // computes that we cannot reproduce.
 //
 // Ownership rule, hardware-derived (see docs/device-memory-model.md):
-//  - A plain top-level memory parameter: OWNED, value = effective default (device
-//    instance value, else parameter default). System B writes every such default and
-//    the device holds it (PSU M-0162 read-back: full-image byte-match only with the
-//    default fallback; gating it off regressed 51 bytes). So these are authoritative.
+//  - A plain top-level memory parameter: OWNED, value = effective value when active; when
+//    inactive, its parameter default where hiddenParameterRule has ETS write it (PSU M-0162
+//    read-back: full-image byte-match only with the default fallback; gating it off
+//    regressed 51 bytes), else not owned.
 //  - A <Union> member or a module-instance (…_MI-…) parameter: OWNED only when ACTIVE
 //    (present in the visibility-resolved image set). Union members overlap one region,
 //    so only the selected branch may be written; an inactive branch must keep the
@@ -416,16 +449,82 @@ export function buildAbsoluteSegmentTargets(
 // time/colour/malformed value claims no bytes.
 // `verify` mirrors DeviceSegmentTarget.verify: owned bytes minus Access="None" device-internal
 // markers, so a post-flash read-back asserts only user-facing bytes.
-// An application that declares <Options DownloadInvisibleParameters="None">: ETS leaves out a parameter that
-// no active branch places when every one of its placements lies in a branch of a choose ETS evaluated and
-// did not take: its bytes keep the allocation fill in a full download and are not in the image of a
-// parameter download. A parameter gated only by a choose on an unset Merker it writes at its default.
-// Theben MIX 2 (a JMG 4 T with its second extension slot empty: offset 1129, P-63, left at 00 in the full
-// download; offset 1201, P-36, absent from its parameter download; private corpus
-// captures/mix2-jmg4t-ets6log-fulldownload.txt and -partial-params.txt) and Jung 400021SE (also "None",
-// whose captures it leaves byte-identical). Where the application does not declare it (GVS AMMA, MEAN WELL
-// PSU), ETS writes such parameters' defaults (gvs-amma-ets-*.log; the PSU's read-back).
-const leavesOutInvisible = (app: AppConfig): boolean => app.downloadInvisibleParameters === "None";
+// What ETS writes for a parameter the configuration does not show (docs/load-procedures.md, R14): its default,
+// or nothing, so its bytes keep the segment's template (<Data>, zeros where the segment has none). The
+// application's <Options DownloadInvisibleParameters> and its MinEtsVersion decide, and only where an ETS
+// download shows the combination; the others refuse, and the builders refuse them only where the two answers
+// differ in a byte. `rejected`: every placement of the parameter lies in a branch of a choose ETS evaluated and
+// did not take. Shown:
+//  - System B, no option, MinEtsVersion 5 or later: the default. GVS AMMA, MDT IP Interface/Router, MEAN WELL
+//    PSU (ETS captures and ETS's download records, private corpus); a parameter in no block (bussard's synthetic
+//    `syn-hidden-default`, 6.0).
+//  - System B, no option, MinEtsVersion 4: the template (`syn-relseg-dataless-hidden`, 4.0: 00 00 on a segment
+//    without <Data>, neither the default nor the fill).
+//  - System B, "None": the template for a rejected parameter. Theben MIX 2 (a JMG 4 T with its second extension
+//    slot empty: offset 1129, P-63, left at 00 in the full download; offset 1201, P-36, absent from its
+//    parameter download; captures/mix2-jmg4t-ets6log-fulldownload.txt and -partial-params.txt) and Jung
+//    400021SE (captures and download records).
+//  - System B, LegacyPatchAlways under "None" or "Background", outside a branch ETS evaluated and did not take:
+//    the default. The MIX 2's P-202, gated by a choose on an unset Merker; `syn-legacy-patch-always` and
+//    `syn-param-calculation` under "Background", in no block.
+//  - System 7, "Background": the template. Every System 7 application in the corpus (ETS captures).
+//  - System 7, no option: the default from MinEtsVersion 5 (`syn-s7-hidden-default`, 6.0), the template at 4
+//    (`syn-s7-hidden-default-ets4`, `-p11`, 4.0).
+export type HiddenWrite = "default" | "template" | { refuse: string };
+export function hiddenParameterRule(app: AppConfig, p: { rejected: boolean; patchAlways: boolean }): HiddenWrite {
+  const family = maskInfo(app.mask).family;
+  const option = app.downloadInvisibleParameters;
+  const minEts = /^\s*(\d+)/.exec(app.minEtsVersion ?? "")?.[1];
+  const major = minEts === undefined ? undefined : Number(minEts);
+  const declared = `DownloadInvisibleParameters ${option === undefined ? "not declared" : `"${option}"`}, MinEtsVersion ${app.minEtsVersion === undefined ? "not declared" : `"${app.minEtsVersion}"`}`;
+  const refuse = (what: string): HiddenWrite => ({ refuse: `no ETS download shows whether ETS writes ${what} at its default on ${family} with ${declared}` });
+  if (family === "system-b") {
+    if (p.patchAlways) {
+      if (option === undefined) return major !== undefined && major >= 5 ? "default" : refuse("a hidden LegacyPatchAlways parameter");
+      return (option === "None" || option === "Background") && !p.rejected ? "default" : refuse(`a hidden LegacyPatchAlways parameter${p.rejected ? " in a branch it evaluated and did not take" : ""}`);
+    }
+    if (option === undefined) return major !== undefined && major >= 5 ? "default" : major === 4 ? "template" : refuse("a parameter the configuration does not show");
+    if (option === "None" && p.rejected) return "template";
+    return refuse("a parameter the configuration does not show");
+  }
+  if (family === "system-7") {
+    if (p.patchAlways) return refuse("a hidden LegacyPatchAlways parameter");
+    if (option === "Background") return "template";
+    if (option === undefined) return major !== undefined && major >= 5 ? "default" : major === 4 ? "template" : refuse("a parameter the configuration does not show");
+    return refuse("a parameter the configuration does not show");
+  }
+  return refuse("a parameter the configuration does not show");
+}
+// The rule of each parameter no active ref places, by its id in the image model, over all its refs: refs it
+// decides differently for refuse.
+const INSTANCE = /_M-\d+_MI-\d+/;
+function hiddenRulesOf(app: AppConfig, refs: Iterable<{ id: string; paramId: string }>, rejectedRefs: Set<string>, shown: Set<string | undefined>): Map<string, HiddenWrite> {
+  const out = new Map<string, HiddenWrite>();
+  for (const ref of refs) {
+    const p = app.params.get(ref.paramId.replace(INSTANCE, ""));
+    if (!p || shown.has(ref.paramId)) continue;
+    const rule = hiddenParameterRule(app, { rejected: rejectedRefs.has(ref.id), patchAlways: !!p.patchAlways });
+    const was = out.get(ref.paramId);
+    if (was === undefined || typeof was !== "string") { if (was === undefined) out.set(ref.paramId, rule); continue; }
+    if (was !== rule) out.set(ref.paramId, typeof rule === "string" ? { refuse: `its ParameterRefs are hidden in ways ETS writes differently (${was}, ${rule})` } : rule);
+  }
+  return out;
+}
+// The image with `value` at the parameter's place; null where its type does not take the value.
+function withValue(img: Buffer, param: { offset?: number; bitOffset?: number }, type: ParamType, value: string | undefined): Buffer | null {
+  if (param.offset === undefined || value === undefined) return null;
+  const trial = Buffer.from(img);
+  try { return encode(trial, param.offset, param.bitOffset ?? 0, type, value) ? trial : null; } catch (e) { if (e instanceof ProductError) return null; throw e; }
+}
+// Whether any of the parameter's bits is set in `mask`.
+function holdsBits(mask: number[], param: { offset?: number; bitOffset?: number }, sizeInBit: number): boolean {
+  if (param.offset === undefined) return false;
+  const mine = new Array<number>(mask.length).fill(0);
+  markOwned(mine, [], param.offset, param.bitOffset ?? 0, sizeInBit, mask.length, false);
+  return mine.some((m, i) => (m & mask[i]) !== 0);
+}
+const hiddenRefusal = (refId: string, at: string, reason: string) =>
+  new ProductError("PARAM_HIDDEN_UNSUPPORTED", `parameter ${refId} at ${at} is not shown in this configuration, its default differs from the segment's template there, and ${reason}; refusing rather than guessing which of the two ETS writes`);
 
 // `markers`: the bits of active Access="None" LegacyPatchAlways parameters, download markers ETS writes
 // set every time and the device clears (the Theben MIX 2's P-199 "A_Download erfolgt", bit 0x80 of
@@ -452,7 +551,13 @@ export function buildRelativeSegmentTarget(
   const calculated = calc.values;
   const built = buildDeviceConfig(app, calculated, opts.lang, instances);
   const active = built.imageValues;
-  const rejected = leavesOutInvisible(app) ? built.rejectedRefs : new Set<string>();
+  // The parameters an active ref places: another ref of theirs is not a hidden parameter.
+  const shown = new Set([...active.keys()].map((r) => model.refs.get(r)?.paramId));
+  const hiddenRules = hiddenRulesOf(app, model.refs.values(), built.rejectedRefs, shown);
+  // The hidden parameters whose bytes no ETS download shows: refused after the loop where their default would change a
+  // byte no written parameter holds.
+  const unshown: { refId: string; param: Param; type: ParamType | undefined; value?: string; reason: string }[] = [];
+  const hiddenDefaults = new Array<number>(seg.size).fill(0); // the bits hidden parameters' defaults wrote
   // The unions with at least one active member (only those write an active member, not the default).
   const activeUnions = new Set<string>();
   for (const refId of active.keys()) {
@@ -509,20 +614,24 @@ export function buildRelativeSegmentTarget(
     // Value source / ownership, in priority order:
     //  - union member / module-instance param: own only when ACTIVE (overlap-safe).
     //  - any active param: own, use its resolved value.
-    //  - inactive plain param that is user-facing (Access != None): own at its parameter default,
-    //    not at a value the project still stores for it; System B writes every such default and the
-    //    device holds it (PSU byte-match). The MDT IP Interface/Router's full download writes the
-    //    defaults of inactive parameters the project holds other values for (private corpus
-    //    captures/mdt-router-ets6log-fulldownload.txt, RelMemory(4) +122, +124, +231, +2692).
+    //  - inactive plain param that is user-facing (Access != None): as hiddenParameterRule says. Where ETS
+    //    writes its default, own it at its parameter default, not at a value the project still stores for
+    //    it: the MDT IP Interface/Router's full download writes the defaults of inactive parameters the
+    //    project holds other values for (private corpus captures/mdt-router-ets6log-fulldownload.txt,
+    //    RelMemory(4) +122, +124, +231, +2692). Where ETS keeps the template: NOT owned.
     //  - inactive Access="None" param: NOT owned; the device byte stays.
-    //  - where the application leaves out invisible parameters, an inactive plain param every placement of which
-    //    lies in a branch the configuration rejects: NOT owned (below).
     const gated = ref.id.includes("_MI-") || cfgParam?.union === true;
     let v: string | undefined;
+    let hiddenDefault = false;
     if (gated || active.has(ref.id)) v = active.get(ref.id);
     //    A LegacyPatchAlways one a calculation computed: the computed value, as ETS's download of bussard's synthetic
     //    `syn-param-calculation` writes it into its hidden output.
-    else if (cfgParam?.access !== "None" && !inModuleRegion(param.offset) && !rejected.has(ref.id)) v = cfgParam?.patchAlways && calc.computed.has(ref.id) ? calculated.get(ref.id) : param.value;
+    else if (cfgParam?.access !== "None" && !inModuleRegion(param.offset) && !shown.has(ref.paramId)) {
+      const value = cfgParam?.patchAlways && calc.computed.has(ref.id) ? calculated.get(ref.id) : param.value;
+      const rule = hiddenRules.get(ref.paramId)!;
+      if (rule === "default") { v = value; hiddenDefault = true; }
+      else if (rule !== "template") unshown.push({ refId: ref.id, param, type: model.types.get(param.typeId), value, reason: rule.refuse });
+    }
     //  - a union with NO active member: ETS writes its DefaultUnionParameter member (GVS AMMA
     //    capture: every disabled channel's unions, byte for byte), under the same
     //    Access="None" rule as an inactive plain parameter. Module-instance unions are not
@@ -535,6 +644,10 @@ export function buildRelativeSegmentTarget(
     if (v === undefined) continue;
     const type = model.types.get(param.typeId);
     if (!type || !Number.isFinite(type.sizeInBit) || type.sizeInBit === 0) continue;
+    // Two hidden parameters' defaults on the same bits that disagree: which one ETS writes is not shown.
+    if (hiddenDefault && holdsBits(hiddenDefaults, param, type.sizeInBit) && opts.textRefusals !== "skip" && !withValue(img, param, type, v)?.equals(img)) {
+      throw hiddenRefusal(ref.id, `offset ${param.offset} of the parameter segment (LSM ${lsm})`, "another hidden parameter's default on the same bits differs, and no ETS download shows which of them ETS writes");
+    }
     let wrote: boolean;
     const before = Buffer.from(img.subarray(param.offset, param.offset + byteWidth(type.sizeInBit, param.bitOffset)));
     try {
@@ -544,6 +657,7 @@ export function buildRelativeSegmentTarget(
       throw e;
     }
     if (!wrote) continue;
+    if (hiddenDefault) markOwned(hiddenDefaults, [], param.offset, param.bitOffset, type.sizeInBit, seg.size, false);
     noteUnionWrite(unionWrites, treeOrder, contested, app, ref.id, ref.paramId, before, img, param.offset, param.bitOffset ?? 0, type.sizeInBit, `the parameter segment (LSM ${lsm})`);
     if (!gated && !active.has(ref.id) && calculated.has(ref.id) && calculated.get(ref.id) !== v) defaulted.add(ref.id);
     const verifiable = cfgParam?.access !== "None"; // device-internal markers stay owned but unverified
@@ -553,6 +667,11 @@ export function buildRelativeSegmentTarget(
       markOwned(constant, [], param.offset, param.bitOffset, type.sizeInBit, seg.size, false);
       placements.push({ paramRefId: ref.id, paramId: param.id, offset: param.offset, bitOffset: param.bitOffset ?? 0, sizeInBit: type.sizeInBit });
     }
+  }
+  for (const u of unshown) {
+    if (opts.textRefusals === "skip" || !u.type || !Number.isFinite(u.type.sizeInBit) || holdsBits(owned, u.param, u.type.sizeInBit)) continue;
+    const written = withValue(img, u.param, u.type, u.value);
+    if (!written || !written.equals(img)) throw hiddenRefusal(u.refId, `offset ${u.param.offset} of the parameter segment (LSM ${lsm})`, u.reason);
   }
   if (contested) for (const [i, c] of contested.entries()) { owned[i] &= ~c; verify[i] &= ~c; markers[i] &= ~c; constant[i] &= ~c; }
   return { lsm, size: seg.size, bytes: img, owned, verify, markers, constant, constants: placements, defaulted };
@@ -787,7 +906,10 @@ export function refuseCalculationWrites(app: AppConfig, values: Map<string, stri
       const { param } = resolveParamRef(app, ref)!;
       const seg = app.segments.find((g) => g.id === param!.codeSegment);
       if (!param!.patchAlways || !seg || param!.offset === undefined) return false;
-      const target = buildRelativeSegmentTarget(app, values, seg.lsm, { moduleInstances: instances, ownIdleUnionDefaults: true });
+      let target;
+      // An image Busforge refuses to build for a hidden parameter holds nothing.
+      try { target = buildRelativeSegmentTarget(app, values, seg.lsm, { moduleInstances: instances, ownIdleUnionDefaults: true }); }
+      catch (e) { if (e instanceof ProductError && e.code === "PARAM_HIDDEN_UNSUPPORTED") return false; throw e; }
       const model = toAppModel(app, { includeUnions: true, instances });
       const p = model.params.get(param!.id), type = p && model.types.get(p.typeId);
       if (!target || !type || !target.owned[param!.offset]) return false;

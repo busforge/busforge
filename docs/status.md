@@ -173,6 +173,13 @@ What each row does not show:
   OpenKNX RaumController holds it (capture comparison); where the orders disagree the write is refused
   (`PARAM_UNION_OVERLAP`). On System 7 a link of a com-object above 255 is refused
   (`ASSOC_SHORT_FORM_OVERFLOW`).
+- **Parameters the configuration does not show.** Written at their default or left at the segment's
+  template as the application's `DownloadInvisibleParameters` option and `MinEtsVersion` decide
+  ([load-procedures.md](load-procedures.md#the-rules-by-level), R14), for the combinations an ETS
+  download shows: every corpus application is one of them (capture comparison and ETS's download
+  records), and bussard's synthetic products show MinEtsVersion 4 against 6 on System B and System 7.
+  Any other combination, System 1 included, is refused where the default and the template differ
+  (`PARAM_HIDDEN_UNSUPPORTED`); a read-back leaves such a parameter out.
 - **Jung 400021SE** runs in Data Secure mode, secure-commissioned by ETS. Its plain claims were shown
   in plain mode; the plain smoke spec applies again only after a master reset. Its load procedure
   declares two memory-control-block regions that every allocation resets, so the full download and

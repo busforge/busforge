@@ -585,7 +585,7 @@ corpusDescribe("structural flash against ETS's partial download", () => {
     // to hold the values of its parameters without memory (as ETS's own project does), and the flash is refused,
     // naming those bytes, where it is not.
     current.get(0x4468)![48] = 0x00; current.get(0x4468)![49] = 0x0a;
-    expect(() => planAbsoluteStructuralFlash(cfg, images, parseLoadProcedures(xml), current, true, instances)).toThrow(/<Data> at 0x4499, bytes of parameters this configuration hides/);
+    expect(() => planAbsoluteStructuralFlash(cfg, images, parseLoadProcedures(xml), current, true, instances)).toThrow(/other values than the image at 0x4499, bytes of parameters this configuration hides/);
     const residue = planAbsoluteStructuralFlash(cfg, images, parseLoadProcedures(xml), current, true, instances, {}, "write");
     const residueBytes = new Map<number, number>();
     for (const st of residue.plan) if (st.op === "writeMem") st.bytes.forEach((b, i) => residueBytes.set(st.address + i, b));

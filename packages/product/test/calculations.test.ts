@@ -22,7 +22,7 @@ const param = (id: string, name: string, offset: number, extra = "") =>
 interface Calc { id?: string; lang?: string; script?: string; func?: string; inputs?: readonly string[]; outputs: readonly string[] }
 const appXml = (calcs: Calc[]) => `<?xml version="1.0" encoding="utf-8"?>
 <KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0005"><ApplicationPrograms>
-<ApplicationProgram Id="${A}" ApplicationNumber="3073" ApplicationVersion="1" ProgramType="ApplicationProgram" MaskVersion="MV-07B0" Name="Calc" LoadProcedureStyle="MergedProcedure" PeiType="0" DefaultLanguage="en-US">
+<ApplicationProgram Id="${A}" ApplicationNumber="3073" ApplicationVersion="1" ProgramType="ApplicationProgram" MaskVersion="MV-07B0" MinEtsVersion="5.0" Name="Calc" LoadProcedureStyle="MergedProcedure" PeiType="0" DefaultLanguage="en-US">
 <Static>
   <Code><RelativeSegment Id="${A}_RS-1" Name="main" Size="16" LoadStateMachine="4" Offset="0"><Data>/////////////////////w==</Data></RelativeSegment></Code>
   <ParameterTypes>
@@ -227,7 +227,7 @@ test("a calculation in a ModuleDef runs per placed instance, and one refused the
   const M = "M-0005_A-0C02-01-0001";
   const mod = (calcs: string) => parseAppConfig(`<?xml version="1.0" encoding="utf-8"?>
 <KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0005"><ApplicationPrograms>
-<ApplicationProgram Id="${M}" ApplicationNumber="3074" ApplicationVersion="1" ProgramType="ApplicationProgram" MaskVersion="MV-07B0" Name="Mod" LoadProcedureStyle="MergedProcedure" PeiType="0" DefaultLanguage="en-US">
+<ApplicationProgram Id="${M}" ApplicationNumber="3074" ApplicationVersion="1" ProgramType="ApplicationProgram" MaskVersion="MV-07B0" MinEtsVersion="5.0" Name="Mod" LoadProcedureStyle="MergedProcedure" PeiType="0" DefaultLanguage="en-US">
 <Static><Code><RelativeSegment Id="${M}_RS-1" Name="main" Size="8" LoadStateMachine="4" Offset="0"><Data>//////////8=</Data></RelativeSegment></Code>
 <ParameterTypes><ParameterType Id="${M}_PT-N" Name="N"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="255"/></ParameterType></ParameterTypes>
 <Parameters/><ParameterRefs/></Static>

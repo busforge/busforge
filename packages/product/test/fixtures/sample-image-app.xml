@@ -3,7 +3,7 @@
   <ManufacturerData>
     <Manufacturer RefId="M-00FA">
       <ApplicationPrograms>
-        <ApplicationProgram Id="M-00FA_A-1234-01-ABCD" ApplicationNumber="4660" ApplicationVersion="1" MaskVersion="MV-07B0" DefaultLanguage="en-US" Name="Image Test">
+        <ApplicationProgram Id="M-00FA_A-1234-01-ABCD" ApplicationNumber="4660" ApplicationVersion="1" MaskVersion="MV-07B0" MinEtsVersion="5.0" DefaultLanguage="en-US" Name="Image Test">
           <Static>
             <ParameterTypes>
               <ParameterType Id="T-enum"><TypeRestriction Base="Value" SizeInBit="2">

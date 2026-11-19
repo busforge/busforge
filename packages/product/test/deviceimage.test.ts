@@ -127,7 +127,7 @@ corpusDescribe("the real M-0081 absolute segment", () => {
 // that mechanism on a minimal app.
 const internalXml = `<?xml version="1.0" encoding="utf-8"?>
 <KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0002"><ApplicationPrograms>
-<ApplicationProgram Id="M-0002_A-0001-01-0001" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-0705" DefaultLanguage="en-US" Name="Internal Test">
+<ApplicationProgram Id="M-0002_A-0001-01-0001" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-0705" MinEtsVersion="4.0" DefaultLanguage="en-US" Name="Internal Test">
 <Static>
 <ParameterTypes><ParameterType Id="M-0002_A-0001-01-0001_PT-8"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="255"/></ParameterType></ParameterTypes>
 <Parameters>
@@ -182,7 +182,7 @@ test("the hidden bits: a ref of a placed parameter hides nothing, though its oth
 // its low one; C, never placed, fills byte 1, past the segment's one-byte <Data>.
 const sharedXml = `<?xml version="1.0" encoding="utf-8"?>
 <KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0007"><ApplicationPrograms>
-<ApplicationProgram Id="M-0007_A-0001-01-0001" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-0705" DefaultLanguage="en-US" Name="Shared Byte">
+<ApplicationProgram Id="M-0007_A-0001-01-0001" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-0705" MinEtsVersion="4.0" DefaultLanguage="en-US" Name="Shared Byte">
 <Static>
 <ParameterTypes>
 <ParameterType Id="M-0007_A-0001-01-0001_PT-4"><TypeNumber SizeInBit="4" Type="unsignedInt" minInclusive="0" maxInclusive="15"/></ParameterType>
@@ -218,7 +218,7 @@ test("the hidden bits: only those of parameters the configuration does not place
 // selects branch A. A shared post-walk env (ctrl already 1) would wrongly select B.
 const assignOrderXml = `<?xml version="1.0" encoding="utf-8"?>
 <KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0003"><ApplicationPrograms>
-<ApplicationProgram Id="M-0003_A-0001-01-0001" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-0705" DefaultLanguage="en-US" Name="Assign Order">
+<ApplicationProgram Id="M-0003_A-0001-01-0001" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-0705" MinEtsVersion="4.0" DefaultLanguage="en-US" Name="Assign Order">
 <Static>
 <ParameterTypes><ParameterType Id="M-0003_A-0001-01-0001_PT-8"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="255"/></ParameterType></ParameterTypes>
 <Parameters>
@@ -258,7 +258,7 @@ test("imageValues resolves choose/Assign in document order, independent of the U
 // tree (offset 1), and offsets 2-3 are gaps owned by no parameter.
 const noDataXml = `<?xml version="1.0" encoding="utf-8"?>
 <KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0004"><ApplicationPrograms>
-<ApplicationProgram Id="M-0004_A-0001-01-0001" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-0705" DefaultLanguage="en-US" Name="No Data">
+<ApplicationProgram Id="M-0004_A-0001-01-0001" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-0705" MinEtsVersion="4.0" DefaultLanguage="en-US" Name="No Data">
 <Static>
 <ParameterTypes><ParameterType Id="M-0004_A-0001-01-0001_PT-8"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="255"/></ParameterType></ParameterTypes>
 <Parameters>
@@ -291,7 +291,7 @@ test("a Data-less segment: param bytes default to 0, gaps stay 0xFF, active over
 // owned (the device byte stays), and a union member is owned only when active.
 const relXml = `<?xml version="1.0" encoding="utf-8"?>
 <KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0005"><ApplicationPrograms>
-<ApplicationProgram Id="M-0005_A-0001-01-0001" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-07B0" DefaultLanguage="en-US" Name="Relative Owned">
+<ApplicationProgram Id="M-0005_A-0001-01-0001" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-07B0" MinEtsVersion="5.0" DefaultLanguage="en-US" Name="Relative Owned">
 <Static>
 <ParameterTypes><ParameterType Id="M-0005_A-0001-01-0001_PT-8"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="255"/></ParameterType></ParameterTypes>
 <Parameters>
@@ -374,7 +374,7 @@ test("a full download's read-back asserts whole bytes of verifiable parameters, 
 // "Objektlink" tables: the active member writes its enumeration's bytes, the other member nothing.
 const binXml = (aBytes: string) => `<?xml version="1.0" encoding="utf-8"?>
 <KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0005"><ApplicationPrograms>
-<ApplicationProgram Id="M-0005_A-0003-01-0001" ApplicationNumber="3" ApplicationVersion="1" MaskVersion="MV-07B0" DefaultLanguage="en-US" Name="Binary Value">
+<ApplicationProgram Id="M-0005_A-0003-01-0001" ApplicationNumber="3" ApplicationVersion="1" MaskVersion="MV-07B0" MinEtsVersion="5.0" DefaultLanguage="en-US" Name="Binary Value">
 <Static>
 <ParameterTypes>
 <ParameterType Id="M-0005_A-0003-01-0001_PT-SEL"><TypeRestriction Base="Value" SizeInBit="8"><Enumeration Text="a" Value="0" Id="M-0005_A-0003-01-0001_PT-SEL_EN-0"/><Enumeration Text="b" Value="1" Id="M-0005_A-0003-01-0001_PT-SEL_EN-1"/></TypeRestriction></ParameterType>
@@ -541,7 +541,7 @@ corpusTest("a top-level param displaced by an active module instance is not owne
 // DE AD (segment <Data> base64 "AADerQ==" = 00 00 DE AD).
 const floatXml = `<?xml version="1.0" encoding="utf-8"?>
 <KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0006"><ApplicationPrograms>
-<ApplicationProgram Id="M-0006_A-0001-01-0001" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-0705" DefaultLanguage="en-US" Name="Float Default">
+<ApplicationProgram Id="M-0006_A-0001-01-0001" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-0705" MinEtsVersion="4.0" DefaultLanguage="en-US" Name="Float Default">
 <Static>
 <ParameterTypes><ParameterType Id="M-0006_A-0001-01-0001_PT-F"><TypeFloat SizeInBit="16"/></ParameterType></ParameterTypes>
 <Parameters>
@@ -625,7 +625,7 @@ corpusTest("a >48-bit ETS-computed 'Objektlink' union member is never owned (and
 // computed as ceil((BitOffset + SizeInBit) / 8) gets this right.
 const nonAlignedXml = `<?xml version="1.0" encoding="utf-8"?>
 <KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0002"><ApplicationPrograms>
-<ApplicationProgram Id="M-0002_A-0002-01-0001" ApplicationNumber="2" ApplicationVersion="1" MaskVersion="MV-07B0" DefaultLanguage="en-US" Name="Non-aligned">
+<ApplicationProgram Id="M-0002_A-0002-01-0001" ApplicationNumber="2" ApplicationVersion="1" MaskVersion="MV-07B0" MinEtsVersion="5.0" DefaultLanguage="en-US" Name="Non-aligned">
 <Static>
 <ParameterTypes><ParameterType Id="M-0002_A-0002-01-0001_PT-12"><TypeNumber SizeInBit="12" Type="unsignedInt" minInclusive="0" maxInclusive="4000"/></ParameterType></ParameterTypes>
 <Parameters>

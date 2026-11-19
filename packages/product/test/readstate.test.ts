@@ -156,7 +156,7 @@ corpusDescribe("System 7 readState: a Meteodata 140 S in service is taken over i
 // DPT 9 float, default "21.0", its <Data> bytes 0; y's default 2, its <Data> byte 9.
 const hiddenXml = `<?xml version="1.0" encoding="utf-8"?>
 <KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0002"><ApplicationPrograms>
-<ApplicationProgram Id="M-0002_A-0051-01-0001" ApplicationNumber="81" ApplicationVersion="1" MaskVersion="MV-0705" DefaultLanguage="en-US" Name="Hidden Test">
+<ApplicationProgram Id="M-0002_A-0051-01-0001" ApplicationNumber="81" ApplicationVersion="1" MaskVersion="MV-0705" MinEtsVersion="4.0" DefaultLanguage="en-US" Name="Hidden Test">
 <Static>
 <ParameterTypes>
 <ParameterType Id="M-0002_A-0051-01-0001_PT-8"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="255"/></ParameterType>

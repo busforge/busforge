@@ -197,9 +197,12 @@ export interface AppConfig {
   additionalAddressesCount: number;
   // <Options ParameterByteOrder>: the byte order of multi-byte parameter values in memory.
   parameterByteOrder: "BigEndian" | "LittleEndian";
-  // <Options DownloadInvisibleParameters>: "None" where ETS downloads no parameter the configuration
-  // does not show (deviceimage.ts buildRelativeSegmentTarget); undefined where the application does not say.
+  // <Options DownloadInvisibleParameters> as declared ("None", "Background", ...); undefined where the
+  // application declares none. With `minEtsVersion` it decides what ETS writes for a parameter the
+  // configuration does not show (deviceimage.ts hiddenParameterRule).
   downloadInvisibleParameters?: string;
+  // ApplicationProgram MinEtsVersion as declared ("4.0", "3.0d", ...); undefined where the application declares none.
+  minEtsVersion?: string;
   // <Options TextParameterZeroTerminate="true">: a text parameter's value is stored with a closing zero,
   // so it can take at most one character less than its field.
   textParameterZeroTerminate: boolean;
@@ -401,6 +404,7 @@ export function parseAppConfig(xml: string): AppConfig {
     textParameterZeroTerminate: optionsNode ? attrsOf(optionsNode).TextParameterZeroTerminate === "true" : false,
     ...(optionsNode && attrsOf(optionsNode).TextParameterEncoding !== undefined ? { textParameterEncoding: attrsOf(optionsNode).TextParameterEncoding } : {}),
     ...(optionsNode && attrsOf(optionsNode).DownloadInvisibleParameters !== undefined ? { downloadInvisibleParameters: attrsOf(optionsNode).DownloadInvisibleParameters } : {}),
+    ...(appAttrs.MinEtsVersion !== undefined ? { minEtsVersion: appAttrs.MinEtsVersion } : {}),
     defaultLanguage: appAttrs.DefaultLanguage ?? "en-US",
     languages,
     loadProcedures: loadProceduresOf(root),
