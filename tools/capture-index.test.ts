@@ -3,10 +3,16 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
-import { iaToNum } from "../packages/knx/src/index.ts";
-import { apciName, buildIndex, indexFile, indexText, INDEX_JSON, INDEX_MD, labelDisagrees, PCAP_CLIENT, renderMarkdown, type IndexedFile, type NotIndexed } from "./capture-index.ts";
-import { captureText } from "./corpus.ts";
-import { corpusDescribe } from "./corpus-test.ts";
+import { gaToNum, iaToNum } from "../packages/knx/src/index.ts";
+import { secureEncode } from "../packages/knx/src/secure.ts";
+import { writeKeyring } from "../packages/project/src/keyring.ts";
+import { addKeys, corpusKeys, emptyKeys, parseKeyList, type SecureKeys } from "./secure-capture.ts";
+import {
+  apciName, BUSSARD_ROWS, buildIndex, documentedKeyringPasswords, indexFile, indexText, INDEX_JSON, INDEX_MD, labelDisagrees, PCAP_CLIENT, renderMarkdown, type IndexedFile, type KeySources,
+  type NotIndexed,
+} from "./capture-index.ts";
+import { BUSSARD_SYNTHETIC_DIR, captureText, corpusPath, corpusRoot } from "./corpus.ts";
+import { corpusDescribe, corpusTest } from "./corpus-test.ts";
 
 const u16 = (n: number) => [(n >> 8) & 0xff, n & 0xff];
 
@@ -37,6 +43,7 @@ function pcap(datagrams: { fromServer: boolean; payload: Buffer }[]): Buffer {
   return Buffer.concat([head, ...records]);
 }
 const REQ = 0x11, CON = 0x2e, IND = 0x29;
+const NO_KEYS: KeySources = { read: [], notRead: [], environment: [], deviceKeys: 0, groupKeys: 0 };
 
 function indexed(r: IndexedFile | NotIndexed): IndexedFile {
   if ("reason" in r) throw new Error(`not indexed: ${r.reason}`);
@@ -77,7 +84,8 @@ describe("proxy logs", () => {
     });
     expect(f.properties).toEqual(["0/54"]);
     expect(f.groupAddresses).toBe(1);
-    expect(f.secure).toEqual({ telegrams: 1, innerShown: 0 });
+    // No key given: the frame shows only its security control field (S-A_Data, no tool access) in clear.
+    expect(f.secure).toEqual({ telegrams: 1, shown: 0, inside: { "S-A_Data (not opened)": { sent: 1, received: 0 } }, openedWith: [] });
     expect(f.telegrams).toBe(9); // the confirmation repeats the request and is not counted
     expect(f.undecoded.count).toBe(0);
   });
@@ -88,7 +96,7 @@ describe("proxy logs", () => {
     expect(f.tools).toEqual(["ETS"]);
     expect(f.framesBuiltAs).toBe("Busforge");
     expect(labelDisagrees(f)).toBe(true);
-    expect(renderMarkdown({ format: "busforge-capture-index/1", dirs: ["captures"], files: [f], notIndexed: [] }))
+    expect(renderMarkdown({ format: "busforge-capture-index/2", dirs: ["captures"], keys: NO_KEYS, files: [f], notIndexed: [] }))
       .toContain("- `x.log`: labelled ETS, frames built as Busforge's");
   });
 
@@ -195,6 +203,143 @@ describe("pcap captures", () => {
   });
 });
 
+// Made-up keys for frames this file builds; no device holds them.
+const FDSK = Buffer.alloc(16, 0x11), TOOL_KEY = Buffer.alloc(16, 0x22), GROUP_KEY = Buffer.alloc(16, 0x33), OTHER_KEY = Buffer.alloc(16, 0x44);
+const SERIAL = Buffer.from("000A31293319", "hex");
+const seq = (n: number) => Buffer.from([0, 0, 0, 0, 0, n]);
+
+// An A_Data_Secure TPDU: `tpci` is its first octet (0x03 unnumbered, 0x43 numbered data with sequence 0),
+// authenticated for `src` -> `dst`. A Sync.req carries the target serial in clear behind the sequence; a Sync.res
+// carries its random sequence XOR the request's challenge.
+function secured(o: {
+  key: Buffer; src: string; dst: number; group?: boolean; scf: number; seq: Buffer; plaintext: Buffer; tpci?: number;
+  serial?: Buffer; challenge?: Buffer;
+}): number[] {
+  const tpci = o.tpci ?? 0x03;
+  const aad = o.serial ? Buffer.concat([Buffer.from([o.scf]), o.serial]) : Buffer.from([o.scf]);
+  let body = secureEncode({ key: o.key, src: iaToNum(o.src), dst: o.dst, dstIsGroup: !!o.group, seq: o.seq, scf: o.scf, tpci, aad, plaintext: o.plaintext });
+  if (o.serial) body = Buffer.concat([body.subarray(0, 7), o.serial, body.subarray(7)]);
+  if (o.challenge) for (let i = 0; i < 6; i++) body[1 + i] ^= o.challenge[i];
+  return [tpci, 0xf1, ...body];
+}
+
+describe("secured telegrams of a proxy log", () => {
+  const keys = (): SecureKeys => {
+    const k = emptyKeys();
+    addKeys(k, [{ name: "fdsk", key: FDSK }, { name: "tool", key: TOOL_KEY }], [{ raw: gaToNum("2/1/7"), key: { name: "group 2/1/7", key: GROUP_KEY } }]);
+    return k;
+  };
+  const challenge = Buffer.from("a1a2a3a4a5a6", "hex");
+  // A tool's request leaves its source 0.0.0; the confirmation names the tunnel's address it was authenticated with.
+  const text = [
+    tunnel("ETS->BRIDGE", REQ, "0.0.0", iaToNum("1.1.7"), [0x80]),
+    tunnel("BRIDGE->ETS", CON, "1.1.100", iaToNum("1.1.7"), [0x80]),
+    // ETS assigns a secure device its address by serial: a broadcast Sync under the device's FDSK ...
+    tunnel("ETS->BRIDGE", REQ, "0.0.0", 0, secured({ key: FDSK, src: "1.1.100", dst: 0, group: true, scf: 0x92, seq: seq(1), plaintext: challenge, serial: SERIAL }), 0xb0, true),
+    tunnel("BRIDGE->ETS", IND, "15.15.255", 0, secured({ key: FDSK, src: "15.15.255", dst: 0, group: true, scf: 0x93, seq: seq(9), plaintext: Buffer.alloc(12, 1), challenge }), 0xb0, true),
+    // ... then the serial-number write to the broadcast, tool access
+    tunnel("ETS->BRIDGE", REQ, "0.0.0", 0, secured({
+      key: FDSK, src: "1.1.100", dst: 0, group: true, scf: 0x90, seq: seq(2), plaintext: Buffer.from([0x03, 0xde, ...SERIAL, ...u16(iaToNum("1.1.204")), 0, 0, 0, 0]),
+    }), 0xb0, true),
+    tunnel("ETS->BRIDGE", REQ, "0.0.0", iaToNum("1.1.7"), secured({ key: TOOL_KEY, src: "1.1.100", dst: iaToNum("1.1.7"), scf: 0x90, seq: seq(3), tpci: 0x43, plaintext: Buffer.from([0x03, 0xd5, 0x00, 0x38, 0x10, 0x01]) })),
+    tunnel("BRIDGE->ETS", IND, "1.1.7", iaToNum("1.1.100"), secured({ key: TOOL_KEY, src: "1.1.7", dst: iaToNum("1.1.100"), scf: 0x90, seq: seq(4), tpci: 0x43, plaintext: Buffer.from([0x03, 0x40, 0x07, 0xb0]) })),
+    tunnel("BRIDGE->ETS", IND, "1.1.9", gaToNum("2/1/7"), secured({ key: GROUP_KEY, src: "1.1.9", dst: gaToNum("2/1/7"), group: true, scf: 0x10, seq: seq(5), plaintext: Buffer.from([0x00, 0x81]) }), 0xbc, true),
+    // under a key nobody gave, and an answer to a Sync no key opened
+    tunnel("ETS->BRIDGE", REQ, "0.0.0", iaToNum("1.1.7"), secured({ key: OTHER_KEY, src: "1.1.100", dst: iaToNum("1.1.7"), scf: 0x90, seq: seq(6), tpci: 0x47, plaintext: Buffer.from([0x03, 0xd5, 0x00, 0x38, 0x10, 0x01]) })),
+    tunnel("BRIDGE->ETS", IND, "1.1.8", iaToNum("1.1.100"), secured({ key: TOOL_KEY, src: "1.1.8", dst: iaToNum("1.1.100"), scf: 0x93, seq: seq(7), tpci: 0x43, plaintext: Buffer.alloc(12, 1), challenge })),
+  ].join("\n");
+
+  test("opens them with the keys it is given, the broadcast address assignment by serial among them", () => {
+    const f = indexed(indexText("x.log", text, keys()));
+    expect(f.undecoded.count).toBe(0);
+    expect(f.secure).toEqual({
+      telegrams: 8, shown: 6, openedWith: ["fdsk", "group 2/1/7", "tool"],
+      inside: {
+        "A_DeviceDescriptor_Response [tool access]": { sent: 0, received: 1 },
+        "A_GroupValue_Write [group]": { sent: 0, received: 1 },
+        "A_IndividualAddressSerialNumber_Write [tool access, broadcast]": { sent: 1, received: 0 },
+        "A_PropertyValue_Read [tool access]": { sent: 1, received: 0 },
+        "S-A_Data (not opened) [tool access]": { sent: 1, received: 0 },
+        "Sync.req [tool access, broadcast]": { sent: 1, received: 0 },
+        "Sync.res (not opened) [tool access]": { sent: 0, received: 1 },
+        "Sync.res [tool access, broadcast]": { sent: 0, received: 1 },
+      },
+    });
+    // An opened telegram's service is read like a plain one.
+    expect(f.assigned).toEqual(["1.1.204 (serial 000A31293319)"]);
+    expect(f.properties).toEqual(["0/56"]);
+    expect(f.devices.find((d) => d.address === "1.1.7")).toEqual({ address: "1.1.7", descriptor0: ["07B0"] });
+    expect(f.services["A_PropertyValue_Read"]).toEqual({ sent: 1, received: 0 });
+    expect(f.services["A_SecureService"]).toEqual({ sent: 4, received: 4 });
+    const md = renderMarkdown({ format: "busforge-capture-index/2", dirs: ["captures"], keys: NO_KEYS, files: [f], notIndexed: [] });
+    expect(md).toContain("- **A_IndividualAddressSerialNumber_Write [tool access, broadcast]** (1): `x.log`");
+    expect(md).toContain("| 8 (6 shown) |");
+  });
+
+  test("without keys, counts each by what its frame shows in clear", () => {
+    const f = indexed(indexText("x.log", text));
+    expect(f.secure.shown).toBe(0);
+    expect(f.secure.inside).toEqual({
+      "S-A_Data (not opened) [group]": { sent: 0, received: 1 },
+      "S-A_Data (not opened) [tool access, broadcast]": { sent: 1, received: 0 },
+      "S-A_Data (not opened) [tool access]": { sent: 2, received: 1 },
+      "Sync.req (not opened) [tool access, broadcast]": { sent: 1, received: 0 },
+      "Sync.res (not opened) [tool access, broadcast]": { sent: 0, received: 1 },
+      "Sync.res (not opened) [tool access]": { sent: 0, received: 1 },
+    });
+    expect(f.assigned).toEqual([]);
+  });
+
+  test("an opened telegram whose inner APDU carries transport bits is counted as undecoded", () => {
+    const line = tunnel("ETS->BRIDGE", REQ, "1.1.100", iaToNum("1.1.7"), secured({ key: TOOL_KEY, src: "1.1.100", dst: iaToNum("1.1.7"), scf: 0x90, seq: seq(1), tpci: 0x43, plaintext: Buffer.from([0x43, 0x00]) }));
+    const f = indexed(indexText("x.log", line, keys()));
+    expect(f.secure.inside).toEqual({ "S-A_Data (inner APDU malformed) [tool access]": { sent: 1, received: 0 } });
+    expect(f.undecoded).toEqual({ count: 1, lines: [1] });
+  });
+});
+
+describe("the keys of the corpus", () => {
+  test("come from its keyrings and projects with the passwords given, plus the environment's; one none opens is named", () => {
+    const root = mkdtempSync(join(tmpdir(), "capture-index-"));
+    try {
+      for (const d of ["captures", "internal/captures", "collections"]) mkdirSync(join(root, d), { recursive: true });
+      const keyring = (toolKey: Buffer, password: string) =>
+        writeKeyring({ created: "2026-01-01T00:00:00", devices: [{ individualAddress: "1.1.7", toolKey }], groups: [] }, password);
+      writeFileSync(join(root, "internal/captures/bench.knxkeys"), keyring(TOOL_KEY, "right"));
+      writeFileSync(join(root, "collections/other.knxkeys"), keyring(OTHER_KEY, "unknown"));
+      writeFileSync(join(root, "captures/run.log"), [
+        tunnel("ETS->BRIDGE", REQ, "1.1.100", iaToNum("1.1.7"), secured({ key: TOOL_KEY, src: "1.1.100", dst: iaToNum("1.1.7"), scf: 0x90, seq: seq(1), tpci: 0x43, plaintext: Buffer.from([0x03, 0xd5, 0x00, 0x38, 0x10, 0x01]) })),
+        tunnel("ETS->BRIDGE", REQ, "1.1.100", iaToNum("1.1.7"), secured({ key: FDSK, src: "1.1.100", dst: iaToNum("1.1.7"), scf: 0x92, seq: seq(2), tpci: 0x47, plaintext: Buffer.alloc(6, 7), serial: SERIAL })),
+      ].join("\n"));
+      const index = buildIndex(root, { passwords: ["wrong", "right"], environment: [{ name: "bench FDSK", key: FDSK }] });
+      expect(index.keys).toEqual({
+        read: [{ file: "internal/captures/bench.knxkeys", deviceKeys: 1, groupKeys: 0 }],
+        notRead: [{ file: "collections/other.knxkeys", reason: expect.stringMatching(/^KEYRING_SIGNATURE_MISMATCH: /) }],
+        environment: ["bench FDSK"], deviceKeys: 2, groupKeys: 0,
+      });
+      const run = index.files.find((f) => f.file === "captures/run.log")!;
+      expect(run.secure.shown).toBe(2);
+      expect(run.secure.openedWith).toEqual(["bench FDSK", "internal/captures/bench.knxkeys tool key 1.1.7"]);
+      const md = renderMarkdown(index);
+      expect(md).toContain("- `internal/captures/bench.knxkeys`: 1 device, 0 group");
+      expect(md).toContain("- from `CAPTURE_KEYS`: `bench FDSK`");
+      expect(md).toContain("- `collections/other.knxkeys`: KEYRING_SIGNATURE_MISMATCH");
+      // Nothing of a key reaches the index.
+      for (const k of [TOOL_KEY, FDSK, OTHER_KEY]) {
+        for (const enc of ["hex", "base64"] as const) expect(md + JSON.stringify(index)).not.toContain(k.toString(enc).toLowerCase().slice(0, 16));
+      }
+    } finally { rmSync(root, { recursive: true }); }
+  });
+
+  test("a key the environment gives is 16 bytes of hex", () => {
+    expect(parseKeyList("a=00112233445566778899aabbccddeeff, b=ffeeddccbbaa99887766554433221100")).toEqual([
+      { name: "a", key: Buffer.from("00112233445566778899aabbccddeeff", "hex") }, { name: "b", key: Buffer.from("ffeeddccbbaa99887766554433221100", "hex") },
+    ]);
+    expect(() => parseKeyList("a=0011")).toThrow("key a is not 16 bytes of hex");
+    expect(() => parseKeyList("00112233445566778899aabbccddeeff")).toThrow("key entry 1 is not name=<32 hex>");
+  });
+});
+
 describe("the corpus walk", () => {
   test("reads a gzipped log, leaves out the index's own files and lists the rest in path order", () => {
     const root = mkdtempSync(join(tmpdir(), "capture-index-"));
@@ -243,7 +388,13 @@ describe("ETS 6 logs", () => {
     expect(f.devices).toEqual([{ address: "1.1.18", descriptor0: ["07B0"] }, { address: "1.1.206", descriptor0: [] }]);
     expect(f.assigned).toEqual(["1.1.206"]);
     expect(f.properties).toEqual(["0/56", "3/5", "t17.1/51"]);
-    expect(f.secure).toEqual({ telegrams: 4, innerShown: 3 });
+    expect(f.secure).toEqual({
+      telegrams: 4, shown: 4, openedWith: [],
+      inside: {
+        "A_PropertyExtValue_WriteCon": { sent: 1, received: 0 }, "A_PropertyValue_Write": { sent: 1, received: 0 },
+        "A_Restart (master reset)": { sent: 1, received: 0 }, "Sync.req": { sent: 1, received: 0 },
+      },
+    });
     expect(f.services["A_Restart (master reset)"]).toEqual({ sent: 1, received: 0 }); // the proxy reader's name for 0x381
     expect(f.services["A_GroupValue_Read"]).toEqual({ sent: 1, received: 0 });
     expect(f.services["A_PropertyValue_Write"]).toEqual({ sent: 1, received: 0 });
@@ -253,6 +404,23 @@ describe("ETS 6 logs", () => {
     expect(f.etsActions).toEqual(["LoadApplicationProgram(PartialLoadParameters) 1.1.18", "StartLoadDevice(Partial) 1.1.18", "StartResetDevice 1.1.18"]);
     expect(f.telegrams).toBe(11);
     expect(f.undecoded.count).toBe(0);
+  });
+
+  test("names a secured telegram ETS logged encrypted, and a secured broadcast by its destination", () => {
+    const text = [
+      `${at}Falcon.KnxStack.LL - [#1 0] Received Sec_ind <- 1.1.203 (hc=6) SyncRes Encrypted:93DD58C5ABA4B824B89A0EED08517755284E126ECD16A4`,
+      `${at}Falcon.KnxStack.LL - [#1 0] Received Sec_ind <- 1.1.203 (hc=6) SAI=A+C SeqNr=0000000E48D5  InnerTelegram=Encrypted: 44BC229A`,
+      `${at}Falcon.KnxStack.LL - [#1 0] Send Sec_req -> 0/0/0 (hc=6) SAI=A+C SeqNr=2  InnerTelegram=IndividualAddressSerialNumber_Read_req -> 0/0/0 (hc=6) SerialNumber=000A31293319`,
+    ].join("\r\n");
+    const f = indexed(indexText("x.txt", text));
+    expect(f.secure).toEqual({
+      telegrams: 3, shown: 2, openedWith: [],
+      inside: {
+        "A_IndividualAddressSerialNumber_Read [broadcast]": { sent: 1, received: 0 },
+        "S-A_Data (not shown)": { sent: 0, received: 1 },
+        "Sync.res": { sent: 0, received: 1 },
+      },
+    });
   });
 
   test("counts a link-layer line it cannot parse, and a property service naming no property", () => {
@@ -338,4 +506,27 @@ corpusDescribe("the proxy decode against ETS's own log of the same download", ()
       expect(a.devices.filter((d) => d.descriptor0.length)).toEqual(b.devices.filter((d) => d.descriptor0.length));
     });
   }
+});
+
+// bussard's synthetic secure captures (MIT, Tom Bocklisch) come with the keyring of their project, under the public
+// password its oracle rows name: every secured telegram ETS sent and the simulator answered opens with it.
+corpusDescribe("a secure ETS capture opened with the keyring beside it", () => {
+  const dir = `${BUSSARD_SYNTHETIC_DIR}/captures/syn-secure/apply`;
+  corpusTest(dir, () => {
+    for (const f of [BUSSARD_ROWS, `${dir}/project.knxkeys`, `${dir}/ets.pcapng`]) corpusPath(f);
+    const root = corpusRoot()!;
+    const load = corpusKeys(root, [`${dir}/project.knxkeys`], documentedKeyringPasswords(root));
+    expect(load.notRead).toEqual([]);
+    expect(load.read).toEqual([{ file: `${dir}/project.knxkeys`, deviceKeys: 2, groupKeys: 3 }]);
+    const f = indexed(indexFile(root, `${dir}/ets.pcapng`, load.keys));
+    expect(f.undecoded.count).toBe(0);
+    expect(f.secure.telegrams).toBeGreaterThan(50);
+    expect(f.secure.shown).toBe(f.secure.telegrams);
+    expect(f.secure.openedWith).toEqual([`${dir}/project.knxkeys tool key 1.1.1`]);
+    expect(Object.keys(f.secure.inside).filter((s) => s.includes("not opened"))).toEqual([]);
+    // ETS's secured load: a Sync, then the load-state machine and the tables through the extended property services.
+    for (const s of ["Sync.req [tool access]", "Sync.res [tool access]", "A_PropertyExtValue_WriteCon [tool access]", "A_MemoryExtended_Write [tool access]"]) {
+      expect((f.secure.inside[s]?.sent ?? 0) + (f.secure.inside[s]?.received ?? 0)).toBeGreaterThan(0);
+    }
+  });
 });

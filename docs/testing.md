@@ -272,7 +272,7 @@ corpus exported, `tools/capture-index.ts` reads every file under `captures/`, `i
 and `collections/` and writes the index into the corpus:
 
 ```bash
-BUSFORGE_CORPUS=<corpus> bun run tools/capture-index.ts
+BUSFORGE_CORPUS=<corpus> KNXPROJ_PASSWORDS=<one per line> CAPTURE_KEYS=<name>=<32 hex>,... bun run tools/capture-index.ts
 #   internal/captures/INDEX.md     one table row per capture, for reading and grep
 #   internal/captures/index.json   every field, for scripts
 ```
@@ -290,8 +290,8 @@ Per file the index records the tool, the units it addressed or that answered wit
 descriptor 0 (the mask version), the addresses an address assignment wrote, every service with how
 often it went each way, the object/PID pairs touched (`<object index>/<PID>`, `t<type>.<instance>/<PID>`
 for the extended services, `if ...` for the interface's own objects), the group addresses, the
-secured telegrams and how many of them show their inner service, ETS's download actions, the
-requests the interface confirmed negatively and the lines that did not decode.
+secured telegrams with the service inside each, ETS's download actions, the requests the interface
+confirmed negatively and the lines that did not decode.
 
 Two things it does not take on trust:
 
@@ -305,8 +305,28 @@ Two things it does not take on trust:
   "Not read" with the reason; the files that cannot hold a telegram log (project exports, JSON
   collections, scripts, product data) are counted by kind, and named one by one in `index.json`.
 
-A proxy log carries Data Secure telegrams encrypted, so their inner services are not in its row;
-ETS's own log of the same minutes shows them.
+#### Secured telegrams
+
+ETS's own log names the service inside a secured telegram. A proxy log or pcap capture carries it
+encrypted, and the index opens it with Busforge's own Data Secure decoder (`tools/secure-capture.ts`,
+which `tools/secure-capture-decode.ts` prints a single capture with) and the keys the corpus holds:
+
+- the tool keys and group keys of every ETS project (`.knxproj`) under the indexed directories, each tried
+  without a password and with each line of `KNXPROJ_PASSWORDS`;
+- the tool keys, FDSKs and group keys of every ETS keyring (`.knxkeys`), with the same passwords and the
+  public one the bussard set names for its synthetic keyrings;
+- device keys the corpus cannot hold, such as a bench device's FDSK from its certificate, from
+  `CAPTURE_KEYS` (`<name>=<32 hex>,...`).
+
+Every tool-access telegram is tried with every device key, whatever its destination, so a secured
+broadcast (ETS assigns a secure device's address by serial with tool-access telegrams to `0/0/0`) opens
+like a point-to-point one; a Sync answer opens against the challenge of the Sync request it answers. An
+opened telegram's inner service counts among the file's services like a plain one, its assigned
+address and object/PID pair included, and `INDEX.md` lists every service seen inside a secured telegram
+with the files that show it, tagged with what the frame shows in clear: tool access, broadcast, group.
+A telegram no key opens stays in the count as `(not opened)`. The keys stay in memory: the index names
+the file a key came from and which keys opened a capture, never a key or a plaintext, and lists each
+project or keyring it could not open with the reason, so an index written without the passwords says so.
 
 ## Why the golden snapshot is not a correctness proof
 

@@ -298,6 +298,9 @@ export const CORPUS_FILES: readonly string[] = [
   ...OPENKNX_RELEASES.map((r) => `${OPENKNX_DEMO_DIR}/${r.asset}`),
   `${BUSSARD_SYNTHETIC_DIR}/LICENSE`,
   `${BUSSARD_SYNTHETIC_DIR}/captures/manifest.json`,
+  // The oracle rows, whose header names the synthetic keyrings' public password, and the keyring
+  // tools/capture-index.test.ts opens a secure capture with.
+  `${BUSSARD_SYNTHETIC_DIR}/captures/rows.txt`, bussardCapture("syn-secure", "apply", "project.knxkeys"),
   ...BUSSARD_SYNTHETIC_VARIANTS.flatMap(({ product: p, variant: v, base }) => [
     bussardCapture(p, v), bussardCapture(p, v, "requests.txt"), ...(base ? [bussardCapture(p, v, "base.pcapng"), bussardCapture(p, v, "base-requests.txt")] : []),
   ]),

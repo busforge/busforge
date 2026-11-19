@@ -16,7 +16,14 @@
 //
 // A file in none of them, or in more than one, is listed with the reason it was not read; a line of a read
 // file whose frame does not decode is counted in that file's row, never skipped silently.
-import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+//
+// The Data Secure telegrams of a proxy log or pcap capture are opened with the keys the corpus holds: the tool
+// keys and group keys of its ETS projects and the keys of its ETS keyrings (tried with each password of
+// KNXPROJ_PASSWORDS, and the public password the bussard set documents for its synthetic keyrings), plus device
+// keys the corpus cannot hold, such as a bench device's FDSK from its certificate, given as
+//   CAPTURE_KEYS="<name>=<32 hex>,..."
+// Keys stay in memory; the index names only the key that opened a file's telegrams, never its value or a plaintext.
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { extname, join } from "node:path";
 import { APCI, CEMI, CEMI_CON_ERROR, SVC, decodeGroupApdu, numToGa, numToIa } from "../packages/knx/src/frame.ts";
@@ -26,11 +33,18 @@ import {
 } from "../packages/knx/src/rawcodec.ts";
 import { parseTunnelFrame } from "./etsdiff.ts";
 import { pcapToLog } from "./pcap.ts";
-import { corpusRoot, CORPUS_ENV } from "./corpus.ts";
+import { BUSSARD_SYNTHETIC_DIR, corpusRoot, CORPUS_ENV, refuseDotenv } from "./corpus.ts";
+import { passwords } from "./corpus-archives.ts";
+import {
+  SecureCaptureDecoder, addKeys, corpusKeys, emptyKeys, parseKeyList, type KeyLoad, type NamedKey, type SecureFrame, type SecureKeys,
+} from "./secure-capture.ts";
 
 export const INDEX_DIRS = ["captures", "internal/captures", "collections"] as const;
 export const INDEX_MD = "internal/captures/INDEX.md";
 export const INDEX_JSON = "internal/captures/index.json";
+export const KEYS_ENV = "CAPTURE_KEYS";
+// The bussard set's oracle rows name the public password of its synthetic keyrings in their header.
+export const BUSSARD_ROWS = `${BUSSARD_SYNTHETIC_DIR}/captures/rows.txt`;
 
 export type Format = "knxproxy" | "pcap" | "ets6log" | "groupmonitor";
 // The client's name in a pcap capture: a sniffer's file does not say which tool sent its frames.
@@ -62,16 +76,32 @@ export interface IndexedFile {
   // (cEMI local management of the interface itself).
   properties: string[];
   groupAddresses: number;
-  // A_SecureService telegrams, and how many of them show the service inside (ETS's log does, a proxy log
-  // carries it encrypted).
-  secure: { telegrams: number; innerShown: number };
+  // A_SecureService telegrams; how many of them the index shows the service of (ETS's log names it, a proxy log
+  // or pcap capture where a key opened it); the services inside, each way (named by secureInside); and the keys that
+  // opened them, by name. The service of an opened S-A_Data counts in `services` too, like any other telegram.
+  secure: { telegrams: number; shown: number; inside: Record<string, ServiceCount>; openedWith: string[] };
   // ETS's download actions on its log, e.g. "StartLoadDevice(Partial) 1.1.18".
   etsActions: string[];
   // Lines of this format whose telegram did not decode, with the first line numbers.
   undecoded: { count: number; lines: number[] };
 }
 export interface NotIndexed { file: string; reason: string }
-export interface CaptureIndex { format: "busforge-capture-index/1"; dirs: readonly string[]; files: IndexedFile[]; notIndexed: NotIndexed[] }
+// Where the keys came from: the corpus files read with how many keys each added, the ones not read with the
+// reason, and the names of the keys from the environment.
+export interface KeySources { read: KeyLoad["read"]; notRead: KeyLoad["notRead"]; environment: string[]; deviceKeys: number; groupKeys: number }
+export interface CaptureIndex {
+  format: "busforge-capture-index/2"; dirs: readonly string[]; keys: KeySources; files: IndexedFile[]; notIndexed: NotIndexed[];
+}
+
+// The name of a service inside a secured telegram: an opened S-A_Data by the service it carries, a Sync by its
+// own, one no key opened as "<SCF service> (not opened)", with what the frame shows in clear in brackets:
+// "tool access" for SCF bit 7, "broadcast" for the destination 0/0/0, "group" for another group address. ETS's
+// log shows neither the SCF nor a Sync's access, so its rows name only the destination; a telegram ETS logs
+// encrypted is "S-A_Data (not shown)".
+export function secureInside(service: string, q: { toolAccess?: boolean; group?: boolean; dst?: number }): string {
+  const tags = [...(q.toolAccess ? ["tool access"] : []), ...(q.group ? [q.dst === 0 ? "broadcast" : "group"] : [])];
+  return tags.length ? `${service} [${tags.join(", ")}]` : service;
+}
 
 // ── service names ─────────────────────────────────────────────────────────────
 
@@ -165,15 +195,22 @@ class FileStats {
   readonly properties = new Set<string>();
   readonly groups = new Set<string>();
   secure = 0;
-  innerShown = 0;
+  secureShown = 0;
+  readonly secureInside = new Map<string, ServiceCount>();
+  readonly openedWith = new Set<string>();
   notOnBus = 0;
   readonly etsActions = new Set<string>();
   readonly undecoded: number[] = [];
+  // The individual address of the tunnel, which a tool's request leaves as 0.0.0 and the interface's
+  // confirmation carries: the source a secured request was authenticated with.
+  tunnelIa = 0;
 
-  service(name: string, sent: boolean): void {
-    const c = this.services.get(name) ?? { sent: 0, received: 0 };
+  constructor(readonly decoder: SecureCaptureDecoder) {}
+
+  service(name: string, sent: boolean, into: Map<string, ServiceCount> = this.services): void {
+    const c = into.get(name) ?? { sent: 0, received: 0 };
     if (sent) c.sent++; else c.received++;
-    this.services.set(name, c);
+    into.set(name, c);
   }
   device(address: string, descriptor0?: string): void {
     const d = this.devices.get(address) ?? new Set<string>();
@@ -192,7 +229,11 @@ class FileStats {
       notOnBus: this.notOnBus,
       properties: [...this.properties].sort(propertyOrder),
       groupAddresses: this.groups.size,
-      secure: { telegrams: this.secure, innerShown: this.innerShown },
+      secure: {
+        telegrams: this.secure, shown: this.secureShown,
+        inside: Object.fromEntries([...this.secureInside.entries()].sort(([a], [b]) => byText(a, b))),
+        openedWith: [...this.openedWith].sort(),
+      },
       etsActions: [...this.etsActions].sort(),
       undecoded: { count: this.undecoded.length, lines: this.undecoded.slice(0, 5) },
     };
@@ -291,6 +332,22 @@ function applicationTelegram(st: FileStats, apci: number, tpdu: Buffer, sent: bo
   return true;
 }
 
+// A secured telegram as the decoder left it. An opened S-A_Data's inner telegram is read like any other; one no
+// key opened is counted by what its frame shows in clear.
+function secureTelegram(st: FileStats, fr: SecureFrame, sent: boolean, src: string, group: boolean, dst: number): boolean {
+  const q = { toolAccess: fr.toolAccess, group, dst };
+  if (!fr.opened) { st.service(secureInside(`${fr.service} (not opened)`, q), sent, st.secureInside); return true; }
+  st.secureShown++;
+  st.openedWith.add(fr.opened.key);
+  if (fr.service !== "S-A_Data") { st.service(secureInside(fr.service, q), sent, st.secureInside); return true; }
+  const p = fr.opened.plaintext;
+  // The inner APDU's first octet carries only the APCI's top two bits; the transport layer is the outer frame's.
+  if (p.length < 2 || (p[0] & 0xfc) !== 0) { st.service(secureInside("S-A_Data (inner APDU malformed)", q), sent, st.secureInside); return false; }
+  const apci = ((p[0] & 0x03) << 8) | p[1];
+  st.service(secureInside(apciName(apci), q), sent, st.secureInside);
+  return applicationTelegram(st, apci, p, sent, src);
+}
+
 // The cEMI message behind a KNXnet/IP header and its connection header, each led by its own length.
 const cemiOf = (f: Buffer) => f.subarray(f[0] + f[f[0]]);
 
@@ -305,6 +362,7 @@ function tunnelTelegram(st: FileStats, f: Buffer, hexFrame: string, sent: boolea
   // parseTunnelFrame has checked the cEMI's length, so its first control field is there.
   const cemi = cemiOf(f), ctrl1 = cemi[2 + cemi[1]];
   if (fr.code === CEMI.LDATA_CON) {
+    if (fr.src !== 0) st.tunnelIa = fr.src;
     if (ctrl1 & CEMI_CON_ERROR) st.notOnBus++;
     return true;
   }
@@ -325,7 +383,11 @@ function tunnelTelegram(st: FileStats, f: Buffer, hexFrame: string, sent: boolea
   if (t.length < 2) return false;
   // A group or broadcast telegram is unnumbered data: no sequence number, no numbered flag.
   if (fr.group && (t[0] & 0xfc) !== 0) return false;
-  return applicationTelegram(st, ((t[0] & 0x03) << 8) | t[1], t, sent, src);
+  const apci = ((t[0] & 0x03) << 8) | t[1];
+  const ok = applicationTelegram(st, apci, t, sent, src);
+  if (apci !== 0x3f1 || !ok) return ok;
+  const authenticated = fr.code === CEMI.LDATA_REQ && fr.src === 0 ? st.tunnelIa : fr.src;
+  return secureTelegram(st, st.decoder.open(authenticated, dst, fr.group, t), sent, src, fr.group, dst);
 }
 
 // cEMI local management on the interface: its own interface objects, not a unit's.
@@ -410,10 +472,19 @@ function etsLine(st: FileStats, line: string): boolean | null {
   let ok = etsTelegram(st, sent, service, addr, to, rest);
   if (service === "Sec") {
     st.secure++;
+    const target = to ?? addr;
+    const q = { group: GA.test(target), dst: target === "0/0/0" ? 0 : -1 };
     const inner = rest.match(ETS_INNER);
+    const sync = rest.match(/^\s*Sync(Req|Res)\b/);
     if (inner) {
-      st.innerShown++;
+      st.secureShown++;
+      st.service(secureInside(ETS_NAMES[inner[1]] ?? `A_${inner[1]}`, q), sent, st.secureInside);
       ok = etsTelegram(st, sent, inner[1], inner[4], inner[5], inner[7]) && ok;
+    } else if (sync) {
+      st.secureShown++;
+      st.service(secureInside(`Sync.${sync[1].toLowerCase()}`, q), sent, st.secureInside);
+    } else {
+      st.service(secureInside("S-A_Data (not shown)", q), sent, st.secureInside);
     }
   }
   return ok;
@@ -424,11 +495,11 @@ function etsLine(st: FileStats, line: string): boolean | null {
 // ── pcap ─────────────────────────────────────────────────────────────────────
 
 // A pcap capture of KNXnet/IP over UDP, as the proxy log tools/pcap.ts turns it into; its refusal is the reason.
-export function indexPcap(file: string, bytes: Buffer): IndexedFile | NotIndexed {
+export function indexPcap(file: string, bytes: Buffer, keys: SecureKeys = emptyKeys()): IndexedFile | NotIndexed {
   let log: string;
   try { log = pcapToLog(bytes, PCAP_CLIENT); }
   catch (e) { return { file, reason: `pcap capture tools/pcap.ts refuses: ${e instanceof Error ? e.message : String(e)}` }; }
-  const r = indexText(file, log);
+  const r = indexText(file, log, keys);
   return "reason" in r ? r : { ...r, format: "pcap" };
 }
 
@@ -476,10 +547,11 @@ const TEXT_EXTENSIONS = new Set([".log", ".txt", ".out", ".err", ".lines"]);
 // APCI field, a decrypted view, a service sequence ("<time> -> T_CONNECT", "<time> <- GROUP ...").
 const TELEGRAM_LIKE = /\d+\.\d+\.\d+ ?->\s?\d+[./]\d+[./]\d+|apci=0x|\bS-A_Data\b|N_Data#|^\S+ (?:->|<-) [A-Z][A-Z_]+\b/m;
 
-export function indexText(file: string, text: string): IndexedFile | NotIndexed {
+// `keys` open the secured telegrams of a proxy log, each file with its own decoder state.
+export function indexText(file: string, text: string, keys: SecureKeys = emptyKeys()): IndexedFile | NotIndexed {
   const lines = text.split(/\r?\n/);
   const formats = new Set<Format>();
-  const st = new FileStats();
+  const st = new FileStats(new SecureCaptureDecoder(keys));
   let firstOther = 0;
   lines.forEach((line, i) => {
     let ok: boolean | null = null;
@@ -509,7 +581,7 @@ export function indexText(file: string, text: string): IndexedFile | NotIndexed 
   return st.result(file, format);
 }
 
-export function indexFile(root: string, file: string): IndexedFile | NotIndexed {
+export function indexFile(root: string, file: string, keys: SecureKeys = emptyKeys()): IndexedFile | NotIndexed {
   // A gzipped log is read as the log it holds.
   const gz = file.toLowerCase().endsWith(".gz");
   const ext = extname(gz ? file.slice(0, -3) : file).toLowerCase();
@@ -521,7 +593,7 @@ export function indexFile(root: string, file: string): IndexedFile | NotIndexed 
     bytes = gz ? gunzipSync(raw) : raw;
   } catch (e) { return { file, reason: `unreadable: ${e instanceof Error ? e.message : String(e)}` }; }
   // A file named .pcapng may hold the classic format; tools/pcap.ts tells them apart by the magic number.
-  return pcap ? indexPcap(file, bytes) : indexText(file, bytes.toString("latin1"));
+  return pcap ? indexPcap(file, bytes, keys) : indexText(file, bytes.toString("latin1"), keys);
 }
 
 function walk(root: string, dir: string, out: string[]): void {
@@ -532,12 +604,30 @@ function walk(root: string, dir: string, out: string[]): void {
   }
 }
 
-export function buildIndex(root: string): CaptureIndex {
+// The public password the bussard set's oracle rows name for its synthetic keyrings, where the corpus holds them.
+export function documentedKeyringPasswords(root: string): string[] {
+  const rows = join(root, BUSSARD_ROWS);
+  if (!existsSync(rows)) return [];
+  const m = readFileSync(rows, "utf8").match(/^#\s+BUSSARD_KEYRING_PASSWORD='([^']+)'/m);
+  return m ? [m[1]] : [];
+}
+
+// The keys besides the corpus's own: the passwords of its protected projects and device keys it cannot hold.
+export interface KeyInput { passwords: string[]; environment: NamedKey[] }
+
+export function buildIndex(root: string, input: KeyInput = { passwords: [], environment: [] }): CaptureIndex {
   const files: string[] = [];
   for (const d of INDEX_DIRS) walk(root, d, files);
-  const index: CaptureIndex = { format: "busforge-capture-index/1", dirs: INDEX_DIRS, files: [], notIndexed: [] };
-  for (const f of files.sort()) {
-    const r = indexFile(root, f);
+  files.sort();
+  const load = corpusKeys(root, files.filter((f) => /\.(knxproj|knxkeys)$/.test(f)), [...input.passwords, ...documentedKeyringPasswords(root)]);
+  addKeys(load.keys, input.environment);
+  const keys: KeySources = {
+    read: load.read, notRead: load.notRead, environment: input.environment.map((k) => k.name),
+    deviceKeys: load.keys.device.length, groupKeys: [...load.keys.group.values()].reduce((n, l) => n + l.length, 0),
+  };
+  const index: CaptureIndex = { format: "busforge-capture-index/2", dirs: INDEX_DIRS, keys, files: [], notIndexed: [] };
+  for (const f of files) {
+    const r = indexFile(root, f, load.keys);
     if ("reason" in r) index.notIndexed.push(r); else index.files.push(r);
   }
   return index;
@@ -568,8 +658,10 @@ export function renderMarkdown(index: CaptureIndex): string {
   out.push("assignment; **sent** is from the tool, **received** from the bus; **not on bus** counts the sent requests the");
   out.push("interface confirmed negatively; **properties** are object index/PID,");
   out.push("`t<type>.<instance>/<PID>` for the extended services, `if ...` for the interface's own objects; **secure**");
-  out.push("counts A_SecureService telegrams and how many show the service inside (a proxy log carries it encrypted:");
-  out.push("the ETS 6 log of the same minutes shows it). **Tool** is the name the proxy wrote (`PROXY_TOOL`), which");
+  out.push("counts A_SecureService telegrams and how many of them the index shows the service of: ETS's own log names it,");
+  out.push("a proxy log or pcap capture carries it encrypted and shows it where a key below opened it. An opened");
+  out.push("telegram's inner service counts among the sent and received services like any other, and is listed under");
+  out.push("\"Inside secured telegrams\". **Tool** is the name the proxy wrote (`PROXY_TOOL`), which");
   out.push("the proxy cannot check, so where the tool's frames come from the other tool's frame builder the");
   out.push("cell says so (`ETS (frames: Busforge)`): Busforge sends control field BC/3C, ETS 6 B0/30. A pcap capture");
   out.push(`names its client \`${PCAP_CLIENT}\`, and only its frames say which tool it was.`, "");
@@ -589,6 +681,35 @@ export function renderMarkdown(index: CaptureIndex): string {
   }
   out.push("");
 
+  const inside = new Map<string, string[]>();
+  for (const f of index.files) for (const s of Object.keys(f.secure.inside)) inside.set(s, [...(inside.get(s) ?? []), f.file]);
+  out.push("## Inside secured telegrams", "");
+  out.push("The service each secured telegram carries, and the files that show it. In brackets what the frame shows in");
+  out.push("clear: **tool access** (security control field bit 7: a device's tool key or FDSK), **broadcast** (to 0/0/0),");
+  out.push("**group** (to another group address). ETS's log shows neither the control field nor a Sync's access, so its");
+  out.push("telegrams name only the destination. **(not opened)**: no key below opened it; **(not shown)**: ETS logged");
+  out.push("it encrypted.", "");
+  for (const [s, fs] of [...inside.entries()].sort(([a], [b]) => byText(a, b))) {
+    out.push(`- **${s}** (${fs.length}): ${fs.map((f) => `\`${f}\``).join(", ")}`);
+  }
+  out.push("");
+
+  const k = index.keys;
+  out.push("## Keys", "");
+  out.push(`Secured telegrams were opened with ${k.deviceKeys} device keys (tool keys, FDSKs) and ${k.groupKeys} group keys, held in`);
+  out.push("memory only. A key is named by the first file that holds it; which keys opened a capture's telegrams is in");
+  out.push("`index.json` (`secure.openedWith`).", "");
+  const added = k.read.filter((r) => r.deviceKeys + r.groupKeys > 0);
+  for (const r of added) out.push(`- \`${r.file}\`: ${r.deviceKeys} device, ${r.groupKeys} group`);
+  if (k.read.length > added.length) out.push(`- ${k.read.length - added.length} more projects and keyrings read, holding no other key`);
+  out.push(k.environment.length ? `- from \`${KEYS_ENV}\`: ${k.environment.map((n) => `\`${n}\``).join(", ")}` : `- none from \`${KEYS_ENV}\``);
+  out.push("");
+  if (k.notRead.length) {
+    out.push("Not read, so their keys are missing (give the password in `KNXPROJ_PASSWORDS`):", "");
+    for (const n of k.notRead) out.push(`- \`${n.file}\`: ${n.reason}`);
+    out.push("");
+  }
+
   const byDd = new Map<string, Set<string>>();
   for (const f of index.files) for (const d of f.devices) for (const v of d.descriptor0) byDd.set(v, (byDd.get(v) ?? new Set()).add(f.file));
   out.push("## By device descriptor 0", "");
@@ -602,7 +723,7 @@ export function renderMarkdown(index: CaptureIndex): string {
   out.push("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
   for (const f of index.files) {
     const devices = f.devices.map((d) => (d.descriptor0.length ? `${d.address} [${d.descriptor0.join(", ")}]` : d.address)).join(", ");
-    const secure = f.secure.telegrams ? `${f.secure.telegrams} (${f.secure.innerShown} shown)` : "";
+    const secure = f.secure.telegrams ? `${f.secure.telegrams} (${f.secure.shown} shown)` : "";
     const undecoded = f.undecoded.count ? `${f.undecoded.count} (from line ${f.undecoded.lines.join(", ")})` : "";
     out.push(`| \`${f.file}\` | ${f.format} | ${toolCell(f)} | ${f.telegrams} | ${cell(devices)} | ${cell(f.assigned.join(", "))} | ${cell(services(f, "sent"))} | ${f.notOnBus || ""} | ${cell(services(f, "received"))} | ${cell(f.properties.join(", "))} | ${f.groupAddresses || ""} | ${secure} | ${cell(f.etsActions.join(", "))} | ${undecoded} |`);
   }
@@ -629,7 +750,8 @@ if (import.meta.main) {
   try {
     const root = corpusRoot();
     if (root === null) throw new Error(`${CORPUS_ENV} is unset; the index is built from the private corpus (docs/testing.md, "The private corpus")`);
-    const index = buildIndex(root);
+    refuseDotenv(KEYS_ENV);
+    const index = buildIndex(root, { passwords: passwords(), environment: parseKeyList(process.env[KEYS_ENV]) });
     writeFileSync(join(root, INDEX_JSON), JSON.stringify(index, null, 1) + "\n");
     writeFileSync(join(root, INDEX_MD), renderMarkdown(index));
     console.log(`capture-index: ${index.files.length} files read, ${index.notIndexed.length} not read -> ${INDEX_MD}, ${INDEX_JSON}`);
