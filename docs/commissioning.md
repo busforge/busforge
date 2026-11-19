@@ -38,7 +38,8 @@ So the write never runs blind:
                   Data Secure unit answers a plain read with FFFF, the mask of the project's
                   application) takes:
                   -> System 1 (BCU1, no device object): A_Restart, as ETS sends it there
-                  -> every other family: write PID_PROGMODE = 0
+                  -> every other family: write PID_PROGMODE = 0, which is not what ETS
+                     sends in its one capture outside System 1 (status.md, Known unproven)
                   -> then ask who is in programming mode: nobody, or progModeCleared is false
 ```
 

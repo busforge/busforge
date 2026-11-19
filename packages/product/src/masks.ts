@@ -167,7 +167,8 @@ export function isMemoryMappedLsm(mask: string): boolean {
 // How a device of this mask leaves programming mode once its individual address is assigned. System 1
 // (BCU1) has no device object to take PID_PROGMODE, and ETS ends the mode there with A_Restart after
 // reading the descriptor at the new address (private corpus internal/captures/hager-th001). Every
-// other family takes PID_PROGMODE 0. `mask` is what the device reported on the bus; where it reported
+// other family takes PID_PROGMODE 0, which is not the route of ETS's one capture outside System 1
+// (A_Restart on a simulated MV-07B0 unit, docs/status.md, Known unproven). `mask` is what the device reported on the bus; where it reported
 // none (a Data Secure unit answers a plain descriptor read with FFFF, a device that closed the connection
 // gives nothing), Busforge takes `projectMask`, the mask of the application the project holds for the
 // device. Any mask the device does report decides, registered or not.

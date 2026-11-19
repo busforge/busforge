@@ -153,10 +153,11 @@ describe("assigning an individual address", () => {
     expect(virgin.progMode).toBe(false);  // and will not answer the next assignment
     expect(bus.broadcastWrites).toEqual([NEW_IA]);
     expect(bus.progModeWrites).toBe(1);
-    // From the write on, ETS's frames on a System B unit (mask 07B0, private corpus
-    // internal/captures/busforge-secure-download.log, the Jung 400021SE's two assignments): the read that
-    // finds the device there, the descriptor read on its own connection, closed, then PID_PROGMODE 0 on a
-    // new one, the read that finds nobody in programming mode, and the close.
+    // From the write on, Busforge's own frames as it sent them to a System B unit (the Jung 400021SE,
+    // private corpus internal/captures/busforge-secure-download.log): the read that finds the device there,
+    // the descriptor read on its own connection, closed, then PID_PROGMODE 0 on a new one, the read that
+    // finds nobody in programming mode, and the close. A regression pin of Busforge's route, not ETS's:
+    // ETS's one capture outside System 1 ends programming mode with A_Restart (docs/status.md, Known unproven).
     expect(bus.wire.slice(bus.wire.indexOf("IA_Write"))).toEqual([
       "IA_Write", "IA_Read", `${NEW_IA} T_Connect`, `${NEW_IA} DescRead`, `${NEW_IA} T_ACK`, `${NEW_IA} T_Disconnect`,
       `${NEW_IA} T_Connect`, `${NEW_IA} PropWrite`, `${NEW_IA} T_ACK`, "IA_Read", `${NEW_IA} T_Disconnect`,
