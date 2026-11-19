@@ -7,7 +7,7 @@ import { downloadDeviceFull } from "../apps/server/src/deviceprofile.ts";
 import type { Connection } from "../apps/server/src/db/connections.ts";
 import { captureText, catalogueXml } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
-import { parseTunnelFrame } from "./etsdiff.ts";
+import { memWriteOf, parseTunnelFrame } from "./etsdiff.ts";
 import { startProxy } from "./knxproxy.ts";
 import { SimUnit, type SimProperty, type SimUnitModel } from "./sim-unit.ts";
 import { MEANWELL_KNX40E, newSimUnit } from "./sim-units.ts";
@@ -201,7 +201,7 @@ corpusDescribe("the simulated MEAN WELL KNX-40E-1280D", () => {
   // the same download into the unit (captures/meanwell-busforge-fulldownload.log) holds the frames of the
   // build that took it, whose download into this simulator gives that capture frame for frame (the corpus's
   // internal/ets-sweep/spike.md); the differences of this build's frames are Busforge's own, named below.
-  test("takes Busforge's full download through the KNXnet/IP server as the unit took it", async () => {
+  test("takes Busforge's full download through the KNXnet/IP server, every frame as the unit answered it", async () => {
     const dir = tempDir("busforge-sim-unit-");
     const sim = newSimUnit(MEANWELL_KNX40E);
     const port = await freePort();
@@ -228,8 +228,23 @@ corpusDescribe("the simulated MEAN WELL KNX-40E-1280D", () => {
       expect(result).toMatchObject({ kind: "flashed", verified: true, restartUnproven: true, stamps: [1, 2, 3, 4].map((obj) => ({ obj, hex: unitDownload.find((f) => f.dir === "<<" && f.tpdu.slice(2, 10) === `d60${obj}1b10`)!.tpdu.slice(12) })) });
 
       const unitPhases = phases(unitDownload), simPhases = phases(simDownload);
-      // From the first unload to the A_Restart: every request, every answer and every confirmation the unit's.
-      expect(simPhases.bracket).toEqual(unitPhases.bracket);
+      // The segments in the order written: this build writes the parameter segment before the three tables, in
+      // ETS's order (held against ETS's capture of the unit in tools/etsdiff.test.ts); the captured build wrote the
+      // tables first.
+      const writeOrder = (fs: Frame[]) => {
+        const lsms = fs.flatMap((f) => {
+          const t = Buffer.from(f.tpdu, "hex");
+          const w = f.dir === ">>" && t.length >= 2 ? memWriteOf(t, ((t[0] & 0x03) << 8) | t[1]) : null;
+          if (!w) return [];
+          return [[1, 2, 3, 4].find((lsm) => { const s = sim.segment(lsm)!; return w.addr >= s.at && w.addr < s.at + s.bytes.length; }) ?? 0];
+        });
+        return lsms.filter((l, i) => lsms[i - 1] !== l);
+      };
+      expect(writeOrder(simPhases.bracket)).toEqual([4, 3, 2, 1]);
+      expect(writeOrder(unitPhases.bracket)).toEqual([3, 2, 1, 4]);
+      // From the first unload to the A_Restart: every request, every answer and every confirmation the unit's, the
+      // parameter segment's run (object 4's two PID 7 reads and the segment's memory writes) taken before the tables'.
+      expect(simPhases.bracket).toEqual(parameterSegmentFirst(unitPhases.bracket));
       // Before it this build also reads the association table's element form (object 2's PID 23 description).
       const at = simPhases.open.findIndex((f) => f.dir === ">>" && f.tpdu === "43d8021700");
       expect(simPhases.open.slice(at, at + 4)).toEqual([{ dir: ">>", tpdu: "43d8021700", con: "OK" }, { dir: "<<", tpdu: "c2", ctrl: 0xb0, to: 0x1164 }, { dir: "<<", tpdu: "43d90217031400ffff", ctrl: 0xbc, to: 0x1164 }, { dir: ">>", tpdu: "c2", con: "OK" }]);
@@ -268,6 +283,16 @@ function phases(fs: Frame[]): { open: Frame[]; bracket: Frame[]; probes: Frame[]
   const reconnect = bare.findIndex((f, i) => i > restart && f.dir === ">>" && f.tpdu === "80");
   if (start < 0 || restart < start || reconnect < restart) throw new Error("the download has no bracket, restart and reconnection");
   return { open: bare.slice(0, start), bracket: bare.slice(start, restart + 1), probes: bare.slice(restart + 1, reconnect), verify: bare.slice(reconnect) };
+}
+
+// A bracket that writes the three tables before the parameter segment, with the parameter segment's run moved
+// before the tables: from its first PID 7 read to the program id's write (object 4 PID 13), the tables' from the
+// com-object table's PID 7 read to it.
+function parameterSegmentFirst(fs: Frame[]): Frame[] {
+  const req = (from: number, re: RegExp) => fs.findIndex((f, i) => i >= from && f.dir === ">>" && re.test(f.tpdu));
+  const tables = req(0, /^43d503071001$/), parameters = req(tables, /^43d504071001$/), programId = req(parameters, /^43d7040d/);
+  if (tables < 0 || parameters < 0 || programId < 0) throw new Error("the bracket has no table run, parameter segment run and program id");
+  return [...fs.slice(0, tables), ...fs.slice(parameters, programId), ...fs.slice(tables, parameters), ...fs.slice(programId)];
 }
 
 // A port for the KNXnet/IP server, which takes a port number for its UDP socket and TCP listener alike.
