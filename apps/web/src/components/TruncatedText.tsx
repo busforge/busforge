@@ -36,7 +36,7 @@ export function TruncatedText({ text, className, testId }: { text: string; class
     // Measured again on opening: a late web font changes the text's width without resizing its box.
     <Tooltip open={open} onOpenChange={(next) => setOpen(next && !!ref.current && measureCut(ref.current))}>
       <TooltipTrigger asChild tapToOpen>
-        <span ref={ref} tabIndex={cut ? 0 : undefined} className={cn("min-w-0 truncate", className)} data-testid={testId}>{text}</span>
+        <span ref={ref} tabIndex={cut ? 0 : undefined} className={cn("min-w-0 truncate rounded-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50", className)} data-testid={testId}>{text}</span>
       </TooltipTrigger>
       <TooltipContent>{text}</TooltipContent>
     </Tooltip>
