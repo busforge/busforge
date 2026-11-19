@@ -1,6 +1,6 @@
 import { resolveParamRef, sameParamValue, type AppConfig, type CfgParamRef, type DynNode, type ModuleInstance } from "./appconfig.ts";
 import { toAppModel, type Param, type ParamType } from "./application.ts";
-import { buildDeviceConfig, decodeTextEntities } from "./config.ts";
+import { buildDeviceConfig, decodeTextEntities, readingsOf, refuseUnreachedInstances, unsettledDefaultRefusal, type DeviceConfigBuild } from "./config.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { byteWidth, MAX_INT_BYTES, encode, textLength } from "./image.ts";
 import { ProductError } from "./errors.ts";
@@ -250,11 +250,31 @@ export function buildAbsoluteSegmentImages(
 export const absoluteBuildInstances = (app: AppConfig, values: Map<string, string>, moduleInstances?: ModuleInstance[]): ModuleInstance[] =>
   moduleInstances?.length ? moduleInstances : (app.hasModules ? resolveModuleInstances(app, values) : []);
 
+// Where a configuration has two readings (buildDeviceConfig), a segment is built from each, and refused unless
+// both write the same bytes the same way. A calculation runs on the first reading's values only, so an application
+// that declares one is refused outright there.
+// `prior`: the configuration's build from the first pass, which the second reads its other reading from.
+type Reading = { prior?: undefined } | { prior: DeviceConfigBuild };
+const sameWrites = <T>(a: T, b: T, fields: (keyof T)[]): boolean => fields.every((f) => JSON.stringify(a[f]) === JSON.stringify(b[f]));
+
 export function buildAbsoluteSegmentTargets(
   app: AppConfig,
   values: Map<string, string>,
   opts: { lang?: string; moduleInstances?: ModuleInstance[]; textRefusals?: TextRefusals } = {},
 ): DeviceSegmentTarget[] {
+  const { out, taken } = absoluteSegmentTargets(app, values, opts, {});
+  if (!taken.otherReading) return out;
+  const other = absoluteSegmentTargets(app, values, opts, { prior: taken }).out;
+  if (other.length !== out.length || out.some((t, i) => !sameWrites(t, other[i], ["address", "bytes", "owned", "verify", "constant", "hidden", "dataBits"]))) throw unsettledDefaultRefusal(taken.unsettledChooses);
+  return out;
+}
+
+function absoluteSegmentTargets(
+  app: AppConfig,
+  values: Map<string, string>,
+  opts: { lang?: string; moduleInstances?: ModuleInstance[]; textRefusals?: TextRefusals },
+  reading: Reading,
+): { out: DeviceSegmentTarget[]; taken: DeviceConfigBuild } {
   // Module instances: the imported project's set when given, else re-run the allocators
   // for a from-scratch device so its channel parameters are placed at the same offsets
   // ETS would compute. Threaded into BOTH the image model (to materialise the per-instance
@@ -262,12 +282,17 @@ export function buildAbsoluteSegmentTargets(
   const instances = absoluteBuildInstances(app, values, opts.moduleInstances);
   const model = toAppModel(app, { includeUnions: true, instances });
   // The results of the <ParameterCalculation>s Busforge runs, stored on their parameters as ETS stores them.
-  const calculated = applyCalculations(app, values, instances).values;
+  const calc = applyCalculations(app, values, instances);
+  const calculated = calc.values;
   // Effective value of every parameter reached in the active dynamic tree, keyed by
   // ParameterRef id. This includes Access="None" internal parameters that ETS writes
   // to memory but hides from the UI, so it is the right source for the image (the
   // visible blocks alone would miss them).
-  const view = buildDeviceConfig(app, calculated, opts.lang, instances);
+  // The calculations ran on the first reading's values; which of them the other reading would run is not known.
+  if (reading.prior && app.calculations.length) throw unsettledDefaultRefusal(reading.prior.unsettledChooses);
+  const taken = reading.prior ?? buildDeviceConfig(app, calculated, opts.lang, instances);
+  if (!opts.moduleInstances?.length) refuseUnreachedInstances(app, taken, instances);
+  const view = reading.prior ? reading.prior.otherReading! : taken;
   const active = view.imageValues;
   const treeOrder = treeOrderOf(app, active);
   // The parameters an active ref places: another ref of theirs is not a hidden parameter.
@@ -415,7 +440,7 @@ export function buildAbsoluteSegmentTargets(
     if (contested) for (const [i, c] of contested.entries()) { owned[i] &= ~c; verify[i] &= ~c; constant[i] &= ~c; }
     out.push({ id: segId, address: seg.address, size: seg.size, bytes: img, owned, verify, constant, constants: placements, hidden: hidden.map((h, i) => h & ~placed[i] & 0xff), dataBits });
   }
-  return out.sort((a, b) => a.address - b.address);
+  return { out: out.sort((a, b) => a.address - b.address), taken };
 }
 
 // The RelativeSegment (System B) parameter image as a SURGICAL target: the bytes plus
@@ -533,6 +558,7 @@ const hiddenRefusal = (refId: string, at: string, reason: string) =>
 // `defaulted`: inactive parameters written at their default although the values hold another value for them.
 export interface RelativeSegmentTarget { lsm: number; size: number; bytes: Buffer; owned: number[]; verify: number[]; markers: number[]; constant: number[]; constants: ConstantPlacement[]; defaulted: Set<string>; }
 
+type RelativeOpts = { lang?: string; moduleInstances?: ModuleInstance[]; ownIdleUnionDefaults?: boolean; textRefusals?: TextRefusals };
 export function buildRelativeSegmentTarget(
   app: AppConfig,
   values: Map<string, string>,
@@ -540,8 +566,16 @@ export function buildRelativeSegmentTarget(
   // ownIdleUnionDefaults: own the DefaultUnionParameter member of every union with no active member,
   // as ETS writes it in both its full and its parameter download (GVS AMMA captures).
   // The read-back model leaves it unset: it compares what the configuration derives.
-  opts: { lang?: string; moduleInstances?: ModuleInstance[]; ownIdleUnionDefaults?: boolean; textRefusals?: TextRefusals } = {},
+  opts: RelativeOpts = {},
 ): RelativeSegmentTarget | null {
+  const built = relativeSegmentTarget(app, values, lsm, opts, {});
+  if (!built?.taken.otherReading) return built?.target ?? null;
+  const other = relativeSegmentTarget(app, values, lsm, opts, { prior: built.taken })!.target;
+  if (!sameWrites(built.target, other, ["bytes", "owned", "verify", "markers", "constant"])) throw unsettledDefaultRefusal(built.taken.unsettledChooses);
+  return built.target;
+}
+
+function relativeSegmentTarget(app: AppConfig, values: Map<string, string>, lsm: number, opts: RelativeOpts, reading: Reading): { target: RelativeSegmentTarget; taken: DeviceConfigBuild } | null {
   const instances = opts.moduleInstances?.length ? opts.moduleInstances : (app.hasModules ? resolveModuleInstances(app, values) : []);
   const model = toAppModel(app, { includeUnions: true, instances });
   const seg = model.segments.find((s) => s.lsm === lsm);
@@ -549,7 +583,11 @@ export function buildRelativeSegmentTarget(
   // The results of the <ParameterCalculation>s Busforge runs, stored on their parameters as ETS stores them.
   const calc = applyCalculations(app, values, instances);
   const calculated = calc.values;
-  const built = buildDeviceConfig(app, calculated, opts.lang, instances);
+  // The calculations ran on the first reading's values; which of them the other reading would run is not known.
+  if (reading.prior && app.calculations.length) throw unsettledDefaultRefusal(reading.prior.unsettledChooses);
+  const taken = reading.prior ?? buildDeviceConfig(app, calculated, opts.lang, instances);
+  if (!opts.moduleInstances?.length) refuseUnreachedInstances(app, taken, instances);
+  const built = reading.prior ? reading.prior.otherReading! : taken;
   const active = built.imageValues;
   // The parameters an active ref places: another ref of theirs is not a hidden parameter.
   const shown = new Set([...active.keys()].map((r) => model.refs.get(r)?.paramId));
@@ -674,7 +712,7 @@ export function buildRelativeSegmentTarget(
     if (!written || !written.equals(img)) throw hiddenRefusal(u.refId, `offset ${u.param.offset} of the parameter segment (LSM ${lsm})`, u.reason);
   }
   if (contested) for (const [i, c] of contested.entries()) { owned[i] &= ~c; verify[i] &= ~c; markers[i] &= ~c; constant[i] &= ~c; }
-  return { lsm, size: seg.size, bytes: img, owned, verify, markers, constant, constants: placements, defaulted };
+  return { target: { lsm, size: seg.size, bytes: img, owned, verify, markers, constant, constants: placements, defaulted }, taken };
 }
 
 // Merge a surgical relative target onto the live segment for a System B download: write
@@ -831,14 +869,20 @@ function colorBits(app: AppConfig, typeId: string): number | undefined {
 
 // The colour parameters with memory that a configuration activates, by ParameterRef id, with their values.
 export function activeColorValues(app: AppConfig, values: Map<string, string>, instances: ModuleInstance[]): Map<string, string> {
+  return colorReadings(app, values, instances)[0];
+}
+// The same, one map per reading of the configuration (readingsOf).
+function colorReadings(app: AppConfig, values: Map<string, string>, instances: ModuleInstance[]): Map<string, string>[] {
   const model = toAppModel(app, { includeUnions: true, instances });
-  const out = new Map<string, string>();
-  for (const [refId, v] of buildDeviceConfig(app, values, undefined, instances).imageValues) {
-    const ref = model.refs.get(refId);
-    const p = ref ? model.params.get(ref.paramId) : undefined;
-    if (p?.offset !== undefined && app.types.get(p.typeId)?.base === "Color") out.set(refId, v);
-  }
-  return out;
+  return readingsOf(buildDeviceConfig(app, values, undefined, instances)).map((view) => {
+    const out = new Map<string, string>();
+    for (const [refId, v] of view.imageValues) {
+      const ref = model.refs.get(refId);
+      const p = ref ? model.params.get(ref.paramId) : undefined;
+      if (p?.offset !== undefined && app.types.get(p.typeId)?.base === "Color") out.set(refId, v);
+    }
+    return out;
+  });
 }
 
 // How ETS encodes a colour is shown for the RGB space on a relative segment (image.ts colorBytes): there
@@ -860,9 +904,10 @@ export function refuseColorWrites(app: AppConfig, values: Map<string, string>, i
     return rgbWritten && !!p && model.types.get(p.typeId)?.base === "Color"
       && (!p.codeSegment || model.segments.find((s) => s.id === p.codeSegment)?.lsm === 4);
   };
-  const now = activeColorValues(app, values, instances);
-  const before = base ? activeColorValues(app, base.values, base.instances) : new Map<string, string>();
-  const written = [...now].filter(([ref, v]) => !encoded(ref) && (!base || before.get(ref)?.toUpperCase() !== v.toUpperCase())).map(([ref]) => ref);
+  // A colour is unchanged only where every reading of the configuration the device holds has it.
+  const before = base ? colorReadings(app, base.values, base.instances) : [];
+  const written = [...new Set(colorReadings(app, values, instances).flatMap((now) => [...now]
+    .filter(([ref, v]) => !encoded(ref) && (!base || before.some((b) => b.get(ref)?.toUpperCase() !== v.toUpperCase()))).map(([ref]) => ref)))];
   if (!written.length) return;
   const what = base
     ? `this flash writes the device's parameters, and ${written.length} colour parameter(s) among them changed or came into use (e.g. ${written[0]})`
@@ -954,8 +999,9 @@ export function refuseCalculationWrites(app: AppConfig, values: Map<string, stri
     }
   }
   if (!feeding.size) return;
-  // Per module instance and Parameter id: the ref whose value counts and that value.
-  const paramValues = (v: Map<string, string>, inst: ModuleInstance[]) => {
+  // Per module instance and Parameter id: the ref whose value counts and that value, one map per reading of the
+  // configuration (readingsOf).
+  const paramValues = (v: Map<string, string>, inst: ModuleInstance[]) => readingsOf(buildDeviceConfig(app, v, undefined, inst)).map((view) => {
     const out = new Map<string, { ref: string; value: string }>();
     const take = (entries: Iterable<[string, string]>) => {
       for (const [ref, value] of entries) {
@@ -964,15 +1010,15 @@ export function refuseCalculationWrites(app: AppConfig, values: Map<string, stri
         if (key && !covered.has(key) && !out.has(key)) out.set(key, { ref, value });
       }
     };
-    take(buildDeviceConfig(app, v, undefined, inst).imageValues);
+    take(view.imageValues);
     take(v);
     return out;
-  };
+  });
   // Both configurations as the builders write them, with the results Busforge computes: a result one calculation
   // computes can be the input of another that Busforge does not run.
-  const now = paramValues(applied.values, instances);
-  const before = paramValues(base ? applyCalculations(app, base.values, base.instances).values : new Map(), base?.instances ?? instances);
-  for (const key of new Set([...now.keys(), ...before.keys()])) {
+  // Every reading of the configuration against every reading of the one the device holds.
+  const befores = paramValues(base ? applyCalculations(app, base.values, base.instances).values : new Map(), base?.instances ?? instances);
+  for (const now of paramValues(applied.values, instances)) for (const before of befores) for (const key of new Set([...now.keys(), ...before.keys()])) {
     const is = now.get(key), was = before.get(key);
     const ref = (is ?? was)!.ref;
     if (same(ref, was?.value ?? null, is?.value ?? null)) continue;

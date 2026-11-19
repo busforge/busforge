@@ -40,11 +40,6 @@ corpusDescribe("bussard's synthetic captures: the System B com-object table of p
   // writes its KNXnet/IP parameter object after the application (its capture's PIDs 51, 66, 67, 76, 55, 53), which no
   // System B path of Busforge writes (FULL_DOWNLOAD_TUNNELING_ENTRIES).
   const PLANNED = ["syn-assign", "syn-assign-rewrite", "syn-choose-never-shown", "syn-choose-per-ref", "syn-color-param", "syn-com-objects", "syn-dynamic-tests", "syn-hidden-default", "syn-ip-address-param", "syn-legacy-patch-always", "syn-master-reset", "syn-master-reset-code4", "syn-minimal", "syn-module-choose", "syn-object-size-ref", "syn-param-calculation", "syn-relseg-fill", "syn-text-initialvalue", "syn-text-undeclared", "syn-union-bitfields", "syn-union-default-range", "syn-user-memory-extmem"];
-  // Products whose object 2 sits in the only branch (default="true") of a <choose> on a ParameterRef no active
-  // branch places: ETS takes no branch and leaves its entry 00 00, Busforge takes the default branch and writes
-  // it (docs/roadmap.md, "A <choose> on a ParameterRef no active branch places"). Held here for what they show
-  // of object 0, the count and the entry of object 1; the entry of object 2 is that open rule's.
-  const CHOOSE_UNREACHED = ["syn-choose-never-shown", "syn-choose-per-ref"];
 
   test("every tested MV-07B0 product numbers an object 0, and none is refused for it", () => {
     const all = products();
@@ -67,13 +62,25 @@ corpusDescribe("bussard's synthetic captures: the System B com-object table of p
       const table = (profile.operationRefusals().fullDownload
         ? (() => { const v = buildDeviceConfig(cfg, params, undefined, instances); return buildComObjectTable(v.imageComObjects, v.maxComObjectNumber, new Set()); })()
         : profile.planFullDownload(cfg.mask, { ia: "1.1.1", params, links: [], moduleInstances: instances, proc: parseLoadProcedures(xml) }).segments.find((s) => s.source === "comObjTable")!.image).toString("hex");
-      const ets = etsTable(capture(product, "defaults"), OBJ.COMOBJ);
-      if (CHOOSE_UNREACHED.includes(product)) {
-        expect(ets.length).toBe(table.length);
-        expect(table.slice(0, 8)).toBe(ets.slice(0, 8));
-      } else {
-        expect(table).toBe(ets);
-      }
+      expect(table).toBe(etsTable(capture(product, "defaults"), OBJ.COMOBJ));
+    });
+  }
+
+  // Object 2 sits in the only branch, default="true", of a <choose> on a ParameterRef no active branch places: a
+  // parameter no block shows (syn-choose-never-shown) and the second ref of a shown parameter, placed only while
+  // that parameter is 0 (syn-choose-per-ref). ETS takes no branch at defaults and leaves object 2's entry 00 00; with
+  // the parameter set to 0 the second ref is placed, and ETS writes the entry. Busforge's full download plans both.
+  for (const [product, variant, set, table] of [
+    ["syn-choose-never-shown", "defaults", {}, "00024b000000"],
+    ["syn-choose-per-ref", "defaults", {}, "00024b000000"],
+    ["syn-choose-per-ref", "params", { "P-1_R-1": "0", "P-2_R-2": "42" }, "00024b004b00"],
+  ] as const) {
+    test(`${product} (${variant}): object 2's entry only where the choose's ref is placed`, () => {
+      const { xml, cfg } = products().find((p) => p.product === product)!;
+      const params = new Map([...initialValues(cfg, "de-DE"), ...Object.entries(set).map(([ref, v]) => [`${cfg.id}_${ref}`, v] as const)]);
+      const build = classify(cfg).planFullDownload(cfg.mask, { ia: "1.1.1", params, links: [], proc: parseLoadProcedures(xml) });
+      expect(etsTable(capture(product, variant), OBJ.COMOBJ)).toBe(table);
+      expect(build.segments.find((s) => s.source === "comObjTable")!.image.toString("hex")).toBe(table);
     });
   }
 

@@ -1,4 +1,6 @@
 import { test, expect } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { parseAppConfig } from "../src/appconfig.ts";
 import { toAppModel, unmappedParamRefs } from "../src/application.ts";
 import { resolveModuleInstances } from "../src/modules.ts";
@@ -243,4 +245,35 @@ corpusDescribe("unresolved module arguments refuse instead of guessing (no silen
       catch (e) { expect((e as { code?: string }).code).toBe("COMOBJ_ARG_UNRESOLVED"); }
     }
   });
+});
+
+// The allocator takes a choose's default branch where the configuration does (config.ts defaultBranchOf): on a
+// ParameterRef an active branch places, or a memoryless one heading a reached block. A module in the default branch
+// of a choose on a ref nothing places is not instantiated, so it consumes no allocator a later module would then
+// start behind; on an Access="None" ref nothing places, which no ETS download decides, the allocation is refused.
+test("a module in the default branch of a choose on a ParameterRef nothing places is not instantiated", () => {
+  const base = readFileSync(join(import.meta.dir, "fixtures", "sample-module-app.xml"), "utf8");
+  const gated = (opts: { place?: boolean; head?: boolean; access?: string }) => parseAppConfig(base
+    .replace("<Parameters />", '<Parameters><Parameter Id="M-TEST_A-2_P-G" Name="Gate" ParameterType="M-TEST_A-2_PT-OnOff" Text="Gate" Value="0" /></Parameters>')
+    .replace("<ParameterRefs />", `<ParameterRefs><ParameterRef Id="M-TEST_A-2_P-G_R-1" RefId="M-TEST_A-2_P-G"${opts.access ? ` Access="${opts.access}"` : ""} /></ParameterRefs>`)
+    .replace(/(<Repeat Id="M-TEST_A-2_X-1"[\s\S]*?<\/Repeat>)/, `${opts.place ? '<ParameterBlock Id="M-TEST_A-2_PB-9" Name="g" Text="Gate"><ParameterRefRef RefId="M-TEST_A-2_P-G_R-1" /></ParameterBlock>' : ""}${opts.head ? '<ParameterBlock Id="M-TEST_A-2_PB-8" Name="h" ParamRefId="M-TEST_A-2_P-G_R-1"><ParameterSeparator Id="M-TEST_A-2_PS-1" Text="page" /></ParameterBlock>' : ""}<choose ParamRefId="M-TEST_A-2_P-G_R-1"><when test="7" /><when default="true">$1</when></choose>`));
+  expect(resolveModuleInstances(gated({}), new Map())).toEqual([]);
+  expect(resolveModuleInstances(gated({ place: true }), new Map())).toHaveLength(4);
+  expect(resolveModuleInstances(gated({ head: true }), new Map())).toHaveLength(4);
+  expect(resolveModuleInstances(gated({ place: true, access: "None" }), new Map())).toHaveLength(4);
+  expect(() => resolveModuleInstances(gated({ access: "None" }), new Map())).toThrow(expect.objectContaining({ code: "CHOOSE_DEFAULT_UNSETTLED" }));
+});
+
+// The allocator evaluates a choose on its own: it reads a Merker nothing places (an Access="None" memoryless
+// parameter) at its static default, where the configuration reads it as unset. An instance it allocates in a
+// branch the configuration does not take is refused once the configuration is built, not placed in memory.
+test("re-run instances the configuration does not reach are refused", () => {
+  const base = readFileSync(join(import.meta.dir, "fixtures", "sample-module-app.xml"), "utf8");
+  const app = parseAppConfig(base
+    .replace("<Parameters />", '<Parameters><Parameter Id="M-TEST_A-2_P-M" Name="Merker" ParameterType="M-TEST_A-2_PT-OnOff" Text="Merker" Access="None" Value="1" /></Parameters>')
+    .replace("<ParameterRefs />", '<ParameterRefs><ParameterRef Id="M-TEST_A-2_P-M_R-1" RefId="M-TEST_A-2_P-M" /></ParameterRefs>')
+    .replace('<Module Id="M-TEST_A-2_MD-1_M-1" RefId="M-TEST_A-2_MD-1" Name="C" />', '<Module Id="M-TEST_A-2_MD-1_M-1" RefId="M-TEST_A-2_MD-1" Name="C"><NumericArg RefId="M-TEST_A-2_MD-1_A-2" Value="10" /></Module>')
+    .replace(/(<Repeat Id="M-TEST_A-2_X-1"[\s\S]*?<\/Repeat>)/, '<choose ParamRefId="M-TEST_A-2_P-M_R-1"><when test="1">$1</when></choose>'));
+  expect(resolveModuleInstances(app, new Map())).toHaveLength(4);
+  expect(() => buildDeviceConfig(app, new Map())).toThrow(expect.objectContaining({ code: "MODULE_INSTANCES_UNREACHED" }));
 });
