@@ -15,6 +15,7 @@ The hardware smoke framework in `smoke/` has its own document, [`docs/testing.md
 | `etsdiff.ts` | Diff Busforge's full-download image, segment by segment, against what ETS wrote in a captured full download (the reference-axis gate, see docs/verification.md) |
 | `knxproxy.ts` | KNXnet/IP-over-TCP logging proxy between ETS (or Busforge) and a KNXnet/IP server: the capture `etsdiff.ts` reads (docs/testing.md, "Taking a capture") |
 | `pcap.ts` | A pcap capture of KNXnet/IP over UDP as the log `knxproxy.ts` writes, so `etsdiff.ts` reads it (docs/testing.md, "Captures in pcap form") |
+| `capture-index.ts` | Offline: index every capture in the private corpus by tool, unit and mask, assigned addresses, services and object/PID pairs, and list what it cannot read (docs/testing.md, "The capture index") |
 | `secure-capture-decode.ts` | Decrypt the KNX Data Secure frames of a logging-proxy capture offline, with keys given only in the environment (FDSK, tool key, group keys); see docs/knx-secure.md |
 | `intake.ts` | Take a diagnostic package a user sent into the private corpus with its provenance and consent, list the received packages, delete one (the procedure is internal, kept in the corpus) |
 | `flashtest.ts` | **Writes to a real device.** Live group-address flash harness with revert |

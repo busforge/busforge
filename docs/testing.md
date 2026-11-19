@@ -200,6 +200,49 @@ device's behaviour. `tools/bussard-synthetic.test.ts` checks the pcap conversion
 holds Busforge's images for these products against ETS's bytes. The set's README in the corpus names
 the commit it was taken from and carries bussard's licence.
 
+### The capture index
+
+"Does a capture show X" is answered by a lookup, not by a hex search through the corpus. With the
+corpus exported, `tools/capture-index.ts` reads every file under `captures/`, `internal/captures/`
+and `collections/` and writes the index into the corpus:
+
+```bash
+BUSFORGE_CORPUS=<corpus> bun run tools/capture-index.ts
+#   internal/captures/INDEX.md     one table row per capture, for reading and grep
+#   internal/captures/index.json   every field, for scripts
+```
+
+Run it again after adding a capture. It reads four formats, each with its own decoder:
+
+| Format | What it is | How it is read |
+|---|---|---|
+| `knxproxy` | The log of `tools/knxproxy.ts` | Each frame's hex, decoded with Busforge's frame decoder (`packages/knx`, `tools/etsdiff.ts`) |
+| `pcap` | A pcap capture (also when named `.pcapng`) | Turned into the proxy's log by `tools/pcap.ts`, then as above |
+| `ets6log` | ETS 6's own log, its `Falcon.KnxStack` lines | ETS's decode as ETS wrote it, including the service inside each secured telegram |
+| `groupmonitor` | The group-telegram listeners of bench and house runs | Each telegram's TPDU; the listener's own reads where its line names them |
+
+Per file the index records the tool, the units it addressed or that answered with their device
+descriptor 0 (the mask version), the addresses an address assignment wrote, every service with how
+often it went each way, the object/PID pairs touched (`<object index>/<PID>`, `t<type>.<instance>/<PID>`
+for the extended services, `if ...` for the interface's own objects), the group addresses, the
+secured telegrams and how many of them show their inner service, ETS's download actions, the
+requests the interface confirmed negatively and the lines that did not decode.
+
+Two things it does not take on trust:
+
+- **The tool.** A proxy names its client by `PROXY_TOOL`, and the default is `ETS`, so a Busforge run
+  through a proxy started without it reads `ETS`. The index also records whose frame builder the
+  tool's frames to units come from: Busforge sets the first cEMI control field to `0xBC` (`0x3C` for an
+  extended frame), ETS 6 to `0xB0` (`0x30`). Where label and frames disagree, the row says so and
+  `INDEX.md` lists the file at the top. A pcap capture names no tool; its frames do.
+- **A line it cannot read.** A telegram line whose frame does not decode is counted in its file's row
+  with its line number, never skipped. A file in no format above, or in more than one, is listed under
+  "Not read" with the reason; the files that cannot hold a telegram log (project exports, JSON
+  collections, scripts, product data) are counted by kind, and named one by one in `index.json`.
+
+A proxy log carries Data Secure telegrams encrypted, so their inner services are not in its row;
+ETS's own log of the same minutes shows them.
+
 ## Why the golden snapshot is not a correctness proof
 
 The golden file is generated from busforge's own output. It locks the output against accidental
