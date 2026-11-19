@@ -554,14 +554,15 @@ report a device family as working on the strength of a passing test suite.
   FFFF, so its route comes from the project's application (MV-0012), and whether it takes a plain
   `A_Restart` while it runs Data Secure is not known.
 
-- **Outside System 1, Busforge does not end programming mode the way ETS does.** After an address
-  assignment Busforge writes `PID_PROGMODE` 0 on every family but System 1. The one ETS capture of an
+- **On System B, Busforge does not end programming mode the way ETS's one capture does.** After an
+  address assignment Busforge writes `PID_PROGMODE` 0 on every family but System 1. The one ETS capture of an
   address assignment outside System 1, ETS 6.4.1 addressing a simulated MV-07B0 (System B) device
   ([third-party test data](testing.md#third-party-test-data)), ends it otherwise: after the descriptor
   read ETS reads `PID_MAX_APDU_LENGTH` and the serial number, then sends `A_Restart`, and writes no
   `PID_PROGMODE`. On the Jung 400021SE Busforge's write left the unit out of programming mode; with Data
   Secure on, the unit refused the plain write and stayed in it. No capture shows ETS assigning an
-  address to a real System B unit, to System 7 (MV-0701, MV-0705) or to any other mask.
+  address to a real System B unit, to System 7 (MV-0701, MV-0705) or to any other mask, so how ETS ends
+  programming mode there is not known.
 
 - **A com-object flag or priority edited on the device page has not been written to hardware by
   Busforge.** ETS writes a flag change with its group-address download; on the MDT BE-02001.02 and the
