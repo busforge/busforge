@@ -156,6 +156,13 @@ What each row does not show:
   not written a colour onto a device. An HSV colour, any other colour space, and any colour on a
   System 7 device are refused for every write that would change one (`PARAM_COLOR_UNSUPPORTED`); a
   read-back leaves them out.
+- **Calculated parameters and overlapping union members.** A `<ParameterCalculation>` is not run: a
+  write that changes a parameter on one side of a calculation whose other side reaches the image is
+  refused (`PARAM_CALCULATION_UNSUPPORTED`). Where two active members of one `<Union>` share bits, the
+  member later both among the ParameterRefs and in the tree is written, as ETS's full download of the
+  OpenKNX RaumController holds it (capture comparison); where the orders disagree the write is refused
+  (`PARAM_UNION_OVERLAP`). On System 7 a link of a com-object above 255 is refused
+  (`ASSOC_SHORT_FORM_OVERFLOW`).
 - **Jung 400021SE** runs in Data Secure mode, secure-commissioned by ETS. Its plain claims were shown
   in plain mode; the plain smoke spec applies again only after a master reset. Its load procedure
   declares two memory-control-block regions that every allocation resets, so the full download and
