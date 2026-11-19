@@ -25,6 +25,20 @@ depends on is hardware-proven.
   object's PID 56 with a cEMI `M_PropRead` (`DEVICE_CONFIGURATION_REQUEST`) and gets the USB limit (40).
   Busforge writes 12 bytes there. Either the bridge answers the search over TCP, or Busforge asks as ETS
   does ([status.md](status.md#known-unproven)).
+- **The tunnelling feature services as ETS uses them.** On an interface that advertises tunnelling
+  version 2 (the MDT IP interface), ETS 6 asks the bus connection status (`TUNNELLING_FEATURE_GET`,
+  feature 0x03) right after it connects over TCP, and switches the interface's feature info service on
+  (`TUNNELLING_FEATURE_SET`, feature 0x08 = 1); the Busforge bridge advertises version 1 and ETS asks it
+  nothing. Busforge asks neither, so an interface that is not on the bus shows as a device that does not
+  answer. Needs: the same exchange, with a refusal where the interface reports no bus, tried against a
+  tunnelling-v2 interface; no capture shows the exchange over UDP.
+- **A device at the tunnel's own address.** A device tells management clients apart by source address
+  only, so a device holding the address the interface gives the tunnel would share its connection.
+  No ETS capture addresses the tunnel's own address, and none shows what ETS does on a collision;
+  bussard reads the device descriptor of that address before each connection and refuses when
+  something answers. Needs: how each interface (the Busforge bridge, a USB stick, an IP interface)
+  passes a frame addressed to its own tunnel address, tried on hardware before such a check can be
+  trusted.
 - **A T_NAK from the device counts as its T_ACK.** `KnxDevice` takes any transport control frame with
   the request's sequence number as the acknowledgement, so a refused frame waits out the response
   timeout and is repeated instead of failing at once. `KnxDevice.restart()` notes a T_NAK on its probe
