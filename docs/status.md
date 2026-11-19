@@ -161,9 +161,14 @@ What each row does not show:
   not written a colour onto a device. An HSV colour, any other colour space, and any colour on a
   System 7 device are refused for every write that would change one (`PARAM_COLOR_UNSUPPORTED`); a
   read-back leaves them out.
-- **Calculated parameters and overlapping union members.** A `<ParameterCalculation>` is not run: a
-  write that changes a parameter on one side of a calculation whose other side reaches the image is
-  refused (`PARAM_CALCULATION_UNSUPPORTED`). Where two active members of one `<Union>` share bits, the
+- **Calculated parameters and overlapping union members.** A `<ParameterCalculation>` is run where an
+  input is off its default, with Busforge's JavaScript and VBScript interpreter, and its results are
+  written like other parameters (capture comparison: bussard's synthetic product, the shown and the
+  hidden LegacyPatchAlways result); its results on a real product are not shown against ETS. A write
+  Busforge cannot compute as ETS does is refused (`PARAM_CALCULATION_UNSUPPORTED`): a script outside
+  the subset or a script function (all OpenKNX calculations), a result that steers the configuration
+  (the MDT counters), a result placed nowhere active (the Jung dimming time with the dimming function
+  off). Where two active members of one `<Union>` share bits, the
   member later both among the ParameterRefs and in the tree is written, as ETS's full download of the
   OpenKNX RaumController holds it (capture comparison); where the orders disagree the write is refused
   (`PARAM_UNION_OVERLAP`). On System 7 a link of a com-object above 255 is refused
