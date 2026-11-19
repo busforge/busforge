@@ -47,7 +47,8 @@ export function addKeys(keys: SecureKeys, device: NamedKey[], group: { raw: numb
 // ── keys from the corpus ─────────────────────────────────────────────────────
 
 // `omitted` names the keys a source holds but did not give: Busforge's project reader takes only the first
-// installation and gives no KNX IP Secure key or password and no BCU key, and a key that is not 16 bytes is left out.
+// installation and the devices in its topology, and gives no KNX IP Secure key or password and no BCU key; a
+// key that is not 16 bytes is left out.
 const KEYRING_NOT_THIS_PASSWORD = new Set(["KEYRING_SIGNATURE_MISMATCH", "KEYRING_PASSWORD_INVALID"]);
 export interface KeySource { file: string; deviceKeys: number; groupKeys: number; omitted: string[] }
 export interface KeyLoad { keys: SecureKeys; read: KeySource[]; notRead: { file: string; reason: string }[] }
@@ -94,6 +95,7 @@ function projectKeys(keys: SecureKeys, file: string, bytes: Buffer, password: st
   const p = loadKnxproj(bytes, password, file);
   const omitted: string[] = [];
   if (p.skippedInstallations) omitted.push(`${p.skippedInstallations} unread installation(s) after the first`);
+  if (p.unassignedDevices + p.malformedDevices) omitted.push(`${p.unassignedDevices + p.malformedDevices} unread device(s) outside the topology or without an id or address`);
   if (p.secretsNotImported) omitted.push(`${p.secretsNotImported} key(s) or password(s) of KNX IP Secure or a BCU key`);
   const key = (what: string, b64: string) => {
     const k = Buffer.from(b64, "base64");

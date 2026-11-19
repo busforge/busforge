@@ -104,7 +104,7 @@ export function parseProject(xml0: string, projectXml: string | undefined, fallb
   const securities = devices.map((d) => parseDeviceSecurity(scope, d.id)).filter((x): x is DeviceSecurity => x !== undefined);
   const deviceSecurity = securities.filter((s) => s.serialNumber !== "");
   const toolKeysWithoutSerial = securities.filter((s) => s.serialNumber === "").map(({ deviceId, toolKey }) => ({ deviceId, toolKey }));
-  const secretsNotImported = countSecretsNotImported(installation, scope, devices);
+  const secretsNotImported = countSecretsNotImported(installations.length ? installations : kids(installation), doc);
   const { secureSenders, unresolvedSenders } = parseSecureSenders(scope, devices, busInterfaceIndex);
   const deviceKnxIp = devices.map((d) => parseDeviceKnxIp(xml0, scope, d.id, productNames, productTranslations)).filter((x): x is DeviceKnxIp => x !== undefined);
 
@@ -163,19 +163,26 @@ const DEFAULT_BCU_KEY = "4294967295";
 const SECRET_INSTALLATION_ATTRS = ["IPRoutingBackboneKey", "BCUKey"] as const;
 const isSecretSet = (name: string, value: string | undefined): boolean => !!value && !(name === "BCUKey" && value === DEFAULT_BCU_KEY);
 
-// The keys and passwords the installation holds that Busforge does not use and does not import: KNX IP
-// Secure's backbone key, each device's authentication code and management password, each tunnelling
-// user's password, and a BCU key other than the default. The copies ETS records as loaded into a device
-// (LoadedIPRoutingBackboneKey and the hashes) are the same secrets and are not counted again.
-function countSecretsNotImported(installation: XmlNode | undefined, doc: XmlNode, devices: Device[]): number {
-  let n = SECRET_INSTALLATION_ATTRS.filter((a) => isSecretSet(a, attr(installation?.[a]))).length;
-  for (const d of devices) {
-    const dev = findDeviceInstance(doc, d.id);
-    const sec = node(dev?.Security);
+// The keys and passwords the project holds that Busforge does not use and does not import, in every
+// installation and on every device, those the import leaves out with their installation or as outside the
+// topology included: KNX IP Secure's backbone key, each device's authentication code and management
+// password, each tunnelling user's password, and a BCU key other than the default. The copies ETS records as
+// loaded into a device (LoadedIPRoutingBackboneKey and the hashes) are the same secrets and are not counted again.
+function countSecretsNotImported(installations: XmlNode[], doc: XmlNode): number {
+  let n = installations.reduce((sum, inst) => sum + SECRET_INSTALLATION_ATTRS.filter((a) => isSecretSet(a, attr(inst[a]))).length, 0);
+  for (const dev of allDeviceInstances(doc)) {
+    const sec = node(dev.Security);
     for (const a of ["DeviceAuthenticationCode", "DeviceManagementPassword"]) if (attr(sec?.[a])) n++;
-    for (const bi of kids(node(dev?.BusInterfaces)?.BusInterface)) if (attr(bi.Password)) n++;
+    for (const bi of kids(node(dev.BusInterfaces)?.BusInterface)) if (attr(bi.Password)) n++;
   }
   return n;
+}
+
+// Every DeviceInstance below `n`, wherever it sits (descends into arrays: see buildGaIdMap).
+function allDeviceInstances(n: unknown): XmlNode[] {
+  if (Array.isArray(n)) return n.flatMap(allDeviceInstances);
+  if (!isNode(n)) return [];
+  return [...kids(n.DeviceInstance), ...Object.entries(n).filter(([k]) => k !== "DeviceInstance").flatMap(([, v]) => allDeviceInstances(v))];
 }
 
 // An element's attributes as text, read off its start tag in the source: the parsed node holds its
@@ -193,7 +200,7 @@ function startTag(xml: string, name: string, from = 0): string {
 
 // The installation's attributes with the value of each one that holds a key emptied: the name says the
 // project sets it, the key itself stays out of the unsealed device settings.
-function withoutSecrets(attrs: Record<string, string>): Record<string, string> {
+export function withoutInstallationSecrets(attrs: Record<string, string>): Record<string, string> {
   const out = { ...attrs };
   for (const a of SECRET_INSTALLATION_ATTRS) if (isSecretSet(a, out[a])) out[a] = "";
   return out;
@@ -221,7 +228,7 @@ function parseDeviceKnxIp(xml0: string, doc: XmlNode, deviceId: string, productN
     securityAttributes: Object.keys(secAttrs),
     toolKeyLoaded: secAttrs.ToolKey !== undefined && secAttrs.ToolKey === secAttrs.LoadedToolKey,
     busInterfaces: kids(node(dev?.BusInterfaces)?.BusInterface).length,
-    installation: withoutSecrets(attrsOfTag(startTag(xml0, "Installation"))),
+    installation: withoutInstallationSecrets(attrsOfTag(startTag(xml0, "Installation"))),
   };
 }
 

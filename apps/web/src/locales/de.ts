@@ -106,7 +106,7 @@ const de: Messages = {
     gapUnresolvedLinks: "{{count}} Gruppenadress-Verknüpfung(en) verweisen auf eine Adresse, die nicht im Projekt ist, und wurden verworfen",
     gapUnresolvedSenders: "{{count}} einer Gruppenadresse zugeordnete Schnittstelle(n) ließen sich keiner Adresse zuordnen und wurden nicht als Absender übernommen",
     gapSecureWithoutSerial: "{{count}} sichere(s) Gerät(e) hat ETS nie in Betrieb genommen (keine Seriennummer); ohne Tool-Key übernommen",
-    gapSecretsNotImported: "Das Projekt enthält {{count}} Schlüssel oder Passwörter, die Busforge nicht nutzt (KNX IP Secure, ein BCU-Schlüssel); nicht übernommen",
+    gapSecretsNotImported: "Das Projekt enthält {{count}} Schlüssel oder Passwort/Passwörter, die Busforge nicht nutzt (KNX IP Secure, ein BCU-Schlüssel); nicht übernommen",
     gapMalformedDevices: "{{count}} Gerät(e) hatten in der Datei keine Id oder keine Adresse und wurden übersprungen",
     gapSkippedInstallations: "Das Projekt enthält {{count}} weitere Installation(en); übernommen wurde nur die erste",
     gapUnassignedDevices: "{{count}} Gerät(e) liegen in ETS außerhalb der Topologie (keine Linie, keine Adresse) und wurden nicht übernommen",

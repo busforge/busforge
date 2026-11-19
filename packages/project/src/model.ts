@@ -198,7 +198,7 @@ export interface Project {
   secureSenders: SecureSender[]; // bus interfaces assigned to group addresses (0.xml BusInterface Connectors)
   unresolvedSenders: number;      // such assignments whose interface address could not be resolved (surfaced, never guessed)
   toolKeysWithoutSerial: { deviceId: string; toolKey: string }[]; // tool keys (base64) of secure devices ETS never commissioned (no serial): no Sync can run against them, so the import keeps them out of the key store
-  secretsNotImported: number;     // KNX IP Secure keys and passwords and a BCU key other than the default the installation sets: not imported (see parse.ts countSecretsNotImported)
+  secretsNotImported: number;     // KNX IP Secure keys and passwords and a BCU key other than the default, in every installation and on every device: not imported (see parse.ts countSecretsNotImported)
   unresolvedLinks: number;        // link tokens that referenced a GA not in the tree (silently lost unless surfaced)
   malformedDevices: number;       // DeviceInstances dropped for a missing Id or non-numeric address (unkeyable/unaddressable; surfaced, not silently defaulted)
   skippedInstallations: number;   // <Installation>s after the first; only the first is imported

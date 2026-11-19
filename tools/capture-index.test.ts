@@ -383,14 +383,15 @@ describe("the keys of the corpus", () => {
       const xml = readFileSync(join(import.meta.dir, "../packages/project/test/fixtures/sample-0.xml"), "utf8")
         .replace('Hardware2ProgramRefId="M-0048_H-1_HP-1">', 'Hardware2ProgramRefId="M-0048_H-1_HP-1"><Security ToolKey="AAECAwQFBgcICQoLDA0ODw==" DeviceAuthenticationCode="code" />')
         .replace('<GroupAddress Id="P-TEST-0_GA-1" Address="1"', '<GroupAddress Id="P-TEST-0_GA-1" Address="1" Key="AAECAwQFBgcICQoLDA0O"')
-        .replace("</Installations>", '<Installation Name="Second" /></Installations>');
+        .replace("</Installations>", '<Installation Name="Second" /></Installations>')
+        .replace("</Topology>", '<UnassignedDevices><DeviceInstance Id="P-TEST-0_DI-9" Name="" /></UnassignedDevices></Topology>');
       writeFileSync(join(root, "captures/p.knxproj"), storeZip({ "P-TEST/0.xml": xml }));
       const index = buildIndex(root);
       expect(index.keys.read).toEqual([{
         file: "captures/p.knxproj", deviceKeys: 1, groupKeys: 0,
-        omitted: ["1 unread installation(s) after the first", "1 key(s) or password(s) of KNX IP Secure or a BCU key", "group key 0/0/1: 15 bytes, not 16"],
+        omitted: ["1 unread installation(s) after the first", "1 unread device(s) outside the topology or without an id or address", "1 key(s) or password(s) of KNX IP Secure or a BCU key", "group key 0/0/1: 15 bytes, not 16"],
       }]);
-      expect(renderMarkdown(index)).toContain("- `captures/p.knxproj`: 1 device, 0 group; not given: 1 unread installation(s) after the first, 1 key(s) or password(s) of KNX IP Secure or a BCU key, group key 0/0/1: 15 bytes, not 16");
+      expect(renderMarkdown(index)).toContain("- `captures/p.knxproj`: 1 device, 0 group; not given: 1 unread installation(s) after the first, 1 unread device(s) outside the topology or without an id or address, 1 key(s) or password(s) of KNX IP Secure or a BCU key, group key 0/0/1: 15 bytes, not 16");
     } finally { rmSync(root, { recursive: true }); }
   });
 
