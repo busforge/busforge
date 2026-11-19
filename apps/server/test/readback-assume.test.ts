@@ -1,12 +1,12 @@
 import { test, expect, mock, afterAll, describe, setDefaultTimeout } from "bun:test";
-import { readFileSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildAbsoluteSegmentTargets, parseAppConfig } from "@busforge/product";
 import { CollectedUnit, asDevice, type Collection } from "../../../packages/product/test/collected-unit.ts";
 import { catalogueXml, corpusPath, inServiceCollection } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
 import { readBackAs } from "./task-client.ts";
+import { tempDir } from "../../../tools/test-temp.ts";
 
 // Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 1.0 s with the
 // file alone (load 5-27) and up to 1.0 s with every workspace's tests in parallel (load 5-8). A full check on a busy
@@ -32,16 +32,13 @@ type DeviceStateRead = Awaited<ReturnType<typeof realRead>>;
 type AppState = ReturnType<typeof createState>;
 afterAll(() => { readImpl = realRead; paramFlashImpl = realParamFlash; structureFlashImpl = realStructureFlash; });
 
-const tmps: string[] = [];
-afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
 const req = (path: string, init?: RequestInit) => new Request(`http://x${path}`, init);
 const fixtures = join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures");
 
 // The demo project's first device, its application swapped for `appXml` when given, reset to what a
 // placement leaves: nothing stored, never programmed.
 async function placed(appXml?: string): Promise<{ state: AppState; pid: string; did: string; path: string }> {
-  const dir = mkdtempSync(join(tmpdir(), "busforge-readback-assume-"));
-  tmps.push(dir);
+  const dir = tempDir("busforge-readback-assume-");
   const state = createState({ dbPath: ":memory:", dataDir: dir, now: () => 1000 });
   const form = new FormData();
   form.set("file", new File([readFileSync(join(fixtures, "sample-config.knxproj"))], "ConfigDemo.knxproj"));

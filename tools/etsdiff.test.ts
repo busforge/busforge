@@ -1,12 +1,12 @@
 import { test, expect, describe, setDefaultTimeout } from "bun:test";
-import { readFileSync, rmSync, existsSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { iaToNum, numToIa, gaToNum, LSM, planSecurityObjectLoad, GROUP_KEY_ENTRY, ownedRuns, planSystemBGaFlash, fillAllocatedRuns, differingRuns, type LoadPlan } from "../packages/knx/src/index.ts";
 import { parseAppConfig, classify, parseLoadProcedures, relParamFillByte, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, differingFF, leaveUnreadUnchanged, buildDeviceConfig, buildComObjectTable, buildGroupTables, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosing, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, withInstanceOverrides, fullDownloadImageCoverage, planSystem1Download, MV0012_DEFAULT_LOAD, absoluteBuildInstances, checkedStamps, buildSecurityObject, writtenGroupKeys, relativeParWriteSet, relativeComObjWriteSet, constantParams, differingConstants, comObjectTableChanges, decodeParameterImage, type KnxIpDevice, type ModuleInstance, type ComObjInstanceOverride, type ImageStamp } from "../packages/product/src/index.ts";
 import { catalogueDir, catalogueXml, captureText, capturePath, listCatalogue } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
+import { tempDir } from "./test-temp.ts";
 import { CollectedUnit, asDevice, type Collection } from "../packages/product/test/collected-unit.ts";
 import { parseCapture, parseTunnelFrame, memoryImage, etsAllocations, reportedTableReferences, compareSegments, parseGaAnyForm, inferBase, captureDevice } from "./etsdiff.ts";
 
@@ -821,10 +821,9 @@ corpusDescribe("Theben DALI-Gateway full download on a loaded unit against ETS",
 corpusDescribe("etsdiff --partial evidence", () => {
   const realDir = catalogueDir();
   const cli = async (args: string[]) => {
-    const out = join(tmpdir(), `etsdiff-partial-${crypto.randomUUID()}.json`);
+    const out = join(tempDir("etsdiff-"), "partial.json");
     const p = Bun.spawnSync(["bun", "run", join(import.meta.dir, "etsdiff.ts"), ...args, "--partial", `--evidence=${out}`], { stdout: "pipe", stderr: "pipe" });
     const written = existsSync(out) ? JSON.parse(readFileSync(out, "utf8")) as { scope: { operation: string; configuration: string }; results: { reference: { state: string; detail?: string } } }[] : null;
-    rmSync(out, { force: true });
     return {
       exitCode: p.exitCode, records: written?.map((r) => [r.scope.operation, r.results.reference.state]) ?? null, details: written?.map((r) => r.results.reference.detail) ?? [],
       configurations: written?.map((r) => r.scope.configuration) ?? [], stderr: p.stderr.toString(),
@@ -864,7 +863,7 @@ corpusDescribe("etsdiff --partial evidence", () => {
       expect([extra, ok, err.includes("--redact-addresses applies to the evidence record")]).toEqual([extra, false, true]);
     }
     // A misspelt flag is refused, so it cannot leave the addresses in by accident.
-    const out = join(tmpdir(), `etsdiff-misspelt-${crypto.randomUUID()}.json`);
+    const out = join(tempDir("etsdiff-"), "misspelt.json");
     const [ok, err] = run(["--redact-address", `--evidence=${out}`]);
     expect([ok, err.includes("unknown option(s): --redact-address"), existsSync(out)]).toEqual([false, true, false]);
   }, 60_000);
@@ -896,14 +895,13 @@ corpusDescribe("etsdiff --partial evidence", () => {
     const cfg = parseAppConfig(xml);
     const params = classify(cfg).planFullDownload(cfg.mask, { ia: DEV, params: new Map(), links: [], proc: parseLoadProcedures(xml) }).segments.find((s) => s.lsm === 4)!;
     const base = 0x3fc6;
-    const capture = join(tmpdir(), `etsdiff-gvs-${crypto.randomUUID()}.log`);
+    const capture = join(tempDir("etsdiff-"), "gvs.log");
     writeFileSync(capture, [
       line("BRIDGE->ETS", 0x29, DEV, "0.0.0", propResponse(4, 7, [0, 0, base >> 8, base & 0xff])),
       line("ETS->BRIDGE", 0x11, "0.0.0", DEV, memWrite(base, [...params.image.subarray(0, 4)])),
       line("ETS->BRIDGE", 0x11, "0.0.0", DEV, propWrite(2, 5, [0x03, 0x0b, 0, 0, 0, 0x02, 0, 0, 0, 0])),
     ].join("\n"));
     const r = await cli([capture, `--app=${join(realDir, "M-0085_A-0072-30-69AA.xml.gz")}`, `--ia=${DEV}`]);
-    rmSync(capture, { force: true });
     expect([r.exitCode, r.records]).toEqual([1, [["flashParams", "pass"], ["flashLinks", "fail"]]]);
     expect(r.details[1]).toContain("L2 association table not compared, address unknown");
     expect(r.details[1]).toContain("L1 address table not written by this partial download");

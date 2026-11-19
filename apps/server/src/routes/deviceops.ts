@@ -321,7 +321,14 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const task = state.queue.submit(
       { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "assign-ia", writes: true },
       async (progress) => {
-        const result = await assignDeviceAddress(conn, dev.ia, progress);
+        const sec = getDeviceSecurity(db, id, deviceId, state.masterKey);
+        const cert = getDeviceCertificate(db, id, deviceId, state.masterKey);
+        if (sec && cert && !sec.serialNumber.equals(cert.serialNumber)) {
+          throw new ApiError("CERTIFICATE_SERIAL_MISMATCH", `the certificate is for serial ${cert.serialNumber.toString("hex")}, the tool key on file for ${sec.serialNumber.toString("hex")}`, 409);
+        }
+        const serial = sec?.serialNumber ?? cert?.serialNumber;
+        const keys = serial ? { serial, toolKey: sec?.toolKey, fdsk: cert?.fdsk, onPeerSequence: (seq: bigint) => setDeviceSequence(db, id, deviceId, seq) } : undefined;
+        const result = await assignDeviceAddress(conn, dev.ia, progress, keys);
         // The address is everything a product without an application program takes, as ETS's
         // IndividualAddressLoaded is everything it records for one.
         // Only while the project still holds the address that was assigned.

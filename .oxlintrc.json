@@ -26,6 +26,19 @@
       "rules": {
         "typescript/no-explicit-any": "off"
       }
+    },
+    {
+      "files": ["**/test/**", "**/*.test.ts", "**/*.test.tsx", "tools/smoke/**"],
+      "rules": {
+        "no-restricted-imports": ["error", {
+          "paths": [
+            { "name": "node:fs", "importNames": ["default", "mkdtemp", "mkdtempSync"], "message": "Use tempDir() from tools/test-temp.ts: it removes the directory when the test process ends." },
+            { "name": "node:fs/promises", "importNames": ["default", "mkdtemp"], "message": "Use tempDir() from tools/test-temp.ts: it removes the directory when the test process ends." },
+            { "name": "fs", "importNames": ["default", "mkdtemp", "mkdtempSync"], "message": "Use tempDir() from tools/test-temp.ts: it removes the directory when the test process ends." },
+            { "name": "fs/promises", "importNames": ["default", "mkdtemp"], "message": "Use tempDir() from tools/test-temp.ts: it removes the directory when the test process ends." }
+          ]
+        }]
+      }
     }
   ]
 }

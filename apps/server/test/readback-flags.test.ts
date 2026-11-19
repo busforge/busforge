@@ -1,8 +1,8 @@
 import { test, expect, mock, afterAll } from "bun:test";
-import { readFileSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readBackAs } from "./task-client.ts";
+import { tempDir } from "../../../tools/test-temp.ts";
 
 // The read-back route and the com-object flags a read of the device's table gives: they become the flag
 // baseline (what the device holds), the project keeps its own, the difference shows as a change, and a
@@ -19,8 +19,6 @@ const { getDeviceComObjOverrides, getDeviceComObjOverrideBase } = await import("
 type AppState = ReturnType<typeof createState>;
 afterAll(() => { readImpl = realRead; });
 
-const dirs: string[] = [];
-afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
 const req = (path: string, init?: RequestInit) => new Request(`http://x${path}`, init);
 const jreq = (path: string, method: string, body: unknown) => req(path, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 const j = async (res: Response | null) => (await res!.json()) as any;
@@ -28,8 +26,7 @@ const objects = (v: any) => v.blocks.flatMap((b: any) => b.items).filter((i: any
 
 // The demo project's first device, its one com-object shown (Mode=1).
 async function setup(): Promise<{ state: AppState; id: string; deviceId: string; base: string; ref: string }> {
-  const dir = mkdtempSync(join(tmpdir(), "busforge-readback-flags-"));
-  dirs.push(dir);
+  const dir = tempDir("busforge-readback-flags-");
   const state = createState({ dbPath: ":memory:", dataDir: dir, now: () => 1000 });
   const form = new FormData();
   form.set("file", new File([readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures", "sample-config.knxproj"))], "ConfigDemo.knxproj"));
