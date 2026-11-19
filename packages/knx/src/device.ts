@@ -285,8 +285,10 @@ async function waitForSyncGap(dst: number): Promise<void> {
 // arrived (request, sendOnOpenConnection), as ETS pauses ("Waiting 2289.6548 ms before reconnect" in its
 // log of a partial download through a stalling TCP link); the device's T_Disconnect to the frame that
 // reached the closed connection arrives in it, not in the new connection.
-export interface DeviceTimeouts { ackMs: number; responseMs: number; retryGapMs: number; syncResponseMs: number; restartAnswerMs: number; restartProofMs: number; droppedRepeatMs: number; staleConnectionMs: number; reconnectGapMs: number; confirmLateMs: number }
-export const DEVICE_TIMEOUTS: Readonly<DeviceTimeouts> = { ackMs: 1500, responseMs: 2000, retryGapMs: 200, syncResponseMs: 3000, restartAnswerMs: 2000, restartProofMs: 4000, droppedRepeatMs: 12_000, staleConnectionMs: 12_000, reconnectGapMs: 2300, confirmLateMs: 3000 };
+// masterResetGapMs: between the T_Disconnect after a declared master reset and the new T_Connect, about a
+// second in ETS's downloads (masterResetAnswered).
+export interface DeviceTimeouts { ackMs: number; responseMs: number; retryGapMs: number; syncResponseMs: number; restartAnswerMs: number; restartProofMs: number; droppedRepeatMs: number; staleConnectionMs: number; reconnectGapMs: number; confirmLateMs: number; masterResetGapMs?: number }
+export const DEVICE_TIMEOUTS: Readonly<DeviceTimeouts> = { ackMs: 1500, responseMs: 2000, retryGapMs: 200, syncResponseMs: 3000, restartAnswerMs: 2000, restartProofMs: 4000, droppedRepeatMs: 12_000, staleConnectionMs: 12_000, reconnectGapMs: 2300, confirmLateMs: 3000, masterResetGapMs: 1000 };
 
 // Transport connections to a device that may still be open in it although the link to the interface
 // they ran over failed, so their T_Disconnect may never have reached it: the tunnel address each ran
@@ -1577,10 +1579,12 @@ export class KnxDevice {
   // answered: the device answered the restart with error code 0. unconfirmed: the interface confirmed
   // the frame negatively (see sendRestart), which counts as sent, not as an error. notDelivered: the
   // device closed the connection before the frame reached it.
-  private async sendConfirmedRestart(): Promise<{ answered: boolean; unconfirmed: boolean; notDelivered?: true }> {
-    return this.sendOnOpenConnection(() => this.sendConfirmedRestartOnce(), (r) => r.notDelivered === true);
+  // `eraseCode`, `channel`: the master reset a load procedure declares (masterResetAnswered); the
+  // confirmed restart is erase code 1, channel 0. processTime: the seconds the answer states.
+  private async sendConfirmedRestart(eraseCode: number = ERASE.CONFIRMED_RESTART, channel = 0): Promise<{ answered: boolean; unconfirmed: boolean; notDelivered?: true; processTime?: number }> {
+    return this.sendOnOpenConnection(() => this.sendConfirmedRestartOnce(eraseCode, channel), (r) => r.notDelivered === true);
   }
-  private async sendConfirmedRestartOnce(): Promise<{ answered: boolean; unconfirmed: boolean; notDelivered?: true }> {
+  private async sendConfirmedRestartOnce(eraseCode: number, channel: number): Promise<{ answered: boolean; unconfirmed: boolean; notDelivered?: true; processTime?: number }> {
     let take: (p: ParsedApdu | null) => void = () => undefined;
     const answer = new Promise<ParsedApdu | null>((res) => { take = res; });
     let unconfirmed = false;
@@ -1593,7 +1597,7 @@ export class KnxDevice {
       // {fulldownload,partial-name,partial-name-revert}.txt: "Ack arrived for ConfirmedRestart_req"
       // and its response, no "Conf after" for that Sec_req, where every other Sec_req has one).
       this.answers = (a) => a === (APCI.RESTART | RESTART_RESPONSE | RESTART_MASTER);
-      await this.request((s) => apdu(s, APCI.RESTART | RESTART_MASTER, Buffer.from([ERASE.CONFIRMED_RESTART, 0])), false, 1, () => { this.respResolve = (p) => take(p); }, true);
+      await this.request((s) => apdu(s, APCI.RESTART | RESTART_MASTER, Buffer.from([eraseCode, channel])), false, 1, () => { this.respResolve = (p) => take(p); }, true);
     } catch (e) {
       const code = (e as { code?: string }).code;
       if (code !== "DEVICE_NOT_ANSWERING" && code !== "DEVICE_CLOSED_CONNECTION" && code !== "BUS_SEND_FAILED") { this.respResolve = null; this.answers = NO_ANSWER; throw e; }
@@ -1618,9 +1622,31 @@ export class KnxDevice {
       this.respResolve = null;
       throw new KnxError("RESTART_REFUSED", `the confirmed restart was answered with service 0x${r.apci.toString(16)} ${r.data.toString("hex")}, not an A_Restart_Response`);
     }
-    if (r.data[0] !== 0) { this.respResolve = null; throw new KnxError("RESTART_REFUSED", `the device refused the confirmed restart with error code ${r.data[0]}`); }
+    if (r.data[0] !== 0) { this.respResolve = null; throw new KnxError("RESTART_REFUSED", `the device refused the ${eraseCode === ERASE.CONFIRMED_RESTART && channel === 0 ? "confirmed restart" : `master reset with erase code ${eraseCode}, channel ${channel},`} with error code ${r.data[0]}`); }
     this.respResolve = null;
-    return { answered: true, unconfirmed };
+    return { answered: true, unconfirmed, processTime: r.data.readUInt16BE(1) };
+  }
+
+  // The master reset a load procedure declares (LdCtrlMasterReset) and the new connection after it, as
+  // ETS runs it in the third-party synthetic captures (docs/testing.md): the confirmed A_Restart with the
+  // declared erase code and channel, answered with error code 0 and a process time of 0; T_Disconnect;
+  // about a second later T_Connect, A_DeviceDescriptor_Read and the maximum APDU length (PID 56); no
+  // authorization again. The download goes on with its next step on that connection. An answer with an
+  // error code or a process time other than 0, none at all, and a unit that comes back with another mask
+  // than `mask` refuse: no capture shows ETS going on after any of them.
+  async masterResetAnswered(eraseCode: number, channel: number, mask: string): Promise<void> {
+    if (!Number.isInteger(eraseCode) || eraseCode < 0 || eraseCode > 0xff || !Number.isInteger(channel) || channel < 0 || channel > 0xff) {
+      throw new KnxError("RESTART_REFUSED", `a master reset with erase code ${eraseCode} and channel ${channel} does not fit the octet each takes`);
+    }
+    const sent = await this.sendConfirmedRestart(eraseCode, channel);
+    if (!sent.answered) throw new KnxError("DEVICE_NOT_ANSWERING", `the device did not answer the master reset with erase code ${eraseCode}, channel ${channel}; refusing to go on with the download without its answer`);
+    if (sent.processTime) throw new KnxError("RESTART_REFUSED", `the device answered the master reset with erase code ${eraseCode} with a process time of ${sent.processTime} s; no capture shows ETS waiting one out, refusing to go on with the download`);
+    await this.disconnect();
+    await sleep(this.timeouts.masterResetGapMs ?? 1000);
+    await this.connect();
+    const back = await this.deviceDescriptor();
+    if (back !== mask) throw new KnxError("MASK_MISMATCH", `after the master reset the device answers with mask ${back}, where it was ${mask}; refusing to go on with the download`);
+    await this.maxApduLength();
   }
 
 

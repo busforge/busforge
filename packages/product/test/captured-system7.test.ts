@@ -1,6 +1,6 @@
 import { test, expect, describe, setDefaultTimeout } from "bun:test";
 import { STATE, type KnxDevice } from "@busforge/knx";
-import { parseAppConfig, classify, parseLoadProcedures, buildDeviceConfig, buildAbsoluteSegmentTargets, absoluteStructuralImages, buildGroupTablesMv0705, System7Profile, absoluteFullStepRefusal, fullDownloadImageDigest, planSystem7GaFlash, type AppConfig, type ComObjectLink, type LoadProcedures } from "../src/index.ts";
+import { parseAppConfig, classify, parseLoadProcedures, buildDeviceConfig, buildAbsoluteSegmentTargets, absoluteStructuralImages, buildGroupTablesMv0705, System7Profile, absoluteFullStepRefusal, isMemoryMappedLsm, fullDownloadImageDigest, planSystem7GaFlash, type AppConfig, type ComObjectLink, type LoadProcedures } from "../src/index.ts";
 import { catalogueXml, listCatalogue } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
 import { absentIfEmpty, refusedIfEmpty } from "./property-reads.ts";
@@ -572,12 +572,12 @@ corpusDescribe("the declared-order M-0081_A-FE01-11-75D9 downloads, run against 
   for (const attrs of forms) {
     test(`LdCtrlTaskCtrl1 ${JSON.stringify(attrs)} is refused`, () => {
       const changed: LoadProcedures = { ...proc, blocks: proc.blocks.map((b) => ({ ...b, steps: b.steps.map((s) => (s.verb === "LdCtrlTaskCtrl1" ? { ...s, attrs } : s)) })) };
-      expect(absoluteFullStepRefusal(changed)).toMatchObject({ code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: expect.stringContaining("LdCtrlTaskCtrl1") });
+      expect(absoluteFullStepRefusal(changed, "declared", isMemoryMappedLsm(cfg.mask))).toMatchObject({ code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: expect.stringContaining("LdCtrlTaskCtrl1") });
       expect(() => classify(cfg).planFullDownload(cfg.mask, { ia: IA, params: new Map(), links, proc: changed })).toThrow(expect.objectContaining({ code: "FULL_DOWNLOAD_STEP_UNSUPPORTED" }));
     });
   }
   test("the captured form is not refused", () => {
-    expect(absoluteFullStepRefusal(proc)).toBeNull();
+    expect(absoluteFullStepRefusal(proc, "declared", isMemoryMappedLsm(cfg.mask))).toBeNull();
   });
 
   // Of a segment with a <Mask>, the declared-order downloads write the bytes the mask marks and the bytes a
@@ -671,7 +671,7 @@ corpusDescribe("the declared-order M-0048_A-107E-12-5B58 (TheLuxa P300) full dow
   for (const attrs of forms) {
     test(`LdCtrlTaskCtrl1 ${JSON.stringify(attrs)} is refused`, () => {
       const changed: LoadProcedures = { ...proc, blocks: proc.blocks.map((b) => ({ ...b, steps: b.steps.map((s) => (s.verb === "LdCtrlTaskCtrl1" ? { ...s, attrs } : s)) })) };
-      expect(absoluteFullStepRefusal(changed)).toMatchObject({ code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: expect.stringContaining("LdCtrlTaskCtrl1") });
+      expect(absoluteFullStepRefusal(changed, "declared", isMemoryMappedLsm(cfg.mask))).toMatchObject({ code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: expect.stringContaining("LdCtrlTaskCtrl1") });
       expect(plan(cfg, changed)).toThrow(expect.objectContaining({ code: "FULL_DOWNLOAD_STEP_UNSUPPORTED" }));
     });
   }

@@ -142,6 +142,25 @@ export async function taskCtrl1Prop(dev: KnxDevice, lsm: number, address: number
 export async function taskCtrl1MM(dev: KnxDevice, lsm: number, address: number, count: number) {
   await dev.memWrite(MM_CTRL_ADDR, mmCtrl([(lsm << 4) | 0x03, 0x04, 0x00, ...taskCtrl1Fields(lsm, address, count)]), { verify: false });
 }
+// LdCtrlTaskPtr and LdCtrlTaskCtrl2 to a property-mapped LSM, as ETS sends them to an MV-0705 device
+// simulator (the third-party synthetic captures, docs/testing.md), each answered LOADING:
+//   TaskPtr   03 03 InitPtr SavePtr SerialPtr 00 00   (03 03 4410 4414 4418 00 00)
+//   TaskCtrl2 03 05 Callback Address Seg0 Seg1        (03 05 441C 4400 0700 4440)
+// every field a 16-bit address, big-endian. The memory-mapped form is in no capture.
+export async function taskPtrProp(dev: KnxDevice, lsm: number, initPtr: number, savePtr: number, serialPtr: number): Promise<number> {
+  return loadControlState(await dev.propWrite(lsm, PID.LOAD_STATE_CONTROL, Buffer.from([0x03, 0x03, ...words(lsm, "TaskPtr", initPtr, savePtr, serialPtr), 0, 0])));
+}
+export async function taskCtrl2Prop(dev: KnxDevice, lsm: number, callback: number, address: number, seg0: number, seg1: number): Promise<number> {
+  return loadControlState(await dev.propWrite(lsm, PID.LOAD_STATE_CONTROL, Buffer.from([0x03, 0x05, ...words(lsm, "TaskCtrl2", callback, address, seg0, seg1)])));
+}
+function words(lsm: number, what: string, ...values: number[]): number[] {
+  for (const v of values) if (!Number.isInteger(v) || v < 0 || v > 0xffff) throw new Error(`LSM ${lsm}: ${what} field ${v} does not fit the 16-bit address the ETS captures show`);
+  return values.flatMap((v) => [(v >> 8) & 0xff, v & 0xff]);
+}
+// The state a load control's answer carries (the echo of a PID 5 write is the resulting state), -1 where
+// the answer carries none.
+const loadControlState = (echo: Buffer): number => (echo.length >= 1 ? echo[0] : -1);
+
 function taskCtrl1Fields(lsm: number, address: number, count: number): number[] {
   if (!Number.isInteger(address) || address < 0 || address > 0xffff || !Number.isInteger(count) || count < 0 || count > 0xff) {
     throw new Error(`LSM ${lsm}: TaskCtrl1 address ${address} / count ${count} does not fit the 2-byte address and 1-byte count the ETS captures show`);
@@ -314,7 +333,7 @@ export function planSystemBFullDownload(tables: {
   addr: Buffer;     // LSM 1, the group-address table
   assoc: Buffer;    // LSM 2, the association table
   programId: Buffer; // PID 13: manufacturer + application number + version
-}, fillByte = 0, requireReboot = true, mcb: { obj: number; element: number; data: Buffer; echoPrefix?: number }[] = [], security?: SecurityObjectTables, unloadPei = false, closeAtOnce = false, filled = true): LoadPlan {
+}, fillByte = 0, requireReboot = true, mcb: { obj: number; element: number; data: Buffer; echoPrefix?: number }[] = [], security?: SecurityObjectTables, unloadPei = false, closeAtOnce = false, filled = true, masterResets: { eraseCode: number; channel: number; mask: string }[] = []): LoadPlan {
   const P = OBJ.APP_PROGRAM, C = OBJ.COMOBJ_TABLE, A = OBJ.ASSOC_TABLE, D = OBJ.ADDR_TABLE;
   // The memory-control-block entries the application declares (PID 27), written right after the
   // object's allocation as ETS does. They split a segment into regions the device checks at boot;
@@ -354,7 +373,13 @@ export function planSystemBFullDownload(tables: {
     // filled (Mode 1, `filled`) with `fillByte`, so every byte the download leaves out holds the fill
     // rather than what a previous application left there; unfilled (Mode 0) with the declared fill byte
     // carried in the request all the same, as ETS sends it.
-    { op: "load", lsm: P }, { op: "alloc", lsm: P, size: tables.params.length, fill: filled, fillByte }, ...mcbFor(P),
+    // `masterResets`: the master resets the application declares right after this allocation, sent there
+    // as ETS sends them (KnxDevice.masterResetAnswered), each followed by a new connection. A device that
+    // restarts may clear the verify mode set above, so it is set again before the next write.
+    { op: "load", lsm: P }, { op: "alloc", lsm: P, size: tables.params.length, fill: filled, fillByte },
+    ...masterResets.map((r): LoadStep => ({ op: "masterReset", ...r })),
+    ...(masterResets.length ? [{ op: "verifyMode", on: true } as LoadStep] : []),
+    ...mcbFor(P),
     { op: "load", lsm: C, assert: false }, { op: "alloc", lsm: C, size: tables.comObj.length }, ...mcbFor(C),
     { op: "load", lsm: D, assert: false }, { op: "alloc", lsm: D, size: tables.addr.length }, ...mcbFor(D),
     { op: "load", lsm: A, assert: false }, { op: "alloc", lsm: A, size: tables.assoc.length }, ...mcbFor(A),
