@@ -630,7 +630,8 @@ export interface DroppedLinkView {
   reason: DroppedLinkReason;
   gas: { etsId: string; address: string | null; name: string | null; inProject: boolean }[];
 }
-interface DroppedLinkDevice { ia: string; name: string; app: () => AppConfig | null; params: StoredParams; modules: StoredModules }
+// `links`: the device's com-object links now, where the list leaves out what was linked again.
+interface DroppedLinkDevice { ia: string; name: string; app: () => AppConfig | null; params: StoredParams; modules: StoredModules; links?: Map<string, number[]> }
 type DeviceObjects = { objs: ReturnType<typeof comObjsByKey> } | { unresolved: "noApplication" } | { unresolved: "refused"; refusal: string };
 
 // A refused application is shown on its device's objects, never fails the list of the others.
@@ -644,9 +645,18 @@ function deviceObjects(dev: DroppedLinkDevice, lang?: string): DeviceObjects {
   }
 }
 
+// Whether an object holds its dropped ETS links again, as made by hand: it is one the configuration shows
+// (only its links reach the device), it holds every ETS address the project has now, and it holds as many
+// addresses in all as ETS linked it to, the others standing in for the addresses the project lacks.
+function linkedAgain(l: DroppedLink, shown: boolean, linked: number[] | undefined, inProject: (raw: number) => boolean): boolean {
+  if (!shown || !linked) return false;
+  const have = new Set(linked);
+  return l.gas.every((g) => g.raw === undefined || !inProject(g.raw) || have.has(g.raw)) && have.size >= new Set(l.gas.map((g) => g.etsId)).size;
+}
+
 function droppedLinkViews(links: DroppedLink[], deviceOf: (deviceId: string) => DroppedLinkDevice, gaOf: (raw: number) => { address: string; name: string | null; inProject: boolean }, lang?: string): DroppedLinkView[] {
   const devices = new Map<string, { dev: DroppedLinkDevice; objects: DeviceObjects }>();
-  return links.map((l) => {
+  return links.flatMap((l) => {
     let d = devices.get(l.deviceId);
     if (!d) {
       const dev = deviceOf(l.deviceId);
@@ -654,14 +664,15 @@ function droppedLinkViews(links: DroppedLink[], deviceOf: (deviceId: string) => 
       devices.set(l.deviceId, d);
     }
     const co = "objs" in d.objects ? d.objects.objs.get(l.comObjRefId) : undefined;
-    return {
+    if (d.dev.links && linkedAgain(l, !!co?.shown, d.dev.links.get(l.comObjRefId), (raw) => gaOf(raw).inProject)) return [];
+    return [{
       deviceId: l.deviceId, ia: d.dev.ia, deviceName: d.dev.name, comObjRefId: l.comObjRefId,
       comObjNumber: co?.number ?? null, comObjName: co?.name ?? null, functionText: co?.functionText ?? null,
       unresolved: co ? null : "objs" in d.objects ? "notInConfiguration" : d.objects.unresolved,
       refusal: "refusal" in d.objects ? d.objects.refusal : null,
       reason: l.reason,
       gas: l.gas.map(({ etsId, raw }) => (raw === undefined ? { etsId, address: null, name: null, inProject: false } : { etsId, ...gaOf(raw) })),
-    };
+    }];
   });
 }
 
@@ -692,15 +703,17 @@ export function previewDroppedLinks(state: AppState, project: Project, programs:
   }, lang);
 }
 
-// The dropped links an imported project keeps, resolved against the project as it is now: an address
-// deleted since the import is shown by its value, as not in the project.
+// The dropped links an imported project keeps that are still open, resolved against the project as it is
+// now: an address deleted since the import is shown by its value, as not in the project, and an object
+// linked again by hand (linkedAgain) is left out. The record itself (import_dropped_links) keeps every
+// entry, for the export.
 export function projectDroppedLinks(state: AppState, projectId: string, lang?: string): DroppedLinkView[] {
   const { db } = state;
   if (!projectExists(db, projectId)) throw new ApiError("PROJECT_NOT_FOUND", "project not found", 404);
   const levels = projectLevels(db, projectId);
   return droppedLinkViews(listDroppedLinks(db, projectId), (deviceId) => {
     const d = getDeviceForFlash(db, projectId, deviceId)!; // listDroppedLinks keeps the project's devices only
-    return { ia: d.ia, name: d.name, app: () => loadApp(state, projectId, deviceId), params: getDeviceParams(db, projectId, deviceId), modules: getDeviceModules(db, projectId, deviceId) };
+    return { ia: d.ia, name: d.name, app: () => loadApp(state, projectId, deviceId), params: getDeviceParams(db, projectId, deviceId), modules: getDeviceModules(db, projectId, deviceId), links: getDeviceLinks(db, projectId, deviceId) };
   }, (raw) => {
     const ga = getGaMeta(db, projectId, raw);
     return { address: ga?.address ?? formatGa(raw, levels), name: ga?.name ?? null, inProject: !!ga };

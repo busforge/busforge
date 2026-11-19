@@ -114,7 +114,7 @@ const en = {
       show: "Show the com-objects concerned ({{count}})",
       label: "Links not imported",
       title: "Links from ETS the import did not take over",
-      hint: "Each com-object with the group addresses ETS linked it to, the first being the one it sends on. Link the objects the device still has again by hand on its page.",
+      hint: "Each com-object with the group addresses ETS linked it to, the first being the one it sends on. Link the objects the device still has again by hand on its page; an object leaves the list once it holds the addresses ETS linked it to that the project has, and as many addresses in all.",
       object: "Object {{number}}",
       objectUnknown: "Object not shown by the device's current configuration",
       objectNoApplication: "The device's application program is not in the project",

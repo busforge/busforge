@@ -9,7 +9,7 @@ import { storeZip } from "../../../packages/project/test/ziputil.ts";
 // A project file whose import leaves links out lists them per com-object: in the preview, on the
 // imported project, and in its .busforge export. One device with an application of three objects:
 // object 1 links an address the project does not have besides one it has, object 2 sends on an address
-// the project does not have, object 3 imports in full.
+// the project does not have, object 3 imports in full. Address 0/0/3 is linked to nothing.
 const M = "M-TDL1";
 const A = `${M}_A-1`;
 const obj = (n: number, name: string, fn: string) =>
@@ -46,7 +46,7 @@ const xml0 = `<?xml version="1.0"?><KNX xmlns="http://knx.org/xml/project/21"><P
   <ComObjectInstanceRef RefId="O-3_R-3" Links="GA-2"/>
 </ComObjectInstanceRefs></DeviceInstance></Line></Area></Topology>
 <GroupAddresses><GroupRanges><GroupRange Name="Main" RangeStart="0" RangeEnd="2047"><GroupRange Name="Mid" RangeStart="0" RangeEnd="255">
-  <GroupAddress Id="P-0001-0_GA-1" Address="1" Name="Kitchen light"/><GroupAddress Id="P-0001-0_GA-2" Address="2" Name="Kitchen status"/>
+  <GroupAddress Id="P-0001-0_GA-1" Address="1" Name="Kitchen light"/><GroupAddress Id="P-0001-0_GA-2" Address="2" Name="Kitchen status"/><GroupAddress Id="P-0001-0_GA-3" Address="3" Name="Spare"/>
 </GroupRange></GroupRange></GroupRanges></GroupAddresses></Installation></Installations></Project></KNX>`;
 const knxprojWith = (app: string) => storeZip({ [`${M}/Hardware.xml`]: hardware, [`${M}/${A}.xml`]: app, "P-0001/0.xml": xml0 });
 const knxproj = knxprojWith(appXml());
@@ -85,6 +85,11 @@ const post = async (state: AppState, path: string, file: File) => {
   expect(res.status).toBeLessThan(300);
   return (await res.json()) as any;
 };
+const put = async (state: AppState, projectId: string, what: "links" | "params", body: object) => {
+  const res = (await handleApi(new Request(`http://x/api/projects/${projectId}/devices/P-0001-0_DI-1/${what}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), state))!;
+  expect(res.status).toBe(200);
+};
+const relink = (state: AppState, projectId: string, comObjRefId: string, gaRaws: number[]) => put(state, projectId, "links", { comObjRefId, gaRaws });
 const listed = async (state: AppState, projectId: string) => {
   const res = (await handleApi(new Request(`http://x/api/projects/${projectId}/dropped-links`), state))!;
   expect(res.status).toBe(200);
@@ -126,6 +131,37 @@ describe("links an import does not take over, per com-object", () => {
     expect(del.status).toBeLessThan(300);
     const [first] = (await listed(state, imp.id)) as { gas: unknown[] }[];
     expect(first.gas[0]).toEqual({ etsId: "GA-1", address: "0/0/1", name: null, inProject: false });
+  });
+
+  test("an object linked again by hand leaves the list, its record stays in the export", async () => {
+    const state = freshState();
+    const imp = await post(state, "/api/projects/import", new File([knxproj], "Dropped.knxproj"));
+    // Object 2 had 0/0/2 and an address the project lacks: 0/0/2 alone is not all ETS linked it to.
+    await relink(state, imp.id, "O-2_R-2", [2]);
+    expect(await listed(state, imp.id)).toEqual(expected);
+    // 0/0/3 stands in for the missing sending address.
+    await relink(state, imp.id, "O-2_R-2", [3, 2]);
+    expect(await listed(state, imp.id)).toEqual([expected[0]]);
+    // Object 1 kept 0/0/1 from the import; a second address makes it whole.
+    await relink(state, imp.id, "O-1_R-1", [1, 3]);
+    expect(await listed(state, imp.id)).toEqual([]);
+    const data = (await unpackBusforge((await exportArtifact(state, imp.id)).bytes)) as any;
+    expect(data.droppedLinks.map((l: any) => l.comObjRefId)).toEqual(["O-1_R-1", "O-2_R-2"]);
+    // Unlinking an ETS address the project has opens the entry again.
+    await relink(state, imp.id, "O-1_R-1", [3, 2]);
+    expect(await listed(state, imp.id)).toEqual([expected[0]]);
+  });
+
+  test("an object linked again counts only while the configuration shows it", async () => {
+    const state = freshState();
+    const hiding = appXml(`<ChannelIndependentBlock><ParameterBlock Id="${A}_PB-1" Name="Main" Text="Main"><ParameterRefRef RefId="${A}_P-1_R-1"/>
+      <ComObjectRefRef RefId="${A}_O-1_R-1"/><choose ParamRefId="${A}_P-1_R-1"><when test="0"><ComObjectRefRef RefId="${A}_O-2_R-2"/></when></choose><ComObjectRefRef RefId="${A}_O-3_R-3"/>
+    </ParameterBlock></ChannelIndependentBlock>`);
+    const imp = await post(state, "/api/projects/import", new File([knxprojWith(hiding)], "Dropped.knxproj"));
+    await relink(state, imp.id, "O-2_R-2", [3, 2]);
+    expect((await listed(state, imp.id)).map((l: any) => l.comObjRefId)).toEqual(["O-1_R-1"]);
+    await put(state, imp.id, "params", { paramRefId: `${A}_P-1_R-1`, value: "1" });
+    expect((await listed(state, imp.id)).map((l: any) => [l.comObjRefId, l.comObjNumber])).toEqual([["O-1_R-1", 1], ["O-2_R-2", 2]]);
   });
 
   test("a project without dropped links lists none, and an unknown project is refused", async () => {
