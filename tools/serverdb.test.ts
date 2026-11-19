@@ -1,13 +1,12 @@
 import { test, expect } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { closeDb, openDb } from "../apps/server/src/db/schema.ts";
 import { openServerDb, pickProject, takeProjectFlag } from "./serverdb.ts";
+import { removeTempDir, tempDir } from "./test-temp.ts";
 
 const withDir = (run: (dir: string) => void) => {
-  const dir = mkdtempSync(join(tmpdir(), "busforge-serverdb-"));
-  try { run(dir); } finally { rmSync(dir, { recursive: true, force: true }); }
+  const dir = tempDir("busforge-serverdb-");
+  try { run(dir); } finally { removeTempDir(dir); }
 };
 
 const seedProjects = (dir: string, projects: readonly [id: string, name: string][]) => {

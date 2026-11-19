@@ -280,7 +280,7 @@ function GaDialog({ editor, onClose, projectId, levels, dptSuggestions }: {
                 {(["auto", "on", "off"] as const).map((m) => <option key={m} value={m}>{t(`groupEdit.securityMode.${m}`)}</option>)}
               </select>
               <p className="text-xs text-muted-foreground">{t(`groupEdit.securityHint.${security}`)}</p>
-              {security !== editor.security && <p className="text-xs text-amber-700 dark:text-amber-400" data-testid="ga-security-changed">{t("groupEdit.securityRewrite")}</p>}
+              {security !== editor.security && <p className="text-xs text-warning" data-testid="ga-security-changed">{t("groupEdit.securityRewrite")}</p>}
             </div>
           )}
         </div>

@@ -1,19 +1,14 @@
-import { test, expect, describe, afterAll } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { test, expect, describe } from "bun:test";
 import { createState, handleApi } from "../src/app.ts";
 import { createProject } from "../src/db/projects.ts";
 import { createGroupAddress, createGroupRange } from "../src/db/groupedit.ts";
 import { putGroupKeys } from "../src/db/groupKeys.ts";
+import { removeTempDir, tempDir } from "../../../tools/test-temp.ts";
 
 // The senders a project assigns to a group address, as the group-address overlay shows and edits them.
 describe("group address senders API", () => {
-  const tmps: string[] = [];
-  afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
   async function setup() {
-    const dir = mkdtempSync(join(tmpdir(), "senders-"));
-    tmps.push(dir);
+    const dir = tempDir("senders-");
     const state = createState({ dbPath: ":memory:", dataDir: dir });
     createProject(state.db, "p", "Test", 0);
     const main = createGroupRange(state.db, "p", null, "Secure", 0);
@@ -24,7 +19,7 @@ describe("group address senders API", () => {
       const res = (await handleApi(new Request(`http://x/api/projects/p/group-addresses/1${path}`, { method, body: body === undefined ? undefined : JSON.stringify(body) }), state))!;
       return { status: res.status, body: await res.json() as Record<string, unknown> };
     };
-    return { state, call, close: () => { state.db.close(); rmSync(dir, { recursive: true, force: true }); } };
+    return { state, call, close: () => { state.db.close(); removeTempDir(dir); } };
   }
 
   test("the overlay says whether the address is secured and lists its assigned senders", async () => {

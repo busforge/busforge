@@ -4,6 +4,9 @@ import { Slot } from "radix-ui"
 
 import { cn } from "@/lib/utils"
 
+// The warning tone, shared with the boxed Notice so a warning reads the same as a mark and as a note.
+const warningTone = "border-warning/40 bg-warning/10 text-warning"
+
 // Badges and tags: short status or label marks. One radius (the control radius), one height per
 // size, so marks next to each other line up whatever their text. A tone carries meaning only:
 // warning for every mark that warns, ok/danger for proven success or failure, info for a derived
@@ -18,7 +21,7 @@ const badgeVariants = cva(
         primary: "border-primary/40 bg-primary/10 text-primary",
         ok: "border-ok/40 bg-ok/10 text-ok",
         info: "border-info/40 bg-info/10 text-info",
-        warning: "border-warning/40 bg-warning/10 text-warning",
+        warning: warningTone,
         danger: "border-destructive/40 bg-destructive/10 text-destructive",
       },
       size: {
@@ -91,4 +94,4 @@ function BadgeButton({
   )
 }
 
-export { Badge, BadgeButton, badgeVariants }
+export { Badge, BadgeButton, badgeVariants, warningTone }

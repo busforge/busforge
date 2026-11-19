@@ -1,11 +1,11 @@
 import { test, expect, mock, afterAll, setDefaultTimeout } from "bun:test";
-import { readFileSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Database } from "bun:sqlite";
 import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
 import { settle } from "./task-client.ts";
+import { tempDir } from "../../../tools/test-temp.ts";
 
 // Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 1.8 s with the
 // file alone (load 5-27) and up to 1.8 s with every workspace's tests in parallel (load 5-8). A full check on a busy
@@ -44,11 +44,8 @@ const fixtures = join(import.meta.dir, "..", "..", "..", "packages", "project", 
 const cfgFixture = readFileSync(join(fixtures, "sample-config.knxproj"));
 const realXml = catalogueXml;
 
-const tmps: string[] = [];
-afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
 function freshState(): AppState {
-  const dir = mkdtempSync(join(tmpdir(), "busforge-readback-"));
-  tmps.push(dir);
+  const dir = tempDir("busforge-readback-");
   return createState({ dbPath: ":memory:", dataDir: dir, now: () => 1000 });
 }
 const req = (path: string, init?: RequestInit) => new Request(`http://x${path}`, init);

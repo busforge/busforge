@@ -1,11 +1,11 @@
-import { test, expect, describe, afterAll } from "bun:test";
-import { readFileSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { test, expect, describe } from "bun:test";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createState, handleApi, type AppState } from "../src/app.ts";
 import { unpackBusforge } from "../src/db/busforgeArtifact.ts";
 import { putAppProgram, putCatalogBaggage, catalogBaggageIds } from "../src/db/catalog.ts";
 import { storeZip } from "../../../packages/project/test/ziputil.ts";
+import { tempDir } from "../../../tools/test-temp.ts";
 
 // The product test fixture with its TypePicture parameters ("Logo" names a baggage image, "Picture without
 // image" none), under a real manufacturer id so it can be placed.
@@ -32,13 +32,10 @@ function knxprod(withImage: boolean): Buffer {
 }
 
 describe("TypePicture images in the catalogue", () => {
-  const tmps: string[] = [];
   const freshState = (): AppState => {
-    const dir = mkdtempSync(join(tmpdir(), "busforge-pic-"));
-    tmps.push(dir);
+    const dir = tempDir("busforge-pic-");
     return createState({ dbPath: ":memory:", dataDir: dir, now: () => 1000 });
   };
-  afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
   const req = (path: string, init?: RequestInit) => new Request(`http://x${path}`, init);
   const post = (path: string, body: unknown) => req(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   const call = async (state: AppState, r: Request) => (await handleApi(r, state))!;

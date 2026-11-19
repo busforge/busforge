@@ -4,6 +4,7 @@ import { Button } from "./button.tsx";
 import { IconButton } from "./icon-button.tsx";
 import { Badge, BadgeButton } from "./badge.tsx";
 import { Chip } from "./chip.tsx";
+import { Notice } from "./notice.tsx";
 import { TooltipProvider } from "./tooltip.tsx";
 
 const classes = (html: string) => (/class="([^"]*)"/.exec(html)?.[1] ?? "").split(" ");
@@ -90,6 +91,21 @@ describe("a badge", () => {
     expect(c).toContain("cursor-pointer");
     expect(c).toContain("focus-visible:ring-[3px]");
     expect(c.some((x) => x.startsWith("hover:not-disabled:"))).toBe(true);
+  });
+});
+
+describe("a notice", () => {
+  test("is the warning badge's colours as a box with the control radius, and takes the caller's layout", () => {
+    const badge = classes(renderToStaticMarkup(<Badge tone="warning">Untested</Badge>));
+    const c = classes(renderToStaticMarkup(<Notice className="flex py-1.5">Left out</Notice>));
+    for (const tone of ["border-warning/40", "bg-warning/10", "text-warning"]) {
+      expect(badge).toContain(tone);
+      expect(c).toContain(tone);
+    }
+    expect(c).toContain(CONTROL_RADIUS);
+    expect(c).toContain("flex");
+    expect(c).toContain("py-1.5");
+    expect(c).not.toContain("py-2");
   });
 });
 

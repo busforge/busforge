@@ -1,9 +1,9 @@
-import { test, expect, afterAll } from "bun:test";
-import { readFileSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { test, expect } from "bun:test";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createState, handleApi } from "../src/app.ts";
 import { deviceCompatibility, evidenceBundle } from "../src/compatibility.ts";
+import { tempDir } from "../../../tools/test-temp.ts";
 
 const ALL = { readParams: true, readLinks: true, flashParams: true, flashLinks: true, fullDownload: true, structuralFlash: true };
 const JUNG = evidenceBundle().products.find((p) => p.productRef.startsWith("M-0004_"))!;
@@ -27,12 +27,8 @@ test("another version of a bundled Product's application program is shown as suc
   expect(ops.structuralFlash.state).toBe("eligible");
 });
 
-const dirs: string[] = [];
-afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
-
 test("the device view carries the device's compatibility", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "busforge-compat-"));
-  dirs.push(dir);
+  const dir = tempDir("busforge-compat-");
   const state = createState({ dbPath: ":memory:", dataDir: dir, now: () => 1000 });
   const form = new FormData();
   form.set("file", new File([readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures", "sample-config.knxproj"))], "ConfigDemo.knxproj"));
@@ -47,8 +43,7 @@ test("the device view carries the device's compatibility", async () => {
 });
 
 test("the catalog names where each manufacturer publishes its product data", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "busforge-manuf-"));
-  dirs.push(dir);
+  const dir = tempDir("busforge-manuf-");
   const state = createState({ dbPath: ":memory:", dataDir: dir, now: () => 1000 });
   const list = (await (await handleApi(new Request("http://x/api/catalog/manufacturers"), state))!.json()) as { id: string; productDataUrl: string | null }[];
   expect(list.find((m) => m.id === "M-0083")?.productDataUrl).toStartWith("https://");
