@@ -219,7 +219,7 @@ corpusDescribe("System 7: LSM 5, the task segment's manufacturer and the declare
       ...cap.propWrites.filter((w) => w.pid === 5 && w.data[0] === 3 && w.data[1] === 2).map((w) => w.obj),
     ];
     expect(ets).toEqual([1, 2, 3]);
-    expect(absoluteFullStepRefusal(parseLoadProcedures(xml), "declared")).toBeNull();
+    expect(absoluteFullStepRefusal(parseLoadProcedures(xml), "declared", parseAppConfig(xml).mask === "MV-0701")).toBeNull();
     if (!plans) return;
     const cfg = parseAppConfig(xml);
     const ours = classify(cfg).planFullDownload(cfg.mask, { ia: "1.1.1", params: new Map(), links: [], proc: parseLoadProcedures(xml), unitHoldsApplication: false }).plan;

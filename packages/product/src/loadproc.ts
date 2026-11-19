@@ -74,6 +74,9 @@ export const KNOWN_LD_VERBS = new Set([
   "LdCtrlWriteAbsMem", "LdCtrlWriteRelMem",
   // interface-object properties
   "LdCtrlWriteProp", "LdCtrlLoadImageProp", "LdCtrlCompareProp",
+  // the steps the third-party synthetic captures show ETS running (docs/load-procedures.md, "Steps run as
+  // the synthetic captures show them"); where a download does not run one, it refuses it
+  "LdCtrlDelay", "LdCtrlMasterReset", "LdCtrlTaskPtr", "LdCtrlTaskCtrl2",
 ]);
 
 function deepFirst(nodes: ONode[], tag: string): ONode | undefined {
@@ -316,6 +319,26 @@ function closingStep(s: LdStep): ClosingStep | string {
 
 const isClosingStep = (lp: LoadProcedures, s: LdStep): boolean => closingCandidates(lp).includes(s);
 
+// An LdCtrlWriteProp inside a load bracket, with its inline data: `count` elements from `start` in one
+// write. ETS reads the property's description first and then writes the elements, at the step's declared
+// place (the third-party synthetic MV-0701 capture: object 3 PID 204, two 5-octet elements inside LSM 3's
+// load, between its segments' writes and its task segment).
+export interface BracketWriteProp { obj: number; pid: number; start: number; count: number; data: Buffer; verify: boolean }
+export function bracketWritePropOf(s: LdStep): BracketWriteProp | string {
+  const extra = Object.keys(s.attrs).filter((k) => !["ObjIdx", "PropId", "StartElement", "Count", "Verify", "InlineData", "AppliesTo"].includes(k));
+  if (extra.length) return `it declares ${extra.join(", ")}, which no capture shows`;
+  const obj = Number(s.attrs.ObjIdx), pid = Number(s.attrs.PropId), start = Number(s.attrs.StartElement ?? 1), count = Number(s.attrs.Count ?? 1);
+  if (s.attrs.ObjIdx === undefined || !Number.isInteger(obj) || obj < 0 || obj > 255) return "it names no object index";
+  if (s.attrs.PropId === undefined || !Number.isInteger(pid) || pid < 1 || pid > 255) return "it names no property";
+  if (!Number.isInteger(start) || start < 1 || start > 4095) return `StartElement "${s.attrs.StartElement}" is not an element index`;
+  if (!Number.isInteger(count) || count < 1 || count > 15) return `Count "${s.attrs.Count}" is not a number of elements one write carries`;
+  const hex = s.attrs.InlineData ?? "";
+  if (!/^([0-9A-Fa-f]{2})+$/.test(hex)) return "it declares no InlineData (a parameter placed in the property), which no capture shows written inside a load bracket";
+  const data = Buffer.from(hex, "hex");
+  if (data.length % count !== 0) return `its ${data.length} octets of InlineData do not split into ${count} elements`;
+  return { obj, pid, start, count, data, verify: s.attrs.Verify === "true" };
+}
+
 const grpSteps = (lp: LoadProcedures): LdStep[] =>
   orderedSteps(lp).filter((s) => (s.attrs.AppliesTo ?? "").split(",").map((x) => x.trim()).some((x) => x === "grp" || x === "all"));
 
@@ -345,6 +368,55 @@ export function taskCtrl1Of(s: LdStep): TaskCtrl1 | string {
   if (s.attrs.Address === undefined || !Number.isInteger(address) || address < 0 || address > 0xffff) return `Address "${s.attrs.Address}" is not a 16-bit address`;
   if (s.attrs.Count === undefined || !Number.isInteger(count) || count < 0 || count > 0xff) return `Count "${s.attrs.Count}" does not fit the one byte the control carries`;
   return { lsm, address, count };
+}
+
+// ---- LdCtrlTaskPtr, LdCtrlTaskCtrl2 ----
+// The two task declarations, from their declared attributes, each field a 16-bit address (the
+// third-party synthetic MV-0705 capture: TaskPtr 17424/17428/17432, TaskCtrl2 17436/17408/1792/17472).
+export interface TaskPtr { lsm: number; initPtr: number; savePtr: number; serialPtr: number }
+export interface TaskCtrl2 { lsm: number; callback: number; address: number; seg0: number; seg1: number }
+// The step's load-state machine and the named attributes, each a 16-bit address, or why they are not.
+function addressFields(s: LdStep, names: readonly string[]): { lsm: number; v: Record<string, number> } | string {
+  const extra = Object.keys(s.attrs).filter((k) => k !== "LsmIdx" && !names.includes(k));
+  if (extra.length) return `it declares ${extra.join(", ")}, which no capture shows encoded`;
+  const lsm = Number(s.attrs.LsmIdx);
+  if (s.attrs.LsmIdx === undefined || !Number.isInteger(lsm) || lsm < 1 || lsm > 15) return "it names no load-state machine";
+  const v: Record<string, number> = {};
+  for (const n of names) {
+    const x = Number(s.attrs[n]);
+    if (s.attrs[n] === undefined || !Number.isInteger(x) || x < 0 || x > 0xffff) return `${n} "${s.attrs[n]}" is not a 16-bit address`;
+    v[n] = x;
+  }
+  return { lsm, v };
+}
+export function taskPtrOf(s: LdStep): TaskPtr | string {
+  const r = addressFields(s, ["InitPtr", "SavePtr", "SerialPtr"]);
+  return typeof r === "string" ? r : { lsm: r.lsm, initPtr: r.v.InitPtr, savePtr: r.v.SavePtr, serialPtr: r.v.SerialPtr };
+}
+export function taskCtrl2Of(s: LdStep): TaskCtrl2 | string {
+  const r = addressFields(s, ["Callback", "Address", "Seg0", "Seg1"]);
+  return typeof r === "string" ? r : { lsm: r.lsm, callback: r.v.Callback, address: r.v.Address, seg0: r.v.Seg0, seg1: r.v.Seg1 };
+}
+
+// ---- LdCtrlMasterReset, LdCtrlDelay ----
+// A master reset's erase code and channel, each one octet of the A_Restart it sends.
+export interface MasterReset { eraseCode: number; channel: number }
+export function masterResetOf(s: LdStep): MasterReset | string {
+  const extra = Object.keys(s.attrs).filter((k) => !["EraseCode", "ChannelNumber", "AppliesTo"].includes(k));
+  if (extra.length) return `it declares ${extra.join(", ")}, which no capture shows`;
+  const eraseCode = Number(s.attrs.EraseCode), channel = Number(s.attrs.ChannelNumber);
+  if (s.attrs.EraseCode === undefined || !Number.isInteger(eraseCode) || eraseCode < 0 || eraseCode > 0xff) return `EraseCode "${s.attrs.EraseCode}" does not fit the octet the A_Restart carries`;
+  if (s.attrs.ChannelNumber === undefined || !Number.isInteger(channel) || channel < 0 || channel > 0xff) return `ChannelNumber "${s.attrs.ChannelNumber}" does not fit the octet the A_Restart carries`;
+  return { eraseCode, channel };
+}
+// A pause on the tool's side: nothing on the wire, the next step that long later (the third-party
+// synthetic MV-0701 capture: 200 ms declared, 211 ms between the last LoadCompleted and A_Restart).
+export function delayOf(s: LdStep): number | string {
+  const extra = Object.keys(s.attrs).filter((k) => !["MilliSeconds", "AppliesTo"].includes(k));
+  if (extra.length) return `it declares ${extra.join(", ")}, which no capture shows`;
+  const ms = Number(s.attrs.MilliSeconds);
+  if (s.attrs.MilliSeconds === undefined || !Number.isInteger(ms) || ms < 0 || ms > 0xffff) return `MilliSeconds "${s.attrs.MilliSeconds}" is not a pause in milliseconds`;
+  return ms;
 }
 
 export function assessParStep(step: LdStep, model: "absolute" | "relative", lp?: LoadProcedures): ParDisposition {
@@ -485,9 +557,18 @@ export const PEI_LSM = 5;
 // checks it runs are the parameter download's (assessParCoverage), so a CompareProp declared for the full
 // download alone is refused. An unload of the PEI program (LSM 5) is the base bracket's own first step (rule R9); any other
 // step on it is refused with PEI_PROGRAM_UNSUPPORTED: no ETS capture shows a System B download that loads it.
+// A master reset runs right after the parameter segment's allocation, where the synthetic captures show it
+// (isAfterParamAllocation, systemBMasterResets); anywhere else, and with ETS's partial form, it is refused.
 export function relativeFullStepRefusal(lp: LoadProcedures): StepRefusal | null {
   let allocMode: string | undefined;
   for (const s of flattenSteps(lp, "full")) {
+    if (s.verb === "LdCtrlMasterReset") {
+      const r = masterResetOf(s);
+      if (typeof r === "string") return { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: `the load procedure declares LdCtrlMasterReset ${JSON.stringify(s.attrs)}: ${r}; refusing to guess what it sends` };
+      if (!isAfterParamAllocation(lp, s)) return { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: `the load procedure declares LdCtrlMasterReset elsewhere than right after the parameter segment's allocation, where the ETS captures show it on System B; refusing to place it` };
+      if (lp.preferPartialIfLoaded) return { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: "the load procedure declares LdCtrlMasterReset in an application that asks for ETS's partial form on a unit that holds it; no capture shows that form with a master reset, refusing to run it without one" };
+      continue;
+    }
     if (s.verb === "LdCtrlCompareProp") {
       if (stepApplies(s, "par")) continue;
       return { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: `the load procedure declares an LdCtrlCompareProp for the full download alone (${JSON.stringify(s.attrs)}); the System B full download runs the checks the parameter download declares, refusing to skip this one` };
@@ -509,6 +590,40 @@ export function relativeFullStepRefusal(lp: LoadProcedures): StepRefusal | null 
     if (d.kind === "blocked") return { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: `the load procedure declares a step the full download cannot execute yet (${d.detail}); refusing to run a partial recipe` };
   }
   return null;
+}
+
+// Whether `step` follows the full download's allocation of the parameter segment (LdCtrlRelSegment on LSM 4)
+// in the same merge block, with nothing but master resets between: where the System B captures show ETS
+// sending a master reset (syn-master-reset, -code4: MergeId 2, right after that allocation, before the
+// tables' brackets). Another merge block is merged at another point of the mask's procedure.
+function isAfterParamAllocation(lp: LoadProcedures, step: LdStep): boolean {
+  const block = lp.blocks.find((b) => b.steps.includes(step));
+  if (!block) return false;
+  const steps = block.steps.filter((x) => stepApplies(x, "full"));
+  for (let k = steps.indexOf(step) - 1; k >= 0; k--) {
+    if (steps[k].verb === "LdCtrlMasterReset") continue;
+    return steps[k].verb === "LdCtrlRelSegment" && (steps[k].attrs.LsmIdx ?? "4") === "4";
+  }
+  return false;
+}
+
+// The master resets a System B full download sends right after the parameter segment's allocation, in
+// declared order (relativeFullStepRefusal holds them to that place).
+export function systemBMasterResets(lp: LoadProcedures): MasterReset[] {
+  return flattenSteps(lp, "full").filter((s) => s.verb === "LdCtrlMasterReset").map((s) => {
+    const r = masterResetOf(s);
+    if (typeof r === "string") throw new ProductError("FULL_DOWNLOAD_STEP_UNSUPPORTED", `the load procedure declares LdCtrlMasterReset ${JSON.stringify(s.attrs)}: ${r}`);
+    return r;
+  });
+}
+
+// The parameter download's coverage as the System B full download is held to it: its checks, and every
+// step it refuses but a master reset, which the full download runs itself (relativeFullStepRefusal). The
+// parameter download keeps refusing a master reset: no capture shows ETS's parameter download of such an
+// application.
+export function fullDownloadParCoverage(lp: LoadProcedures): ParCoverage {
+  const c = assessParCoverage(lp, "relative");
+  return { ...c, blocked: c.blocked.filter((b) => b.verb !== "LdCtrlMasterReset") };
 }
 
 // Build the app-id / hardware pre-flight a single LdCtrlCompareProp step declares. The Mask
