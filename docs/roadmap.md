@@ -190,6 +190,14 @@ depends on is hardware-proven.
   at import and reach the write path, as the PEI program does, so that a product whose factory image
   holds the com-object table is refused the same writes. An ETS capture of a download of either kind
   settles what the table holds; no product in the test corpus is of either kind.
+- **A `<choose>` on a ParameterRef no active branch places.** ETS's downloads of two of bussard's
+  synthetic products ([third-party test data](testing.md#third-party-test-data)) take no branch of such
+  a choose, not even its `default` one: the com-object in it gets no entry. Busforge takes the default
+  branch and writes the object's entry. One choose is on a parameter no block shows, the other on a
+  second ParameterRef of a shown parameter that only an untaken branch places. The rule has to agree
+  with the shown cases that read such a ref (the Merker rule and the Jung 400021SE in
+  [findings.md](findings.md)); until it is settled and pinned against these captures, real products
+  with such a choose are written with the default branch taken.
 - **Prove a non-TP device.** One read-back on real powerline, RF or IP hardware promotes that row
   from extrapolation to proof. Hardware verification help is welcome.
 - **OpenKNX surgical flashes under an automated run.** The device-in-service spec
@@ -334,25 +342,16 @@ where they are required; raw acquisition is not a way around access control. Wha
 
 - **The security object on System 7.** Only System B loads it; the others refuse a secure device's
   GA flash and full download.
-- **Individual-address assignment of a secure device as ETS does it.** Busforge assigns it plain, and a
-  unit in Data Secure mode ignores the plain `A_Restart` that ends programming mode, so it stays in it.
-  ETS finds the unit by its serial (`A_SystemNetworkParameter_Read` of PID 11 while it is in programming
-  mode, `A_IndividualAddressSerialNumber_Read` without), Syncs to `0/0/0` and sends the serial-number
-  write as a secured broadcast, under the FDSK on a reset unit
-  ([knx-secure.md](knx-secure.md#individual-address-assignment)) and under its tool key otherwise, with
-  Data Secure on or off in the project (captured on the Jung 400021SE with it on and off, on the GVS AMMA
-  with it on). On the secured
-  connection that follows it switches the security mode on, writes the tool key and the sending sequence
-  (PID 59) where the project has Data Secure on, reads the security mode where it is off, reads the serial
-  number and ends with a secured confirmed restart ([commissioning.md](commissioning.md)).
 - **Repeat a secured write that fails at the long size at 40 octets,** as ETS does ("switching to
   shorter frames"), and then size secured writes up to the interface's full length as ETS does. Until
   then a secured write uses the interface's announced length only on the interface's own line and
   within the 55 octets shown answered, and a path that carries less than its interface announces fails
   the write.
-- **The sending sequence (PID 59) at an address assignment.** ETS writes it at every address assignment
-  of a unit the project runs in Data Secure, also where nothing is re-activated (the Jung 400021SE and the
-  GVS AMMA). Busforge writes it on a re-activation only; its address assignment is plain (above).
+- **The sending sequence (PID 59) at a re-activation without an address assignment.** ETS writes it at
+  every address assignment of a unit the project runs in Data Secure, and Busforge does the same. Busforge
+  also writes it when it activates a unit reset since its activation; ETS's only run of that case gave the
+  unit its address by serial in the same download, so whether ETS writes it without the assignment needs
+  a capture (a reset unit given its address by button, then a download).
 - **A master reset before downloading a secure-capable application over another one.** Reported for
   ETS (erase code 7 on such a device, none on a fresh one or one holding the same application); not
   captured, as the bench's secure units have one application each. ETS sends a secured confirmed restart

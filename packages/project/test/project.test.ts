@@ -158,8 +158,8 @@ describe("0.xml parser", () => {
       '<ComObjectInstanceRef RefId="O-1_R-1" Links="GA-1 GA-2" /><ComObjectInstanceRef RefId="O-1_R-1" Links="GA-2" />',
     );
     const di1 = parseProject(dup, undefined, "fallback").deviceLinks.find((d) => d.deviceId === "P-TEST-0_DI-1")!;
-    // one merged entry (slots 0,1,2 stay unique, so insertProject cannot collide on its PK)
-    expect(di1.links).toEqual([{ comObjRefId: "O-1_R-1", gaRaws: [1, 2, 2] }]);
+    // one merged entry (slots 0,1 stay unique, so insertProject cannot collide on its PK); GA-2 is kept once
+    expect(di1.links).toEqual([{ comObjRefId: "O-1_R-1", gaRaws: [1, 2] }]);
   });
 
   test("keeps the com-object flags and priority the project sets on a device, verbatim, linked or not", () => {

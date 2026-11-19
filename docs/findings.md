@@ -127,7 +127,9 @@ Read the LSM state with `PropertyValueRead(obj, PID = 5)`.
   before any write (`GA_TABLE_TOO_LARGE`), on System B as on System 7, and a System B application
   that declares none (`GA_TABLE_CAPACITY_UNDECLARED`).
 - **Com-object table**: `[count:2][flags:1][typeOrSize:1] x count`, entry i is com-object i
-  (1-based).
+  (1-based). An object numbered 0 has no entry, its place is the count; ETS still links its group
+  addresses to object 0 in the association table
+  ([device-memory-model.md](device-memory-model.md#system-b-layout)).
 
 ### Table layouts, System 7 (mask `MV-0705`)
 

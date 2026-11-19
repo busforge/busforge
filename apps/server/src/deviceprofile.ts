@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { KnxDevice, KnxUsbTransport, PID, STATE, lsmState, SecureSession, iaToNum, assignIndividualAddress, readProgModeDevices, activateSecureDevice, readSecurityMode, type SecurityModeReading, type AssignIaResult, type ActivationResult } from "@busforge/knx";
+import { KnxDevice, KnxUsbTransport, PID, STATE, lsmState, SecureSession, iaToNum, assignAddress, type DeviceKeys, readProgModeDevices, activateSecureDevice, readSecurityMode, type SecurityModeReading, type AssignIaResult, type ActivationResult } from "@busforge/knx";
 import {
   classify, parseAppConfig, sameMask, planForMask, resolveModuleInstances, type ComObjectLink, type ComObjInstanceOverride, programIdStamp, maskInfo, isMemoryMappedLsm,
   buildDeviceConfig, deviceComObjOverrideRows, placeComObjOverrides, type AppConfig,
@@ -351,7 +351,10 @@ async function readStateIn(inSession: InSession, cfg: AppConfig, opts: ReadState
     // On the configuration of the parameter baseline this read sets, where the rows are stored and placed.
     // A baseline the flags cannot be taken over (two rows of one object that disagree) leaves them open.
     try {
-      flagBase = deviceComObjOverrideRows(cfg, buildDeviceConfig(cfg, read.paramBase, undefined, instancesFor(read.paramBase)).imageComObjects, read.comObjFlags, opts.comObjectOverrideBaseRows ?? []);
+      // An object the family's table holds no entry for shows no flags to take.
+      const active = new Map(buildDeviceConfig(cfg, read.paramBase, undefined, instancesFor(read.paramBase)).imageComObjects);
+      for (const n of classify(cfg).comObjNumbersWithoutEntry()) active.delete(n);
+      flagBase = deviceComObjOverrideRows(cfg, active, read.comObjFlags, opts.comObjectOverrideBaseRows ?? []);
     } catch (e) {
       if (opts.signal?.aborted) throw e;
       flagsUnreadable = `${(e as { code?: string }).code ?? "ERROR"}: ${e instanceof Error ? e.message : String(e)}`;
@@ -471,18 +474,18 @@ export async function activateDevice(
 // Give a device its physical address. Unlike every other operation here this one CANNOT use
 // withDeviceSession: the device is reached by broadcast, precisely because it may not have a
 // usable address yet, so there is no address to open a session to and no mask gate to pass.
-// It therefore drives the raw transport. All the safety lives in assignIndividualAddress
-// (@busforge/knx): exactly one device in programming mode, the target address must be free,
-// and the result is proven by talking to the device on its new address. Programming mode ends with
-// A_Restart, as ETS ends it. Hardware-verified on a virgin device through this endpoint (docs/status.md).
+// It therefore drives the raw transport. All the safety lives in @busforge/knx (assignAddress): the
+// route its keys allow, exactly one device in programming mode on the plain one, the target address
+// must be free, and the result is proven by talking to the device on its new address. Hardware-verified
+// on a virgin device and on Data Secure units through this endpoint (docs/status.md).
 export async function assignDeviceAddress(
-  connection: Connection, ia: string, onProgress?: ProgressFn,
+  connection: Connection, ia: string, onProgress?: ProgressFn, keys?: DeviceKeys,
 ): Promise<AssignIaResult> {
   const tun = makeTransport(connection);
   onProgress?.("connect");
   await tun.connect();
   try {
-    return await assignIndividualAddress(tun, ia, { onProgress: (phase) => onProgress?.(phase) });
+    return await assignAddress(tun, ia, keys, { onProgress: (phase) => onProgress?.(phase) });
   } finally {
     await tun.disconnect();
   }

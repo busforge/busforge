@@ -178,14 +178,6 @@ export function appProgramName(xml: string, id: string): string {
   return program ? text(program.Name) : "";
 }
 
-// The MaskVersion application program `id` declares in a stored program document, or "" where the
-// document holds no such program or the program no mask. Reads the program's attributes only, never its
-// parameters or objects.
-export function appProgramMask(xml: string, id: string): string {
-  const program = programOf(xml, id);
-  return program ? text(program.MaskVersion) : "";
-}
-
 // A product source (a .knxproj, a .knxprod or a plain manufacturer XML): its Hardware.xml documents and
 // the program documents it carries, by application-program id (undefined where it carries none).
 interface ProductSource { hardware: XmlNode[]; program: (id: string) => string | undefined }

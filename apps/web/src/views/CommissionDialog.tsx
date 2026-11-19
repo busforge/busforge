@@ -138,6 +138,7 @@ export function CommissionDialog({ open, onOpenChange, projectId, device, onComm
           ? <span data-testid={addressOnly ? "commission-ok" : undefined}>{line(okIcon, t("commission.assigned", { previous: r.previous, assigned: r.assigned }), "ok")}</span>
           : <span data-testid="commission-fail">{line(warnIcon, t("commission.assignedUnverified", { ia: device.ia }), "err")}</span>}
         {r.verified && !r.progModeCleared && line(warnIcon, t("commission.progModeNotCleared", { error: r.progModeError ?? "?" }), "warn")}
+        {r.secureNotAnswered && line(warnIcon, t("commission.secureNotAnswered", { reason: r.secureNotAnswered }), "warn")}
       </span>
     );
   };

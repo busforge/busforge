@@ -1,6 +1,9 @@
 import { test, expect, describe } from "bun:test";
 import { buildParameterImage, decodeParameterImage, encodeDpt9, decodeDpt9 } from "../src/image.ts";
 import { unmappedParamRefs } from "../src/application.ts";
+import { parseAppConfig, parseLoadProcedures, classify, resolveModuleInstances } from "../src/index.ts";
+import { catalogueXml } from "../../../tools/corpus.ts";
+import { corpusTest } from "../../../tools/corpus-test.ts";
 import type { AppModel, ParamType, Param, ParamRef } from "../src/application.ts";
 
 // A minimal application model covering one of each codec path: a bit-field enum,
@@ -36,6 +39,39 @@ describe("DPT-9 float codec", () => {
     expect(decodeDpt9(0x0000)).toBe(0);
     expect(decodeDpt9(0x0c1a)).toBe(21);
     expect(decodeDpt9(0x87ff)).toBe(-0.01);
+  });
+
+  test("rounds as ETS writes it: smallest exponent, mantissa rounded once from the decimal value", () => {
+    // ETS 6.4.1 downloading the MDT BE-02001.02 (M-0083_A-00B6), input B "Werte senden", DPT 9.004, 1000 Lux:
+    // 100000 / 2^6 = 1562.5 -> 1562 = 0x61A, written at 0x44A6 (private corpus
+    // internal/captures/progmode-end-2026-11-19/h1-mdt-lux1000-download.log line 351:
+    // MEMORY_WRITE 44a4 001d361a0000010000000000).
+    expect(encodeDpt9(1000)).toBe(0x361a);
+    // Values KNXBench reports from ETS 6.4 (its logs are private, so a lead, not our capture). Every tie
+    // here and above has an even lower neighbour, so none tells half-to-even from half-down; 25000 tells
+    // rounding from truncation, 32.45 the decimal value from the double 3245.0000000000005.
+    expect(encodeDpt9(32.09)).toBe(0x0e44); // 3209 / 2 = 1604.5 -> 1604
+    expect(encodeDpt9(32.45)).toBe(0x0e56); // 3245 / 2 = 1622.5 -> 1622
+    expect(encodeDpt9(25000)).toBe(0x5cc5); // 2500000 / 2^11 = 1220.7 -> 1221
+    expect(encodeDpt9(-12.5)).toBe(0x831e);
+    // Rounded once at the final exponent: 1000000 / 2^9 = 1953.125 -> 1953.
+    expect(encodeDpt9(10000)).toBe(0x4fa1);
+    // Beyond the range: the largest mantissa at exponent 15.
+    expect(encodeDpt9(1e9)).toBe(0x7fff);
+    expect(encodeDpt9(-1e9)).toBe(0xf800);
+  });
+
+  corpusTest("the MDT BE-02001.02 input B sending 1000 Lux: Busforge's image holds the 12 bytes ETS wrote", () => {
+    // ETS's write (private corpus internal/captures/progmode-end-2026-11-19/h1-mdt-lux1000-download.log
+    // line 351): input B "send values" (0x44A5 = 1D), DPT 9.004 Lux at its union default 1000 (0x44A6 = 36 1A).
+    const A = "M-0083_A-00B6-32-9642";
+    const xml = catalogueXml(`${A}.xml.gz`);
+    const cfg = parseAppConfig(xml);
+    const params = new Map([[`${A}_MD-2_M-3_MI-1_P-24_R-2`, "4"], [`${A}_MD-2_M-3_MI-1_P-20_R-81`, "8"]]);
+    const build = classify(cfg).planFullDownload(cfg.mask, { ia: "1.1.56", params, links: [], moduleInstances: resolveModuleInstances(cfg, params), proc: parseLoadProcedures(xml) });
+    const seg = build.segments.find((s) => s.address === 0x4468);
+    expect(seg).toBeDefined();
+    expect(seg!.image.subarray(0x44a4 - 0x4468, 0x44b0 - 0x4468).toString("hex")).toBe("001d361a0000010000000000");
   });
 
   test("round-trips values within DPT-9 resolution (0.01 * 2^exp)", () => {

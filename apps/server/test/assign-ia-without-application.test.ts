@@ -56,14 +56,14 @@ async function assign(state: AppState, projectId: string) {
 describe("assigning the address of a device without an application program", () => {
   test("a verified assignment marks it programmed", async () => {
     const { state, projectId } = await setup();
-    assignImpl = async (_c, ia) => ({ previous: "15.15.255", assigned: ia, verified: true, progModeCleared: true, progModeError: null });
+    assignImpl = async (_c, ia) => ({ previous: "15.15.255", assigned: ia, verified: true, progModeCleared: true, progModeError: null, route: "programming-mode" as const });
     expect(await assign(state, projectId)).toBe(false);
   });
 
   test("a device with an application program stays never programmed: only its full download clears that", async () => {
     const { state, projectId } = await setup();
     state.db.run("UPDATE devices SET has_application = 1");
-    assignImpl = async (_c, ia) => ({ previous: "15.15.255", assigned: ia, verified: true, progModeCleared: true, progModeError: null });
+    assignImpl = async (_c, ia) => ({ previous: "15.15.255", assigned: ia, verified: true, progModeCleared: true, progModeError: null, route: "programming-mode" as const });
     expect(await assign(state, projectId)).toBe(true);
   });
 
@@ -71,7 +71,7 @@ describe("assigning the address of a device without an application program", () 
     const { state, projectId } = await setup();
     assignImpl = async (_c, ia) => {
       state.db.run("UPDATE devices SET ia = '1.2.9'"); // edited while the task ran
-      return { previous: "15.15.255", assigned: ia, verified: true, progModeCleared: true, progModeError: null };
+      return { previous: "15.15.255", assigned: ia, verified: true, progModeCleared: true, progModeError: null, route: "programming-mode" as const };
     };
     expect(await assign(state, projectId)).toBe(true);
   });

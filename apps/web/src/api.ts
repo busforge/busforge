@@ -87,7 +87,7 @@ export interface ReplaceMappingEntry { from: string; to: string | null; }
 // Result of writing a device's individual address on the bus (mirrors
 // @busforge/knx AssignIaResult). `verified` means THE programmed device answers
 // on the new address; anything less is a failure the UI must show as one.
-export interface AssignIaResult { previous: string; assigned: string; verified: boolean; progModeCleared: boolean; progModeError: string | null; }
+export interface AssignIaResult { previous: string; assigned: string; verified: boolean; progModeCleared: boolean; progModeError: string | null; route: "programming-mode" | "serial" | "serial-secured"; secureNotAnswered?: string; }
 // One device's communication object on a group address, for the group-address overlay and a
 // com-object's linked objects.
 export interface GaComObj {
