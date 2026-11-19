@@ -651,14 +651,15 @@ report a device family as working on the strength of a passing test suite.
   secured group address on it are refused.
 - **The load steps run as the synthetic captures show them have run on no device.** A full download
   runs a pause (`LdCtrlDelay`), a master reset (`LdCtrlMasterReset`, MV-0701 before the first load-state
-  event, System B right after the parameter segment's allocation), the task pointers (`LdCtrlTaskPtr`,
-  `LdCtrlTaskCtrl2`, MV-0705), a property write with inline data inside the application's load bracket
-  (MV-0701) and a RAM segment only the procedure declares as ETS's downloads of bussard's synthetic
-  products into a device simulator show them: every load control and every byte equal to ETS's, run
-  against a simulated unit (offline match,
+  event, System B right after the parameter segment's allocation, each with the erase codes the captures
+  show), the task pointers (`LdCtrlTaskPtr`, `LdCtrlTaskCtrl2`, MV-0705), a property write with inline
+  data inside the application's load bracket (MV-0701) and a RAM segment only the procedure declares as
+  ETS's downloads of bussard's synthetic products into a device simulator show them, run against a
+  simulated unit (offline match: on System 7 every load control and every byte equal to ETS's, on System
+  B the load controls around the master reset and its frames,
   [load-procedures.md](load-procedures.md#steps-run-as-the-synthetic-captures-show-them)). No
-  application of a real product in the corpus declares one of them. Each step elsewhere, and in a
-  parameter download, is refused.
+  application of a real product in the corpus declares one of them. Each step elsewhere is refused, the
+  RAM segment aside, in a parameter download too.
 - **Our image equals what ETS would write** is checked only where an ETS capture of the same
   device exists (`tools/etsdiff.ts`, its records shipped with the others, [compatibility.md](compatibility.md)). Full
   download: the MDT BE-02001.02, the ABB US/U 4.2, the GVS AMMA, the Jung 400021SE and the MEAN WELL

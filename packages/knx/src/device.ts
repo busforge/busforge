@@ -284,11 +284,10 @@ async function waitForSyncGap(dst: number): Promise<void> {
 // arrived (request, sendOnOpenConnection), as ETS pauses ("Waiting 2289.6548 ms before reconnect" in its
 // log of a partial download through a stalling TCP link); the device's T_Disconnect to the frame that
 // reached the closed connection arrives in it, not in the new connection.
-export interface DeviceTimeouts { ackMs: number; responseMs: number; retryGapMs: number; syncResponseMs: number; restartAnswerMs: number; restartProofMs: number; droppedRepeatMs: number; staleConnectionMs: number; reconnectGapMs: number; confirmLateMs: number }
-export const DEVICE_TIMEOUTS: Readonly<DeviceTimeouts> = { ackMs: 1500, responseMs: 2000, retryGapMs: 200, syncResponseMs: 3000, restartAnswerMs: 2000, restartProofMs: 4000, droppedRepeatMs: 12_000, staleConnectionMs: 12_000, reconnectGapMs: 2300, confirmLateMs: 3000 };
-// Between the T_Disconnect after a declared master reset and the new T_Connect: about a second in ETS's
-// downloads (masterResetAnswered).
-const MASTER_RESET_GAP_MS = 1000;
+// masterResetGapMs: between the T_Disconnect after a declared master reset and the new T_Connect, about a
+// second in ETS's downloads (masterResetAnswered).
+export interface DeviceTimeouts { ackMs: number; responseMs: number; retryGapMs: number; syncResponseMs: number; restartAnswerMs: number; restartProofMs: number; droppedRepeatMs: number; staleConnectionMs: number; reconnectGapMs: number; confirmLateMs: number; masterResetGapMs?: number }
+export const DEVICE_TIMEOUTS: Readonly<DeviceTimeouts> = { ackMs: 1500, responseMs: 2000, retryGapMs: 200, syncResponseMs: 3000, restartAnswerMs: 2000, restartProofMs: 4000, droppedRepeatMs: 12_000, staleConnectionMs: 12_000, reconnectGapMs: 2300, confirmLateMs: 3000, masterResetGapMs: 1000 };
 
 // Transport connections to a device that may still be open in it although the link to the interface
 // they ran over failed, so their T_Disconnect may never have reached it: the tunnel address each ran
@@ -1632,18 +1631,20 @@ export class KnxDevice {
   // declared erase code and channel, answered with error code 0 and a process time of 0; T_Disconnect;
   // about a second later T_Connect, A_DeviceDescriptor_Read and the maximum APDU length (PID 56); no
   // authorization again. The download goes on with its next step on that connection. An answer with an
-  // error code, or none at all, refuses: no capture shows ETS going on after either. A process time the
-  // device states is waited out before the new connection; the captures show only 0.
-  async masterResetAnswered(eraseCode: number, channel: number): Promise<void> {
+  // error code or a process time other than 0, none at all, and a unit that comes back with another mask
+  // than `mask` refuse: no capture shows ETS going on after any of them.
+  async masterResetAnswered(eraseCode: number, channel: number, mask: string): Promise<void> {
     if (!Number.isInteger(eraseCode) || eraseCode < 0 || eraseCode > 0xff || !Number.isInteger(channel) || channel < 0 || channel > 0xff) {
       throw new KnxError("RESTART_REFUSED", `a master reset with erase code ${eraseCode} and channel ${channel} does not fit the octet each takes`);
     }
     const sent = await this.sendConfirmedRestart(eraseCode, channel);
     if (!sent.answered) throw new KnxError("DEVICE_NOT_ANSWERING", `the device did not answer the master reset with erase code ${eraseCode}, channel ${channel}; refusing to go on with the download without its answer`);
+    if (sent.processTime) throw new KnxError("RESTART_REFUSED", `the device answered the master reset with erase code ${eraseCode} with a process time of ${sent.processTime} s; no capture shows ETS waiting one out, refusing to go on with the download`);
     await this.disconnect();
-    await sleep(Math.max(MASTER_RESET_GAP_MS, (sent.processTime ?? 0) * 1000));
+    await sleep(this.timeouts.masterResetGapMs ?? 1000);
     await this.connect();
-    await this.deviceDescriptor();
+    const back = await this.deviceDescriptor();
+    if (back !== mask) throw new KnxError("MASK_MISMATCH", `after the master reset the device answers with mask ${back}, where it was ${mask}; refusing to go on with the download`);
     await this.maxApduLength();
   }
 

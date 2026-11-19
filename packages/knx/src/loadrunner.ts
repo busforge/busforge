@@ -52,7 +52,8 @@ export type LoadStep =
   | { op: "taskCtrl2"; lsm: number; callback: number; address: number; seg0: number; seg1: number }
   // LdCtrlMasterReset: the confirmed A_Restart with the declared erase code and channel, then a new
   // connection to the device (KnxDevice.masterResetAnswered).
-  | { op: "masterReset"; eraseCode: number; channel: number }
+  // `mask`: the device's, which it must answer with again on the new connection.
+  | { op: "masterReset"; eraseCode: number; channel: number; mask: string }
   // A declared LdCtrlWriteProp inside a load bracket: the property's description read first, then
   // `count` elements from `start` in one write, the data exactly as wide as the description's elements
   // make them; `verify`: the answer must carry the written value, else any answer with as many octets.
@@ -207,7 +208,7 @@ export function leftUnloaded(e: unknown): boolean {
 // for a step whose requests KnxDevice splits, or that sends only short ones.
 function wholeRequestLength(step: LoadStep): number | null {
   const ext = propertyExtHead(0, 0, 0).length;
-  if (step.op === "writeProp") return apdu(0, APCI.PROPERTY_WRITE, Buffer.alloc(4 + step.data.length)).length - 1;
+  if (step.op === "writeProp" || step.op === "declaredWriteProp") return apdu(0, APCI.PROPERTY_WRITE, Buffer.alloc(4 + step.data.length)).length - 1;
   if (step.op === "writePropExt") return apdu(0, APCI.PROPERTY_EXT_WRITE_CON, Buffer.alloc(ext + 3 + step.data.length)).length - 1;
   if (step.op === "funcPropExt") return apdu(0, APCI.FUNCTION_PROPERTY_EXT_COMMAND, Buffer.alloc(ext + step.data.length)).length - 1;
   if (step.op === "securityLsm") return apdu(0, APCI.FUNCTION_PROPERTY_EXT_COMMAND, Buffer.alloc(ext + LOAD_EVENT_LENGTH)).length - 1;
@@ -286,12 +287,13 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
         if (s !== STATE.LOADING) throw await stateRefusal(dev, step.lsm, s, `not LOADING after ${step.op === "taskPtr" ? "TaskPtr" : "TaskCtrl2"}`, opts.memMappedLsms);
         break;
       }
-      case "masterReset": await dev.masterResetAnswered(step.eraseCode, step.channel); break;
+      case "masterReset": await dev.masterResetAnswered(step.eraseCode, step.channel, step.mask); break;
       case "declaredWriteProp": {
         const d = await dev.propertyDescription(step.obj, step.pid, 0);
         const size = genericElementSize(d.pdt);
         const at = `object ${step.obj} PID ${step.pid}`;
         if (d.pid === 0) throw new KnxError("PROPERTY_WRITE_REFUSED", `${at}: the device describes no such property, where the load procedure writes it`);
+        if (!d.writable) throw new KnxError("PROPERTY_WRITE_REFUSED", `${at}: the device describes the property as not writable, where the load procedure writes it`);
         if (size === null) throw new KnxError("PROPERTY_WRITE_REFUSED", `${at}: the device describes the property with type 0x${d.pdt.toString(16)}, whose element width no capture shows a declared write to take`);
         if (size * step.count !== step.data.length) throw new KnxError("PROPERTY_WRITE_REFUSED", `${at}: the load procedure writes ${step.data.length} octets as ${step.count} element(s), the device's elements are ${size} octets wide; refusing to pad or cut the declared data`);
         if (step.start + step.count - 1 > d.maxElements) throw new KnxError("PROPERTY_WRITE_REFUSED", `${at}: the load procedure writes elements ${step.start}-${step.start + step.count - 1}, the device describes ${d.maxElements}`);

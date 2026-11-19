@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { APCI, apdu, parseApdu, tpAck, type KnxTransport } from "../packages/knx/src/index.ts";
 import { parseTunnelFrame } from "./etsdiff.ts";
 import { pcapToLog } from "./pcap.ts";
@@ -40,7 +39,6 @@ export function captureFrames(pcap: Buffer, device: number): DownloadFrame[] {
     return [{ from, tpdu: c ?? strip(fr.tpdu), at: Date.parse(line.slice(0, line.indexOf(" "))) }];
   });
 }
-export const captureFramesOf = (path: string, device: number) => captureFrames(readFileSync(path), device);
 
 // `description`: what A_PropertyDescription_Read answers, the property's index in its object included.
 export interface SimProperty { elements: Buffer; description?: { index: number; type: number; maxElements: number; access: number } }
@@ -50,6 +48,7 @@ export interface DownloadSimOpts {
   properties?: Map<string, SimProperty>; // "obj:pid" -> what a read answers
   echoMemoryWrites?: boolean;
   masterResetAnswer?: Buffer | null; // error code and process time (3 octets); default 00 0000
+  maskAfterMasterReset?: string;     // the descriptor answer after a master reset; default `mask`
 }
 
 const MM_CTRL = 0x0104, MM_STATUS_BASE = 46825;
@@ -61,6 +60,7 @@ export class DownloadSim implements KnxTransport {
   onClosed: ((reason: string) => void) | null = null;
   frames: DownloadFrame[] = [];
   refused: string[] = [];
+  private reset = false;
   readonly memory = new Map<number, number>();
   private readonly states = new Map<number, number>();
   // Where each relative allocation (03 0B) put its segment, the table reference (PID 7) a read answers.
@@ -68,9 +68,7 @@ export class DownloadSim implements KnxTransport {
   private nextBase = 0x4000;
   private readonly props: Map<string, SimProperty>;
   private seq = 0;
-  private device = 0x1101;
-  constructor(private readonly opts: DownloadSimOpts, device = 0x1101) {
-    this.device = device;
+  constructor(private readonly opts: DownloadSimOpts, private readonly device = 0x1101) {
     this.props = new Map([["0:14", { elements: Buffer.from([0]) }], ...(opts.properties ?? [])]);
   }
   async connect() {}
@@ -93,7 +91,7 @@ export class DownloadSim implements KnxTransport {
   private refuse(what: string): void { this.refused.push(what); }
   private answer(seq: number, apci: number, data: Buffer, tpdu: Buffer) {
     this.onCemi?.(this.device, this.assignedIa, tpAck(seq), false);
-    if (apci === APCI.DEVICE_DESCRIPTOR_READ) return this.send(APCI.DEVICE_DESCRIPTOR_RESPONSE, Buffer.from(this.opts.mask, "hex"));
+    if (apci === APCI.DEVICE_DESCRIPTOR_READ) return this.send(APCI.DEVICE_DESCRIPTOR_RESPONSE, Buffer.from(this.reset ? this.opts.maskAfterMasterReset ?? this.opts.mask : this.opts.mask, "hex"));
     if ((apci & 0x3c0) === APCI.MEMORY_READ) {
       const n = apci & 0x3f, at = data.readUInt16BE(0);
       const bytes = Buffer.from(Array.from({ length: n }, (_, i) => this.readByte(at + i)));
@@ -127,6 +125,7 @@ export class DownloadSim implements KnxTransport {
     }
     // A_Restart: tpdu octet 1 bit 0 is the master-reset request, then the erase code and the channel.
     if ((apci & 0x3e0) === APCI.RESTART && (tpdu[1] & 0x01) === 1) {
+      this.reset = true;
       const a = this.opts.masterResetAnswer === undefined ? Buffer.from([0, 0, 0]) : this.opts.masterResetAnswer;
       if (a) this.send(APCI.RESTART | 0x21, a);
       return;

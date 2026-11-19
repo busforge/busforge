@@ -1255,7 +1255,7 @@ export class SystemBProfile extends DeviceProfile {
     // secure procedure closes with the confirmed restart (IsSecureEnabled), the plain one with A_Restart.
     const plan = withClosing(withConfirmedRestart(planSystemBFullDownload({
       params: target.bytes, paramsInImage: fullDownloadImageCoverage(cfg, target.owned), comObj, addr, assoc, programId: programIdStamp(cfg),
-    }, fillByte, requireReboot, declaredMcbWrites(proc, target.size), security, true, closesAtOnce(cfg), filled, systemBMasterResets(proc)), proc.secureEnabled), proc, "full");
+    }, fillByte, requireReboot, declaredMcbWrites(proc, target.size), security, true, closesAtOnce(cfg), filled, systemBMasterResets(proc, cfg.mask)), proc.secureEnabled), proc, "full");
     const imageBytes = target.size + comObj.length + addr.length + assoc.length;
 
     return {

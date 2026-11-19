@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { readFileSync } from "node:fs";
 import { KnxDevice, iaToNum, runLoadPlan, type LoadPlan } from "../packages/knx/src/index.ts";
-import { parseAppConfig, parseLoadProcedures, classify, initialValues, absoluteFullStepRefusal } from "../packages/product/src/index.ts";
+import { parseAppConfig, parseLoadProcedures, classify, initialValues, absoluteFullStepRefusal, isMemoryMappedLsm } from "../packages/product/src/index.ts";
 import { BUSSARD_LOAD_STEP_PRODUCTS, BUSSARD_SYNTHETIC_TESTED, bussardApplication, bussardCapture, corpusPath } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { DownloadSim, captureFrames, type DownloadFrame, type DownloadSimOpts, type SimProperty } from "./download-sim.ts";
@@ -34,11 +34,12 @@ const PID204: SimProperty = { elements: Buffer.alloc(0), description: { index: 5
 // (the plan's index; default: its closing restart, which the simulator does not take).
 async function download(xml: string, opts: { until?: (plan: LoadPlan) => number; sim?: Partial<DownloadSimOpts> } = {}) {
   const cfg = parseAppConfig(xml);
-  const mm = cfg.mask === "MV-0701";
+  const mm = isMemoryMappedLsm(cfg.mask);
   const { plan } = classify(cfg).planFullDownload(cfg.mask, { ia: "1.1.1", params: initialValues(cfg, "de-DE"), links: [], proc: parseLoadProcedures(xml), unitHoldsApplication: false });
   const props = new Map<string, SimProperty>([["3:204", PID204], ...(MAX_APDU[cfg.mask] ? [["0:56", { elements: Buffer.from(MAX_APDU[cfg.mask], "hex") }] as const] : [])]);
   const sim = new DownloadSim({ mask: cfg.mask.slice(3), memoryMappedLsms: mm, echoMemoryWrites: cfg.mask === "MV-07B0", properties: props, ...opts.sim });
-  const dev = new KnxDevice(sim, "1.1.1");
+  // The pause before the new connection after a master reset is ETS's second; its frames do not depend on it.
+  const dev = new KnxDevice(sim, "1.1.1", undefined, { masterResetGapMs: 10 });
   dev.setExtendedMemoryServices(false);
   await dev.connect();
   const until = opts.until ? opts.until(plan) : plan.findLastIndex((s) => s.op === "restart");
@@ -174,6 +175,19 @@ corpusDescribe("bussard's synthetic captures: a load step where no capture shows
     expect(declaredStep(xml, false)).toEqual(expect.objectContaining({ code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: expect.stringContaining("property-mapped") }));
     const late = swap(swap(xml, `<LdCtrlMasterReset EraseCode="5" ChannelNumber="0" />`, ""), `<LdCtrlUnload LsmIdx="3" />`, `<LdCtrlUnload LsmIdx="3" />\n<LdCtrlMasterReset EraseCode="5" ChannelNumber="0" />`);
     expect(fullRefusal(late)).toEqual(expect.objectContaining({ code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: expect.stringContaining("follows a load-state event") }));
+    // A factory reset or an address reset, after which the unit no longer answers at its address, and another channel.
+    for (const attrs of [`EraseCode="2" ChannelNumber="0"`, `EraseCode="3" ChannelNumber="0"`, `EraseCode="5" ChannelNumber="7"`, `EraseCode="5"`]) {
+      const other = swap(xml, `<LdCtrlMasterReset EraseCode="5" ChannelNumber="0" />`, `<LdCtrlMasterReset ${attrs} />`);
+      expect(fullRefusal(other)?.code).toBe("FULL_DOWNLOAD_STEP_UNSUPPORTED");
+    }
+  });
+
+  test("a pause elsewhere than between the last LoadCompleted and the restart, or one as long as the connection timeout", () => {
+    const xml = application("syn-s7-delay");
+    const step = `<LdCtrlDelay MilliSeconds="200" />`;
+    const early = swap(swap(xml, step, ""), `<LdCtrlLoad LsmIdx="1" />`, `${step}\n<LdCtrlLoad LsmIdx="1" />`);
+    expect(fullRefusal(early)).toEqual(expect.objectContaining({ code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: expect.stringContaining("between the last LoadCompleted and the restart") }));
+    expect(fullRefusal(swap(xml, step, `<LdCtrlDelay MilliSeconds="6000" />`))).toEqual(expect.objectContaining({ code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: expect.stringContaining("connection timeout") }));
   });
 
   test("the task pointers on a memory-mapped mask, or outside their load bracket", () => {
@@ -191,11 +205,34 @@ corpusDescribe("bussard's synthetic captures: a load step where no capture shows
     expect(fullRefusal(inLsm1)?.code).toBe("FULL_DOWNLOAD_STEP_UNSUPPORTED");
     expect(fullRefusal(swap(xml, ` InlineData="00004440000000448000"`, ""))).toEqual(expect.objectContaining({ code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: expect.stringContaining("no InlineData") }));
     expect(declaredStep(xml, false)?.code).toBe("FULL_DOWNLOAD_STEP_UNSUPPORTED");
+    // Another object than the bracket's, or a property the download drives itself.
+    expect(fullRefusal(swap(xml, `ObjIdx="3" PropId="204"`, `ObjIdx="4" PropId="204"`))?.code).toBe("FULL_DOWNLOAD_STEP_UNSUPPORTED");
+    expect(fullRefusal(swap(xml, `ObjIdx="3" PropId="204"`, `ObjIdx="3" PropId="27"`))?.code).toBe("FULL_DOWNLOAD_STEP_UNSUPPORTED");
+    // A parameter placed in a property, which such a write would carry.
+    const placed = swap(xml, `<Memory CodeSegment="M-00FA_A-2821-11-0000_AS-4440" Offset="0" BitOffset="0" />`, `<Property ObjectIndex="3" PropertyId="204" Offset="0" BitOffset="0" />`);
+    expect(fullRefusal(placed)).toEqual(expect.objectContaining({ code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: expect.stringContaining("placed in a property") }));
   });
 
-  test("a segment only the procedure declares that is not RAM", () => {
-    const xml = swap(application("syn-s7-0705"), `SegType="1" Address="1808" Size="48" Access="0" MemType="2"`, `SegType="1" Address="1808" Size="48" Access="0" MemType="3"`);
-    expect(fullRefusal(xml)).toEqual(expect.objectContaining({ code: "FULL_DOWNLOAD_SEGMENT_UNKNOWN", message: expect.stringContaining("at 1808") }));
+  // A write the route cannot carry is refused before the first unload, as every whole request of a plan is.
+  test("a property write too long for a route through a coupler is refused before anything is sent", async () => {
+    const sent: string[] = [];
+    const dev = {
+      assertFitsRoute: (n: number) => { if (n > 15) throw Object.assign(new Error("long frame"), { code: "COUPLER_ROUTE_LONG_FRAME" }); },
+      writesConfirmed: async () => { sent.push("asked"); return false; },
+      propWrite: async () => { sent.push("propWrite"); return Buffer.alloc(1); },
+    } as unknown as KnxDevice;
+    const plan: LoadPlan = [{ op: "unload", lsm: 1 }, { op: "declaredWriteProp", obj: 3, pid: 204, start: 1, count: 3, data: Buffer.alloc(15), verify: false }];
+    expect(await runLoadPlan(dev, plan).then(() => null, (e: unknown) => e)).toEqual(expect.objectContaining({ code: "COUPLER_ROUTE_LONG_FRAME" }));
+    expect(sent).toEqual([]);
+  });
+
+  test("a segment only the procedure declares that is not RAM, or a RAM one in an application asking for ETS's partial form", () => {
+    const xml = application("syn-s7-0705");
+    const rom = swap(xml, `SegType="1" Address="1808" Size="48" Access="0" MemType="2"`, `SegType="1" Address="1808" Size="48" Access="0" MemType="3"`);
+    expect(fullRefusal(rom)).toEqual(expect.objectContaining({ code: "FULL_DOWNLOAD_SEGMENT_UNKNOWN", message: expect.stringContaining("at 1808") }));
+    const partial = xml.includes("<Options ") ? swap(xml, "<Options ", `<Options PreferPartialDownloadIfApplicationLoaded="true" `) : swap(xml, "<Static>", `<Static>\n<Options PreferPartialDownloadIfApplicationLoaded="true" />`);
+    expect(parseLoadProcedures(partial).preferPartialIfLoaded).toBe(true);
+    expect(fullRefusal(partial)).toEqual(expect.objectContaining({ code: "FULL_DOWNLOAD_SEGMENT_UNKNOWN", message: expect.stringContaining("partial form") }));
   });
 
   test("a System B master reset anywhere but right after the parameter segment's allocation, or with the partial form", () => {
@@ -205,14 +242,21 @@ corpusDescribe("bussard's synthetic captures: a load step where no capture shows
     expect(fullRefusal(later)).toEqual(expect.objectContaining({ code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: expect.stringContaining("right after the parameter segment's allocation") }));
     const partial = swap(xml, "<Options ", `<Options PreferPartialDownloadIfApplicationLoaded="true" `);
     expect(fullRefusal(partial)).toEqual(expect.objectContaining({ code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: expect.stringContaining("partial form") }));
+    expect(fullRefusal(swap(xml, step, `<LdCtrlMasterReset EraseCode="2" ChannelNumber="0" />`))?.code).toBe("FULL_DOWNLOAD_STEP_UNSUPPORTED");
+    const secure = swap(xml, `<ApplicationProgram `, `<ApplicationProgram IsSecureEnabled="true" `);
+    expect(fullRefusal(secure)).toEqual(expect.objectContaining({ code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: expect.stringContaining("Data Secure") }));
   });
 
-  test("a master reset the unit refuses or does not answer, and a property whose elements do not fit the declared data", async () => {
+  test("a master reset the unit refuses, does not answer, answers with a process time or comes back from with another mask, and a property it does not describe as the step writes it", async () => {
     const reset = application("syn-s7-master-reset");
     const failure = (run: Promise<unknown>) => run.then(() => null, (e: unknown) => e);
     expect(await failure(download(reset, { sim: { masterResetAnswer: Buffer.from([1, 0, 0]) } }))).toEqual(expect.objectContaining({ code: "RESTART_REFUSED" }));
     expect(await failure(download(reset, { sim: { masterResetAnswer: null } }))).toEqual(expect.objectContaining({ code: "DEVICE_NOT_ANSWERING" }));
-    const narrow: SimProperty = { elements: Buffer.alloc(0), description: { index: 5, type: 0x94, maxElements: 2, access: 0x30 } };
-    expect(await failure(download(application("syn-s7-pid204"), { sim: { properties: new Map([["3:204", narrow]]) } }))).toEqual(expect.objectContaining({ code: "PROPERTY_WRITE_REFUSED" }));
+    expect(await failure(download(reset, { sim: { masterResetAnswer: Buffer.from([0, 0, 2]) } }))).toEqual(expect.objectContaining({ code: "RESTART_REFUSED", message: expect.stringContaining("process time") }));
+    expect(await failure(download(reset, { sim: { maskAfterMasterReset: "0705" } }))).toEqual(expect.objectContaining({ code: "MASK_MISMATCH" }));
+    for (const description of [{ index: 5, type: 0x94, maxElements: 2, access: 0x30 }, { index: 5, type: 0x15, maxElements: 2, access: 0x30 }]) {
+      const props = new Map([["3:204", { elements: Buffer.alloc(0), description }]]);
+      expect(await failure(download(application("syn-s7-pid204"), { sim: { properties: props } }))).toEqual(expect.objectContaining({ code: "PROPERTY_WRITE_REFUSED" }));
+    }
   });
 });

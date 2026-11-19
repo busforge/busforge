@@ -333,7 +333,7 @@ export function planSystemBFullDownload(tables: {
   addr: Buffer;     // LSM 1, the group-address table
   assoc: Buffer;    // LSM 2, the association table
   programId: Buffer; // PID 13: manufacturer + application number + version
-}, fillByte = 0, requireReboot = true, mcb: { obj: number; element: number; data: Buffer; echoPrefix?: number }[] = [], security?: SecurityObjectTables, unloadPei = false, closeAtOnce = false, filled = true, masterResets: { eraseCode: number; channel: number }[] = []): LoadPlan {
+}, fillByte = 0, requireReboot = true, mcb: { obj: number; element: number; data: Buffer; echoPrefix?: number }[] = [], security?: SecurityObjectTables, unloadPei = false, closeAtOnce = false, filled = true, masterResets: { eraseCode: number; channel: number; mask: string }[] = []): LoadPlan {
   const P = OBJ.APP_PROGRAM, C = OBJ.COMOBJ_TABLE, A = OBJ.ASSOC_TABLE, D = OBJ.ADDR_TABLE;
   // The memory-control-block entries the application declares (PID 27), written right after the
   // object's allocation as ETS does. They split a segment into regions the device checks at boot;
@@ -363,9 +363,9 @@ export function planSystemBFullDownload(tables: {
     // carried in the request all the same, as ETS sends it.
     // `masterResets`: the master resets the application declares right after this allocation, sent there
     // as ETS sends them (KnxDevice.masterResetAnswered), each followed by a new connection. A device that
-    // restarts loses the verify mode set above, so it is set again before the next write.
+    // restarts may clear the verify mode set above, so it is set again before the next write.
     { op: "load", lsm: P }, { op: "alloc", lsm: P, size: tables.params.length, fill: filled, fillByte },
-    ...masterResets.flatMap((r): LoadStep[] => [{ op: "masterReset", eraseCode: r.eraseCode, channel: r.channel }]),
+    ...masterResets.map((r): LoadStep => ({ op: "masterReset", ...r })),
     ...(masterResets.length ? [{ op: "verifyMode", on: true } as LoadStep] : []),
     ...mcbFor(P),
     { op: "load", lsm: C, assert: false }, { op: "alloc", lsm: C, size: tables.comObj.length }, ...mcbFor(C),
