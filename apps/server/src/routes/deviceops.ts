@@ -1,4 +1,4 @@
-import { parseAppConfig, collectApp, takesValue, resolveParamRef, resolveModuleInstances, buildDeviceConfig, assumableMemorylessRefs, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, CollectCancelled, comObjectTableChanges, fullDownloadRefusedForTunnelingEntries, type CollectApp, type AppConfig, type DeviceReadbackInfo, type MatrixOperation, type ModuleInstance, type WriteGate, type KnxIpDevice } from "@busforge/product";
+import { parseAppConfig, collectApp, takesValue, resolveParamRef, resolveModuleInstances, buildDeviceConfig, assumableMemorylessRefs, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, CollectCancelled, comObjectTableChanges, fullDownloadRefusedForTunnelingEntries, HARDWARE_PEI_PROGRAM_REFUSAL, type CollectApp, type AppConfig, type DeviceReadbackInfo, type MatrixOperation, type ModuleInstance, type WriteGate, type KnxIpDevice } from "@busforge/product";
 import { getProjectConnection, getGaMeta } from "../db/projects.ts";
 import type { Database } from "bun:sqlite";
 import type { Connection } from "../db/connections.ts";
@@ -95,17 +95,18 @@ function busOpPreamble(state: AppState, projectId: string, deviceId: string): { 
 // project was ever verified on has no baseline to differ from, and may run another application or
 // none, so it takes a full download first (the flash dialog offers it on this code). Where the
 // application's own load procedure keeps Busforge from downloading it in full, it is refused just the
-// same, pointing at ETS: its procedure declares no application check a surgical flash could run first.
+// same, pointing at ETS: its procedure declares no application check a surgical flash could run first,
+// and so is one whose hardware carries a PEI program (`peiProgram`, HARDWARE_PEI_PROGRAM_REFUSAL).
 // A family that cannot be downloaded in full for another reason keeps the surgical flash, the only way
 // it is programmed; its verified result then ends the state (gaEndsNever, paramsEndNever).
-const canDownloadFull = (app: AppConfig | null) => !!app && classify(app).capabilities().fullDownload;
-const onlyEtsDownloads = (app: AppConfig | null) => !!app && classify(app).operationRefusals().fullDownload !== undefined;
-function refuseNeverProgrammed(dev: { neverProgrammed: boolean }, app: AppConfig | null): void {
+const canDownloadFull = (app: AppConfig | null, peiProgram: boolean) => !peiProgram && !!app && classify(app).capabilities().fullDownload;
+const onlyEtsDownloads = (app: AppConfig | null, peiProgram: boolean) => !!app && (peiProgram || classify(app).operationRefusals().fullDownload !== undefined);
+function refuseNeverProgrammed(dev: { neverProgrammed: boolean; peiProgram: boolean }, app: AppConfig | null): void {
   if (!dev.neverProgrammed) return;
-  if (canDownloadFull(app)) {
+  if (canDownloadFull(app, dev.peiProgram)) {
     throw new ApiError("NEVER_PROGRAMMED_USE_DOWNLOAD", "no configuration of this project has been verified on this device since it was placed or its product replaced; a full download commissions it first", 400);
   }
-  if (onlyEtsDownloads(app)) {
+  if (onlyEtsDownloads(app, dev.peiProgram)) {
     throw new ApiError("NEVER_PROGRAMMED_USE_ETS", "no configuration of this project has been verified on this device since it was placed or its product replaced, and Busforge cannot download this application in full; commission it with ETS first", 400);
   }
 }
@@ -190,21 +191,23 @@ async function programOrPreview(
 // family that can commission from scratch is pointed at the full download with a distinct code (the
 // FlashDialog offers it), and any other is refused. Returns "surgical" when the table stays, a
 // "structural" verdict, or the refusal to short-circuit with. Runs pre-enqueue, like the capability
-// guards: no snapshot, no bus.
+// guards: no snapshot, no bus. `peiProgram`: the device's hardware carries a PEI program, which keeps it
+// from the full download.
 function comObjectTableGuard(
   app: AppConfig | null,
   base: Map<string, string>,
   now: Map<string, string>,
   modules: ModuleInstance[],
   secure: boolean,
+  peiProgram: boolean,
 ): "surgical" | "structural" | Response {
   if (!app) return "surgical"; // no cfg: the profile layer's requireCfg refuses downstream
   if (!comObjectTableChanges(app, base, now, modules).length) return "surgical";
   if (secure && !classify(app).loadsSecurityObject) return secureTablesRefusal();
   const caps = classify(app).capabilities();
   if (caps.structuralFlash) return "structural";
-  if (caps.fullDownload) return err("COM_OBJECT_TABLE_STALE_USE_DOWNLOAD", "this change alters the device's communication objects, which needs its com-object table rewritten; run a full download to apply it", 400);
-  if (onlyEtsDownloads(app)) return err("COM_OBJECT_TABLE_STALE_USE_ETS", "this change alters the device's communication objects, which needs its com-object table rewritten; Busforge cannot download this application in full, so apply it with ETS", 400);
+  if (caps.fullDownload && !peiProgram) return err("COM_OBJECT_TABLE_STALE_USE_DOWNLOAD", "this change alters the device's communication objects, which needs its com-object table rewritten; run a full download to apply it", 400);
+  if (onlyEtsDownloads(app, peiProgram)) return err("COM_OBJECT_TABLE_STALE_USE_ETS", "this change alters the device's communication objects, which needs its com-object table rewritten; Busforge cannot download this application in full, so apply it with ETS", 400);
   return err("COM_OBJECT_TABLE_STALE", "this change alters the device's communication objects, which needs its com-object table rewritten; busforge cannot do that for this device family yet", 400);
 }
 
@@ -641,7 +644,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const { dev, conn, appXml: gaAppXml } = busOpPreamble(state, id, deviceId);
     const gaFamilyApp = loadApp(state, id, deviceId);
     refuseNeverProgrammed(dev, gaFamilyApp);
-    const gaEndsNever = dev.neverProgrammed && !canDownloadFull(gaFamilyApp);
+    const gaEndsNever = dev.neverProgrammed && !canDownloadFull(gaFamilyApp, dev.peiProgram);
     const resolved = resolveDeviceLinks(state, id, deviceId);
     const submittedLinks = getDeviceLinks(db, id, deviceId);
     if (!resolved) return err("APP_PROGRAM_MISSING", "application program not found in project", 404);
@@ -675,7 +678,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const gaOverrideBase = resolveComObjOverrideBase(state, id, deviceId); // read with gaBase
     // If wiring these links would leave the device's kept-from-device com-object table stale, the
     // structural flash writes it (or the full download, or a refusal). Pre-enqueue.
-    const gaStale = comObjectTableGuard(gaApp, gaBase, gaParams, gaModules, secureCredsFor(state, id, deviceId) !== undefined);
+    const gaStale = comObjectTableGuard(gaApp, gaBase, gaParams, gaModules, secureCredsFor(state, id, deviceId) !== undefined, dev.peiProgram);
     if (gaStale === "structural") return structuralFlash(state, url, id, deviceId, dev, conn, gaAppXml);
     if (gaStale !== "surgical") return gaStale;
     let gaFingerprint: string | null = null;
@@ -718,6 +721,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
   // programmed baseline is adopted ONLY if that read-back verified.
   if (seg.length === 6 && seg[3] === "devices" && seg[5] === "download" && req.method === "POST") {
     const deviceId = decodeURIComponent(seg[4]);
+    if (getDeviceForFlash(db, id, deviceId)?.peiProgram) return err(HARDWARE_PEI_PROGRAM_REFUSAL.code, HARDWARE_PEI_PROGRAM_REFUSAL.message);
     const { dev, conn, appXml } = busOpPreamble(state, id, deviceId);
     const app = loadApp(state, id, deviceId);
     if (app && !classify(app).capabilities().fullDownload) {
@@ -769,7 +773,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // and connect the bus just to have the profile throw.
     const flApp = loadApp(state, id, deviceId);
     refuseNeverProgrammed(dev, flApp);
-    const paramsEndNever = dev.neverProgrammed && !canDownloadFull(flApp);
+    const paramsEndNever = dev.neverProgrammed && !canDownloadFull(flApp, dev.peiProgram);
     if (flApp && !classify(flApp).capabilities().flashParams) {
       const why = classify(flApp).operationRefusals().flashParams;
       return why ? err(why.code, why.message) : err("DEVICE_FAMILY_UNSUPPORTED", "this device's family does not support parameter programming yet");
@@ -789,7 +793,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // If these parameters change which com-objects the device has (or their flags), a surgical
     // parameter flash would leave its kept-from-device com-object table stale. Promote to a full
     // download where the family can commission, else refuse. Pre-enqueue: no snapshot, no bus.
-    const flStale = comObjectTableGuard(flApp, flashBase, flashParams, flashModules, secure !== undefined);
+    const flStale = comObjectTableGuard(flApp, flashBase, flashParams, flashModules, secure !== undefined, dev.peiProgram);
     if (flStale === "structural") return structuralFlash(state, url, id, deviceId, dev, conn, appXml);
     if (flStale !== "surgical") return flStale;
     // A System 1 parameter download is the full download, the security object loaded with it (system1.ts).

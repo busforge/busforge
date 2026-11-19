@@ -3,7 +3,7 @@ import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { iaToNum, numToGa, formatGa, SENDER_ENTRY } from "@busforge/knx";
 import { appProgramId, readAppProgram, type Project, type DroppedLink, type DroppedLinkReason } from "@busforge/project";
-import { parseAppConfig, buildDeviceConfig, buildSecurityObject, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, effectiveComObjFlags, ProductError, imageWritableType, resolveParamRef, sameParamValue, type SameParamValue, takesValue, type EffectiveComObjFlags, type ComObjInstanceOverride, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
+import { parseAppConfig, buildDeviceConfig, buildSecurityObject, HARDWARE_PEI_PROGRAM_REFUSAL, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, effectiveComObjFlags, ProductError, imageWritableType, resolveParamRef, sameParamValue, type SameParamValue, takesValue, type EffectiveComObjFlags, type ComObjInstanceOverride, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
 import { getAppProgram, putAppProgram, catalogBaggageNames, pictureType } from "./db/catalog.ts";
 import { getDeviceParams, getDeviceParamBase, getDeviceParamAssumed, getDeviceModules, getDeviceAppRef, getDeviceProductRef, getDeviceForFlash, deviceHasApplication, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps, getDeviceComObjOverrides, getDeviceComObjOverrideBase } from "./db/deviceparams.ts";
 import { deviceCompatibility } from "./compatibility.ts";
@@ -380,7 +380,8 @@ export function missingApplication(db: Database, projectId: string, deviceId: st
 
 export function buildDeviceView(state: AppState, projectId: string, deviceId: string, lang?: string): DeviceConfigView {
   const { db } = state;
-  if (!getDeviceForFlash(db, projectId, deviceId)) throw new ApiError("DEVICE_NOT_FOUND", "device not found", 404);
+  const device = getDeviceForFlash(db, projectId, deviceId);
+  if (!device) throw new ApiError("DEVICE_NOT_FOUND", "device not found", 404);
   const app = loadApp(state, projectId, deviceId);
   if (!app) throw missingApplication(db, projectId, deviceId);
   const view = buildDeviceConfig(app, getDeviceParams(db, projectId, deviceId), lang, getDeviceModules(db, projectId, deviceId));
@@ -396,7 +397,10 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
   // A secure device's group tables and commissioning also need its security object, which only
   // some memory models load; on the others the UI must not offer either.
   view.capabilities = isSecureDevice(db, projectId, deviceId) && !classify(app).loadsSecurityObject ? { ...caps, flashLinks: false, fullDownload: false, structuralFlash: false } : caps;
-  view.refusals = Object.fromEntries(Object.entries(classify(app).operationRefusals()).map(([op, r]) => [op, r.code]));
+  // Hardware that carries a PEI program takes no full download, whatever its application allows.
+  if (device.peiProgram) view.capabilities = { ...view.capabilities, fullDownload: false };
+  const refusals = { ...classify(app).operationRefusals(), ...(device.peiProgram ? { fullDownload: HARDWARE_PEI_PROGRAM_REFUSAL } : {}) };
+  view.refusals = Object.fromEntries(Object.entries(refusals).map(([op, r]) => [op, r.code]));
   view.fullDownloadLoadsApplication = view.capabilities.fullDownload && classify(app).fullDownloadLoadsApplication();
   const productRef = getDeviceProductRef(db, projectId, deviceId);
   if (productRef) {

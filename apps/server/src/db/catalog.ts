@@ -60,17 +60,17 @@ export function catalogBaggageIds(db: Database, appProgramId: string): Set<strin
 export function putCatalogProduct(db: Database, p: CatalogProduct, pin = false): void {
   if (pin) {
     db.prepare(
-      "INSERT INTO catalog_products (app_ref, product_ref, app_program_id, manufacturer, name, order_number, hw_version, has_application, pinned) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1) ON CONFLICT(app_ref, product_ref) DO UPDATE SET pinned = 1",
-    ).run(p.appRef, p.productRef, p.appProgramId, p.manufacturer, p.name, p.orderNumber, p.hwVersion, p.hasApplication ? 1 : 0);
+      "INSERT INTO catalog_products (app_ref, product_ref, app_program_id, manufacturer, name, order_number, hw_version, has_application, pei_program, pinned) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1) ON CONFLICT(app_ref, product_ref) DO UPDATE SET pinned = 1",
+    ).run(p.appRef, p.productRef, p.appProgramId, p.manufacturer, p.name, p.orderNumber, p.hwVersion, p.hasApplication ? 1 : 0, p.peiProgram ? 1 : 0);
   } else {
     db.prepare(
-      "INSERT OR IGNORE INTO catalog_products (app_ref, product_ref, app_program_id, manufacturer, name, order_number, hw_version, has_application) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-    ).run(p.appRef, p.productRef, p.appProgramId, p.manufacturer, p.name, p.orderNumber, p.hwVersion, p.hasApplication ? 1 : 0);
+      "INSERT OR IGNORE INTO catalog_products (app_ref, product_ref, app_program_id, manufacturer, name, order_number, hw_version, has_application, pei_program) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(p.appRef, p.productRef, p.appProgramId, p.manufacturer, p.name, p.orderNumber, p.hwVersion, p.hasApplication ? 1 : 0, p.peiProgram ? 1 : 0);
   }
 }
 
-const PRODUCT_COLUMNS = "app_ref AS appRef, product_ref AS productRef, app_program_id AS appProgramId, manufacturer, name, order_number AS orderNumber, hw_version AS hwVersion, has_application AS hasApplication";
-const productOf = (r: Omit<CatalogProduct, "hasApplication"> & { hasApplication: number }): CatalogProduct => ({ ...r, hasApplication: r.hasApplication === 1 });
+const PRODUCT_COLUMNS = "app_ref AS appRef, product_ref AS productRef, app_program_id AS appProgramId, manufacturer, name, order_number AS orderNumber, hw_version AS hwVersion, has_application AS hasApplication, pei_program AS peiProgram";
+const productOf = (r: Omit<CatalogProduct, "hasApplication" | "peiProgram"> & { hasApplication: number; peiProgram: number }): CatalogProduct => ({ ...r, hasApplication: r.hasApplication === 1, peiProgram: r.peiProgram === 1 });
 
 // All placeable catalog products, ordered for the device picker.
 export function listCatalogProducts(db: Database): CatalogProduct[] {
@@ -89,12 +89,13 @@ export function getCatalogProduct(db: Database, appRef: string, productRef: stri
 // installer's), order number and hardware version are unknown. Only products whose application
 // program is in the catalog are added, so every entry stays placeable, and products without an
 // application program, which need none to be placed (they have no program to name them: the picker
-// shows their product id). Idempotent (only keys not yet in the catalog). Returns the number of rows added.
+// shows their product id). A PEI program a device's hardware carries goes along. Idempotent (only keys not yet in
+// the catalog). Returns the number of rows added.
 export function backfillCatalogFromDevices(db: Database): number {
   const stored = new Set((db.query("SELECT id FROM app_programs").all() as { id: string }[]).map((r) => r.id));
   const rows = db.query(
-    "SELECT d.app_ref AS appRef, d.product_ref AS productRef, d.manufacturer, MIN(d.has_application) AS hasApplication FROM devices d LEFT JOIN catalog_products c ON c.app_ref = d.app_ref AND c.product_ref = d.product_ref WHERE c.app_ref IS NULL GROUP BY d.app_ref, d.product_ref, d.manufacturer",
-  ).all() as { appRef: string; productRef: string; manufacturer: number; hasApplication: number }[];
+    "SELECT d.app_ref AS appRef, d.product_ref AS productRef, d.manufacturer, MIN(d.has_application) AS hasApplication, MAX(d.pei_program) AS peiProgram FROM devices d LEFT JOIN catalog_products c ON c.app_ref = d.app_ref AND c.product_ref = d.product_ref WHERE c.app_ref IS NULL GROUP BY d.app_ref, d.product_ref, d.manufacturer",
+  ).all() as { appRef: string; productRef: string; manufacturer: number; hasApplication: number; peiProgram: number }[];
   // One parse per program (several products can share one, and a program can be tens of MB). A program
   // whose XML does not parse names nothing here; the picker then shows the product id, and the list of
   // every other product stays available.
@@ -113,15 +114,15 @@ export function backfillCatalogFromDevices(db: Database): number {
     for (const r of rows) {
       if (r.hasApplication === 0) {
         n += db.prepare(
-          "INSERT OR IGNORE INTO catalog_products (app_ref, product_ref, app_program_id, manufacturer, name, order_number, hw_version, has_application) VALUES (?, ?, '', ?, '', '', '', 0)",
-        ).run(r.appRef, r.productRef, r.manufacturer).changes;
+          "INSERT OR IGNORE INTO catalog_products (app_ref, product_ref, app_program_id, manufacturer, name, order_number, hw_version, has_application, pei_program) VALUES (?, ?, '', ?, '', '', '', 0, ?)",
+        ).run(r.appRef, r.productRef, r.manufacturer, r.peiProgram).changes;
         continue;
       }
       const id = appProgramId(r.appRef);
       if (!stored.has(id)) continue; // not placeable without its program XML
       n += db.prepare(
-        "INSERT OR IGNORE INTO catalog_products (app_ref, product_ref, app_program_id, manufacturer, name, order_number, hw_version) VALUES (?, ?, ?, ?, ?, '', '')",
-      ).run(r.appRef, r.productRef, id, r.manufacturer, nameOf(id)).changes;
+        "INSERT OR IGNORE INTO catalog_products (app_ref, product_ref, app_program_id, manufacturer, name, order_number, hw_version, pei_program) VALUES (?, ?, ?, ?, ?, '', '', ?)",
+      ).run(r.appRef, r.productRef, id, r.manufacturer, nameOf(id), r.peiProgram).changes;
     }
   })();
   return n;

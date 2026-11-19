@@ -24,6 +24,7 @@ import type { AppState } from "../app.ts";
 // .busforge export, and snapshots.
 // The Hardware2Program ids of the products in a project file that carry no application program.
 const applicationless = (products: CatalogProduct[]): Set<string> => new Set(products.filter((p) => !p.hasApplication).map((p) => p.appRef));
+const withPeiProgram = (products: CatalogProduct[]): Set<string> => new Set(products.filter((p) => p.peiProgram).map((p) => p.appRef));
 
 export async function handle(req: Request, url: URL, seg: string[], state: AppState): Promise<Response | null> {
   const { db, bus } = state;
@@ -81,7 +82,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // atomic transaction with nothing to clean up on failure. The legacy on-disk
     // path column source_file stays empty.
     db.transaction(() => {
-      insertProject(db, id, project, "", state.now(), withoutApplication);
+      insertProject(db, id, project, "", state.now(), withoutApplication, withPeiProgram(products));
       setProjectSource(db, id, importSourceOf("knxproj", file instanceof File ? file.name : "project.knxproj", bytes));
       for (const [pid, xml] of programs) putAppProgram(db, pid, xml);
       for (const [pid, files] of pictures) putCatalogBaggage(db, pid, files);

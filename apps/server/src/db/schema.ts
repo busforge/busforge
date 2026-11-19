@@ -558,6 +558,12 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (project_id, seq)
   );
   `,
+  // Whether a device's hardware carries a PEI program next to its application (its Hardware2Program names
+  // two programs). No full download of Busforge loads it, so none runs on such a device.
+  `
+  ALTER TABLE devices ADD COLUMN pei_program INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE catalog_products ADD COLUMN pei_program INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration

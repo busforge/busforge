@@ -298,6 +298,7 @@ export function extractCatalogProducts(bytes: Buffer): CatalogProduct[] {
             const hasApplication = h2p.ApplicationProgramRef !== undefined;
             out.push({
               appRef, productRef, hasApplication,
+              peiProgram: kids(h2p.ApplicationProgramRef).length > 1,
               appProgramId: hasApplication ? appProgramId(appRef) : "",
               manufacturer: manufacturerOf(productRef),
               name: text(p.Text),

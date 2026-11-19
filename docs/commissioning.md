@@ -138,6 +138,16 @@ the address, and commissioning assigns the address and stops there. A verified a
 device programmed, as ETS's `IndividualAddressLoaded` is all ETS records for it. Every operation on an
 application (configuration, read-back, flash, download) refuses with `DEVICE_WITHOUT_APPLICATION`.
 
+### Hardware with a PEI program
+
+Some hardware runs a second program next to its application, the PEI program on load-state machine 5:
+its product's Hardware2Program names both. Busforge's full download loads the application only, and on
+System B unloads the PEI program first and never loads it again
+([load-procedures.md](load-procedures.md#the-rules-by-level), R9). The import records such hardware, the
+device page withholds the full download, and the download is refused before anything is sent
+(`HARDWARE_PEI_PROGRAM_UNSUPPORTED`). A never-programmed device of this kind is pointed at ETS, as is a
+change that needs its com-object table rewritten and no structural flash can write.
+
 ## The full download
 
 Address assignment alone does not commission a device. The rest (application id, parameter

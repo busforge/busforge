@@ -39,6 +39,10 @@ export interface CatalogProduct {
   // False where the Hardware2Program names no ApplicationProgramRef: a product that takes an
   // individual address and nothing else (the Hager TH001 RS 232 interface).
   hasApplication: boolean;
+  // True where the Hardware2Program names a second program next to the application (the schema allows
+  // two ApplicationProgramRefs): two-application hardware, whose PEI program sits on load-state machine 5.
+  // No full download of Busforge loads it, so none runs on such hardware (HARDWARE_PEI_PROGRAM_UNSUPPORTED).
+  peiProgram: boolean;
 }
 
 // A device's stored parameter values, keyed by the application ParameterRef id.

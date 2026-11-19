@@ -110,7 +110,7 @@ describe("a product without an application program", () => {
     const state = fresh();
     await imported(state);
     const products = (await call(state, "/api/catalog/products")).body;
-    expect(products).toEqual([{ appRef: HP, productRef: PRODUCT, appProgramId: "", manufacturer: 9, name: "Modular RS 232", orderNumber: "TH001", hwVersion: "1", hasApplication: false }]);
+    expect(products).toEqual([{ appRef: HP, productRef: PRODUCT, appProgramId: "", manufacturer: 9, name: "Modular RS 232", orderNumber: "TH001", hwVersion: "1", hasApplication: false, peiProgram: false }]);
     const blank = (await call(state, "/api/projects", post({ name: "Blank" }))).body.id;
     expect((await call(state, `/api/projects/${blank}/devices`, post({ appRef: HP, productRef: PRODUCT }))).status).toBe(201);
     expect((await call(state, `/api/projects/${blank}`)).body.devices[0]).toMatchObject({ hasApplication: false, changes: { neverProgrammed: true } });

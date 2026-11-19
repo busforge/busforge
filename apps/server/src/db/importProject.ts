@@ -94,6 +94,7 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
     if (dev.neverProgrammed !== undefined && typeof dev.neverProgrammed !== "boolean") throw new ApiError("BUSFORGE_INVALID", "malformed device entry");
     if (dev.configFromEts !== undefined && dev.configFromEts !== true) throw new ApiError("BUSFORGE_INVALID", "malformed device entry");
     if (dev.withoutApplication !== undefined && dev.withoutApplication !== true) throw new ApiError("BUSFORGE_INVALID", "malformed device entry");
+    if (dev.peiProgram !== undefined && dev.peiProgram !== true) throw new ApiError("BUSFORGE_INVALID", "malformed device entry");
     // The parts ETS has still to download explain a never-programmed device and nothing else: known parts,
     // each once, at least one.
     if (dev.etsNotDownloaded !== undefined) {
@@ -242,11 +243,11 @@ export function importProjectExport(db: Database, data: ProjectExport, id: strin
     const source = data.source ?? artifact;
     if (source) setProjectSource(db, id, source);
 
-    const insDev = db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment, link_base_gaps, never_programmed, ets_not_downloaded, security_base, config_from_ets, has_application) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    const insDev = db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment, link_base_gaps, never_programmed, ets_not_downloaded, security_base, config_from_ets, has_application, pei_program) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
     // An artifact from before the gap count carries a link baseline whose gaps were never
     // counted: unknown (-1) until the device is read again, as the schema migration does.
     const withLinkBase = new Set(data.deviceLinkBase.map((l) => l.deviceId));
-    for (const d of data.devices) insDev.run(id, d.id, d.ia, d.name, d.productRef, d.appRef, d.manufacturer, d.comment, d.linkBaseGaps ?? (withLinkBase.has(d.id) ? -1 : 0), d.neverProgrammed ? 1 : 0, d.etsNotDownloaded?.join(",") ?? null, d.securityBase ?? null, d.configFromEts ? 1 : 0, d.withoutApplication ? 0 : 1);
+    for (const d of data.devices) insDev.run(id, d.id, d.ia, d.name, d.productRef, d.appRef, d.manufacturer, d.comment, d.linkBaseGaps ?? (withLinkBase.has(d.id) ? -1 : 0), d.neverProgrammed ? 1 : 0, d.etsNotDownloaded?.join(",") ?? null, d.securityBase ?? null, d.configFromEts ? 1 : 0, d.withoutApplication ? 0 : 1, d.peiProgram ? 1 : 0);
 
     const insRange = db.prepare("INSERT INTO group_ranges (project_id, parent_id, name, range_start, range_end) VALUES (?, ?, ?, ?, ?)");
     const idMap = new Map<number, number>(); // exported range id -> new row id

@@ -36,6 +36,7 @@ describe("extractCatalogProducts (catalog metadata ingest)", () => {
       orderNumber: "SW-4F-001",
       hwVersion: "12",
       hasApplication: true,
+      peiProgram: false,
     });
   });
 
@@ -71,7 +72,20 @@ describe("extractCatalogProducts (catalog metadata ingest)", () => {
       orderNumber: "TH001",
       hwVersion: "1",
       hasApplication: false,
+      peiProgram: false,
     }]);
+  });
+
+  test("a Hardware2Program naming a second program is two-application hardware: it carries a PEI program", () => {
+    // Synthetic: the schema allows two ApplicationProgramRefs per Hardware2Program, the application
+    // and the PEI program. No product of the private corpus has one.
+    const twoPrograms = hardwareXml.replace(
+      '<ApplicationProgramRef RefId="M-0083_A-AAAA-1-0001"/>',
+      '<ApplicationProgramRef RefId="M-0083_A-AAAA-1-0001"/><ApplicationProgramRef RefId="M-0083_A-BBBB-1-0002"/>',
+    );
+    expect(twoPrograms).not.toBe(hardwareXml);
+    const [product] = extractCatalogProducts(storeZip({ "M-0083/Hardware.xml": twoPrograms }));
+    expect(product).toMatchObject({ appRef: "M-0083_H-SW4-1_HP-AAAA-1-0001", hasApplication: true, peiProgram: true });
   });
 
   test("no Hardware.xml yields no catalog products", () => {

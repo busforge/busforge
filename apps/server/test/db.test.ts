@@ -880,7 +880,7 @@ describe("catalog (app programs)", () => {
 describe("catalog (products + placement)", () => {
   const product = (o: Partial<ReturnType<typeof getCatalogProduct>> = {}) => ({
     appRef: "M-9_H-1_HP-1", productRef: "M-9_P-1", appProgramId: "M-9_A-1",
-    manufacturer: 9, name: "Demo", orderNumber: "ON-1", hwVersion: "3", hasApplication: true, ...o,
+    manufacturer: 9, name: "Demo", orderNumber: "ON-1", hwVersion: "3", hasApplication: true, peiProgram: false, ...o,
   });
 
   test("put/get/list catalog products; put is idempotent", () => {

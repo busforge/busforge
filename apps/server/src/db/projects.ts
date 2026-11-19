@@ -112,10 +112,11 @@ export function readSpaces(db: Database, projectId: string): SpaceNode[] {
 }
 
 // Persist a freshly parsed project (rows only; the caller stores the source file). `withoutApplication`:
-// the Hardware2Program ids (device appRefs) whose product carries no application program.
-export function insertProject(db: Database, id: string, project: Project, sourceFile: string, now: number, withoutApplication: ReadonlySet<string> = new Set()): void {
+// the Hardware2Program ids (device appRefs) whose product carries no application program; `withPeiProgram`:
+// those whose hardware carries a PEI program next to its application.
+export function insertProject(db: Database, id: string, project: Project, sourceFile: string, now: number, withoutApplication: ReadonlySet<string> = new Set(), withPeiProgram: ReadonlySet<string> = new Set()): void {
   const insProject = db.prepare("INSERT INTO projects (id, name, imported_at, source_file, ga_levels) VALUES (?, ?, ?, ?, ?)");
-  const insDevice = db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment, never_programmed, ets_not_downloaded, config_from_ets, has_application) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)");
+  const insDevice = db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment, never_programmed, ets_not_downloaded, config_from_ets, has_application, pei_program) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)");
   const insRange = db.prepare("INSERT INTO group_ranges (project_id, parent_id, name, range_start, range_end) VALUES (?, ?, ?, ?, ?)");
   const insGa = db.prepare("INSERT INTO group_addresses (project_id, range_id, raw, address, name, dpt, security) VALUES (?, ?, ?, ?, ?, ?, ?)");
   const insParam = db.prepare("INSERT OR REPLACE INTO device_parameters (project_id, device_id, param_ref_id, value) VALUES (?, ?, ?, ?)");
@@ -150,7 +151,7 @@ export function insertProject(db: Database, id: string, project: Project, source
       const hasApplication = !withoutApplication.has(d.appRef);
       const never = hasApplication ? !etsLoadedCompletely(d) && !!d.appRef : !d.etsLoaded.individualAddress;
       const parts = never && hasApplication ? etsNotDownloaded(d) : null;
-      insDevice.run(id, d.id, d.ia, d.name, d.productRef, d.appRef, d.manufacturer, d.comment, never ? 1 : 0, parts?.length ? parts.join(",") : null, hasApplication ? 1 : 0);
+      insDevice.run(id, d.id, d.ia, d.name, d.productRef, d.appRef, d.manufacturer, d.comment, never ? 1 : 0, parts?.length ? parts.join(",") : null, hasApplication ? 1 : 0, withPeiProgram.has(d.appRef) ? 1 : 0);
     }
     for (const r of project.groupRanges) insertRange(r, null);
     for (const dp of project.deviceParams) for (const v of dp.values) { insParam.run(id, dp.deviceId, v.refId, v.value); insParamBase.run(id, dp.deviceId, v.refId, v.value); }
@@ -190,8 +191,8 @@ export function addDevice(db: Database, projectId: string, product: CatalogProdu
   if (!ia) throw new ApiError("NO_FREE_IA", "no free individual address in area 1");
   const instanceId = `BF-${randomUUID()}`;
   db.prepare(
-    "INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment, never_programmed, has_application) VALUES (?, ?, ?, ?, ?, ?, ?, '', 1, ?)",
-  ).run(projectId, instanceId, ia, name || product.name, product.productRef, product.appRef, product.manufacturer, product.hasApplication ? 1 : 0);
+    "INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment, never_programmed, has_application, pei_program) VALUES (?, ?, ?, ?, ?, ?, ?, '', 1, ?, ?)",
+  ).run(projectId, instanceId, ia, name || product.name, product.productRef, product.appRef, product.manufacturer, product.hasApplication ? 1 : 0, product.peiProgram ? 1 : 0);
   return { id: instanceId, ia };
 }
 
