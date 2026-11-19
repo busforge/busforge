@@ -226,4 +226,21 @@ corpusDescribe("unresolved module arguments refuse instead of guessing (no silen
     // Untampered instances build fine.
     expect(() => buildDeviceConfig(app2, env, undefined, instances)).not.toThrow();
   });
+
+  test("an argument that is not an integer refuses like a missing one", () => {
+    const app2 = parseAppConfig(xml);
+    const instances = resolveModuleInstances(app2, env);
+    const baseNumArg = [...app2.comObjects.entries()]
+      .filter(([id]) => id.startsWith(`${APP}_MD-7_`))
+      .map(([, o]) => o.baseNumber).find((b) => b !== undefined)!;
+    const numArgRef = baseNumArg.slice(APP.length + 1);
+    for (const value of ["", "1.5", " 7", "0x10"]) {
+      const offsetTampered = instances.map((i) => (i.id === "MD-7_M-19_MI-3" ? { ...i, args: i.args.map((a) => (a.refId === "MD-7_A-1" ? { ...a, value } : a)) } : i));
+      try { toAppModel(app2, { instances: offsetTampered }); expect.unreachable(); }
+      catch (e) { expect((e as { code?: string }).code).toBe("MODULE_ARG_UNRESOLVED"); }
+      const numberTampered = instances.map((i) => ({ ...i, args: i.args.map((a) => (a.refId === numArgRef ? { ...a, value } : a)) }));
+      try { buildDeviceConfig(app2, env, undefined, numberTampered); expect.unreachable(); }
+      catch (e) { expect((e as { code?: string }).code).toBe("COMOBJ_ARG_UNRESOLVED"); }
+    }
+  });
 });

@@ -15,7 +15,7 @@ consumed directly by Bun (server) and Vite (web).
 
 | Workspace | What it is |
 |---|---|
-| `packages/project` | Reads a `.knxproj` / `.knxprod`: a dependency-free ZIP reader with WinZip-AES, the ETS6 password derivation, and the `0.xml` parser (topology, group addresses, per-device parameter values, module instances, com-object links, building structure, per-device security). |
+| `packages/project` | Reads a `.knxproj` / `.knxprod`: a dependency-free ZIP reader with WinZip-AES (ETS 6) and ZipCrypto (ETS 4 and 5), the ETS6 password derivation, and the `0.xml` parser (topology, group addresses, per-device parameter values, module instances, com-object links, building structure, per-device security). |
 | `packages/product` | The application-program engine. One parser (`appconfig.ts`) with two projections: the configuration view (`config.ts`) and the memory image (`application.ts` → `image.ts`, `grouptables.ts`, `comobjtable.ts`). Also the device profiles and the flash operations (`profiles.ts`, `deviceflash.ts`, `deviceimage.ts`, `loadproc.ts`, `masks.ts`). |
 | `packages/knx` | The KNX side: transports (`connection.ts` KNXnet/IP, `usb.ts` HID), the connection-oriented device layer (`device.ts`), the load-procedure executor (`loadrunner.ts`), KNX Data Secure (`secure.ts`, `secureSession.ts`), a KNXnet/IP **server** (`ipserver.ts`), and a browser-safe DPT decoder (`dpt.ts`, exported as `@busforge/knx/dpt`). |
 | `apps/server` | A single `Bun.serve`: the `handleApi()` router, the SQLite layer (`db/`), the bus, the task queue, and the flash orchestration. In production it also serves the built web app. |

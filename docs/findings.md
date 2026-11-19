@@ -32,17 +32,34 @@ winzip_password = base64( PBKDF2-HMAC-SHA256(
 `P-XXXX.zip` is then a standard WinZip-AES archive opened with that derived password. `0.xml`
 inside holds installations, topology, devices, group addresses and com-object instances.
 
+**ETS 4 and ETS 5 project decryption.** Their `P-XXXX.zip` uses traditional PKWARE encryption
+(ZipCrypto, APPNOTE 6.1), method 8 with the encrypted flag set, keyed by the project password
+itself as UTF-8; no data descriptor, so the header's check byte is the CRC's high byte. The check is
+one byte, so a wrong password passes it once in 256 tries; the entry's CRC after inflating is what
+refuses it.
+
 Key relations in `0.xml`:
 
 - `GroupAddress Id="…_GA-n" Address="<16-bit>"`.
 - `ComObjectInstanceRef RefId="O-x_R-y" Links="GA-a GA-b …"` links a device's com-object to
-  group addresses.
+  group addresses; the first is the one the object sends on.
+- ETS 4 writes the links as
+  `<Connectors><Send GroupAddressRefId="P-XXXX-0_GA-a"/><Receive GroupAddressRefId="…"/></Connectors>`
+  under the `ComObjectInstanceRef`, the address ids with their project prefix, and the `RefId`
+  with its application program's (`M-XXXX_A-…_O-x_R-y`). Connectors without exactly one `Send` do not
+  say which address the object sends on, and are not imported. ETS 5 before 5.7 (schema 14) is
+  read by the same rules; no real file of it has been read. ETS 4 also names the project file
+  `Project.xml`, keeps the building structure in `<Buildings>` as nested `<BuildingPart>`s instead
+  of `<Locations>` with `<Space>`s, and writes its boolean attributes as `1` and `0`.
+- One project can hold several `<Installation>`s; with the prefix stripped, their group-address ids
+  collide (`P-XXXX-0_GA-1`, `P-XXXX-1_GA-1`), so links resolve only inside their own installation.
 - Device to application via `Hardware2ProgramRefId` to `M-XXXX_A-….xml`.
 
 **What ETS last downloaded, per device.** A `DeviceInstance` carries five load flags:
 `IndividualAddressLoaded`, `MediumConfigLoaded`, `ApplicationProgramLoaded`, `ParametersLoaded` and
-`CommunicationPartLoaded`. ETS writes a flag as `"true"` and leaves it off when it is false; it never
-writes `"false"`. A download sets the flags of the parts it wrote. An edit afterwards drops the flag of
+`CommunicationPartLoaded`. ETS 5 and 6 write a flag as `"true"` and leave it off when it is false;
+they never write `"false"`. ETS 4 writes every flag, `"0"` where it is false, in the digit form of
+`xs:boolean`; the reader takes `"1"` and `"true"` alike. A download sets the flags of the parts it wrote. An edit afterwards drops the flag of
 the part it touched and keeps the others: a parameter edit drops `ParametersLoaded`, a group-address
 change `CommunicationPartLoaded`, and `LastModified` then lies after `LastDownload`. A device ETS never
 downloaded, or whose product was replaced in ETS, carries none of the application flags; one ETS gave

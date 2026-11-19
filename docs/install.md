@@ -14,7 +14,7 @@ project as a backup and a way to program the device without Busforge.
   [Tested platforms](#tested-platforms) for what has actually run.
 - A **KNXnet/IP interface or router** on the network that accepts a plain (not IP Secure) tunnel,
   or a **KNX USB interface** together with the [bridge](#a-knx-usb-interface-through-the-bridge).
-- Your **ETS project** (`.knxproj`, ETS 5 or 6), or the manufacturers' **product databases**
+- Your **ETS project** (`.knxproj`, ETS 4, 5 or 6), or the manufacturers' **product databases**
   (`.knxprod`) for the devices you want to configure.
 
 ## 1. Start the container

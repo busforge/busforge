@@ -1,5 +1,6 @@
 import { parseAppConfig, type AppConfig, type CfgType, type ModuleInstance } from "./appconfig.ts";
 import { ProductError } from "./errors.ts";
+import { moduleArgNumber } from "./modules.ts";
 
 // The memory-image model used to build/decode a parameter image: parameter types
 // (sizes), parameters (with memory location), parameter refs, and the default
@@ -134,14 +135,14 @@ function materializeModuleParams(
     const instFull = `${app.id}_${inst.id}`;               // e.g. M-0048_…_MD-7_M-19_MI-1
     const rewrite = (id: string) => (id.startsWith(`${defId}_`) ? instFull + id.slice(defId.length) : id);
     const argVal = new Map<string, number>();              // full arg id -> numeric value
-    for (const a of inst.args) argVal.set(`${app.id}_${a.refId}`, Number(a.value));
+    for (const a of inst.args) argVal.set(`${app.id}_${a.refId}`, moduleArgNumber(a.value));
     for (const r of app.refs.values()) {
       if (r.moduleDefId !== defId) continue;
       const param = app.params.get(r.paramId);
       if (!param) continue;
       const refId = rewrite(r.id);
       const paramId = rewrite(r.paramId);
-      // A memory param whose BaseOffset argument is missing (or non-numeric) on this
+      // A memory param whose BaseOffset argument is missing (or not an integer) on this
       // instance has an UNKNOWN placement. The old `?? 0` fallback placed it at the
       // module's base 0, i.e. over channel 1's memory, where a flash would then write
       // it and verify against the same wrong model. Refuse instead of guessing.
@@ -150,7 +151,7 @@ function materializeModuleParams(
         const v = argVal.get(param.baseOffsetArg);
         if (v === undefined || Number.isNaN(v)) {
           throw new ProductError("MODULE_ARG_UNRESOLVED",
-            `module instance ${inst.id}: memory placement of ${refId} needs argument ${param.baseOffsetArg}, which the instance does not carry; refusing to place it at base 0`);
+            `module instance ${inst.id}: memory placement of ${refId} needs argument ${param.baseOffsetArg}, which the instance does not carry as an integer; refusing to place it at base 0`);
         }
         base = v;
       }

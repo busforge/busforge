@@ -1,7 +1,7 @@
 import { pbkdf2Sync } from "node:crypto";
 import { XMLParser } from "fast-xml-parser";
-import { readZip } from "./zip.ts";
-import { parseProject, manufacturerOf, kids, node, text, type XmlNode } from "./parse.ts";
+import { readZip, zipEncryption } from "./zip.ts";
+import { parseProject, manufacturerOf, appProgramId, kids, node, text, type XmlNode } from "./parse.ts";
 import { KnxprojError } from "./errors.ts";
 import type { Project, CatalogProduct } from "./model.ts";
 
@@ -14,17 +14,17 @@ function deriveWinzipPassword(password: string): string {
 // Resolve the inner project archive ("P-XXXX.zip" at the root of the outer zip),
 // decrypting with the project password when it is encrypted. Returns undefined
 // for an unencrypted export that has no inner archive (0.xml sits in the outer
-// zip). Shared by loadKnxproj and readBaggage so the decrypt fallback lives once.
+// zip). Shared by loadKnxproj and readBaggage so the decryption lives once.
+// ETS 6 encrypts with WinZip-AES under a password derived from the project password; ETS 4 and 5
+// use traditional PKWARE encryption keyed by the project password itself, as UTF-8.
 function resolveInner(outer: Map<string, Buffer>, password: string | undefined): Map<string, Buffer> | undefined {
   const innerName = [...outer.keys()].find((n) => /(^|\/)P-[^/]+\.zip$/.test(n));
   if (!innerName) return undefined;
   const innerBuf = outer.get(innerName)!;
-  try {
-    return readZip(innerBuf); // unencrypted inner (rare, but possible)
-  } catch {
-    if (!password) throw new KnxprojError("PASSWORD_REQUIRED", "project is password-protected");
-    return readZip(innerBuf, deriveWinzipPassword(password));
-  }
+  const encryption = zipEncryption(innerBuf);
+  if (encryption === "none") return readZip(innerBuf);
+  if (!password) throw new KnxprojError("PASSWORD_REQUIRED", "project is password-protected");
+  return readZip(innerBuf, encryption === "aes" ? deriveWinzipPassword(password) : password);
 }
 
 // Load a .knxproj: unzip the outer archive, decrypt the inner P-XXXX.zip if
@@ -36,7 +36,8 @@ export function loadKnxproj(bytes: Buffer, password: string | undefined, fallbac
   // Encrypted/normal export keeps 0.xml in the inner archive; an unencrypted
   // export keeps it directly in the outer zip under P-XXXX/.
   const xml0 = inner ? textOf(inner, "0.xml") : textOf(outer, "0.xml");
-  const projectXml = (inner && tryTextOf(inner, "project.xml")) ?? tryTextOf(outer, "project.xml");
+  // ETS 4 names it Project.xml, later versions project.xml.
+  const projectXml = (inner && tryTextOf(inner, "project.xml", true)) ?? tryTextOf(outer, "project.xml", true);
 
   const programs = [...outer].filter(([k]) => /\/M-[^/]+_A-[^/]+\.xml$/.test(k)).map(([, b]) => dec.decode(b));
   return parseProject(xml0, projectXml, fallbackName, parseProductNames(outer), busInterfaceIndexes(programs), parseProductTranslations(outer));
@@ -91,8 +92,8 @@ function parseProductTranslations(outer: Map<string, Buffer>): Map<string, strin
 }
 
 const dec = new TextDecoder("utf-8");
-function tryTextOf(files: Map<string, Buffer>, suffix: string): string | undefined {
-  const k = [...files.keys()].find((n) => n.endsWith(suffix));
+function tryTextOf(files: Map<string, Buffer>, suffix: string, anyCase = false): string | undefined {
+  const k = [...files.keys()].find((n) => anyCase ? n.toLowerCase().endsWith(suffix) : n.endsWith(suffix));
   return k ? dec.decode(files.get(k)!) : undefined;
 }
 function textOf(files: Map<string, Buffer>, suffix: string): string {
@@ -116,13 +117,6 @@ export function readBaggage(bytes: Buffer, password: string | undefined): Map<st
   return out;
 }
 
-// Hardware2ProgramRefId -> ApplicationProgram id.
-// "M-0048_H-4930240-2_HP-493B-21-B471" -> "M-0048_A-493B-21-B471".
-export function appProgramId(appRef: string): string {
-  const manufacturer = appRef.split("_")[0];
-  const hp = appRef.split("_HP-")[1];
-  return hp ? `${manufacturer}_A-${hp}` : appRef;
-}
 
 // Read a manufacturer application program XML from the outer zip. These sit
 // plaintext in the outer archive, so no password is needed.
@@ -310,4 +304,4 @@ export function extractCatalogProducts(bytes: Buffer): CatalogProduct[] {
   return out;
 }
 
-export { deriveWinzipPassword };
+export { deriveWinzipPassword, appProgramId };

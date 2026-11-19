@@ -2,6 +2,11 @@ import type { AppConfig, DynNode, ModuleInstance } from "./appconfig.ts";
 import { matchTest } from "./config.ts";
 import { ProductError } from "./errors.ts";
 
+// A module argument's value as a number where it is used as one (a memory base offset, a com-object
+// base number): a decimal integer, else NaN, which every caller refuses. Number() alone would read
+// "" as 0 and "1.5" as 1.5, and place the module there.
+export const moduleArgNumber = (value: string): number => (/^-?\d+$/.test(value) ? Number(value) : NaN);
+
 // Re-run a device's module allocators to produce the same ModuleInstance set that ETS
 // pins into a project 0.xml. This is the FROM-SCRATCH path: when there is no imported
 // project, we cannot read the resolved per-instance base offsets, so we recompute them

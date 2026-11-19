@@ -53,34 +53,56 @@ export const manufacturerOf = (ref: string): number => {
   return m ? parseInt(m[1], 16) : 0;
 };
 
+// Hardware2ProgramRefId -> ApplicationProgram id.
+// "M-0048_H-4930240-2_HP-493B-21-B471" -> "M-0048_A-493B-21-B471".
+export function appProgramId(appRef: string): string {
+  const manufacturer = appRef.split("_")[0];
+  const hp = appRef.split("_HP-")[1];
+  return hp ? `${manufacturer}_A-${hp}` : appRef;
+}
+
+// An xs:boolean attribute: "true" or "1" (ETS 4 writes the digits, later versions the words).
+const xsBool = (v: unknown): boolean => { const t = text(v); return t === "true" || t === "1"; };
+
 export function parseProject(xml0: string, projectXml: string | undefined, fallbackName: string, productNames: Map<string, string> = new Map(), busInterfaceIndex: ReadonlyMap<string, number> = new Map(), productTranslations: ReadonlyMap<string, string[]> = new Map()): Project {
   const p = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", isArray: () => false });
   const doc = p.parse(xml0) as XmlNode;
 
-  const installation = firstByKey(doc, "Installation");
+  // A project can hold several installations. Busforge imports the first and reports how many it
+  // left out; every lookup below stays inside that one, since group-address ids repeat across
+  // installations once their project prefix is stripped ("P-0600-0_GA-1" and "P-0600-1_GA-1").
+  const installations = kids(firstByKey(doc, "Installations")?.Installation);
+  const installation = installations[0] ?? firstByKey(doc, "Installation");
+  const skippedInstallations = Math.max(0, installations.length - 1);
+  const scope: XmlNode = installation ?? doc;
   // Parse project.xml's <ProjectInformation> once; both the name and the group-address
   // style come from it (falling back to the 0.xml Installation).
   const projectInfo = projectXml ? firstByKey(p.parse(projectXml), "ProjectInformation") : undefined;
   const groupAddressLevels = parseGroupAddressLevels(projectInfo, installation);
   const { topology, malformedDevices } = parseTopology(installation?.Topology, productNames);
-  const locations = parseLocations(installation?.Locations);
+  const unassignedDevices = kids(node(node(installation?.Topology)?.UnassignedDevices)?.DeviceInstance).length;
+  // ETS 4 keeps the building structure in <Buildings>, as <BuildingPart>s; later versions in <Locations>, as <Space>s.
+  const locations = installation?.Locations !== undefined ? parseLocations(installation.Locations, "Space") : parseLocations(installation?.Buildings, "BuildingPart");
   const devices = topology.areas.flatMap((a) => a.lines.flatMap((l) => l.devices));
   const { groupRanges, groupAddresses, groupKeys } = parseGroupAddresses(installation?.GroupAddresses, groupAddressLevels);
-  const deviceParams = devices.map((d) => ({ deviceId: d.id, values: parseDeviceParams(doc, d.id) }));
-  const deviceModules = devices.map((d) => ({ deviceId: d.id, instances: parseDeviceModules(doc, d.id) }));
+  const deviceParams = devices.map((d) => ({ deviceId: d.id, values: parseDeviceParams(scope, d.id) }));
+  const deviceModules = devices.map((d) => ({ deviceId: d.id, instances: parseDeviceModules(scope, d.id) }));
   const gaIdToRaw = new Map<string, number>();
-  buildGaIdMap(doc, gaIdToRaw);
-  const linkResults = devices.map((d) => ({ deviceId: d.id, ...parseDeviceLinks(doc, d.id, gaIdToRaw) }));
+  buildGaIdMap(scope, gaIdToRaw);
+  const linkResults = devices.map((d) => ({ deviceId: d.id, ...parseDeviceLinks(scope, d, gaIdToRaw) }));
   const deviceLinks = linkResults.map(({ deviceId, links }) => ({ deviceId, links }));
-  const unresolvedLinks = linkResults.reduce((n, r) => n + r.unresolved, 0);
-  const deviceComObjOverrides = devices.map((d) => ({ deviceId: d.id, overrides: parseDeviceComObjOverrides(doc, d.id) })).filter((o) => o.overrides.length > 0);
-  const securities = devices.map((d) => parseDeviceSecurity(doc, d.id));
+  const sum = (k: "unresolved" | "withoutSender" | "staleModule") => linkResults.reduce((n, r) => n + r[k], 0);
+  const deviceComObjOverrides = devices.map((d) => ({ deviceId: d.id, overrides: parseDeviceComObjOverrides(scope, d) })).filter((o) => o.overrides.length > 0);
+  const securities = devices.map((d) => parseDeviceSecurity(scope, d.id));
   const deviceSecurity = securities.filter((x): x is DeviceSecurity => x !== undefined && x !== "noSerial");
   const secureDevicesWithoutSerial = securities.filter((x) => x === "noSerial").length;
-  const { secureSenders, unresolvedSenders } = parseSecureSenders(doc, devices, busInterfaceIndex);
-  const deviceKnxIp = devices.map((d) => parseDeviceKnxIp(xml0, doc, d.id, productNames, productTranslations)).filter((x): x is DeviceKnxIp => x !== undefined);
+  const { secureSenders, unresolvedSenders } = parseSecureSenders(scope, devices, busInterfaceIndex);
+  const deviceKnxIp = devices.map((d) => parseDeviceKnxIp(xml0, scope, d.id, productNames, productTranslations)).filter((x): x is DeviceKnxIp => x !== undefined);
 
-  return { name: parseName(projectInfo, installation, fallbackName), groupAddressLevels, topology, locations, devices, groupRanges, groupAddresses, deviceParams, deviceModules, deviceLinks, deviceComObjOverrides, deviceSecurity, deviceKnxIp, groupKeys, secureSenders, unresolvedSenders, secureDevicesWithoutSerial, unresolvedLinks, malformedDevices };
+  return {
+    name: parseName(projectInfo, installation, fallbackName), groupAddressLevels, topology, locations, devices, groupRanges, groupAddresses, deviceParams, deviceModules, deviceLinks, deviceComObjOverrides, deviceSecurity, deviceKnxIp, groupKeys, secureSenders, unresolvedSenders, secureDevicesWithoutSerial,
+    unresolvedLinks: sum("unresolved"), malformedDevices, skippedInstallations, unassignedDevices, linksWithoutSender: sum("withoutSender"), staleModuleLinks: sum("staleModule"),
+  };
 }
 
 // The project's group-address style, as a level count. ETS stores GroupAddressStyle on
@@ -213,42 +235,84 @@ function buildGaIdMap(node: unknown, out: Map<string, number>) {
   for (const k of Object.keys(node)) buildGaIdMap(node[k], out);
 }
 
-// A device's com-object -> GA links (ComObjectInstanceRef RefId + resolved GAs).
-// Also counts link tokens that did NOT resolve to a group address in the tree: those
-// are real assignments we silently lose, so the caller can surface the count instead
-// of pretending every link imported.
-function parseDeviceLinks(doc: XmlNode, deviceId: string, gaIdToRaw: Map<string, number>): { links: { comObjRefId: string; gaRaws: number[] }[]; unresolved: number } {
-  const dev = findDeviceInstance(doc, deviceId);
+// A ComObjectInstanceRef's RefId as the key the project stores: without the application program's
+// prefix. ETS 5.7 and later write it so ("O-40_R-1433"); ETS 4 and 5 prefix it with the program id
+// ("M-0083_A-0013-11-A9D6_O-0_R-10000").
+const comObjKey = (d: Pick<Device, "appRef">, refId: string): string => {
+  const app = appProgramId(d.appRef);
+  return refId.startsWith(`${app}_`) ? refId.slice(app.length + 1) : refId;
+};
+
+// The group-address ids a ComObjectInstanceRef links, the sending one first. ETS 5.7 and later
+// write them in the Links attribute ("GA-1 GA-3", the first is the address the object sends on);
+// ETS 4 and ETS 5 up to 5.6 as <Connectors> holding one <Send> and any number of <Receive>
+// elements, each naming its address with the project prefix ("P-0600-0_GA-1"). Undefined where
+// the connectors name no single sending address: which address the object sends on is then not in
+// the file, and the order decides the bytes of the association table.
+function linkTokens(c: XmlNode): string[] | undefined {
+  const links = attr(c.Links);
+  if (links !== undefined) return links.split(/\s+/).filter(Boolean);
+  const conn = node(c.Connectors);
+  const send = kids(conn?.Send), receive = kids(conn?.Receive);
+  if (!send.length && !receive.length) return [];
+  if (send.length !== 1) return undefined;
+  return [...send, ...receive].map((x) => text(x.GroupAddressRefId).split("_").pop()!);
+}
+
+// Every ModuleInstance id under a device, nested ones included.
+function moduleInstanceIds(n: unknown, out = new Set<string>()): Set<string> {
+  if (Array.isArray(n)) { for (const e of n) moduleInstanceIds(e, out); return out; }
+  if (!isNode(n)) return out;
+  for (const mi of kids(n.ModuleInstance)) { const id = attr(mi.Id); if (id) out.add(id); }
+  for (const k of Object.keys(n)) moduleInstanceIds(n[k], out);
+  return out;
+}
+
+// A device's com-object -> GA links (ComObjectInstanceRef RefId + resolved GAs). Counts what it
+// does not import: link tokens that did not resolve to a group address in the tree, and those of
+// connectors that name no single sending address. Counts as well the tokens of a com-object whose
+// module instance the device no longer has (ETS leaves such refs behind when a module goes away):
+// those are stored, but no com-object of the device carries them, so they are never programmed.
+function parseDeviceLinks(scope: XmlNode, d: Device, gaIdToRaw: Map<string, number>): { links: { comObjRefId: string; gaRaws: number[] }[]; unresolved: number; withoutSender: number; staleModule: number } {
+  const dev = findDeviceInstance(scope, d.id);
   // Merge by RefId: two ComObjectInstanceRefs on one device can share a RefId (synthetic
   // module-instance ids, or a malformed export). Stored per (refId, slot), two separate
   // rows would collide on the slot index and abort the whole import. Merging their GAs
   // keeps the assignments and never crashes; for the normal (unique-RefId) case it is a
   // no-op that preserves document order.
   const byRef = new Map<string, number[]>();
-  let unresolved = 0;
+  const instances = moduleInstanceIds(dev?.ModuleInstances);
+  let unresolved = 0, withoutSender = 0, staleModule = 0;
   for (const c of kids(node(dev?.ComObjectInstanceRefs)?.ComObjectInstanceRef)) {
-    const links = attr(c.Links);
-    if (!links) continue;
-    const tokens = links.split(/\s+/).filter(Boolean);
+    const tokens = linkTokens(c);
+    if (tokens === undefined) {
+      const conn = node(c.Connectors);
+      withoutSender += kids(conn?.Send).length + kids(conn?.Receive).length;
+      continue;
+    }
+    if (!tokens.length) continue;
+    const key = comObjKey(d, text(c.RefId));
+    const instance = /^(.*_MI-\d+)_/.exec(key)?.[1];
+    if (instance !== undefined && !instances.has(instance)) staleModule += tokens.length;
     const gaRaws = tokens.map((l) => gaIdToRaw.get(l)).filter((x): x is number => x !== undefined);
     unresolved += tokens.length - gaRaws.length;
     if (!gaRaws.length) continue;
-    const existing = byRef.get(text(c.RefId));
+    const existing = byRef.get(key);
     if (existing) existing.push(...gaRaws);
-    else byRef.set(text(c.RefId), gaRaws);
+    else byRef.set(key, gaRaws);
   }
-  return { links: [...byRef].map(([comObjRefId, gaRaws]) => ({ comObjRefId, gaRaws })), unresolved };
+  return { links: [...byRef].map(([comObjRefId, gaRaws]) => ({ comObjRefId, gaRaws })), unresolved, withoutSender, staleModule };
 }
 
 // A device's com-object flags and priority set in the project (COM_OBJ_INSTANCE_ATTRS), per
 // ComObjectInstanceRef that carries any, linked or not.
-function parseDeviceComObjOverrides(doc: XmlNode, deviceId: string): ComObjInstanceAttrs[] {
-  const dev = findDeviceInstance(doc, deviceId);
+function parseDeviceComObjOverrides(scope: XmlNode, d: Device): ComObjInstanceAttrs[] {
+  const dev = findDeviceInstance(scope, d.id);
   const out: ComObjInstanceAttrs[] = [];
   for (const c of kids(node(dev?.ComObjectInstanceRefs)?.ComObjectInstanceRef)) {
     const attrs: Record<string, string> = {};
     for (const a of COM_OBJ_INSTANCE_ATTRS) { const v = attr(c[a]); if (v !== undefined) attrs[a] = v; }
-    if (Object.keys(attrs).length) out.push({ comObjRefId: text(c.RefId), attrs });
+    if (Object.keys(attrs).length) out.push({ comObjRefId: comObjKey(d, text(c.RefId)), attrs });
   }
   return out;
 }
@@ -339,12 +403,14 @@ function parseTopology(topo: unknown, productNames: Map<string, string>): { topo
           manufacturer: manufacturerOf(text(d.ProductRefId)),
           comment: [d.Comment, d.Description].map((x) => text(x).trim()).filter(Boolean).join(" "),
           etsLoaded: {
-            individualAddress: text(d.IndividualAddressLoaded) === "true",
-            mediumConfig: text(d.MediumConfigLoaded) === "true",
-            application: text(d.ApplicationProgramLoaded) === "true",
-            parameters: text(d.ParametersLoaded) === "true",
-            communication: text(d.CommunicationPartLoaded) === "true",
+            individualAddress: xsBool(d.IndividualAddressLoaded),
+            mediumConfig: xsBool(d.MediumConfigLoaded),
+            application: xsBool(d.ApplicationProgramLoaded),
+            parameters: xsBool(d.ParametersLoaded),
+            communication: xsBool(d.CommunicationPartLoaded),
           },
+          ...(attr(d.LoadedImage) !== undefined ? { etsLoadedImage: attr(d.LoadedImage) } : {}),
+          ...(attr(d.CheckSums) !== undefined ? { etsCheckSums: attr(d.CheckSums) } : {}),
         });
       }
       return { address: Number(attr(line.Address)), name: text(line.Name), devices };
@@ -354,20 +420,20 @@ function parseTopology(topo: unknown, productNames: Map<string, string>): { topo
   return { topology: { areas }, malformedDevices };
 }
 
-// The building structure: <Locations> holds a tree of <Space> elements (ETS6),
-// each carrying its Type (Building/Floor/Room/...), Name and the device instances
-// placed directly in it. Nesting is arbitrary depth. Absent in older/structureless
-// exports, in which case this returns an empty array.
-function parseLocations(loc: unknown): SpaceNode[] {
+// The building structure: a tree of <Space> elements under <Locations> (ETS 5 and 6) or of
+// <BuildingPart> elements under <Buildings> (ETS 4), each carrying its Type
+// (Building/Floor/Room/...), Name and the device instances placed directly in it. Nesting is
+// arbitrary depth. Absent in structureless exports, in which case this returns an empty array.
+function parseLocations(loc: unknown, element: "Space" | "BuildingPart"): SpaceNode[] {
   const toSpace = (s: XmlNode): SpaceNode => ({
     id: "", // not addressable until stored (the DB assigns the row id); source id is extId
     extId: text(s.Id),
     type: text(s.Type),
     name: text(s.Name),
     deviceIds: kids(s.DeviceInstanceRef).map((r) => text(r.RefId)).filter(Boolean),
-    children: kids(s.Space).map(toSpace),
+    children: kids(s[element]).map(toSpace),
   });
-  return kids(node(loc)?.Space).map(toSpace);
+  return kids(node(loc)?.[element]).map(toSpace);
 }
 
 // A secured group address carries its key in the Key attribute (plain inside the password-protected

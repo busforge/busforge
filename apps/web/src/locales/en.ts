@@ -105,6 +105,10 @@ const en = {
     gapUnresolvedSenders: "{{count}} interface(s) assigned to a group address could not be resolved to an address and were not imported as senders",
     gapSecureWithoutSerial: "{{count}} secure device(s) were never commissioned by ETS (no serial number); imported without their tool key",
     gapMalformedDevices: "{{count}} device(s) had no id or a missing address in the file and were skipped",
+    gapSkippedInstallations: "The project holds {{count}} further installation(s); only the first was imported",
+    gapUnassignedDevices: "{{count}} device(s) sit outside the topology in ETS (no line, no address) and were not imported",
+    gapLinksWithoutSender: "{{count}} group-address link(s) from an ETS 4/5 project name no single sending address and were not imported",
+    gapStaleModuleLinks: "{{count}} group-address link(s) belong to a module instance the device no longer has; kept in the project, never programmed",
   },
   export: {
     title: "Export project",
@@ -141,6 +145,7 @@ const en = {
     KEYRING_KEY_INVALID: "A key has the wrong length for a keyring.",
     WRONG_PASSWORD: "Wrong password.",
     DECRYPT_FAILED: "Could not decrypt the project. Check the password, the file may also be corrupt.",
+    ZIP_ENCRYPTION_UNSUPPORTED: "The project archive uses an encryption no ETS version writes (PKWARE strong encryption); Busforge cannot open it.",
     PASSWORD_REQUIRED: "This project is password-protected. Enter its password.",
     INVALID_KNXPROJ: "This file is not a valid .knxproj.",
     FILE_MISSING: "No file was provided.",

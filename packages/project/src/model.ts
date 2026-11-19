@@ -13,6 +13,8 @@ export interface Device {
   // when it downloads that part and drops it when the part is edited afterwards (a false flag is left
   // off); a device another tool programmed reads false throughout.
   etsLoaded: EtsLoaded;
+  etsLoadedImage?: string; // DeviceInstance/@LoadedImage as written, undecoded; absent where ETS wrote none
+  etsCheckSums?: string;   // DeviceInstance/@CheckSums as written, undecoded; absent where ETS wrote none
 }
 
 export interface EtsLoaded { individualAddress: boolean; mediumConfig: boolean; application: boolean; parameters: boolean; communication: boolean }
@@ -173,4 +175,8 @@ export interface Project {
   secureDevicesWithoutSerial: number; // secure devices ETS holds a tool key for but never commissioned (no serial): imported without it
   unresolvedLinks: number;        // link tokens that referenced a GA not in the tree (silently lost unless surfaced)
   malformedDevices: number;       // DeviceInstances dropped for a missing Id or non-numeric address (unkeyable/unaddressable; surfaced, not silently defaulted)
+  skippedInstallations: number;   // <Installation>s after the first; only the first is imported
+  unassignedDevices: number;      // DeviceInstances ETS keeps outside the topology (<UnassignedDevices>, no line, no address): not imported
+  linksWithoutSender: number;     // link tokens of ETS 4/5 <Connectors> that name no single <Send> address: not imported
+  staleModuleLinks: number;       // link tokens of com-objects whose module instance the device no longer has: stored, never programmed
 }

@@ -1,6 +1,6 @@
 import type { ConstantDifference } from "./deviceimage.ts";
 import type { AppConfig, CfgParam, CfgParamRef, CfgType, ComObjFlags, ComObjPriority, DcaInfo, DynNode, DynWhen, ModuleDefModel, ModuleInstance } from "./appconfig.ts";
-import { resolveModuleInstances } from "./modules.ts";
+import { resolveModuleInstances, moduleArgNumber } from "./modules.ts";
 import { ProductError } from "./errors.ts";
 import type { MatrixOperation, OperationVerdict } from "./compatibility.ts";
 
@@ -547,7 +547,7 @@ export function buildDeviceConfig(
       const fullArgId = `${app.id}_${a.refId}`;
       const defArg = def.args.find((d) => d.id === fullArgId);
       if (defArg) textArgs.set(defArg.name, a.value); // any arg can appear in {{name}} text
-      argMap.set(fullArgId, Number(a.value));         // numeric base for com-object numbering (NaN for text args, unused)
+      argMap.set(fullArgId, moduleArgNumber(a.value)); // numeric base for com-object numbering (NaN for text args, unused)
     }
     return {
       // Match on the id boundary ("_") so MD-1 never wrongly captures MD-10's ids.
@@ -561,7 +561,7 @@ export function buildDeviceConfig(
         const v = argMap.get(argId);
         if (v === undefined || Number.isNaN(v)) {
           throw new ProductError("COMOBJ_ARG_UNRESOLVED",
-            `module instance ${inst.id}: com-object numbering needs argument ${argId}, which the instance does not carry (or it is not numeric)`);
+            `module instance ${inst.id}: com-object numbering needs argument ${argId}, which the instance does not carry (or it is not an integer)`);
         }
         return v;
       },

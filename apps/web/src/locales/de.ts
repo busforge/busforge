@@ -107,6 +107,10 @@ const de: Messages = {
     gapUnresolvedSenders: "{{count}} einer Gruppenadresse zugeordnete Schnittstelle(n) ließen sich keiner Adresse zuordnen und wurden nicht als Absender übernommen",
     gapSecureWithoutSerial: "{{count}} sichere(s) Gerät(e) hat ETS nie in Betrieb genommen (keine Seriennummer); ohne Tool-Key übernommen",
     gapMalformedDevices: "{{count}} Gerät(e) hatten in der Datei keine Id oder keine Adresse und wurden übersprungen",
+    gapSkippedInstallations: "Das Projekt enthält {{count}} weitere Installation(en); übernommen wurde nur die erste",
+    gapUnassignedDevices: "{{count}} Gerät(e) liegen in ETS außerhalb der Topologie (keine Linie, keine Adresse) und wurden nicht übernommen",
+    gapLinksWithoutSender: "{{count}} Gruppenadress-Verknüpfung(en) aus einem ETS-4/5-Projekt nennen keine eindeutige Sendeadresse und wurden nicht übernommen",
+    gapStaleModuleLinks: "{{count}} Gruppenadress-Verknüpfung(en) gehören zu einer Modulinstanz, die das Gerät nicht mehr hat; im Projekt behalten, nie programmiert",
   },
   export: {
     title: "Projekt exportieren",
@@ -141,6 +145,7 @@ const de: Messages = {
     KEYRING_KEY_INVALID: "Ein Schlüssel hat die falsche Länge für einen Schlüsselbund.",
     WRONG_PASSWORD: "Falsches Passwort.",
     DECRYPT_FAILED: "Projekt konnte nicht entschlüsselt werden. Passwort prüfen, die Datei kann auch beschädigt sein.",
+    ZIP_ENCRYPTION_UNSUPPORTED: "Das Projektarchiv nutzt eine Verschlüsselung, die keine ETS-Version schreibt (PKWARE Strong Encryption); Busforge kann es nicht öffnen.",
     PASSWORD_REQUIRED: "Dieses Projekt ist passwortgeschützt. Bitte das Passwort eingeben.",
     INVALID_KNXPROJ: "Diese Datei ist keine gültige .knxproj.",
     FILE_MISSING: "Es wurde keine Datei übergeben.",

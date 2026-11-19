@@ -18,7 +18,7 @@ and the image is **computed** from them on demand:
 | In the file | What it is | Where |
 | --- | --- | --- |
 | Application program | the manufacturer's parameter definitions, memory **layout** (which parameter sits at which byte and bit), and the default segment image (base64) | `M-XXXX/..._A-....xml`, plaintext in the outer zip |
-| Project instance data | the parameter **values**, device addresses, group addresses | `0.xml`, WinZip-AES encrypted |
+| Project instance data | the parameter **values**, device addresses, group addresses | `0.xml`, WinZip-AES (ETS 6) or ZipCrypto (ETS 4 and 5) encrypted |
 
 The flashed image is `layout + defaults + your values -> build -> bytes`. ETS computes it
 this way, Busforge computes it this way. Nothing stores the baked result, so "compare against

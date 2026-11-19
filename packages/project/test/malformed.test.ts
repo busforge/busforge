@@ -71,12 +71,10 @@ describe("readBaggage (knxproj.ts:78)", () => {
     }
   });
 
-  // Wrong password: resolveInner first tries the inner zip unencrypted, which
-  // throws (AES entries need a password, zip.ts:116) and is caught; with a
-  // password present it retries with the derived key (knxproj.ts:26), where the
-  // PBKDF2 verify bytes mismatch and aesDecrypt throws
-  // KnxprojError("WRONG_PASSWORD", "wrong password") (zip.ts:87). Same path the
-  // existing loadKnxproj wrong-password test locks (project.test.ts:141).
+  // Wrong password: resolveInner sees the inner zip is AES-encrypted and decrypts
+  // with the derived key, where the PBKDF2 verify bytes mismatch and aesDecrypt
+  // throws KnxprojError("WRONG_PASSWORD", "wrong password"). Same path the
+  // existing loadKnxproj wrong-password test locks (project.test.ts).
   test("throws WRONG_PASSWORD for the encrypted fixture with a wrong password", () => {
     const e = catchError(() => readBaggage(fix("sample-encrypted.knxproj"), "wrong"));
     expect(e).toBeInstanceOf(KnxprojError);
