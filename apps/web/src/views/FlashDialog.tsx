@@ -248,7 +248,7 @@ export function FlashDialog({ open, onOpenChange, projectId, device, targets, on
           )}
           {noInterface && (
             // Marked as a failed target, as the per-target lines it stands in for are.
-            <p className="flex items-start gap-2 text-amber-300" data-testid="flash-part-fail">
+            <p className="flex items-start gap-2 text-warning" data-testid="flash-part-fail">
               <AlertTriangle className="mt-0.5 size-4 shrink-0" /> {t("flash.noInterface")}
             </p>
           )}

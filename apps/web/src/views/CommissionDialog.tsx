@@ -107,7 +107,7 @@ export function CommissionDialog({ open, onOpenChange, projectId, device, onComm
     <span className={{
       muted: "flex items-start gap-2 text-muted-foreground",
       ok: "flex items-start gap-2 text-ok",
-      warn: "flex items-start gap-2 text-amber-600 dark:text-amber-400",
+      warn: "flex items-start gap-2 text-warning",
       err: "flex items-start gap-2 text-destructive",
       run: "flex items-start gap-2 text-primary",
     }[tone]}>{icon}{text}</span>
