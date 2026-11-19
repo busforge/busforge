@@ -45,7 +45,7 @@ export function DroppedLinksDetail({ links, projectId, showDevice }: { links: Dr
 
 // The com-objects whose ETS links an import did not take over in full, grouped by device in the file's
 // order: each object with what ETS linked it to, the first address being the one it sends on, and why
-// the links were left out. Those no link made in Busforge reaches follow apart, each saying why. With
+// the links were left out. Those no link made in Busforge reaches follow apart, each saying why (a reason that holds for the whole device once, at the head of its group). With
 // `projectId` a device heads its group as a link to its page, where the object can be linked again.
 export function DroppedLinksList({ links, projectId, showDevice = true }: { links: DroppedLink[]; projectId?: string; showDevice?: boolean }) {
   const { t } = useTranslation();

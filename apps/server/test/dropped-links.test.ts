@@ -228,17 +228,17 @@ describe("links an import does not take over, per com-object", () => {
     expect((await listed(state, imp.id)).map((l: any) => [l.comObjRefId, l.comObjNumber])).toEqual([["O-1_R-1", 1], ["O-2_R-2", 2]]);
   });
 
-  test("a hidden object gives the same reason whether a ComObjectRef or a bare ComObject is hidden, and none once it shows", async () => {
+  test("a hidden ComObjectRef gives the reason a hidden module object or bare ComObject gives, and none once it shows", async () => {
     const state = freshState();
     const hiding = appXml(`<ChannelIndependentBlock><ParameterBlock Id="${A}_PB-1" Name="Main" Text="Main"><ParameterRefRef RefId="${A}_P-1_R-1"/>
-      <choose ParamRefId="${A}_P-1_R-1"><when test="1"><ComObjectRefRef RefId="${A}_O-1_R-1"/><ComObjectRefRef RefId="${A}_O-4"/></when></choose>
-    </ParameterBlock></ChannelIndependentBlock>`).replace("</ComObjectTable>", `${obj(4, "Scene", "Recall")}</ComObjectTable>`);
-    const project = xml0.replace(/<ComObjectInstanceRefs>[\s\S]*<\/ComObjectInstanceRefs>/, `<ComObjectInstanceRefs><ComObjectInstanceRef RefId="O-1_R-1" Links="GA-1 GA-9"/><ComObjectInstanceRef RefId="O-4" Links="GA-1 GA-9"/></ComObjectInstanceRefs>`);
+      <choose ParamRefId="${A}_P-1_R-1"><when test="1"><ComObjectRefRef RefId="${A}_O-1_R-1"/></when></choose>
+    </ParameterBlock></ChannelIndependentBlock>`);
+    const project = xml0.replace(/<ComObjectInstanceRefs>[\s\S]*<\/ComObjectInstanceRefs>/, `<ComObjectInstanceRefs><ComObjectInstanceRef RefId="O-1_R-1" Links="GA-1 GA-9"/></ComObjectInstanceRefs>`);
     const imp = await post(state, "/api/projects/import", new File([knxprojWith(hiding, project)], "Dropped.knxproj"));
     const entries = async () => ((await listed(state, imp.id)) as any[]).map((l) => [l.comObjRefId, l.unresolved, l.unrecoverable]);
-    expect(await entries()).toEqual([["O-1_R-1", "notInConfiguration", false], ["O-4", "notInConfiguration", false]]);
+    expect(await entries()).toEqual([["O-1_R-1", "notInConfiguration", false]]);
     await put(state, imp.id, "params", { paramRefId: `${A}_P-1_R-1`, value: "1" });
-    expect(await entries()).toEqual([["O-1_R-1", null, false], ["O-4", null, false]]);
+    expect(await entries()).toEqual([["O-1_R-1", null, false]]);
   });
 
   test("an object the application does not have can never be linked again: listed apart, with its reason", async () => {
