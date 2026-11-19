@@ -48,7 +48,9 @@ for (const line of readFileSync(file, "utf8").split("\n")) {
   if (tpdu.length < 2 || (tpdu[0] & 0x03) !== 0x03 || tpdu[1] !== 0xf1) continue;
 
   const ts = line.slice(0, 24);
-  const dir = line.includes("ETS->BRIDGE") ? "ETS>" : "<DEV";
+  // The tool as the proxy named it (PROXY_TOOL), never assumed to be ETS.
+  const tool = line.match(/ (\S+)->BRIDGE /)?.[1];
+  const dir = tool ? `${tool}>` : "<DEV";
   const outerTpci = tpdu[0];
   let body = tpdu.subarray(2);
   const scf = body[0];

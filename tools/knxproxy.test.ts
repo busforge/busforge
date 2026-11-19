@@ -3,7 +3,7 @@ import net from "node:net";
 import { readFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { makeSplitter, parseEndpoint, rewriteSearchEndpoint, logLine, startProxy, isSyncRequest } from "./knxproxy.ts";
+import { makeSplitter, parseEndpoint, rewriteSearchEndpoint, logLine, startProxy, isSyncRequest, toolLabel } from "./knxproxy.ts";
 import { parseCapture, memoryImage } from "./etsdiff.ts";
 
 // Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 0.3 s with the
@@ -59,6 +59,22 @@ describe("frames", () => {
 
   test("an endpoint that is not <ipv4>:<port> is refused", () => {
     for (const bad of ["192.0.2.7", "192.0.2.256:3672", "192.0.2.7:0", "host:3672", "192.0.2.7:70000"]) expect(() => parseEndpoint(bad)).toThrow("PROXY_ADVERTISE");
+  });
+
+  test("a tool label is required and must name a known tool: the proxy cannot see which tool connects", () => {
+    expect(toolLabel("ETS")).toBe("ETS");
+    expect(toolLabel("Busforge")).toBe("Busforge");
+    for (const bad of [undefined, ""]) expect(() => toolLabel(bad)).toThrow("PROXY_TOOL is required");
+    // "OpenETS->BRIDGE" would read as ETS's to a reader that looks for "ETS->BRIDGE".
+    for (const bad of ["ets", "ETS6.4", "OpenETS", "ETS->BRIDGE"]) expect(() => toolLabel(bad)).toThrow("must be ETS or Busforge");
+  });
+
+  test("the proxy started without a tool label refuses to start", () => {
+    const env = { ...process.env };
+    delete env.PROXY_TOOL;
+    const run = Bun.spawnSync(["bun", join(import.meta.dir, "knxproxy.ts")], { env: { ...env, PROXY_PORT: "0", PROXY_LOG: join(tmpdir(), `knxproxy-refused-${crypto.randomUUID()}.log`) }, timeout: 10_000 });
+    expect(run.exitCode).not.toBe(0);
+    expect(run.stderr.toString()).toContain("PROXY_TOOL is required");
   });
 
   test("a logged line is what etsdiff reads", () => {

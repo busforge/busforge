@@ -4,12 +4,14 @@
 // KNXnet/IP server, passes every frame on unchanged and logs each in both directions, one line per
 // frame, in the format tools/etsdiff.ts reads:
 //
-//   <ISO time> <DIR> <SERVICE> <summary> | <full frame hex>      DIR = "ETS->BRIDGE" or "BRIDGE->ETS"
+//   <ISO time> <DIR> <SERVICE> <summary> | <full frame hex>      DIR = "<tool>->BRIDGE" or "BRIDGE-><tool>"
 //
-// (with PROXY_TOOL=Busforge the tool side is named "Busforge" instead of "ETS").
+// <tool> is PROXY_TOOL, the tool on the client side ("ETS" or "Busforge"). The proxy cannot see which
+// tool connects, and tools/etsdiff.ts takes every "ETS->BRIDGE" frame for ETS's, so there is no default:
+// without PROXY_TOOL the proxy does not start.
 //
-//   PROXY_PORT=3672 BRIDGE_HOST=<server ip> BRIDGE_PORT=3671 PROXY_LOG=./capture.log \
-//     [PROXY_TOOL=ETS] [PROXY_ADVERTISE=<this host's ip>:<PROXY_PORT>] [PROXY_SYNC_GAP_MS=1200] bun run tools/knxproxy.ts
+//   PROXY_TOOL=ETS PROXY_PORT=3672 BRIDGE_HOST=<server ip> BRIDGE_PORT=3671 PROXY_LOG=./capture.log \
+//     [PROXY_ADVERTISE=<this host's ip>:<PROXY_PORT>] [PROXY_SYNC_GAP_MS=1200] bun run tools/knxproxy.ts
 //
 // ETS is pointed at this host's PROXY_PORT as a KNXnet/IP TCP interface. A KNXnet/IP server answers
 // ETS's search with its own control endpoint (SEARCH_RESPONSE, SEARCH_RESPONSE_EXTENDED), and ETS 6
@@ -118,6 +120,16 @@ export function isSyncRequest(frame: Buffer): boolean {
   return tpdu.length >= 3 && ((tpdu[0] & 0x03) << 8 | tpdu[1]) === 0x3f1 && (tpdu[2] & 0x07) === 2;
 }
 
+// The tools a log may name on its client side. A missing label is refused rather than guessed: a guessed
+// "ETS" makes a Busforge run read as ETS's frames. Readers match the label as written (tools/etsdiff.ts
+// takes "ETS->BRIDGE"), so only these exact names are taken.
+export const TOOLS = ["ETS", "Busforge"] as const;
+export function toolLabel(value: string | undefined, name = "PROXY_TOOL"): string {
+  if (!value) throw new Error(`${name} is required: name the tool that connects (${TOOLS.join(" or ")})`);
+  if (!(TOOLS as readonly string[]).includes(value)) throw new Error(`${name} must be ${TOOLS.join(" or ")}, not ${JSON.stringify(value)}`);
+  return value;
+}
+
 export interface ProxyOptions { port: number; bridgeHost: string; bridgePort: number; log: string; tool: string; advertise?: { ip: number[]; port: number }; syncGapMs?: number }
 
 export function startProxy(o: ProxyOptions): net.Server {
@@ -157,7 +169,7 @@ if (import.meta.main) {
   const env = process.env;
   const o: ProxyOptions = {
     port: Number(env.PROXY_PORT ?? 3672), bridgeHost: env.BRIDGE_HOST ?? "127.0.0.1", bridgePort: Number(env.BRIDGE_PORT ?? 3671),
-    log: env.PROXY_LOG ?? "./capture.log", tool: env.PROXY_TOOL ?? "ETS", advertise: env.PROXY_ADVERTISE ? parseEndpoint(env.PROXY_ADVERTISE) : undefined,
+    log: env.PROXY_LOG ?? "./capture.log", tool: toolLabel(env.PROXY_TOOL), advertise: env.PROXY_ADVERTISE ? parseEndpoint(env.PROXY_ADVERTISE) : undefined,
     syncGapMs: env.PROXY_SYNC_GAP_MS ? Number(env.PROXY_SYNC_GAP_MS) : undefined,
   };
   if (o.syncGapMs !== undefined && !(o.syncGapMs > 0)) throw new Error(`PROXY_SYNC_GAP_MS must be a positive number of milliseconds, not ${env.PROXY_SYNC_GAP_MS}`);

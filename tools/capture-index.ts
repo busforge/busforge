@@ -41,7 +41,7 @@ export interface Device { address: string; descriptor0: string[] }
 export interface IndexedFile {
   file: string;
   format: Format;
-  // The tool on the client side of a proxy log as the proxy names it (PROXY_TOOL, whose default is ETS), ETS for
+  // The tool on the client side of a proxy log as the proxy names it (PROXY_TOOL), ETS for
   // its own log, PCAP_CLIENT for a pcap capture; none for a group monitor.
   tools: string[];
   // Whose frame builder the tool's point-to-point and broadcast frames in a proxy log come from, by their first
@@ -148,8 +148,8 @@ const CONTROL_SERVICES = new Set<number>([
 
 // The first cEMI control field of an L_Data.req the tool sends to a unit or as a broadcast. Busforge's
 // cemiLData (packages/knx/src/frame.ts) sets 0xBC, or 0x3C for an extended frame; ETS 6 sets 0xB0 or 0x30
-// in every capture of the corpus that ETS's own log names. A proxy names its client by PROXY_TOOL with the
-// default ETS, so a Busforge run through a proxy started without it reads ETS; the frames tell them apart.
+// in every capture of the corpus that ETS's own log names. A proxy names its client by PROXY_TOOL, and
+// proxy logs in the corpus name Busforge runs ETS; the frames tell them apart.
 // Group telegrams are left out: ETS sends some of those with 0xBC.
 const FRAME_BUILDERS: Record<number, "ETS" | "Busforge"> = { 0xb0: "ETS", 0x30: "ETS", 0xbc: "Busforge", 0x3c: "Busforge" };
 
@@ -569,8 +569,8 @@ export function renderMarkdown(index: CaptureIndex): string {
   out.push("interface confirmed negatively; **properties** are object index/PID,");
   out.push("`t<type>.<instance>/<PID>` for the extended services, `if ...` for the interface's own objects; **secure**");
   out.push("counts A_SecureService telegrams and how many show the service inside (a proxy log carries it encrypted:");
-  out.push("the ETS 6 log of the same minutes shows it). **Tool** is the name the proxy wrote; the proxy names its");
-  out.push("client ETS unless told otherwise, so where the tool's frames come from the other tool's frame builder the");
+  out.push("the ETS 6 log of the same minutes shows it). **Tool** is the name the proxy wrote (`PROXY_TOOL`), which");
+  out.push("the proxy cannot check, so where the tool's frames come from the other tool's frame builder the");
   out.push("cell says so (`ETS (frames: Busforge)`): Busforge sends control field BC/3C, ETS 6 B0/30. A pcap capture");
   out.push(`names its client \`${PCAP_CLIENT}\`, and only its frames say which tool it was.`, "");
 

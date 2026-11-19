@@ -165,9 +165,14 @@ speaks TCP on both sides, so the server must accept KNXnet/IP over TCP (Tunnelli
 Busforge bridge, or an interface that offers TCP.
 
 ```bash
-PROXY_PORT=3672 BRIDGE_HOST=<server ip> BRIDGE_PORT=3671 PROXY_LOG=$PWD/<name>.log \
+PROXY_TOOL=ETS PROXY_PORT=3672 BRIDGE_HOST=<server ip> BRIDGE_PORT=3671 PROXY_LOG=$PWD/<name>.log \
   PROXY_ADVERTISE=<this host's ip>:3672 bun run tools/knxproxy.ts
 ```
+
+`PROXY_TOOL` names the tool that connects, and every line of the log carries it (`ETS->BRIDGE`,
+`BRIDGE->ETS`). The proxy cannot see which tool it is, and `tools/etsdiff.ts` takes every `ETS->BRIDGE`
+frame for ETS's, so there is no default: without `PROXY_TOOL` the proxy refuses to start. A Busforge run
+through the proxy is started with `PROXY_TOOL=Busforge`.
 
 ETS gets this host and port as a KNXnet/IP TCP interface. `PROXY_ADVERTISE` matters for ETS 6: it
 follows the control endpoint in the server's search answer and connects there directly, so without
@@ -249,10 +254,10 @@ requests the interface confirmed negatively and the lines that did not decode.
 
 Two things it does not take on trust:
 
-- **The tool.** A proxy names its client by `PROXY_TOOL`, and the default is `ETS`, so a Busforge run
-  through a proxy started without it reads `ETS`. The index also records whose frame builder the
-  tool's frames to units come from: Busforge sets the first cEMI control field to `0xBC` (`0x3C` for an
-  extended frame), ETS 6 to `0xB0` (`0x30`). Where label and frames disagree, the row says so and
+- **The tool.** A proxy names its client by `PROXY_TOOL`, and some proxy logs in the corpus name a
+  Busforge run `ETS`. The index also records whose frame builder the tool's frames to units come
+  from: Busforge sets the first cEMI control field to `0xBC` (`0x3C` for an extended frame), ETS 6
+  to `0xB0` (`0x30`). Where label and frames disagree, the row says so and
   `INDEX.md` lists the file at the top. A pcap capture names no tool; its frames do.
 - **A line it cannot read.** A telegram line whose frame does not decode, or whose data is short of the
   layout its service fixes, is counted in its file's row with its line number, never skipped. A file in no format above, or in more than one, is listed under
