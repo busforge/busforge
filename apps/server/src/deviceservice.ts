@@ -3,7 +3,7 @@ import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { iaToNum, numToGa, formatGa, SENDER_ENTRY } from "@busforge/knx";
 import { appProgramId, readAppProgram, type Project, type DroppedLink, type DroppedLinkReason } from "@busforge/project";
-import { parseAppConfig, buildDeviceConfig, buildSecurityObject, hardwareRefusals, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, effectiveComObjFlags, ProductError, imageWritableType, resolveParamRef, sameParamValue, type SameParamValue, takesValue, type EffectiveComObjFlags, type ComObjInstanceOverride, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
+import { parseAppConfig, buildDeviceConfig, annotateCalculations, buildSecurityObject, hardwareRefusals, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, effectiveComObjFlags, ProductError, imageWritableType, resolveParamRef, sameParamValue, type SameParamValue, takesValue, type EffectiveComObjFlags, type ComObjInstanceOverride, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
 import { getAppProgram, putAppProgram, catalogBaggageNames, pictureType } from "./db/catalog.ts";
 import { getDeviceParams, getDeviceParamBase, getDeviceParamAssumed, getDeviceModules, getDeviceAppRef, getDeviceProductRef, getDeviceForFlash, deviceHasApplication, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps, getDeviceComObjOverrides, getDeviceComObjOverrideBase } from "./db/deviceparams.ts";
 import { deviceCompatibility } from "./compatibility.ts";
@@ -384,7 +384,11 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
   if (!device) throw new ApiError("DEVICE_NOT_FOUND", "device not found", 404);
   const app = loadApp(state, projectId, deviceId);
   if (!app) throw missingApplication(db, projectId, deviceId);
-  const view = buildDeviceConfig(app, getDeviceParams(db, projectId, deviceId), lang, getDeviceModules(db, projectId, deviceId));
+  const params = getDeviceParams(db, projectId, deviceId), modules = getDeviceModules(db, projectId, deviceId);
+  const view = buildDeviceConfig(app, params, lang, modules);
+  // A parameter of a <ParameterCalculation> names the values Busforge computes for its results, or that Busforge does
+  // not run the calculation; a shown read-only result shows the computed value, not the one stored.
+  annotateCalculations(app, params, modules, view, lang);
   // Offer a native DCA-replacement module if one matches this app program.
   const module = resolveDcaModule(app.id, app.appVersion);
   if (module) view.dca = { ...(view.dca ?? { hint: "" }), module };

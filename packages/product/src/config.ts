@@ -63,6 +63,27 @@ export interface CfgParamView {
   // no value of the parameter's type: no option of its enumeration, or a number outside its bounds.
   // Shown as such, never taken into the project. Filled in by the server.
   baseOutsideType?: string;
+  // The parameter is an input or a result of the application's <ParameterCalculation>s: one mark per calculation
+  // (calculations.ts annotateCalculations). Filled in by the server.
+  calculations?: CfgCalculationMark[];
+}
+export interface CfgCalculationMark {
+  name: string; // the calculation's Name, else its Id
+  role: "input" | "result";
+  // computed: Busforge ran the script and builds the image with its results. defaults: every input is at its default,
+  // so the results keep the values the configuration stores, as ETS keeps them. refused: Busforge does not run the
+  // calculation (`reason`) and computes none of its results.
+  state: "computed" | "defaults" | "refused";
+  reason?: string;
+  // A parameter on the other side of the calculation has memory, lies in a property or decides what the configuration
+  // places: where Busforge does not run the calculation, a write that changes this parameter is refused.
+  otherSideReaches: boolean;
+  // A result: the value Busforge builds the image with for this parameter (absent where the calculation is refused).
+  // A row the user can edit keeps the value the project stores, which can differ.
+  value?: string;
+  // Each result: the value Busforge builds the image with (absent where the calculation is refused), and whether an
+  // active branch of the configuration places it.
+  results: { refId: string; name: string; value?: string; placed: boolean }[];
 }
 export interface CfgComObjView {
   refId: string; number: number; name: string; functionText: string;

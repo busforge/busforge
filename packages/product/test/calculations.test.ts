@@ -1,6 +1,7 @@
 import { test, expect, describe, setDefaultTimeout } from "bun:test";
 import { parseAppConfig, resolveModuleInstances, classify, parseLoadProcedures, toAppModel } from "../src/index.ts";
-import { applyCalculations } from "../src/calculations.ts";
+import { applyCalculations, annotateCalculations } from "../src/calculations.ts";
+import { buildDeviceConfig, type CfgParamView } from "../src/config.ts";
 import { buildRelativeSegmentTarget, refuseCalculationWrites } from "../src/deviceimage.ts";
 import { scriptRefusal } from "../src/script/index.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
@@ -168,6 +169,60 @@ describe("a ParameterCalculation", () => {
   });
 });
 
+// The device page's rows of a configuration, with the marks annotateCalculations sets.
+const rows = (cfg: ReturnType<typeof parseAppConfig>, v: Map<string, string>, instances: ReturnType<typeof resolveModuleInstances> = []) => {
+  const view = buildDeviceConfig(cfg, v, undefined, instances);
+  annotateCalculations(cfg, v, instances, view);
+  const out = new Map<string, CfgParamView>();
+  for (const b of view.blocks) for (const it of b.items) if (it.kind === "param") out.set(it.param.refId, it.param);
+  return out;
+};
+
+describe("the device page of a ParameterCalculation", () => {
+  test("shows a read-only result as Busforge computes it for the image, not the value the project stores", () => {
+    const cfg = app(doubled);
+    // The stored result is an earlier computation's: the script replaces it, and the image holds 41 (0x29) and 27 (0x1b).
+    const v = vals({ "P-1": "20", "P-2": "5" });
+    const page = rows(cfg, v);
+    expect(page.get(R("P-2"))).toMatchObject({ value: "41", calculations: [{ name: "calc1", role: "result", state: "computed", value: "41" }] });
+    expect(segment(cfg, v)).toBe("00140029001b00000000");
+    // The input names each result and its value; the hidden LegacyPatchAlways one is placed by no active branch.
+    expect(page.get(R("P-1"))!.calculations).toEqual([{ name: "calc1", role: "input", state: "computed", otherSideReaches: true, results: [{ refId: R("P-2"), name: "B", value: "41", placed: true }, { refId: R("P-3"), name: "c", value: "27", placed: false }] }]);
+    expect(page.get(R("P-5"))!.calculations).toBeUndefined();
+  });
+
+  test("at the inputs' defaults shows the stored result, which the image keeps", () => {
+    const page = rows(app(doubled), vals({ "P-2": "5" }));
+    expect(page.get(R("P-2"))).toMatchObject({ value: "5", calculations: [{ role: "result", state: "defaults", value: "5" }] });
+    expect(page.get(R("P-1"))!.calculations![0].results[0]).toEqual({ refId: R("P-2"), name: "B", value: "5", placed: true });
+  });
+
+  test("marks a parameter on both sides of a calculation as input and result, and shows the result", () => {
+    const page = rows(app({ script: "b = 20;", inputs: ["P-2"], outputs: ["P-2"] }), vals({ "P-2": "5" }));
+    expect(page.get(R("P-2"))!.calculations!.map((m) => m.role)).toEqual(["input", "result"]);
+    expect(page.get(R("P-2"))!.value).toBe("20");
+  });
+
+  test("names a shown result as its row does", () => {
+    const page = rows(app(doubled), vals({ "P-1": "20" }));
+    expect(page.get(R("P-1"))!.calculations![0].results[0].name).toBe(page.get(R("P-2"))!.name);
+  });
+
+  test("leaves a result the user can edit at its stored value and names the computed one beside it", () => {
+    const page = rows(app({ script: "e = a;", outputs: ["P-5"] }), vals({ "P-1": "20", "P-5": "3", "P-6": "1" }));
+    expect(page.get(R("P-5"))).toMatchObject({ value: "3", calculations: [{ role: "result", state: "computed", value: "20" }] });
+  });
+
+  test("says a calculation Busforge does not run is refused, and shows its stored result, with no value computed", () => {
+    for (const calc of [{ func: "calc", outputs: ["P-2"] }, { script: "b = b + a;", outputs: ["P-2"] }] as const) {
+      const page = rows(app(calc), vals({ "P-1": "20", "P-2": "5" }));
+      expect(page.get(R("P-2"))).toMatchObject({ value: "5", calculations: [{ role: "result", state: "refused", reason: expect.any(String), otherSideReaches: true }] });
+      expect(page.get(R("P-2"))!.calculations![0].value).toBeUndefined();
+      expect(page.get(R("P-1"))!.calculations).toEqual([expect.objectContaining({ role: "input", state: "refused", results: [{ refId: R("P-2"), name: "B", placed: true }] })]);
+    }
+  });
+});
+
 test("a calculation in a ModuleDef runs per placed instance, and one refused there keeps refusing its inputs", () => {
   const M = "M-0005_A-0C02-01-0001";
   const mod = (calcs: string) => parseAppConfig(`<?xml version="1.0" encoding="utf-8"?>
@@ -199,6 +254,10 @@ test("a calculation in a ModuleDef runs per placed instance, and one refused the
   // A second calculation on the same input that Busforge cannot run (a script function, a steering result).
   const both = mod(calc(1, 'LRTransformationFunc="f"><LRTransformation/', 3) + calc(2, "><LRTransformation>b = a + 1;</LRTransformation", 2));
   expect(() => refuseCalculationWrites(both, set, instances)).toThrow(refused("LRTransformationFunc"));
+  // The page: the instance's result as computed, and on the input both calculations, the one refused in every instance too.
+  const page = rows(both, set, instances);
+  expect(page.get(`${M}_MD-1_M-1_MI-1_P-2_R-2`)).toMatchObject({ value: "6", calculations: [{ name: "c2", state: "computed" }] });
+  expect(page.get(`${M}_MD-1_M-1_MI-1_P-1_R-1`)!.calculations!.map((m) => [m.name, m.state])).toEqual([["c2", "computed"], ["c1", "refused"]]);
 });
 
 corpusDescribe("the ParameterCalculations of corpus applications", () => {
@@ -242,6 +301,9 @@ corpusDescribe("the ParameterCalculations of corpus applications", () => {
     // The same time with the dimming function off: its result is placed nowhere active, and is refused.
     const off = new Map([[at("P-9_R-11"), "500"]]);
     expect(() => refuseCalculationWrites(cfg, off, instances)).toThrow(refused("no active branch places"));
+    // The device page: the time entered (no memory of its own) names the hidden result the image holds, and its value.
+    const page = rows(cfg, values, instances);
+    expect(page.get(at("P-9_R-11"))!.calculations).toEqual([{ name: "E - Dimmen - Millisekunden", role: "input", state: "computed", otherSideReaches: true, results: [{ refId: at("P-12_R-14"), name: "E - Dimmen - Zeit zwischen Schalten und Dimmen", value: "500", placed: true }] }]);
   });
 
   test("MDT BE-06001.02: the counter's calculation sets a parameter that decides what else is placed, and stays refused", () => {

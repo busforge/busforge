@@ -19,7 +19,7 @@
 // (./script/LICENSE).
 
 import { resolveParamRef, sameParamValue, takesValue, type AppConfig, type CfgCalculation, type DynNode, type ModuleInstance } from "./appconfig.ts";
-import { buildDeviceConfig, type DeviceConfigBuild } from "./config.ts";
+import { buildDeviceConfig, decodeTextEntities, resolveLanguage, type CfgCalculationMark, type DeviceConfigBuild } from "./config.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { runScript, scriptRefusal, ScriptError, type ScriptValue } from "./script/index.ts";
 
@@ -259,4 +259,65 @@ export function applyCalculations(app: AppConfig, values: Map<string, string>, m
   }
   // Results that still change after the last pass never settle (calculations feeding each other): none is written.
   return unchanged([...staticRuns, ...runnable.map((c) => refusedRun(c, "its results did not settle (calculations feeding each other)"))]);
+}
+
+// What a device page says about the parameters of the <ParameterCalculation>s: every shown parameter of one gets a
+// mark per calculation it is an input or a result of, with the value Busforge builds the image with for each result
+// (the configuration applyCalculations hands the image builders), and a shown read-only result shows that value instead
+// of the one the project stores. Whether a write then takes the image or refuses it is refuseCalculationWrites' to say.
+// A result Busforge computes never decides what the configuration places (staticRefusal), so `view`, built from the
+// stored values, shows the same rows as one built from the computed ones.
+export function annotateCalculations(app: AppConfig, values: Map<string, string>, moduleInstances: ModuleInstance[], view: DeviceConfigBuild, lang?: string): void {
+  if (!app.calculations.length) return;
+  // The module instances the image builders resolve for this configuration.
+  const instances = moduleInstances.length || !app.hasModules ? moduleInstances : resolveModuleInstances(app, values);
+  const applied = applyCalculations(app, values, instances);
+  const valueOf = valueReader(app, applied.values, applied.values === values ? view : buildDeviceConfig(app, applied.values, undefined, instances));
+  const placed = new Set<string>(); // per instance and Parameter id: placed by an active branch
+  for (const r of view.imageValues.keys()) { const k = paramKey(app, r); if (k !== undefined) placed.add(k); }
+  const language = resolveLanguage(app, lang);
+  const shownName = new Map<string, string>(); // per instance and Parameter id: the name of a row that shows it
+  for (const b of view.blocks) for (const it of b.items) if (it.kind === "param") { const k = paramKey(app, it.param.refId); if (k !== undefined && !shownName.has(k)) shownName.set(k, it.param.name); }
+  // A result's name as its row shows it; for one the page does not show, its Text in the page's language, or its
+  // Name where it has no Text or one that takes arguments ({{…}}) only the configuration's view fills in.
+  const nameOf = (refId: string): string => {
+    const shown = shownName.get(paramKey(app, refId)!);
+    if (shown !== undefined) return shown;
+    const { ref, param } = resolveParamRef(app, refId)!;
+    const tr = (id: string, base: string | undefined) => (language === app.defaultLanguage ? base : app.translations.get(language)?.get(id)?.get("Text") ?? base);
+    const text = tr(ref.id, ref.text) || tr(param!.id, param!.text);
+    return decodeTextEntities(text && !text.includes("{{") ? text : param!.name || param!.id).trim();
+  };
+  const steering = steeringParamIds(app);
+  const reaches = (refs: string[]) => refs.some((r) => { const p = resolveParamRef(app, r)?.param; return !!p && (p.hasMemory || !!p.onProperty || steering.has(p.id)); });
+  // Per instance and Parameter id, the marks keyed by run and role: a parameter on both sides gets both.
+  const marks = new Map<string, Map<string, CfgCalculationMark>>();
+  for (const [n, run] of applied.runs.entries()) {
+    const scope = scoper(app, calcModuleDef(app, run.calc.id), run.instance);
+    const results = new Map<string, CfgCalculationMark["results"][number]>();
+    for (const r of run.calc.rRefs) {
+      const key = paramKey(app, scope(r));
+      if (key === undefined || results.has(key)) continue;
+      results.set(key, { refId: scope(r), name: nameOf(scope(r)), placed: placed.has(key), ...(run.state !== "refused" ? { value: valueOf(scope(r)) } : {}) });
+    }
+    for (const [role, refs, other] of [["input", run.calc.lRefs, run.calc.rRefs], ["result", run.calc.rRefs, run.calc.lRefs]] as const) for (const r of refs) {
+      const key = paramKey(app, scope(r));
+      if (key === undefined) continue;
+      const of = marks.get(key) ?? marks.set(key, new Map()).get(key)!;
+      if (!of.has(`${n}:${role}`)) of.set(`${n}:${role}`, { name: run.label, role, state: run.state, ...(run.reason !== undefined ? { reason: run.reason } : {}), otherSideReaches: reaches(other), results: [...results.values()] });
+    }
+  }
+  // Calculations refused in no module instance (whatever the configuration, or because their results do not settle)
+  // are keyed by Parameter id alone.
+  const bare = (key: string) => key.replace(/^_M-\d+_MI-\d+/, "");
+  for (const b of view.blocks) for (const it of b.items) {
+    if (it.kind !== "param") continue;
+    const key = paramKey(app, it.param.refId);
+    if (key === undefined) continue;
+    const found = [...(marks.get(key)?.values() ?? []), ...(bare(key) !== key ? marks.get(bare(key))?.values() ?? [] : [])];
+    if (!found.length) continue;
+    // A result names the value Busforge computes for its own parameter; a read-only one shows it.
+    it.param.calculations = found.map((m) => (m.role === "result" && m.state !== "refused" ? { ...m, value: valueOf(it.param.refId) } : m));
+    if (it.param.readOnly && found.some((m) => m.role === "result" && m.state !== "refused")) it.param.value = valueOf(it.param.refId);
+  }
 }

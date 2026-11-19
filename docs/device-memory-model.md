@@ -274,6 +274,14 @@ Two cases of a computed calculation are refused too, since no capture shows them
 Where the configuration hides a computed parameter on System 7, its bits keep the unit's value rather
 than the segment's `<Data>`.
 
+On the device page, a calculation's parameters say what Busforge computes. A read-only result shows the
+value the image is built with, marked as computed, not the value the project stores; a result the user
+can edit keeps the stored value and names the computed one beside it. An input names each result and
+its value, also where the configuration does not show the result: the Jung 400021SE's dimming time is
+entered in seconds and milliseconds that the device does not hold, and the page names the hidden
+parameter the image holds and its value. A calculation Busforge does not run marks its parameters as
+not computed, with the reason, in warning tone where a change of them is refused.
+
 ## Ownership rules, in detail
 
 The rules below are hardware-derived. They are the difference between a re-configuration

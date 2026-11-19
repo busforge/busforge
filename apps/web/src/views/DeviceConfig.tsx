@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, ChevronDown, ChevronLeft, ChevronsUpDown, Cpu, HardDriveDownload, Info, KeyRound, Loader2, MapPin, MessageSquareWarning, MoreVertical, Puzzle, RadioTower, Repeat2, RotateCcw, Search, ShieldCheck, Stethoscope, X } from "lucide-react";
+import { AlertTriangle, Calculator, ChevronDown, ChevronLeft, ChevronsUpDown, Cpu, HardDriveDownload, Info, KeyRound, Loader2, MapPin, MessageSquareWarning, MoreVertical, Puzzle, RadioTower, Repeat2, RotateCcw, Search, ShieldCheck, Stethoscope, X } from "lucide-react";
 import { Link, useLocation, useNavigate, useParams, useRouter, useSearch } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -77,6 +77,45 @@ function OutsideTypeBadge({ refId, value }: { refId: string; value: string }) {
     <Badge tone="danger" title={t("device.outsideTypeTitle", { value })} data-testid={`outside-type-${refId}`}>
       {t("device.outsideTypeBadge", { value })}
     </Badge>
+  );
+}
+
+// The parameter is an input or a result of the application's <ParameterCalculation>s (CfgParamView.calculations): an
+// input names the values Busforge computes for the results, a result that its value is the computed one (or that the
+// project stores another), and a calculation Busforge does not run says so, in warning tone where that refuses a write.
+function CalculationBadges({ param }: { param: CfgParamView }) {
+  const { t } = useTranslation();
+  return (
+    <>
+      {param.calculations?.map((m, k) => {
+        const testId = `calc-${param.refId}${k ? `-${k}` : ""}`;
+        if (m.state === "refused") {
+          return (
+            <Badge key={k} tone={m.otherSideReaches ? "warning" : "neutral"} title={t(m.otherSideReaches ? "device.calcRefusedTitle" : "device.calcRefusedQuietTitle", { name: m.name, reason: m.reason ?? "" })} data-testid={testId}>
+              <Calculator />{t("device.calcRefusedBadge")}
+            </Badge>
+          );
+        }
+        if (m.role === "result" && m.value !== undefined && m.value !== param.value) {
+          return (
+            <Badge key={k} tone="warning" title={t("device.calcResultDiffersTitle", { name: m.name, value: m.value, stored: param.value })} data-testid={testId}>
+              <Calculator />{t("device.calcResultDiffersBadge", { value: m.value })}
+            </Badge>
+          );
+        }
+        const results = m.results.map((r) => t(r.placed ? "device.calcResultValue" : "device.calcResultUnplaced", { name: r.name, value: r.value })).join("; ");
+        const title = m.role === "result"
+          ? t(m.state === "computed" ? "device.calcResultTitle" : "device.calcResultDefaultsTitle", { name: m.name })
+          : t(m.state === "computed" ? "device.calcInputTitle" : "device.calcInputDefaultsTitle", { name: m.name, results });
+        const label = m.role === "result" ? t("device.calcResultBadge")
+          : m.results.length === 1 ? t("device.calcInputBadge", { value: m.results[0].value }) : t("device.calcInputBadgeMany", { count: m.results.length });
+        return (
+          <Badge key={k} tone="info" title={title} data-testid={testId}>
+            <Calculator />{label}
+          </Badge>
+        );
+      })}
+    </>
   );
 }
 
@@ -1068,7 +1107,7 @@ function ParamRow({ param, compact, changedTitle, revertTitle, reverting, onChan
       title={label}
       className={cn(
         compact
-          ? "flex min-w-0 items-center gap-1.5 border-l-2 py-1 pl-1.5"
+          ? cn("flex min-w-0 items-center gap-1.5 border-l-2 py-1 pl-1.5", param.calculations?.length && "flex-wrap")
           // Narrow: the label on its own line, then the revert next to the control.
           : "flex flex-wrap items-center gap-x-2 gap-y-1 border-l-2 py-1.5 pl-3 sm:flex-nowrap sm:justify-between sm:gap-4 pointer-fine:py-1",
         param.changed ? "border-primary bg-primary/5" : "border-transparent",
@@ -1079,6 +1118,8 @@ function ParamRow({ param, compact, changedTitle, revertTitle, reverting, onChan
           {param.changed ? <ChangedDot title={changedTitle} /> : null}
           {param.assumed ? <AssumedBadge refId={param.refId} /> : null}
           {param.baseOutsideType !== undefined ? <OutsideTypeBadge refId={param.refId} value={param.baseOutsideType} /> : null}
+          {/* On a line of their own: a grid cell is too narrow for its control next to them. */}
+          {param.calculations?.length ? <span className="flex basis-full flex-wrap gap-1"><CalculationBadges param={param} /></span> : null}
         </>
       ) : (
         <span className="flex min-w-0 basis-full items-center gap-2 text-sm sm:basis-auto sm:flex-1">
@@ -1087,6 +1128,7 @@ function ParamRow({ param, compact, changedTitle, revertTitle, reverting, onChan
           <span className="min-w-0 whitespace-pre-wrap">{param.name}</span>
           {param.assumed ? <AssumedBadge refId={param.refId} /> : null}
           {param.baseOutsideType !== undefined ? <OutsideTypeBadge refId={param.refId} value={param.baseOutsideType} /> : null}
+          <CalculationBadges param={param} />
         </span>
       )}
       {param.changed && (param.baseOutsideType !== undefined
