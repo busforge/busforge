@@ -1,21 +1,28 @@
 // Decrypt the A_Data_Secure frames of a knxproxy capture log offline.
 // Keys come only from the environment, never from a file:
-//   KEYS="fdsk=<32 hex>,tool=<32 hex>"   tried in order on every tool-access frame (P2P or to 0/0/0)
-//   GROUP_KEYS="2/1/7=<32 hex>,..."       optional, for the other secured group frames
+//   KEYS="fdsk=<32 hex>,tool=<32 hex>"   tried on every tool-access frame (P2P or to 0/0/0)
+//   GROUP_KEYS="2/1/7=<32 hex>,..."       optional, for the other secured group frames (three-level addresses)
 //   bun run tools/secure-capture-decode.ts <capture.log>
 import { readFileSync } from "node:fs";
-import { gaToNum } from "../packages/knx/src/frame.ts";
-import { SecureCaptureDecoder, addKeys, emptyKeys, ga, ia, parseKeyList } from "./secure-capture.ts";
+import { numToGa as ga, numToIa as ia } from "../packages/knx/src/frame.ts";
+import { SecureCaptureDecoder, addKeys, emptyKeys, parseKeyList } from "./secure-capture.ts";
 
 const file = process.argv[2];
 if (!file) throw new Error("usage: secure-capture-decode.ts <capture.log>");
 
 const keys = emptyKeys();
-addKeys(keys, parseKeyList(process.env.KEYS), parseKeyList(process.env.GROUP_KEYS).map((k) => ({ raw: gaToNum(k.name), key: k })));
+// A group key's name is its three-level address; anything else is refused rather than tried on another address.
+function groupAddress(name: string): number {
+  const m = name.match(/^(\d+)\/(\d+)\/(\d+)$/);
+  const [main, mid, sub] = m ? m.slice(1).map(Number) : [];
+  if (!m || main > 31 || mid > 7 || sub > 255) throw new Error(`GROUP_KEYS: ${name} is not a three-level group address`);
+  return (main << 11) | (mid << 8) | sub;
+}
+addKeys(keys, parseKeyList(process.env.KEYS), parseKeyList(process.env.GROUP_KEYS).map((k) => ({ raw: groupAddress(k.name), key: k })));
 const decoder = new SecureCaptureDecoder(keys);
 
 // The bus source of a tunnelled request is the tunnel's IA, which ETS leaves as 0.0.0;
-// learn it from the first confirmation that carries it.
+// take it from the latest confirmation that carries it.
 let tunnelIa = 0;
 
 for (const line of readFileSync(file, "utf8").split("\n")) {
@@ -44,6 +51,7 @@ for (const line of readFileSync(file, "utf8").split("\n")) {
   const fr = decoder.open(src, dst, isGroup, tpdu);
   const extra = fr.serial ? ` serial=${fr.serial.toString("hex")}` : "";
   const head = `${ts} ${dir} ${where} SCF=${fr.scf.toString(16)} ${fr.service}${extra}`;
+  if (fr.truncated) { console.log(`${head}  TRUNCATED`); continue; }
   if (fr.noRequest) { console.log(`${ts} ${dir} ${where} SCF=${fr.scf.toString(16)} Sync.res  (no matching Sync.req decrypted)`); continue; }
   if (!fr.opened) { console.log(`${head}  UNDECRYPTED`); continue; }
   console.log(`${head} seq=${fr.opened.seq.toString("hex")} key=${fr.opened.key}  ${fr.opened.plaintext.toString("hex")}`);

@@ -8,7 +8,7 @@ import { secureEncode } from "../packages/knx/src/secure.ts";
 import { writeKeyring } from "../packages/project/src/keyring.ts";
 import { addKeys, corpusKeys, emptyKeys, parseKeyList, type SecureKeys } from "./secure-capture.ts";
 import {
-  apciName, BUSSARD_ROWS, buildIndex, documentedKeyringPasswords, indexFile, indexText, INDEX_JSON, INDEX_MD, labelDisagrees, PCAP_CLIENT, renderMarkdown, type IndexedFile, type KeySources,
+  apciName, BUSSARD_ROWS, buildIndex, documentedKeyringPasswords, indexFile, propertyAnswerRows, renderPropertyAnswers, indexText, INDEX_JSON, INDEX_MD, labelDisagrees, PCAP_CLIENT, renderMarkdown, type IndexedFile, type KeySources,
   type NotIndexed,
 } from "./capture-index.ts";
 import { BUSSARD_SYNTHETIC_DIR, captureText, corpusPath, corpusRoot } from "./corpus.ts";
@@ -66,7 +66,7 @@ describe("proxy logs", () => {
       tunnel("BRIDGE->ETS", IND, "1.1.7", iaToNum("1.1.100"), [0xc2]),                             // T_Ack
       tunnel("ETS->BRIDGE", REQ, "0.0.0", iaToNum("1.1.7"), [0x47, 0xd7, 0x00, 0x36, 0x10, 0x01, 0x00]), // PropertyValue_Write 0/54
       tunnel("ETS->BRIDGE", REQ, "0.0.0", iaToNum("1.1.7"), [0x4a, 0x82, 0x40, 0x00, 0x01, 0x02]), // A_Memory_Write, 2 bytes
-      tunnel("ETS->BRIDGE", REQ, "0.0.0", iaToNum("1.1.7"), [0x4f, 0xf1, 0x10]),                   // A_SecureService
+      tunnel("ETS->BRIDGE", REQ, "0.0.0", iaToNum("1.1.7"), [0x4f, 0xf1, 0x10, ...Array(11).fill(0)]), // A_SecureService, SCF 0x10 and 11 octets
       tunnel("BRIDGE->ETS", IND, "1.1.9", 0x0a01, [0x00, 0x81], 0xbc, true),                        // someone's group write
       "=== second run",
     ].join("\n");
@@ -290,6 +290,27 @@ describe("secured telegrams of a proxy log", () => {
     expect(f.assigned).toEqual([]);
   });
 
+  test("a secured request that comes before any confirmation waits for the tunnel address the confirmation names", () => {
+    const f = indexed(indexText("x.log", [
+      tunnel("ETS->BRIDGE", REQ, "0.0.0", 0, secured({ key: FDSK, src: "1.1.100", dst: 0, group: true, scf: 0x92, seq: seq(1), plaintext: challenge, serial: SERIAL }), 0xb0, true),
+      tunnel("BRIDGE->ETS", CON, "1.1.100", 0, [0x03, 0xf1, 0x92], 0xb0, true),
+      tunnel("BRIDGE->ETS", IND, "15.15.255", 0, secured({ key: FDSK, src: "15.15.255", dst: 0, group: true, scf: 0x93, seq: seq(9), plaintext: Buffer.alloc(12, 1), challenge }), 0xb0, true),
+      // the last line of the file: opened when the file ends, with the address it has by then
+      tunnel("ETS->BRIDGE", REQ, "0.0.0", iaToNum("1.1.7"), secured({ key: TOOL_KEY, src: "1.1.100", dst: iaToNum("1.1.7"), scf: 0x90, seq: seq(3), tpci: 0x43, plaintext: Buffer.from([0x43, 0x00]) })),
+    ].join("\n"), keys()));
+    expect(f.secure.inside).toEqual({
+      "S-A_Data (inner APDU malformed) [tool access]": { sent: 1, received: 0 },
+      "Sync.req [tool access, broadcast]": { sent: 1, received: 0 }, "Sync.res [tool access, broadcast]": { sent: 0, received: 1 },
+    });
+    expect(f.undecoded).toEqual({ count: 1, lines: [4] });
+  });
+
+  test("a secured telegram shorter than its service's layout is counted as undecoded, not as one no key opens", () => {
+    const f = indexed(indexText("x.log", tunnel("BRIDGE->ETS", IND, "1.1.7", iaToNum("1.1.100"), [0x43, 0xf1, 0x92, 0, 0, 0, 0, 0, 1, 0, 0x0a]), keys()));
+    expect(f.secure.inside).toEqual({ "Sync.req (truncated) [tool access]": { sent: 0, received: 1 } });
+    expect(f.undecoded).toEqual({ count: 1, lines: [1] });
+  });
+
   test("an opened telegram whose inner APDU carries transport bits is counted as undecoded", () => {
     const line = tunnel("ETS->BRIDGE", REQ, "1.1.100", iaToNum("1.1.7"), secured({ key: TOOL_KEY, src: "1.1.100", dst: iaToNum("1.1.7"), scf: 0x90, seq: seq(1), tpci: 0x43, plaintext: Buffer.from([0x43, 0x00]) }));
     const f = indexed(indexText("x.log", line, keys()));
@@ -324,10 +345,14 @@ describe("the keys of the corpus", () => {
       expect(md).toContain("- `internal/captures/bench.knxkeys`: 1 device, 0 group");
       expect(md).toContain("- from `CAPTURE_KEYS`: `bench FDSK`");
       expect(md).toContain("- `collections/other.knxkeys`: KEYRING_SIGNATURE_MISMATCH");
-      // Nothing of a key reaches the index.
+      // Nothing of a key or a plaintext reaches the index, in either case of hex or as base64.
+      const written = md + JSON.stringify(index);
       for (const k of [TOOL_KEY, FDSK, OTHER_KEY]) {
-        for (const enc of ["hex", "base64"] as const) expect(md + JSON.stringify(index)).not.toContain(k.toString(enc).toLowerCase().slice(0, 16));
+        expect(written.toLowerCase()).not.toContain(k.toString("hex").slice(0, 16));
+        expect(written).not.toContain(k.toString("base64").slice(0, 16));
       }
+      expect(written.toLowerCase()).not.toContain("03d500381001"); // the opened A_PropertyValue_Read
+      expect(written.toLowerCase()).not.toContain("070707070707"); // the Sync challenge
     } finally { rmSync(root, { recursive: true }); }
   });
 
@@ -528,5 +553,45 @@ corpusDescribe("a secure ETS capture opened with the keyring beside it", () => {
     for (const s of ["Sync.req [tool access]", "Sync.res [tool access]", "A_PropertyExtValue_WriteCon [tool access]", "A_MemoryExtended_Write [tool access]"]) {
       expect((f.secure.inside[s]?.sent ?? 0) + (f.secure.inside[s]?.received ?? 0)).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("property answers", () => {
+  test("are recorded per property, unit and element count, with the error octet, and queried across files", () => {
+    const proxy = indexed(indexText("p.log", [
+      tunnel("BRIDGE->ETS", IND, "1.1.7", iaToNum("1.1.100"), [0x43, 0x40, 0x07, 0x05]), // descriptor 0: 0705
+      tunnel("BRIDGE->ETS", IND, "1.1.7", iaToNum("1.1.100"), [0x43, 0xd6, 0x00, 0x38, 0x00, 0x01]), // 0/56, no element
+      tunnel("BRIDGE->ETS", IND, "1.1.7", iaToNum("1.1.100"), [0x47, 0xd6, 0x00, 0x38, 0x00, 0x01]), // the same again
+      tunnel("BRIDGE->ETS", IND, "1.1.7", iaToNum("1.1.100"), [0x4b, 0xd6, 0x00, 0x0b, 0x00, 0x01, 0x07]), // 0/11, no element, error octet
+      tunnel("BRIDGE->ETS", IND, "1.1.7", iaToNum("1.1.100"), [0x4f, 0xd6, 0x00, 0x38, 0x10, 0x01, 0x00, 0xf8]), // 0/56, one element
+      tunnel("BRIDGE->ETS", IND, "1.1.7", iaToNum("1.1.100"), [0x51, 0xcd, 0x00, 0x11, 0x00, 0x10, 0x33, 0x00, 0x00, 0x01, 0x07]), // t17.1/51, error code
+    ].join("\n")));
+    expect(proxy.undecoded.count).toBe(0);
+    expect(proxy.propertyAnswers).toEqual([
+      { property: "0/11", device: "1.1.7", elements: 0, errorOctet: true, count: 1 },
+      { property: "0/56", device: "1.1.7", elements: 0, errorOctet: false, count: 2 },
+      { property: "0/56", device: "1.1.7", elements: 1, errorOctet: false, count: 1 },
+      { property: "t17.1/51", device: "1.1.7", elements: 0, errorOctet: true, count: 1 },
+    ]);
+    const at = "2026-01-01 00:00:00,000 [1] INFO  Falcon.KnxStack.LL - [#1 0] ";
+    const ets = indexed(indexText("e.txt", [
+      `${at}Received PropertyValue_Response_ind <- 1.1.18 (hc=6, S=1) ObjectIndex=0 PID=56 NumberOfElements=0 StartIndex=1 Data=`,
+      `${at}Received PropertyExtValue_Response_ind <- 1.1.90 (hc=6, S=6) ObjectType=11 Instance=1 PID=64 NumberOfElements=1 StartIndex=1 Data=00 FF`,
+      `${at}Received PropertyValue_Response_ind <- 1.1.18 (hc=6, S=2) ObjectIndex=0 PID=56 NumberOfElements=1`, // no data field
+    ].join("\r\n")));
+    expect(ets.propertyAnswers).toEqual([
+      { property: "0/56", device: "1.1.18", elements: 0, errorOctet: false, count: 1 },
+      { property: "t11.1/64", device: "1.1.90", elements: 1, errorOctet: false, count: 1 },
+    ]);
+    expect(ets.undecoded).toEqual({ count: 1, lines: [3] });
+    const index = { format: "busforge-capture-index/2" as const, dirs: ["captures"], keys: NO_KEYS, files: [proxy, ets, proxy], notIndexed: [] };
+    const rows = propertyAnswerRows(index, ["0/56"]);
+    expect(rows).toEqual([
+      { property: "0/56", elements: 0, errorOctet: false, device: "1.1.7", descriptor0: "0705", tool: "ETS", answers: 4, files: ["p.log", "p.log"] },
+      { property: "0/56", elements: 0, errorOctet: false, device: "1.1.18", descriptor0: "?", tool: "ETS", answers: 1, files: ["e.txt"] },
+      { property: "0/56", elements: 1, errorOctet: false, device: "1.1.7", descriptor0: "0705", tool: "ETS", answers: 2, files: ["p.log", "p.log"] },
+    ]);
+    expect(renderPropertyAnswers(rows)).toContain("| 0/56 | 0 | no | 1.1.7 | 0705 | ETS | 4 | `p.log`, `p.log` |");
+    expect(propertyAnswerRows(index)).toHaveLength(6);
   });
 });

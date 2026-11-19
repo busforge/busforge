@@ -15,10 +15,10 @@ import { corpusRoot, refuseDotenv } from "./corpus.ts";
 
 export const PASSWORDS_ENV = "KNXPROJ_PASSWORDS";
 const ARCHIVE = /\.(knxproj|knxprod|busforge)$/;
-const NEEDS_PASSWORD = new Set(["PASSWORD_REQUIRED", "BUSFORGE_PASSWORD_REQUIRED"]);
+export const NEEDS_PASSWORD = new Set(["PASSWORD_REQUIRED", "BUSFORGE_PASSWORD_REQUIRED"]);
 // Refusals that mean this candidate is not the archive's password, so the next one is tried. A zip with a
 // bad entry authenticates as DECRYPT_FAILED too, which is why the last refusal is named when none opens it.
-const NOT_THIS_PASSWORD = new Set(["WRONG_PASSWORD", "DECRYPT_FAILED", "ZIPCRYPTO_PASSWORD_ENCODING", "BUSFORGE_WRONG_PASSWORD"]);
+export const NOT_THIS_PASSWORD = new Set(["WRONG_PASSWORD", "DECRYPT_FAILED", "ZIPCRYPTO_PASSWORD_ENCODING", "BUSFORGE_WRONG_PASSWORD"]);
 
 // Every archive of the corpus, relative to its root, sorted. The corpus's own git directory holds none.
 export function corpusArchives(): string[] {
@@ -48,7 +48,7 @@ export const passwords = (): string[] => {
   }
   return given;
 };
-const codeOf = (e: unknown) => (e as { code?: string }).code;
+export const codeOf = (e: unknown) => (e as { code?: string }).code;
 export const describeFailure = (e: unknown) => `${codeOf(e) ?? "ERROR"}: ${(e as Error).message ?? String(e)}`;
 
 // Opens `file` the way Busforge does, with `password` for the one layer that has one. A project's 0.xml

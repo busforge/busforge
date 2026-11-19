@@ -36,7 +36,7 @@ import { pcapToLog } from "./pcap.ts";
 import { BUSSARD_SYNTHETIC_DIR, corpusRoot, CORPUS_ENV, refuseDotenv } from "./corpus.ts";
 import { passwords } from "./corpus-archives.ts";
 import {
-  SecureCaptureDecoder, addKeys, corpusKeys, emptyKeys, parseKeyList, type KeyLoad, type NamedKey, type SecureFrame, type SecureKeys,
+  SecureCaptureDecoder, addKeys, corpusKeys, emptyKeys, groupKeyCount, parseKeyList, type KeyLoad, type NamedKey, type SecureFrame, type SecureKeys,
 } from "./secure-capture.ts";
 
 export const INDEX_DIRS = ["captures", "internal/captures", "collections"] as const;
@@ -82,9 +82,14 @@ export interface IndexedFile {
   secure: { telegrams: number; shown: number; inside: Record<string, ServiceCount>; openedWith: string[] };
   // ETS's download actions on its log, e.g. "StartLoadDevice(Partial) 1.1.18".
   etsActions: string[];
+  // The property answers (A_PropertyValue_Response, A_PropertyExtValue_Response, opened secured ones included): per
+  // property in the form of `properties`, answering unit, element count and whether octets follow an answer of
+  // no element (the error octet), how many such answers.
+  propertyAnswers: PropertyAnswer[];
   // Lines of this format whose telegram did not decode, with the first line numbers.
   undecoded: { count: number; lines: number[] };
 }
+export interface PropertyAnswer { property: string; device: string; elements: number; errorOctet: boolean; count: number }
 export interface NotIndexed { file: string; reason: string }
 // Where the keys came from: the corpus files read with how many keys each added, the ones not read with the
 // reason, and the names of the keys from the environment.
@@ -98,8 +103,8 @@ export interface CaptureIndex {
 // "tool access" for SCF bit 7, "broadcast" for the destination 0/0/0, "group" for another group address. ETS's
 // log shows neither the SCF nor a Sync's access, so its rows name only the destination; a telegram ETS logs
 // encrypted is "S-A_Data (not shown)".
-export function secureInside(service: string, q: { toolAccess?: boolean; group?: boolean; dst?: number }): string {
-  const tags = [...(q.toolAccess ? ["tool access"] : []), ...(q.group ? [q.dst === 0 ? "broadcast" : "group"] : [])];
+export function secureInside(service: string, q: { toolAccess?: boolean; group?: boolean; broadcast?: boolean }): string {
+  const tags = [...(q.toolAccess ? ["tool access"] : []), ...(q.group ? [q.broadcast ? "broadcast" : "group"] : [])];
   return tags.length ? `${service} [${tags.join(", ")}]` : service;
 }
 
@@ -200,10 +205,14 @@ class FileStats {
   readonly openedWith = new Set<string>();
   notOnBus = 0;
   readonly etsActions = new Set<string>();
+  readonly propertyAnswers = new Map<string, PropertyAnswer>();
   readonly undecoded: number[] = [];
   // The individual address of the tunnel, which a tool's request leaves as 0.0.0 and the interface's
-  // confirmation carries: the source a secured request was authenticated with.
+  // confirmation carries: the source a secured request was authenticated with. Such a request waits for the
+  // confirmation that follows it (`pending`, read with the line it came from) before it is opened.
   tunnelIa = 0;
+  line = 0;
+  pending: { line: number; open: () => boolean } | null = null;
 
   constructor(readonly decoder: SecureCaptureDecoder) {}
 
@@ -211,6 +220,12 @@ class FileStats {
     const c = into.get(name) ?? { sent: 0, received: 0 };
     if (sent) c.sent++; else c.received++;
     into.set(name, c);
+  }
+  propertyAnswer(property: string, device: string, elements: number, errorOctet: boolean): void {
+    const key = `${property}|${device}|${elements}|${errorOctet}`;
+    const a = this.propertyAnswers.get(key) ?? { property, device, elements, errorOctet, count: 0 };
+    a.count++;
+    this.propertyAnswers.set(key, a);
   }
   device(address: string, descriptor0?: string): void {
     const d = this.devices.get(address) ?? new Set<string>();
@@ -235,7 +250,9 @@ class FileStats {
         openedWith: [...this.openedWith].sort(),
       },
       etsActions: [...this.etsActions].sort(),
-      undecoded: { count: this.undecoded.length, lines: this.undecoded.slice(0, 5) },
+      propertyAnswers: [...this.propertyAnswers.values()].sort((a, b) =>
+        propertyOrder(a.property, b.property) || byAddress(a.device, b.device) || a.elements - b.elements || Number(a.errorOctet) - Number(b.errorOctet)),
+      undecoded: { count: this.undecoded.length, lines: [...this.undecoded].sort((a, b) => a - b).slice(0, 5) },
     };
   }
 }
@@ -316,8 +333,13 @@ function applicationTelegram(st: FileStats, apci: number, tpdu: Buffer, sent: bo
   if (!payloadFits(apci, tpdu, data)) return false;
   if (PROPERTY_APCIS.has(apci)) {
     st.properties.add(`${data[0]}/${data[1]}`);
+    // object index, PID, element count (4 bits) and start index (12 bits), then the elements or the error octet
+    if (apci === APCI.PROPERTY_RESPONSE) st.propertyAnswer(`${data[0]}/${data[1]}`, src, data[2] >> 4, data[2] >> 4 === 0 && data.length > 4);
   } else if (EXT_PROPERTY_APCIS.has(apci)) {
-    st.properties.add(`t${data.readUInt16BE(0)}.${(data[2] << 4) | (data[3] >> 4)}/${((data[3] & 0x0f) << 8) | data[4]}`);
+    const property = `t${data.readUInt16BE(0)}.${(data[2] << 4) | (data[3] >> 4)}/${((data[3] & 0x0f) << 8) | data[4]}`;
+    st.properties.add(property);
+    // object type, instance and PID (5 octets), element count (1), start index (2), then the elements or the error code
+    if (apci === APCI.PROPERTY_EXT_RESPONSE) st.propertyAnswer(property, src, data[5], data[5] === 0 && data.length > 8);
   } else if (apci === APCI.DEVICE_DESCRIPTOR_RESPONSE) {
     st.device(src, hex(data));
   } else if (apci === APCI.INDIVIDUAL_ADDRESS_WRITE) {
@@ -335,7 +357,8 @@ function applicationTelegram(st: FileStats, apci: number, tpdu: Buffer, sent: bo
 // A secured telegram as the decoder left it. An opened S-A_Data's inner telegram is read like any other; one no
 // key opened is counted by what its frame shows in clear.
 function secureTelegram(st: FileStats, fr: SecureFrame, sent: boolean, src: string, group: boolean, dst: number): boolean {
-  const q = { toolAccess: fr.toolAccess, group, dst };
+  const q = { toolAccess: fr.toolAccess, group, broadcast: group && dst === 0 };
+  if (fr.truncated) { st.service(secureInside(`${fr.service} (truncated)`, q), sent, st.secureInside); return false; }
   if (!fr.opened) { st.service(secureInside(`${fr.service} (not opened)`, q), sent, st.secureInside); return true; }
   st.secureShown++;
   st.openedWith.add(fr.opened.key);
@@ -363,9 +386,11 @@ function tunnelTelegram(st: FileStats, f: Buffer, hexFrame: string, sent: boolea
   const cemi = cemiOf(f), ctrl1 = cemi[2 + cemi[1]];
   if (fr.code === CEMI.LDATA_CON) {
     if (fr.src !== 0) st.tunnelIa = fr.src;
+    openPending(st);
     if (ctrl1 & CEMI_CON_ERROR) st.notOnBus++;
     return true;
   }
+  openPending(st);
   st.telegrams++;
   const src = numToIa(fr.src), dst = fr.dst;
   if (sent && fr.code === CEMI.LDATA_REQ && (!fr.group || dst === 0)) st.builders.add(FRAME_BUILDERS[ctrl1] ?? "other");
@@ -386,8 +411,19 @@ function tunnelTelegram(st: FileStats, f: Buffer, hexFrame: string, sent: boolea
   const apci = ((t[0] & 0x03) << 8) | t[1];
   const ok = applicationTelegram(st, apci, t, sent, src);
   if (apci !== 0x3f1 || !ok) return ok;
-  const authenticated = fr.code === CEMI.LDATA_REQ && fr.src === 0 ? st.tunnelIa : fr.src;
-  return secureTelegram(st, st.decoder.open(authenticated, dst, fr.group, t), sent, src, fr.group, dst);
+  const open = () => secureTelegram(st, st.decoder.open(fr.code === CEMI.LDATA_REQ && fr.src === 0 ? st.tunnelIa : fr.src, dst, fr.group, t), sent, src, fr.group, dst);
+  if (fr.code !== CEMI.LDATA_REQ || fr.src !== 0) return open();
+  st.pending = { line: st.line, open };
+  return true;
+}
+
+// Opens the secured request waiting for its confirmation, with the tunnel address known now; a request that does
+// not decode counts its own line.
+function openPending(st: FileStats): void {
+  const p = st.pending;
+  if (!p) return;
+  st.pending = null;
+  if (!p.open()) st.undecoded.push(p.line);
 }
 
 // cEMI local management on the interface: its own interface objects, not a unit's.
@@ -437,11 +473,12 @@ const ETS_NAMES: Record<string, string> = {
   Ack: "T_Ack", Nak: "T_Nak", Connect: "T_Connect", Disconnect: "T_Disconnect", Sec: "A_SecureService",
   ConfirmedRestart: "A_Restart (master reset)", ConfirmedRestart_Response: "A_Restart_Response",
 };
+const etsName = (service: string) => ETS_NAMES[service] ?? `A_${service}`;
 const IA = /^\d+\.\d+\.\d+$/, GA = /^\d+\/\d+\/\d+$/;
 
 // False where a property service names no property in a form read here.
 function etsTelegram(st: FileStats, sent: boolean, service: string, addr: string, to: string | undefined, rest: string): boolean {
-  st.service(ETS_NAMES[service] ?? `A_${service}`, sent);
+  st.service(etsName(service), sent);
   // A received group telegram's first address is its sender, not a unit the tool addressed; 0/0/0 is the
   // broadcast an address response goes to. A sent one names only the group address.
   if (to !== undefined && to !== "0/0/0") st.groups.add(to);
@@ -455,6 +492,12 @@ function etsTelegram(st: FileStats, sent: boolean, service: string, addr: string
   if (prop) st.properties.add(`${prop[1]}/${prop[2]}`);
   const ext = rest.match(/ObjectType=(\d+) Instance=(\d+) PID=(\d+)/);
   if (ext) st.properties.add(`t${ext[1]}.${ext[2]}/${ext[3]}`);
+  if ((service === "PropertyValue_Response" || service === "PropertyExtValue_Response") && (prop || ext) && IA.test(addr)) {
+    const answer = rest.match(/NumberOfElements=(\d+) StartIndex=\d+ Data=([0-9A-Fa-f ]*)/);
+    if (!answer) return false;
+    const elements = Number(answer[1]);
+    st.propertyAnswer(prop ? `${prop[1]}/${prop[2]}` : `t${ext![1]}.${ext![2]}/${ext![3]}`, addr, elements, elements === 0 && answer[2].trim() !== "");
+  }
   return !(/Property/.test(service) && !prop && !ext);
 }
 
@@ -473,12 +516,12 @@ function etsLine(st: FileStats, line: string): boolean | null {
   if (service === "Sec") {
     st.secure++;
     const target = to ?? addr;
-    const q = { group: GA.test(target), dst: target === "0/0/0" ? 0 : -1 };
+    const q = { group: GA.test(target), broadcast: target === "0/0/0" };
     const inner = rest.match(ETS_INNER);
     const sync = rest.match(/^\s*Sync(Req|Res)\b/);
     if (inner) {
       st.secureShown++;
-      st.service(secureInside(ETS_NAMES[inner[1]] ?? `A_${inner[1]}`, q), sent, st.secureInside);
+      st.service(secureInside(etsName(inner[1]), q), sent, st.secureInside);
       ok = etsTelegram(st, sent, inner[1], inner[4], inner[5], inner[7]) && ok;
     } else if (sync) {
       st.secureShown++;
@@ -554,6 +597,7 @@ export function indexText(file: string, text: string, keys: SecureKeys = emptyKe
   const st = new FileStats(new SecureCaptureDecoder(keys));
   let firstOther = 0;
   lines.forEach((line, i) => {
+    st.line = i + 1;
     let ok: boolean | null = null;
     const p = line.match(PROXY_LINE);
     if (p) { formats.add("knxproxy"); ok = proxyLine(st, p); }
@@ -569,6 +613,7 @@ export function indexText(file: string, text: string, keys: SecureKeys = emptyKe
     }
     if (ok === false) st.undecoded.push(i + 1);
   });
+  openPending(st);
   if (formats.size > 1) return { file, reason: `mixed formats (${[...formats].sort().join(", ")}): no single reader applies` };
   const [format] = [...formats];
   if (!format) {
@@ -619,11 +664,11 @@ export function buildIndex(root: string, input: KeyInput = { passwords: [], envi
   const files: string[] = [];
   for (const d of INDEX_DIRS) walk(root, d, files);
   files.sort();
-  const load = corpusKeys(root, files.filter((f) => /\.(knxproj|knxkeys)$/.test(f)), [...input.passwords, ...documentedKeyringPasswords(root)]);
+  const load = corpusKeys(root, files.filter((f) => /\.(knxproj|knxkeys)$/i.test(f)), [...input.passwords, ...documentedKeyringPasswords(root)]);
   addKeys(load.keys, input.environment);
   const keys: KeySources = {
     read: load.read, notRead: load.notRead, environment: input.environment.map((k) => k.name),
-    deviceKeys: load.keys.device.length, groupKeys: [...load.keys.group.values()].reduce((n, l) => n + l.length, 0),
+    deviceKeys: load.keys.device.length, groupKeys: groupKeyCount(load.keys),
   };
   const index: CaptureIndex = { format: "busforge-capture-index/2", dirs: INDEX_DIRS, keys, files: [], notIndexed: [] };
   for (const f of files) {
@@ -696,7 +741,7 @@ export function renderMarkdown(index: CaptureIndex): string {
 
   const k = index.keys;
   out.push("## Keys", "");
-  out.push(`Secured telegrams were opened with ${k.deviceKeys} device keys (tool keys, FDSKs) and ${k.groupKeys} group keys, held in`);
+  out.push(`Every secured telegram was tried with the ${k.deviceKeys} device keys (tool keys, FDSKs) or the ${k.groupKeys} group keys loaded, held in`);
   out.push("memory only. A key is named by the first file that holds it; which keys opened a capture's telegrams is in");
   out.push("`index.json` (`secure.openedWith`).", "");
   const added = k.read.filter((r) => r.deviceKeys + r.groupKeys > 0);
@@ -705,7 +750,7 @@ export function renderMarkdown(index: CaptureIndex): string {
   out.push(k.environment.length ? `- from \`${KEYS_ENV}\`: ${k.environment.map((n) => `\`${n}\``).join(", ")}` : `- none from \`${KEYS_ENV}\``);
   out.push("");
   if (k.notRead.length) {
-    out.push("Not read, so their keys are missing (give the password in `KNXPROJ_PASSWORDS`):", "");
+    out.push("Not read, so their keys are missing (a password `KNXPROJ_PASSWORDS` lacks, or the reason given):", "");
     for (const n of k.notRead) out.push(`- \`${n.file}\`: ${n.reason}`);
     out.push("");
   }
@@ -746,10 +791,52 @@ export function renderMarkdown(index: CaptureIndex): string {
   return out.join("\n");
 }
 
+// ── the property answer query ────────────────────────────────────────────────
+
+// One row of the query: a property's answers of one element count from one unit, with its device descriptor 0 and
+// the tool, over every file that shows them.
+export interface PropertyAnswerRow { property: string; elements: number; errorOctet: boolean; device: string; descriptor0: string; tool: string; answers: number; files: string[] }
+
+// The property answers of the index, for the properties named (`<object index>/<PID>`, `t<type>.<instance>/<PID>`)
+// or all of them. A unit's descriptor 0 is the one its file shows, "?" where the file shows none.
+export function propertyAnswerRows(index: CaptureIndex, properties: string[] = []): PropertyAnswerRow[] {
+  const rows = new Map<string, PropertyAnswerRow>();
+  for (const f of index.files) {
+    for (const a of f.propertyAnswers) {
+      if (properties.length && !properties.includes(a.property)) continue;
+      const descriptor0 = f.devices.find((d) => d.address === a.device)?.descriptor0.join(", ") || "?";
+      const tool = toolCell(f) || f.format;
+      const key = [a.property, a.elements, a.errorOctet, a.device, descriptor0, tool].join("|");
+      const row = rows.get(key) ?? { property: a.property, elements: a.elements, errorOctet: a.errorOctet, device: a.device, descriptor0, tool, answers: 0, files: [] };
+      row.answers += a.count;
+      row.files.push(f.file);
+      rows.set(key, row);
+    }
+  }
+  return [...rows.values()].sort((a, b) => propertyOrder(a.property, b.property) || a.elements - b.elements || byAddress(a.device, b.device) || byText(a.tool, b.tool));
+}
+
+export function renderPropertyAnswers(rows: PropertyAnswerRow[]): string {
+  const out = ["| Property | Elements | Error octet | Unit | Descriptor 0 | Tool | Answers | Files |", "|---|---|---|---|---|---|---|---|"];
+  for (const r of rows) {
+    const files = r.files.length > 3 ? `${r.files.slice(0, 3).map((f) => `\`${f}\``).join(", ")} and ${r.files.length - 3} more` : r.files.map((f) => `\`${f}\``).join(", ");
+    out.push(`| ${r.property} | ${r.elements} | ${r.errorOctet ? "yes" : "no"} | ${r.device} | ${cell(r.descriptor0)} | ${cell(r.tool)} | ${r.answers} | ${cell(files)} |`);
+  }
+  return out.join("\n") + "\n";
+}
+
 if (import.meta.main) {
   try {
     const root = corpusRoot();
     if (root === null) throw new Error(`${CORPUS_ENV} is unset; the index is built from the private corpus (docs/testing.md, "The private corpus")`);
+    // --properties [<property>...]: query the written index.json, write nothing.
+    const query = process.argv.indexOf("--properties");
+    if (query >= 0) {
+      const index = JSON.parse(readFileSync(join(root, INDEX_JSON), "utf8")) as CaptureIndex;
+      if (index.format !== "busforge-capture-index/2") throw new Error(`${INDEX_JSON} is ${String(index.format)}; write the index again first`);
+      process.stdout.write(renderPropertyAnswers(propertyAnswerRows(index, process.argv.slice(query + 1))));
+      process.exit(0);
+    }
     refuseDotenv(KEYS_ENV);
     const index = buildIndex(root, { passwords: passwords(), environment: parseKeyList(process.env[KEYS_ENV]) });
     writeFileSync(join(root, INDEX_JSON), JSON.stringify(index, null, 1) + "\n");

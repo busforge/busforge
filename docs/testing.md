@@ -330,6 +330,23 @@ A telegram no key opens stays in the count as `(not opened)`. The keys stay in m
 the file a key came from and which keys opened a capture, never a key or a plaintext, and lists each
 project or keyring it could not open with the reason, so an index written without the passwords says so.
 
+#### Property answers
+
+Per file the index also records every property answer (`A_PropertyValue_Response`,
+`A_PropertyExtValue_Response`, those inside opened secured telegrams and those in ETS's log included):
+the property, the answering unit, the element count, and whether octets follow an answer of no
+element (the error octet). A device contract that depends on how units answer a property is checked
+against the whole corpus with one query of the written index, which writes nothing:
+
+```bash
+BUSFORGE_CORPUS=<corpus> bun run tools/capture-index.ts --properties 0/56 t17.1/51
+# | Property | Elements | Error octet | Unit | Descriptor 0 | Tool | Answers | Files |
+```
+
+Without property arguments it lists every property. Each row is one property, element count, error
+octet, unit, device descriptor 0 (as that capture shows it, `?` where it shows none) and tool, summed
+over the captures that show it.
+
 ## Why the golden snapshot is not a correctness proof
 
 The golden file is generated from busforge's own output. It locks the output against accidental

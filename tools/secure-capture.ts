@@ -4,9 +4,11 @@
 // telegrams with it; tools/capture-index.ts counts the services inside them.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { numToGa, numToIa } from "../packages/knx/src/frame.ts";
 import { loadKnxproj } from "../packages/project/src/knxproj.ts";
 import { readKeyring } from "../packages/project/src/keyring.ts";
 import { secureDecode } from "../packages/knx/src/secure.ts";
+import { NEEDS_PASSWORD, NOT_THIS_PASSWORD, codeOf, describeFailure } from "./corpus-archives.ts";
 
 export interface NamedKey { name: string; key: Buffer }
 // Device keys (tool keys and FDSKs) are tried on every tool-access telegram; a group key only on telegrams to its
@@ -14,6 +16,7 @@ export interface NamedKey { name: string; key: Buffer }
 export interface SecureKeys { device: NamedKey[]; group: Map<number, NamedKey[]> }
 
 export const emptyKeys = (): SecureKeys => ({ device: [], group: new Map() });
+export const groupKeyCount = (keys: SecureKeys) => [...keys.group.values()].reduce((n, l) => n + l.length, 0);
 
 // "name=<32 hex>,..." as the environment gives keys.
 export function parseKeyList(s: string | undefined): NamedKey[] {
@@ -22,9 +25,8 @@ export function parseKeyList(s: string | undefined): NamedKey[] {
     if (at < 0) throw new Error(`key entry ${i + 1} is not name=<32 hex>`);
     const name = kv.slice(0, at).trim();
     const hex = kv.slice(at + 1).trim();
-    const key = Buffer.from(hex, "hex");
-    if (!/^[0-9a-fA-F]{32}$/.test(hex) || key.length !== 16) throw new Error(`key ${name} is not 16 bytes of hex`);
-    return { name, key };
+    if (!/^[0-9a-fA-F]{32}$/.test(hex)) throw new Error(`key ${name} is not 16 bytes of hex`);
+    return { name, key: Buffer.from(hex, "hex") };
   });
 }
 
@@ -42,47 +44,40 @@ export function addKeys(keys: SecureKeys, device: NamedKey[], group: { raw: numb
   for (const g of group) addGroup(keys, g.raw, g.key);
 }
 
-export const ia = (n: number) => `${(n >> 12) & 0xf}.${(n >> 8) & 0xf}.${n & 0xff}`;
-export const ga = (n: number) => `${(n >> 11) & 0x1f}/${(n >> 8) & 0x7}/${n & 0xff}`;
-
 // ── keys from the corpus ─────────────────────────────────────────────────────
 
 export interface KeySource { file: string; deviceKeys: number; groupKeys: number }
 export interface KeyLoad { keys: SecureKeys; read: KeySource[]; notRead: { file: string; reason: string }[] }
 
-// Refusals that mean "not this password": the next one is tried.
-const NOT_THIS_PASSWORD = new Set(["PASSWORD_REQUIRED", "WRONG_PASSWORD", "DECRYPT_FAILED", "ZIPCRYPTO_PASSWORD_ENCODING"]);
-const codeOf = (e: unknown) => (e as { code?: string }).code;
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
-
 // The tool keys and group keys of every ETS project (`.knxproj`) and the tool keys, FDSKs and group keys of
-// every ETS keyring (`.knxkeys`) among `files` (relative to `root`). An archive or keyring is tried without a
-// password and with each of `passwords`; one none opens is listed with the reason, never skipped. A key is named
-// by its file and the device's address or the group address, the first file that holds it.
+// every ETS keyring (`.knxkeys`) among `files` (relative to `root`). A project is tried without a password and
+// with each of `passwords`, a keyring with each of `passwords`; one none opens, or one that cannot be read, is
+// listed with the reason, never skipped. A key is named by its file and the device's address or the group
+// address, the first file that holds it.
 export function corpusKeys(root: string, files: string[], passwords: string[]): KeyLoad {
   const load: KeyLoad = { keys: emptyKeys(), read: [], notRead: [] };
   for (const file of files) {
-    const bytes = readFileSync(join(root, file));
-    const keyring = file.endsWith(".knxkeys");
+    const keyring = /\.knxkeys$/i.test(file);
+    let bytes: Buffer;
+    try { bytes = readFileSync(join(root, file)); }
+    catch (e) { load.notRead.push({ file, reason: `unreadable: ${describeFailure(e)}` }); continue; }
     let lastRefusal = keyring && passwords.length === 0 ? "a keyring, and no password given" : "";
     let opened = false;
     for (const pw of keyring ? passwords : [undefined, ...passwords]) {
+      const before = { d: load.keys.device.length, g: groupKeyCount(load.keys) };
       try {
-        const before = { d: load.keys.device.length, g: [...load.keys.group.values()].reduce((n, l) => n + l.length, 0) };
         if (keyring) keyringKeys(load.keys, file, bytes.toString("utf8"), pw!);
         else projectKeys(load.keys, file, bytes, pw);
-        load.read.push({
-          file,
-          deviceKeys: load.keys.device.length - before.d,
-          groupKeys: [...load.keys.group.values()].reduce((n, l) => n + l.length, 0) - before.g,
-        });
-        opened = true;
-        break;
       } catch (e) {
-        lastRefusal = `${codeOf(e) ?? "ERROR"}: ${message(e)}`;
-        // A keyring's wrong password shows as a key that does not decrypt or a signature that does not verify.
-        if (!keyring && !NOT_THIS_PASSWORD.has(codeOf(e) ?? "")) break;
+        lastRefusal = describeFailure(e);
+        // A keyring's wrong password shows as a signature that does not verify; any refusal tries the next one.
+        const code = codeOf(e) ?? "";
+        if (keyring || NEEDS_PASSWORD.has(code) || NOT_THIS_PASSWORD.has(code)) continue;
+        break;
       }
+      load.read.push({ file, deviceKeys: load.keys.device.length - before.d, groupKeys: groupKeyCount(load.keys) - before.g });
+      opened = true;
+      break;
     }
     if (!opened) load.notRead.push({ file, reason: lastRefusal });
   }
@@ -95,7 +90,7 @@ function projectKeys(keys: SecureKeys, file: string, bytes: Buffer, password: st
   for (const s of p.deviceSecurity) {
     addDevice(keys, { name: `${file} tool key ${address.get(s.deviceId) ?? s.deviceId}`, key: Buffer.from(s.toolKey, "base64") });
   }
-  for (const g of p.groupKeys) addGroup(keys, g.raw, { name: `${file} group key ${ga(g.raw)}`, key: Buffer.from(g.key, "base64") });
+  for (const g of p.groupKeys) addGroup(keys, g.raw, { name: `${file} group key ${numToGa(g.raw)}`, key: Buffer.from(g.key, "base64") });
 }
 
 function keyringKeys(keys: SecureKeys, file: string, xml: string, password: string): void {
@@ -104,12 +99,15 @@ function keyringKeys(keys: SecureKeys, file: string, xml: string, password: stri
     if (d.toolKey) addDevice(keys, { name: `${file} tool key ${d.individualAddress}`, key: Buffer.from(d.toolKey) });
     if (d.fdsk) addDevice(keys, { name: `${file} FDSK ${d.individualAddress}`, key: Buffer.from(d.fdsk) });
   }
-  for (const g of k.groups) addGroup(keys, g.address, { name: `${file} group key ${ga(g.address)}`, key: Buffer.from(g.key) });
+  for (const g of k.groups) addGroup(keys, g.address, { name: `${file} group key ${numToGa(g.address)}`, key: Buffer.from(g.key) });
 }
 
 // ── one telegram ─────────────────────────────────────────────────────────────
 
 export const SCF_SERVICE: Record<number, string> = { 0: "S-A_Data", 2: "Sync.req", 3: "Sync.res" };
+const MAC = 4;
+// The shortest body of each service: SCF and sequence, a Sync.req's serial, at least one octet of payload, the MAC.
+const MIN_BODY: Record<number, number> = { 0: 1 + 6 + 1 + MAC, 2: 1 + 6 + 6 + 1 + MAC, 3: 1 + 6 + 1 + MAC };
 
 export interface SecureFrame {
   scf: number;
@@ -117,6 +115,8 @@ export interface SecureFrame {
   service: string;
   // SCF bit 7: the tool key or FDSK of a device, whatever the destination.
   toolAccess: boolean;
+  // A body shorter than its service's layout: no key was tried.
+  truncated?: boolean;
   // A Sync.req's target serial, in clear.
   serial?: Buffer;
   // The key that authenticated the telegram, its sequence (a Sync.res: random XOR challenge, recovered) and the
@@ -142,24 +142,24 @@ export class SecureCaptureDecoder {
   open(src: number, dst: number, isGroup: boolean, tpdu: Buffer): SecureFrame {
     const outerTpci = tpdu[0];
     const body = tpdu.subarray(2);
-    const scf = body[0];
+    const scf = body[0] ?? 0;
     const service = scf & 0x07;
     const toolAccess = (scf & 0x80) !== 0;
     const frame: SecureFrame = { scf, service: SCF_SERVICE[service] ?? `svc${service}`, toolAccess };
+    if (body.length < (MIN_BODY[service] ?? MIN_BODY[0])) { frame.truncated = true; return frame; }
     let aadFor = (s: number) => Buffer.from([s]);
     let bodies = [body];
 
     if (service === 2) {
       // Sync.req carries the target serial in clear after the sequence, and in the AAD.
-      if (body.length < 13) return frame;
       const serial = Buffer.from(body.subarray(7, 13));
       frame.serial = serial;
       aadFor = (s) => Buffer.concat([Buffer.from([s]), serial]);
       bodies = [Buffer.concat([body.subarray(0, 7), body.subarray(13)])];
     } else if (service === 3) {
       // Sync.res: the sequence slot is random XOR the requester's challenge.
-      const chs = this.challenges.get(isGroup ? `* -> ${ga(dst)}` : `${ia(dst)} -> ${ia(src)}`);
-      if (!chs || body.length < 7) { frame.noRequest = true; return frame; }
+      const chs = this.challenges.get(isGroup ? `* -> ${numToGa(dst)}` : `${numToIa(dst)} -> ${numToIa(src)}`);
+      if (!chs) { frame.noRequest = true; return frame; }
       bodies = chs.map((ch) => {
         const r = Buffer.alloc(6);
         for (let i = 0; i < 6; i++) r[i] = body[1 + i] ^ ch[i];
@@ -180,7 +180,7 @@ export class SecureCaptureDecoder {
         this.lastKey.set(pair, k);
         frame.opened = { key: k.name, seq: Buffer.from(r.seq), plaintext: Buffer.from(r.plaintext) };
         if (service === 2) {
-          const at = isGroup ? `* -> ${ga(dst)}` : `${ia(src)} -> ${ia(dst)}`;
+          const at = isGroup ? `* -> ${numToGa(dst)}` : `${numToIa(src)} -> ${numToIa(dst)}`;
           this.challenges.set(at, isGroup ? [...(this.challenges.get(at) ?? []), frame.opened.plaintext] : [frame.opened.plaintext]);
         }
         return frame;
