@@ -35,6 +35,9 @@ describe("the state marks of a device", () => {
     const html = render(<ChangePill size="md" targets={{ changes: { action: "Open flashing", onClick: noop } }} changes={changes({ params: 1, security: "unknown" })} />);
     expect(tag(html, "device-changes")).toBe("button");
     expect(tag(html, "security-unknown")).toBe("span");
+    // As tall on a touch screen as the mark beside it that opens something; a row's marks keep their size.
+    expect(/<span[^>]*pointer-coarse:h-8[^>]*data-testid="security-unknown"/.test(html)).toBe(true);
+    expect(render(<ChangePill changes={changes({ neverProgrammed: true })} />)).not.toContain("pointer-coarse:h-8");
   });
 
   test("a device ETS downloaded once is not called never programmed: it names what ETS has still to download, and opens the same remedy", () => {

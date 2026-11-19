@@ -709,8 +709,8 @@ export function DeviceConfig() {
   return (
     <div className="space-y-4">
       {/* Two rows: who the device is, what state it is in and what stands against it, every mark in one
-          height; then the filter of its parameters and what can be done with it, right-aligned as one
-          group. Pinned below the project bar on wide windows, so the device, its state and its actions
+          height; then the filter of its parameters on the left and what can be done with it, right-aligned
+          as one group. Pinned below the project bar on wide windows, so the device, its state and its actions
           stay in view while its parameters scroll. */}
       <header ref={headerRef} className="space-y-3 lg:sticky lg:top-(--bar-h) lg:z-10 lg:-mx-2 lg:border-b lg:border-border/60 lg:bg-background/95 lg:px-2 lg:pt-2 lg:pb-3 lg:backdrop-blur" data-testid="device-header">
         <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">

@@ -29,11 +29,17 @@ const badgeVariants = cva(
         true: "font-mono",
         false: "",
       },
+      // As tall on a touch screen as a BadgeButton, for a static mark that sits among them.
+      tapHeight: {
+        true: "pointer-coarse:h-8",
+        false: "",
+      },
     },
     defaultVariants: {
       tone: "neutral",
       size: "md",
       mono: false,
+      tapHeight: false,
     },
   }
 )
@@ -46,6 +52,7 @@ function Badge({
   tone,
   size,
   mono,
+  tapHeight,
   asChild = false,
   ...props
 }: React.ComponentProps<"span"> & BadgeVariants & { asChild?: boolean }) {
@@ -54,7 +61,7 @@ function Badge({
     <Comp
       data-slot="badge"
       data-tone={tone ?? "neutral"}
-      className={cn(badgeVariants({ tone, size, mono }), className)}
+      className={cn(badgeVariants({ tone, size, mono, tapHeight }), className)}
       {...props}
     />
   )
@@ -68,15 +75,15 @@ function BadgeButton({
   mono,
   type = "button",
   ...props
-}: React.ComponentProps<"button"> & BadgeVariants) {
+}: React.ComponentProps<"button"> & Omit<BadgeVariants, "tapHeight">) {
   return (
     <button
       data-slot="badge-button"
       data-tone={tone ?? "neutral"}
       type={type}
       className={cn(
-        badgeVariants({ tone, size, mono }),
-        "cursor-pointer outline-none transition-[filter,box-shadow] pointer-coarse:h-8 hover:not-disabled:brightness-125 focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50",
+        badgeVariants({ tone, size, mono, tapHeight: true }),
+        "cursor-pointer outline-none transition-[filter,box-shadow] hover:not-disabled:brightness-125 focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50",
         className
       )}
       {...props}

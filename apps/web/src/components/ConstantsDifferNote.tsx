@@ -9,5 +9,5 @@ export function ConstantsDifferNote({ result }: { result: FlashResult }) {
   if (result.kind !== "unchanged" || !result.constantsDiffer?.length) return null;
   // A long list is cut to three lines; the whole text stays in the tooltip.
   const msg = t("flash.constantsDiffer", { params: result.constantsDiffer.map((c) => c.label).join(", ") });
-  return <span className="line-clamp-3 text-amber-600 dark:text-amber-400" title={msg} data-testid="flash-constants-differ">{msg}</span>;
+  return <span className="line-clamp-3 text-warning" title={msg} data-testid="flash-constants-differ">{msg}</span>;
 }

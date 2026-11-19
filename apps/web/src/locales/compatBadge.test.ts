@@ -5,7 +5,8 @@ import de from "@/locales/de";
 
 const i18n = createInstance();
 
-// The badge's own text is short; what it leaves out is in its popover.
+// The product badge (components/CompatibilityBadge.tsx) keeps its own text short; what it leaves out is in
+// its popover.
 describe("the product badge's words", () => {
   beforeAll(() => i18n.init({ resources: { en: { translation: en }, de: { translation: de } }, lng: "en", interpolation: { escapeValue: false } }));
 
