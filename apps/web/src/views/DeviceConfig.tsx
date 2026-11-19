@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import { AlertTriangle, ChevronDown, ChevronLeft, ChevronsUpDown, Cpu, HardDriveDownload, Info, KeyRound, Loader2, MapPin, MessageSquareWarning, MoreVertical, Puzzle, RadioTower, Repeat2, RotateCcw, Search, ShieldCheck, Stethoscope, X } from "lucide-react";
-import { Link, useNavigate, useParams, useRouter, useSearch } from "@tanstack/react-router";
+import { Link, useLocation, useNavigate, useParams, useRouter, useSearch } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -141,7 +141,10 @@ export function DeviceConfig() {
   const navigate = useNavigate({ from: "/projects/$projectId/devices/$deviceId" });
   const qRaw = search.q ?? "";
   const q = qRaw.trim().toLowerCase();
-  const setQ = (val: string) => { void navigate({ search: (p) => ({ ...p, q: val || undefined }), replace: true }); };
+  // The page's own navigations (the filter, opening a list of linked objects) keep the com-object the
+  // URL names; any other (a link, back, reload) names it anew.
+  const ownNavigation = useRef(false);
+  const setQ = (val: string) => { ownNavigation.current = true; void navigate({ search: (p) => ({ ...p, q: val || undefined }), replace: true }); };
   const qc = useQueryClient();
   const { data: project } = useProject(projectId);
   const device = project?.devices.find((d) => d.id === deviceId);
@@ -401,56 +404,59 @@ export function DeviceConfig() {
   // on devices with hundreds of rows.
   const { active: activeSec, registerRef, jump: scrollToSec } = useScrollSpy(filteredGroups[0] ? `sec-${filteredGroups[0].head.id}` : null, filteredGroups);
 
-  // A com-object's row scrolled into view, or said why the page has none for it.
+  // The com-object the URL names: the one a link led to (co), else the one whose linked objects are
+  // open (links), named by each navigation that is not the page's own. It is scrolled to once its row is
+  // shown, also after a filter or parameter change brings it; until then the page says once per reason
+  // why it has no row.
   const coRows = useRef(new Map<number, HTMLElement>());
   const whyNoRow = useCallback((number: number) =>
     view?.blocks.some((b) => b.items.some((i) => i.kind === "comObject" && i.comObject.number === number))
       ? "linkedObjects.targetFiltered" : "linkedObjects.targetNotShown", [view]);
-  const showObject = useCallback((number: number) => {
-    const el = coRows.current.get(number);
-    if (el) scrollToSection(el);
-    else toast.warning(t(whyNoRow(number), { number }));
-  }, [whyNoRow, t]);
-  // The object the URL names: the one a link led to (co), or on arriving at the page with a list of
-  // linked objects open (links: back, reload) its row; opening a list on the page names none. It is
-  // scrolled to once its row is shown, also after a filter or parameter change brings it; until then
-  // the page says once per reason why it has no row.
   const router = useRouter();
-  const arrivedAt = useRef<string | null>(null);
-  const namedTarget = useRef<string | null>(null);
+  // Key and search of one location: on a switch of device the page's search can lag a render behind.
+  const location = useLocation();
+  const locationKey = location.state.__TSR_key;
+  const named = location.search as { co?: number; links?: number };
+  const namedAt = useRef<string | undefined | null>(null);
   const pendingTarget = useRef<{ number: number; told?: string } | null>(null);
   const awaitingRender = useRef<(() => void) | null>(null);
+  // Counts the navigations the router has rendered while a target waits for one.
+  const [renderedNavigations, setRenderedNavigations] = useState(0);
   useEffect(() => () => awaitingRender.current?.(), []);
   useEffect(() => {
     if (!view) return;
-    const arriving = arrivedAt.current !== assumeKey;
-    arrivedAt.current = assumeKey;
-    if (arriving) pendingTarget.current = null;
-    const target = search.co ?? (arriving ? search.links : undefined);
-    const key = target == null ? null : `${assumeKey}/${target}`;
-    if (target != null && namedTarget.current !== key) { namedTarget.current = key; pendingTarget.current = { number: target }; }
+    if (namedAt.current !== locationKey) {
+      namedAt.current = locationKey;
+      if (ownNavigation.current) ownNavigation.current = false;
+      else {
+        const target = named.co ?? named.links;
+        pendingTarget.current = target == null ? null : { number: target };
+      }
+    }
     const pending = pendingTarget.current;
     if (!pending) return;
-    if (coRows.current.has(pending.number)) {
-      pendingTarget.current = null;
-      awaitingRender.current?.();
-      awaitingRender.current = null;
-      const go = () => scrollToSection(coRows.current.get(pending.number));
-      // The router resets the scroll of a navigation once it has rendered it, which can be after this
-      // effect: then the scroll waits for that.
-      const { location, resolvedLocation } = router.state;
-      if (resolvedLocation?.href === location.href) go();
-      else {
-        const off = router.subscribe("onRendered", () => { off(); awaitingRender.current = null; go(); });
+    // The router resets the scroll of a navigation once it has rendered it, which can be after this
+    // effect: until then the target waits.
+    const { location: at, resolvedLocation } = router.state;
+    if (resolvedLocation?.href !== at.href) {
+      if (!awaitingRender.current) {
+        const off = router.subscribe("onRendered", () => { off(); awaitingRender.current = null; setRenderedNavigations((n) => n + 1); });
         awaitingRender.current = off;
       }
       return;
     }
+    const el = coRows.current.get(pending.number);
+    if (el) { pendingTarget.current = null; scrollToSection(el); return; }
     const why = whyNoRow(pending.number);
     if (pending.told !== why) { pending.told = why; toast.warning(t(why, { number: pending.number })); }
-  }, [search.co, search.links, view, assumeKey, filteredGroups, whyNoRow, t, router]);
-  const setLinksOpen = (number: number, open: boolean) =>
+  }, [locationKey, named.co, named.links, view, filteredGroups, renderedNavigations, whyNoRow, t, router]);
+  // A list closes only while the URL holds it open: following one of its rows has already left it, and
+  // the popover reports its close after that navigation.
+  const setLinksOpen = (number: number, open: boolean) => {
+    if (!open && (router.state.location.search as { links?: number }).links !== number) return;
+    ownNavigation.current = true;
     void navigate({ search: (p) => ({ ...p, links: open ? number : undefined }), replace: true, resetScroll: false });
+  };
 
   const secondary = [
     { key: "device.revert", icon: <RotateCcw className="size-4" />, onClick: () => setRevertOpen(true), opts: { ghost: true, disabled: !hasChanges || saving, testId: "revert-device" } },
@@ -560,7 +566,7 @@ export function DeviceConfig() {
               <ComObjLinks
                 projectId={projectId} deviceId={deviceId} number={co.number} label={comObjLabel(co)} gaRaws={co.gaRaws}
                 options={gaOptions} levels={project?.groupAddressLevels ?? 3}
-                open={search.links === co.number} onOpenChange={(open) => setLinksOpen(co.number, open)} onSameDevice={showObject}
+                open={search.links === co.number} onOpenChange={(open) => setLinksOpen(co.number, open)}
               />
             ) : <span className="size-7 shrink-0 pointer-coarse:size-10" aria-hidden />}
           </div>

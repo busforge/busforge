@@ -22,8 +22,6 @@ interface Props {
   levels: Levels;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  // A row of this device was chosen: its page does not change when its URL is the one shown already.
-  onSameDevice: (number: number) => void;
 }
 
 // A com-object's links on its device page: for each of its group addresses, in its order (the first
@@ -49,7 +47,7 @@ export function ComObjLinks(props: Props) {
 }
 
 // The open list; mounted only while the popover is open, so a closed row loads and builds nothing.
-function LinksPanel({ projectId, deviceId, number, label, gaRaws, options, levels, onSameDevice }: Props) {
+function LinksPanel({ projectId, deviceId, number, label, gaRaws, options, levels }: Props) {
   const { t } = useTranslation();
   const results = useGaDevicesOf(projectId, gaRaws);
   const byRaw = new Map(options.map((o) => [o.raw, o]));
@@ -90,8 +88,7 @@ function LinksPanel({ projectId, deviceId, number, label, gaRaws, options, level
                 <ul className="space-y-0.5">
                   {rows.map((r) => (
                     <li key={`${r.deviceId}-${r.comObjRefId}`}>
-                      <ComObjRow projectId={projectId} entry={r} direction={r} sameDevice={r.sameDevice}
-                        onNavigate={r.sameDevice && !r.hidden ? () => onSameDevice(r.comObjNumber) : undefined} />
+                      <ComObjRow projectId={projectId} entry={r} direction={r} sameDevice={r.sameDevice} />
                     </li>
                   ))}
                 </ul>

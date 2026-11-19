@@ -26,7 +26,8 @@ export function linkedObjects(view: Pick<GaDevicesView, "senders" | "receivers">
 export const objectSearch = (e: Pick<GaComObj, "comObjNumber" | "hidden">): { co?: number } =>
   e.hidden ? {} : { co: e.comObjNumber };
 
-// Whether `flags`, and whether the object sends or receives by them, are the object's as its device has them: not where the project's own flags cannot be
-// placed (they are the application's), and not for an object its configuration hides (its project
-// overrides are not resolved). The device page shows none in either case.
+// Whether `flags`, and whether the object sends or receives by them, are the object's as its device
+// has them: not where the project's own flags cannot be placed (they are the application's), and not
+// for an object its configuration hides (its project overrides are not resolved). The device page
+// shows none in either case.
 export const flagsKnown = (e: Pick<GaComObj, "flagsRefused" | "hidden">): boolean => !e.flagsRefused && !e.hidden;

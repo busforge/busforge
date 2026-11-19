@@ -128,11 +128,10 @@ function Section({ icon, title, entries, projectId, emptyHint, onNavigate }: {
 }
 
 // One linked com-object of a group address: its device, number, texts and flags (where they are the
-// device's), linking to its row on the device's page (`co` in the page's URL), or to the page where
-// its configuration hides it. `direction` adds whether it sends or receives on the
-// address, where the list does not say it by its section, and like the flags only where they are the
-// device's; `sameDevice` marks an object of the device
-// the list is shown from.
+// device's), leading to its row on the device's page (`co` in the page's URL), or to the page where its
+// configuration hides it. `direction` adds whether it sends or receives on the address, where the list
+// does not say it by its section, like the flags only where they are the device's. `sameDevice` marks an
+// object of the device the list is shown from; hidden there, it leads nowhere, the page being the one shown.
 export function ComObjRow({ projectId, entry: e, onNavigate, direction, sameDevice }: {
   projectId: string;
   entry: GaComObj;
@@ -143,15 +142,9 @@ export function ComObjRow({ projectId, entry: e, onNavigate, direction, sameDevi
   const { t } = useTranslation();
   const known = flagsKnown(e);
   const letters = known ? flagLetters(e.flags, t) : "";
-  return (
-    <Link
-      to="/projects/$projectId/devices/$deviceId"
-      params={{ projectId, deviceId: e.deviceId }}
-      search={objectSearch(e)}
-      onClick={onNavigate}
-      className="flex flex-col gap-0.5 rounded-md px-1.5 py-1 outline-none hover:bg-secondary/60 focus-visible:ring-[3px] focus-visible:ring-ring/50"
-      data-testid={`co-row-${e.ia}-${e.comObjNumber}`}
-    >
+  const testId = `co-row-${e.ia}-${e.comObjNumber}${e.hidden ? "-hidden" : ""}`;
+  const body = (
+    <>
       <span className="flex min-w-0 items-center gap-1.5">
         <DeviceLabel name={e.deviceName} ia={e.ia} className="min-w-0 max-w-full" />
         {sameDevice && <Badge tone="outline" size="sm">{t("gaDevices.sameDevice")}</Badge>}
@@ -167,6 +160,19 @@ export function ComObjRow({ projectId, entry: e, onNavigate, direction, sameDevi
       </span>
       {e.hidden && <span className="pl-1 text-xs text-amber-700 dark:text-amber-300" data-testid="ga-object-hidden">{t("gaDevices.hidden")}</span>}
       {e.flagsRefused && <span className="pl-1 text-xs text-amber-700 dark:text-amber-300" data-testid="ga-flags-refused">{t(direction ? "linkedObjects.flagsRefused" : "gaDevices.flagsRefused")}</span>}
+    </>
+  );
+  if (sameDevice && e.hidden) return <div className="flex flex-col gap-0.5 px-1.5 py-1" data-testid={testId}>{body}</div>;
+  return (
+    <Link
+      to="/projects/$projectId/devices/$deviceId"
+      params={{ projectId, deviceId: e.deviceId }}
+      search={objectSearch(e)}
+      onClick={onNavigate}
+      className="flex flex-col gap-0.5 rounded-md px-1.5 py-1 outline-none hover:bg-secondary/60 focus-visible:ring-[3px] focus-visible:ring-ring/50"
+      data-testid={testId}
+    >
+      {body}
     </Link>
   );
 }

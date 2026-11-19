@@ -87,7 +87,8 @@ export interface ReplaceMappingEntry { from: string; to: string | null; }
 // @busforge/knx AssignIaResult). `verified` means THE programmed device answers
 // on the new address; anything less is a failure the UI must show as one.
 export interface AssignIaResult { previous: string; assigned: string; verified: boolean; progModeCleared: boolean; progModeError: string | null; }
-// One device's communication object on a group address, for the GA details overlay.
+// One device's communication object on a group address, for the group-address overlay and a
+// com-object's linked objects.
 export interface GaComObj {
   deviceId: string; deviceName: string; ia: string;
   // The stored ref id: an object its configuration hides can share its number with the one it shows.
