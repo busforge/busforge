@@ -54,7 +54,7 @@ KNX Secure is two separate mechanisms, and Busforge implements one of them.
 |---|---|---|
 | Protects | each management and group telegram to and from a device | the connection between a tool and its KNXnet/IP interface |
 | Busforge | reads and programs Data Secure devices, activates a factory device from its certificate, sends and decodes secured group telegrams | **not supported** |
-| Shown on | three products: the Jung 400021SE and the GVS AMMA (full download, parameter and group-address flash), the MDT IP Interface/Router (parameter flash, and the group-address flash of a plain address; its full download is refused); plus the download of one Data Secure KNXnet/IP interface, the MDT IP Interface Secure ([status.md](status.md#devices-driven-on-real-hardware)) | |
+| Shown on | three products: the Jung 400021SE and the GVS AMMA (full download, parameter and group-address flash), the MDT IP Interface/Router (parameter flash, and the group-address flash of a plain address; its full download is capture-tested only); plus the download of one Data Secure KNXnet/IP interface, the MDT IP Interface Secure ([status.md](status.md#devices-driven-on-real-hardware)) | |
 
 Busforge drives a secure device only under a tool key it holds: imported from your ETS project,
 entered by hand, or written by Busforge when it activates the device. Details in

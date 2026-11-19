@@ -3711,11 +3711,19 @@ corpusDescribe("System B full download: the bytes ETS writes, and no other", () 
       const ets = memoryImage(cap.writes);
       expect(ours.size).toBeGreaterThan(0);
       expect([...ours].sort((x, y) => x[0] - y[0])).toEqual([...ets].sort((x, y) => x[0] - y[0]));
+      // The segments in the order written: ETS writes the parameter segment first on each; so does Busforge, but on
+      // thelsing/OpenKNX, where it writes the three tables first (planSystemBFullDownload).
+      const lsmAt = (addr: number) => build.segments.find((s) => addr >= at(s.lsm) && addr < at(s.lsm) + s.image.length)!.lsm;
+      const order = (lsms: number[]) => lsms.filter((l, i) => lsms[i - 1] !== l);
+      const etsOrder = order(cap.writes.map((w) => lsmAt(w.addr)));
+      const ourOrder = order(build.plan.flatMap((st) => (st.op === "writeSegment" ? [st.lsm] : [])));
+      expect(etsOrder).toEqual([4, 3, 2, 1]);
+      expect(ourOrder).toEqual(c.name === "OpenKNX RaumController" ? [3, 2, 1, 4] : etsOrder);
     }, "timeout" in c ? c.timeout : undefined);
   }
 
   // The MDT IP Interface/Router's parameter segment held against ETS's secured writes with the rule alone: <Data> images
-  // the segment whole. Its whole full download is held against ETS in its own describe below.
+  // the segment whole. Its whole full download is held against ETS in its own describe above.
   test("MDT IP Interface/Router: the parameter segment's bytes ETS wrote inside its secured telegrams", () => {
     const xml = catalogueXml("M-0083_A-0137-20-7EB2.xml.gz");
     const cfg = parseAppConfig(xml);

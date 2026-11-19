@@ -404,9 +404,9 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
   view.capabilities = isSecureDevice(db, projectId, deviceId) && !classify(app).loadsSecurityObject ? { ...caps, flashLinks: false, fullDownload: false, structuralFlash: false } : caps;
   // What the hardware (a PEI program) and the device's KNXnet/IP settings in the project keep Busforge
   // from, whatever its application allows.
-  const hardware = { ...knxIpRefusals(app, getDeviceKnxIp(db, projectId, deviceId)), ...hardwareRefusals(app, device) };
-  for (const op of Object.keys(hardware) as (keyof typeof hardware)[]) view.capabilities = { ...view.capabilities, [op]: false };
-  const refusals = { ...classify(app).operationRefusals(), ...hardware };
+  const ofDevice = { ...knxIpRefusals(app, getDeviceKnxIp(db, projectId, deviceId)), ...hardwareRefusals(app, device) };
+  for (const op of Object.keys(ofDevice) as (keyof typeof ofDevice)[]) view.capabilities = { ...view.capabilities, [op]: false };
+  const refusals = { ...classify(app).operationRefusals(), ...ofDevice };
   view.refusals = Object.fromEntries(Object.entries(refusals).map(([op, r]) => [op, r.code]));
   view.fullDownloadLoadsApplication = view.capabilities.fullDownload && classify(app).fullDownloadLoadsApplication();
   const productRef = getDeviceProductRef(db, projectId, deviceId);

@@ -332,7 +332,9 @@ export function fullDownloadImageCoverage(app: AppConfig, owned: ReadonlyArray<n
 // A declaration that is not a number counts as declaring addresses.
 export const declaresTunnelingEntries = (app: AppConfig): boolean => app.maxTunnelingUserEntries !== 0;
 export const declaresAdditionalAddresses = (app: AppConfig): boolean => app.additionalAddressesCount !== 0;
-export const holdsKnxIpSettings = (knxIp: Pick<KnxIpDevice, "ipConfig" | "additionalAddresses"> | null | undefined): boolean =>
+// The settings as the project holds them for an instance; null or absent where it holds none.
+export type KnxIpSettings = Pick<KnxIpDevice, "ipConfig" | "additionalAddresses"> | null | undefined;
+export const holdsKnxIpSettings = (knxIp: KnxIpSettings): boolean =>
   !!knxIp && (knxIp.ipConfig !== null || knxIp.additionalAddresses.length > 0);
 export const KNXIP_SETTINGS_REFUSAL: OperationRefusal = {
   code: "FULL_DOWNLOAD_TUNNELING_ENTRIES",
@@ -340,18 +342,18 @@ export const KNXIP_SETTINGS_REFUSAL: OperationRefusal = {
 };
 // Whether these settings are what keeps the full download from this device: its profile would offer it
 // without them. A device refused for its family anyway reports that instead.
-function fullDownloadRefusedForKnxIp(app: AppConfig, knxIp: Pick<KnxIpDevice, "ipConfig" | "additionalAddresses"> | null | undefined): boolean {
+function fullDownloadRefusedForKnxIp(app: AppConfig, knxIp: KnxIpSettings): boolean {
   return (declaresAdditionalAddresses(app) || holdsKnxIpSettings(knxIp)) && classify({ ...app, additionalAddressesCount: 0 }).capabilities().fullDownload;
 }
 // What the device's KNXnet/IP settings in the project keep Busforge from, on top of its application's own
 // refusals (operationRefusals), as hardwareRefusals for its hardware. System 1 writes the settings itself.
-export function knxIpRefusals(app: AppConfig, knxIp: Pick<KnxIpDevice, "ipConfig" | "additionalAddresses"> | null | undefined): OperationRefusals {
+export function knxIpRefusals(app: AppConfig, knxIp: KnxIpSettings): OperationRefusals {
   return classify(app).memoryModel !== "bcu1" && fullDownloadRefusedForKnxIp(app, knxIp) ? { fullDownload: KNXIP_SETTINGS_REFUSAL } : {};
 }
 // The planners' and the download's own refusal, with the code the download route answers.
-function refuseKnxIpSettings(app: AppConfig, knxIp: Pick<KnxIpDevice, "ipConfig" | "additionalAddresses"> | null | undefined): void {
+function refuseKnxIpSettings(app: AppConfig, knxIp: KnxIpSettings): void {
   if (!declaresAdditionalAddresses(app) && !holdsKnxIpSettings(knxIp)) return;
-  if (!fullDownloadRefusedForKnxIp(app, knxIp)) {
+  if (!classify({ ...app, additionalAddressesCount: 0 }).capabilities().fullDownload) {
     throw new ProductError("FULL_DOWNLOAD_UNSUPPORTED", "this application cannot be commissioned from scratch (and the device holds KNXnet/IP settings no Busforge full download writes)");
   }
   throw new ProductError(KNXIP_SETTINGS_REFUSAL.code, KNXIP_SETTINGS_REFUSAL.message);
@@ -619,6 +621,11 @@ async function assocEntryBytes(dev: KnxDevice): Promise<2 | 4> {
   if (form === "undescribed") throw new ProductError("ASSOC_TABLE_FORMAT_UNKNOWN", "the unit describes no table property of its association table object, so the width of its entries is not known; refusing to write it");
   return form;
 }
+// ETS's partial form of the full download on a unit describing the short association table: no capture shows it.
+const PARTIAL_SHORT_ASSOC_REFUSAL: OperationRefusal = {
+  code: "ASSOC_TABLE_SHORT_UNSUPPORTED",
+  message: "the unit holds this application, so the download takes ETS's partial form, and the unit's association table holds one byte per group index and object number; no capture shows ETS's partial form on such a unit, refusing to write it",
+};
 // The structural flash builds the association table in its long form only: no capture shows ETS's structural
 // bracket on a unit describing the short one.
 async function requireLongAssoc(dev: KnxDevice, what: string): Promise<4> {
@@ -1271,6 +1278,7 @@ export class SystemBProfile extends DeviceProfile {
     const proc = ctx.proc;
     assertParCoverage(proc, "relative");
     refuseKnxIpSettings(cfg, ctx.knxIp);
+    if ((ctx.assocEntryBytes ?? 4) !== 4) refuseWith(PARTIAL_SHORT_ASSOC_REFUSAL);
     const unit = ctx.unitMemory;
     if (!unit) {
       throw new ProductError("FULL_DOWNLOAD_UNIT_UNKNOWN", "the unit holds this application, so the download takes ETS's partial form, which writes only what the unit does not hold; it cannot be planned without the unit's application segment and com-object table");
@@ -1383,12 +1391,13 @@ export class SystemBProfile extends DeviceProfile {
         const size = images().target.size;
         const paramsMcb = await readMcbTable(dev, LSM, size);
         if (paramsMcb && paramsMcb.reduce((n, r) => n + r.size, 0) === size) {
-          if (assocForm !== 4) throw new ProductError("ASSOC_TABLE_SHORT_UNSUPPORTED", "the unit holds this application, so the download takes ETS's partial form, and the unit's association table holds one byte per group index and object number; no capture shows ETS's partial form on such a unit, refusing to write it");
+          if (assocForm !== 4) refuseWith(PARTIAL_SHORT_ASSOC_REFUSAL);
           return this.downloadPartialForm(dev, mask, ctx, proc, images, paramsMcb, assocForm);
         }
       }
     }
-    const formImages = assocForm === 4 ? images : builtBefore(() => this.systemBImages(this.requireCfg("full download"), { ...ctx, proc, assocEntryBytes: assocForm }));
+    // Only the group tables depend on the width, and they are cheap to build with the connection open.
+    const formImages = assocForm === 4 ? images : builtBefore(() => ({ ...images(), ...buildGroupTables(ctx.links, assocForm) }));
     const { plan, imageBytes, target, comObj, addr, assoc, security, segments } = this.planSystemBFull(mask, { ...ctx, proc, assocEntryBytes: assocForm }, formImages);
     // A full download UNLOADS every segment before it rewrites them, so whatever the device held is
     // gone the moment it starts. A virgin device holds nothing (its load-state machines point at
@@ -1426,7 +1435,7 @@ export class SystemBProfile extends DeviceProfile {
               `the device will not report the size of its loaded parameter segment (PID_MCB_TABLE); refusing the full download rather than back up a guessed length and let the unload destroy the remainder`);
           }
         } else {
-          size = await tableByteLength(dev, obj, at);
+          size = await tableByteLength(dev, obj, at, assocForm);
         }
         segs.push({ obj, what, at, size });
       }
@@ -2736,13 +2745,13 @@ const MAX_BACKUP_TABLE_ENTRIES = 2048;
 // length is unknown: backing up a guessed span and then unloading the real table would destroy
 // bytes the "backup" never captured. Refuse the whole download instead (the same coded error the
 // reader raises on the same condition), rather than silently skipping the table and unloading it.
-async function tableByteLength(dev: KnxDevice, obj: number, at: number): Promise<number> {
+async function tableByteLength(dev: KnxDevice, obj: number, at: number, assocEntryBytes: 2 | 4): Promise<number> {
   const head = await dev.memRead(at, 2);
   const count = (head[0] << 8) | head[1];
   if (count > MAX_BACKUP_TABLE_ENTRIES) {
     throw new GroupTableUnreadable(
       `loaded group object ${obj} table reports ${count} entries (implausible); refusing the full download rather than unloading a table this backup cannot capture`);
   }
-  const entryBytes = obj === OBJ.ASSOC_TABLE ? 4 : 2;
+  const entryBytes = obj === OBJ.ASSOC_TABLE ? assocEntryBytes : 2;
   return 2 + count * entryBytes;
 }

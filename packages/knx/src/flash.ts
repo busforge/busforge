@@ -360,8 +360,8 @@ export function planSystemBFullDownload(tables: {
     { op: "load", lsm: A, assert: false }, { op: "alloc", lsm: A, size: tables.assoc.length }, ...mcbFor(A),
     // The writes in ETS's order, the parameter segment first, then the com-object, association and
     // address tables: every ETS capture of an MV-07B0 full download writes them so (the Theben MIX 2
-    // and DALI-Gateway, the MEAN WELL power supply, the MDT IP Interface/Router, and the OpenKNX
-    // RaumController too). On thelsing/knx (`closeAtOnce` false) Busforge writes the THREE SMALL TABLES
+    // and DALI-Gateway, the Jung 400021SE, the GVS AMMA, the MEAN WELL power supply, the MDT IP
+    // Interface/Router, and the OpenKNX RaumController too). On thelsing/knx (`closeAtOnce` false) Busforge writes the THREE SMALL TABLES
     // FIRST, and the 21601-byte parameter image last. Hardware-found, and it cost a device: writing the
     // parameter image first leaves that firmware's flash subsystem with a full erase-block buffer
     // sitting exactly at the boundary the tables land behind, and the table writes that follow are then
