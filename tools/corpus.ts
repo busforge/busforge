@@ -8,7 +8,7 @@
 //
 // Nothing here touches the file system at import time.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, posix } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { OPENKNX_RELEASES } from "./openknx-releases.ts";
 
@@ -79,7 +79,8 @@ export const bussardCapture = (product: string, variant: string, file = "ets.pca
 export const bussardApplication = (product: string, application: string) => `${BUSSARD_SYNTHETIC_DIR}/products/${product}/xml/M-00FA/${application}.xml`;
 
 // Every file the tests and tools read, relative to the corpus root. A corpus may hold more; it
-// may not hold less.
+// may not hold less. corpusPath refuses a file that is not listed here, so a test cannot read one
+// the check does not know it needs.
 export const CORPUS_FILES: readonly string[] = [
   ...[
     "M-0002_A-A001-13-63C2.xml.gz",
@@ -97,6 +98,7 @@ export const CORPUS_FILES: readonly string[] = [
     "M-0083_A-0138-21-F18E-O0072.xml.gz",
     "M-0085_A-0072-30-69AA.xml.gz",
     "M-008E_A-7079-10-9C41.xml.gz",
+    "M-00FA_A-A012-55-0000.xml.gz",
     "M-0162_A-0004-11-F245.xml.gz",
   ].map((f) => `catalogue/${f}`),
   ...[
@@ -106,12 +108,16 @@ export const CORPUS_FILES: readonly string[] = [
     "abb-usu-4.2-ets-partial-links.log",
     "abb-usu-4.2-ets6log-fulldownload-loaded.txt",
     "auro-m0081-ets-fulldownload.log",
+    "auro-m0081-ets-partial-heatalarm-off.log",
+    "auro-m0081-ets-partial-heatalarm-on.log",
     "auro-m0081-ets-partial-links.log",
     "auro-m0081-ets-partial-params.log",
     "auro-m0081-ets-partial-relink9.log",
     "auro-m0081-ets-partial-revert.log",
     "auro-m0081-ets-partial-unlink9.log",
     "auro-m0081-ets6log-fulldownload.txt",
+    "auro-m0081-ets6log-partial-heatalarm-off.txt",
+    "auro-m0081-ets6log-partial-heatalarm-on.txt",
     "auro-m0081-ets6log-partial-links.txt",
     "auro-m0081-ets6log-partial-params.txt",
     "auro-m0081-ets6log-partial-relink9.txt",
@@ -119,15 +125,31 @@ export const CORPUS_FILES: readonly string[] = [
     "auro-m0081-ets6log-partial-unlink9.txt",
     "bench-ets-project-params-edited-after-download.knxproj",
     "bench-memory-refused.log",
+    "dali-ets-fulldownload-real.log",
     "dali-ets-fulldownload.log",
+    "dali-ets-partial-links.log",
+    "dali-ets-partial-params.log",
+    "dali-ets-partial-revert.log",
+    "dali-ets6log-fulldownload-real.txt",
     "dali-ets6log-fulldownload.txt",
+    "dali-ets6log-partial-links.txt",
+    "dali-ets6log-partial-params.txt",
+    "dali-ets6log-partial-revert.txt",
     "dali-gateway-unit-fulldownload.json",
     "ets-download-records.json.gz",
     "gira-m0008-ets-fulldownload.log",
     "gira-m0008-ets-partial-links.log",
     "gira-m0008-ets-partial-params.log",
     "gira-m0008-ets-partial-revert.log",
+    "gira-m0008-ets-partial-sperre-off.log",
+    "gira-m0008-ets-partial-sperre-on.log",
+    "gira-m0008-ets6log-fulldownload-restore.txt",
     "gira-m0008-ets6log-fulldownload.txt",
+    "gira-m0008-ets6log-partial-links.txt",
+    "gira-m0008-ets6log-partial-params.txt",
+    "gira-m0008-ets6log-partial-revert.txt",
+    "gira-m0008-ets6log-partial-sperre-off.txt",
+    "gira-m0008-ets6log-partial-sperre-on.txt",
     "gvs-amma-ets-fulldownload-defaults.log",
     "gvs-amma-ets-partial-links.log",
     "gvs-amma-ets6log-keytable-add.txt",
@@ -139,12 +161,17 @@ export const CORPUS_FILES: readonly string[] = [
     "jung-400021se-ets-fulldownload.log",
     "jung-400021se-ets-partial-links.log",
     "jung-400021se-ets-partial-structure.log",
+    "jung-400021se-ets6log-partial-colour-123456.txt",
+    "jung-400021se-ets6log-partial-colour-a1b2c3.txt",
+    "jung-400021se-ets6log-partial-colour-revert.txt",
     "jung-400021se-ets6log-partial-flag-read-off.txt",
     "jung-400021se-ets6log-partial-flag-read-on.txt",
     "jung-400021se-ets6log-q2-nochange.txt",
     "jung-400021se-ets6log-q2-param-link.txt",
     "jung-400021se-ets6log-q2-param.txt",
     "jung-400021se-ets6log-q2-revert.txt",
+    "jung-400021se-unit-colour-after.json",
+    "jung-400021se-unit-colour-before.json",
     "jung-400021se-unit-q2.json",
     "knx-master-mv0012.xml",
     "mdt-be02001-collect-scan.log",
@@ -161,8 +188,12 @@ export const CORPUS_FILES: readonly string[] = [
     "mdt-be02001-ets-partial-sender-high.log",
     "mdt-be02001-ets-partial-sender-low.log",
     "mdt-be02001-ets-partial-structure.log",
+    "mdt-ip-secure-ets6log-fulldownload.txt",
+    "mdt-ip-secure-unit-knxip.json",
     "mdt-ip-secure-unit-memory.json",
     "mdt-router-ets6log-fulldownload.txt",
+    "mdt-router-ets6log-partial-ga-link.txt",
+    "mdt-router-ets6log-partial-ga-unlink.txt",
     "mdt-router-ets6log-partial-name-revert.txt",
     "mdt-router-ets6log-partial-name.txt",
     "mdt-router-ets6log-partial-nochange.txt",
@@ -312,10 +343,62 @@ export function corpusRoot(): string | null {
   return (checked = root);
 }
 
-// The absolute path of a file or directory in the corpus. Refuses when the corpus is absent.
-export function corpusPath(relative: string): string {
+export const ETS_RECORDS_FILE = "captures/ets-download-records.json.gz";
+
+// Directories whose files the tests walk whole. What they hold grows, so the manifest cannot name
+// the files; the directory is open to the tests as a whole.
+export const CORPUS_WALKED_DIRS: readonly string[] = ["evidence"];
+
+const listedFiles = new Set(CORPUS_FILES);
+const listedDirs = new Set(CORPUS_FILES.flatMap((f) => {
+  const parts = f.split("/");
+  return parts.slice(0, -1).map((_, i) => parts.slice(0, i + 1).join("/"));
+}));
+
+let recordedProjects: Set<string> | undefined;
+
+// The corpus projects ETS's download records name (tools/ets-records.ts keeps that file complete,
+// tools/ets-records.test.ts holds it to the projects the corpus has). Their file names are not
+// listed in CORPUS_FILES, which is public.
+function recordedProjectPaths(root: string): ReadonlySet<string> {
+  if (recordedProjects === undefined) {
+    const records = JSON.parse(gunzipSync(readFileSync(join(root, ETS_RECORDS_FILE))).toString("utf8")) as { projects: { path: string }[] };
+    recordedProjects = new Set(records.projects.map((p) => p.path));
+  }
+  return recordedProjects;
+}
+
+// Whether a test may open `relative`: a file of CORPUS_FILES, a directory that holds some, anything
+// under a walked directory, or a project the download records name (`recorded` returns those).
+export function corpusListed(relative: string, recorded: () => ReadonlySet<string> = () => new Set()): boolean {
+  const path = posix.normalize(relative).replace(/\/$/, "");
+  if (path === ".." || path.startsWith("../") || isAbsolute(path)) return false;
+  return listedFiles.has(path) || listedDirs.has(path)
+    || CORPUS_WALKED_DIRS.some((d) => path === d || path.startsWith(`${d}/`))
+    || (path.endsWith(".knxproj") && recorded().has(path));
+}
+
+// The absolute path of a corpus file no manifest can name yet, such as the project
+// tools/ets-records.ts is about to record. Tests open files through corpusPath. Refuses when the corpus is absent.
+export function corpusUnlistedPath(relative: string): string {
+  return join(presentRoot(relative), relative);
+}
+
+function presentRoot(relative: string): string {
   const root = corpusRoot();
   if (root === null) throw new Error(`${relative} is read from the private corpus, but ${CORPUS_ENV} is unset (docs/testing.md, "The private corpus")`);
+  return root;
+}
+
+// The absolute path of a file or directory in the corpus that CORPUS_FILES lists (see corpusListed),
+// so a corpus that lacks it is refused by name before any test runs. Refuses when the corpus is absent.
+export function corpusPath(relative: string): string {
+  const root = presentRoot(relative);
+  if (!corpusListed(relative, () => recordedProjectPaths(root))) {
+    throw new Error(relative.endsWith(".knxproj")
+      ? `${relative} is read from the private corpus but ETS's download records do not name it; record it with tools/ets-records.ts`
+      : `${relative} is read from the private corpus but is not listed in CORPUS_FILES (tools/corpus.ts); list it, so a corpus without it is refused by name`);
+  }
   return join(root, relative);
 }
 

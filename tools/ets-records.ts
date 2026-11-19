@@ -16,11 +16,10 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { loadKnxproj, readAppProgram, appProgramId, type EtsLoaded } from "../packages/project/src/index.ts";
 import { parseLoadProcedures } from "../packages/product/src/index.ts";
-import { catalogueXml, corpusPath, listCatalogue } from "./corpus.ts";
+import { catalogueXml, corpusPath, corpusUnlistedPath, ETS_RECORDS_FILE, listCatalogue } from "./corpus.ts";
 import { deviceRows, type DeviceRows } from "./etsdiff.ts";
 import { sha256 } from "./evidence.ts";
 
-export const ETS_RECORDS_FILE = "captures/ets-download-records.json.gz";
 const FORMAT = "busforge-ets-records/1";
 
 export interface DeviceRecord {
@@ -53,7 +52,7 @@ export function recordedAppXml(records: EtsRecords, appId: string): string {
 }
 
 function recordProject(path: string, password: string | undefined, apps: Record<string, string>): ProjectRecords {
-  const bytes = readFileSync(corpusPath(path));
+  const bytes = readFileSync(corpusUnlistedPath(path));
   const proj = loadKnxproj(bytes, password, path);
   // The import leaves these devices out, so their records would be missing without anything saying so.
   const left = proj.skippedInstallations + proj.unassignedDevices + proj.malformedDevices;

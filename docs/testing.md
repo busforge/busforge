@@ -90,8 +90,14 @@ test or a `corpusDescribe` body. A test that does not touch the corpus stays an 
 even in a file that has corpus tests, so it keeps running in public CI.
 
 A new file the tests read from the corpus is added to `CORPUS_FILES` in `tools/corpus.ts`, so a
-corpus without it is reported incomplete. A contributor without the corpus attaches the file (a
-catalogue, a capture) privately to the issue or pull request, and a maintainer adds it.
+corpus without it is reported incomplete. `corpusPath` (and with it every other helper above)
+enforces that: it refuses a file that is neither listed, nor a directory holding listed files, nor
+under a walked directory (`CORPUS_WALKED_DIRS`), nor a project that
+`captures/ets-download-records.json.gz` names, and the test that opened it fails naming the file.
+A test that walks the corpus (`readdirSync(corpusRoot())`) and reads what it finds with `readFileSync`
+is not held to the list; one that opens what it finds through the helpers (`listCatalogue()` with
+`catalogueXml`) is, so a catalogue file added to the corpus needs its entry. A contributor without the corpus attaches the file (a catalogue, a capture) privately to
+the issue or pull request, and a maintainer adds it.
 
 Most corpus projects are password-protected, and the check holds no password. What
 `tools/ets-records.test.ts` needs of them (ETS's download record of each device, its load flags and
