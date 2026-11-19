@@ -761,7 +761,7 @@ export function DeviceConfig() {
           </div>
           {/* The marks: under the name on a narrow window; on a wide one beside it at their own width,
               wrapping among themselves only on a line of their own. */}
-          <div className="flex min-w-0 basis-full flex-wrap items-center gap-2 empty:hidden sm:flex-initial sm:basis-auto" data-testid="device-marks">
+          <div className="flex min-w-0 basis-full flex-wrap items-center gap-2 empty:hidden sm:flex-initial" data-testid="device-marks">
             <ChangePill changes={device?.changes} size="md" targets={changeTargets} showProgrammed={!!device?.appRef} />
             <CompatibilityBadge view={view} manufacturer={device?.manufacturer} />
             {/* What this device's values are never compared with the device for. Not the product's test
