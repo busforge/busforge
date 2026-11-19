@@ -162,6 +162,17 @@ under the new address ran on a unit (an MDT IP Interface/Router, whose restart d
 interface beside it); a device closing the new connection at its Sync is tested against a scripted
 unit only.
 
+**A secured frame must leave the interface under the address it was sealed under.** Busforge's bridge
+sends every point-to-point frame as its USB interface's own address, because the interface hands the
+host no answer addressed to any other ([connections.md](connections.md#the-usb-limit-answers-reach-only-the-interfaces-own-address)).
+Rewritten that way, a secured frame fails its MAC: the Jung 400021SE and the GVS AMMA left such a Sync
+unanswered and answered the same Sync from the tunnel holding the interface's address at once. The
+bridge therefore refuses a secured point-to-point frame on any other tunnel and confirms it negatively.
+Over a TCP tunnel Busforge reports a Sync request the interface confirmed negatively as
+`SECURE_SYNC_NOT_CONFIRMED`, at once, instead of the `SECURE_SYNC_NO_RESPONSE` a wrong key gives after the
+Sync timeout; over UDP it does not wait for confirmations and still gets the timeout. A KNXnet/IP
+interface that sends from each tunnel's own address does not have this limit.
+
 ## The key store
 
 Tool keys live in a first-class Busforge store, not in an ETS keyring (one can be exported, see [Keyring export](#keyring-export)).

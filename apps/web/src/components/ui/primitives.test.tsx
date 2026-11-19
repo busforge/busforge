@@ -5,6 +5,7 @@ import { IconButton } from "./icon-button.tsx";
 import { Badge, BadgeButton } from "./badge.tsx";
 import { Chip } from "./chip.tsx";
 import { Notice } from "./notice.tsx";
+import { Checkbox } from "./checkbox.tsx";
 import { TooltipProvider } from "./tooltip.tsx";
 
 const classes = (html: string) => (/class="([^"]*)"/.exec(html)?.[1] ?? "").split(" ");
@@ -135,5 +136,44 @@ describe("a chip", () => {
     expect(c).toContain(CONTROL_RADIUS);
     expect(c).toContain("focus-visible:ring-[3px]");
     expect(c).toContain("disabled:cursor-not-allowed");
+  });
+});
+
+describe("a checkbox", () => {
+  const input = (html: string) => /<input[^>]*>/.exec(html)![0];
+
+  test("is a native checkbox with the pointer, a hover only while enabled, the focus ring and the disabled look", () => {
+    const html = renderToStaticMarkup(<Checkbox checked onChange={() => {}} aria-label="Read" data-testid="x" />);
+    const c = classes(html);
+    expect(input(html)).toContain('type="checkbox"');
+    expect(input(html)).toContain('aria-label="Read"');
+    expect(input(html)).toContain('data-testid="x"');
+    expect(c).toContain("cursor-pointer");
+    expect(c).toContain("focus-visible:ring-[3px]");
+    expect(c).toContain("disabled:cursor-not-allowed");
+    expect(c).toContain("disabled:opacity-50");
+    expect(c.some((x) => x.startsWith("hover:not-disabled:"))).toBe(true);
+    expect(c.some((x) => x.startsWith("hover:") && !x.startsWith("hover:not-disabled:"))).toBe(false);
+    expect(c).not.toContain("rounded-full");
+  });
+
+  test("says it is checked or disabled only when it is", () => {
+    expect(input(renderToStaticMarkup(<Checkbox checked onChange={() => {}} />))).toContain(' checked=""');
+    expect(input(renderToStaticMarkup(<Checkbox checked={false} onChange={() => {}} />))).not.toContain(' checked=""');
+    expect(input(renderToStaticMarkup(<Checkbox checked disabled onChange={() => {}} />))).toContain(' disabled=""');
+    expect(input(renderToStaticMarkup(<Checkbox checked onChange={() => {}} />))).not.toContain(' disabled=""');
+  });
+
+  test("grows on a touch screen like the other controls", () => {
+    expect(classes(renderToStaticMarkup(<Checkbox checked onChange={() => {}} />))).toContain("pointer-coarse:size-5");
+  });
+
+  test("is the only checkbox in the app: every other one goes through it", async () => {
+    const offenders: string[] = [];
+    for await (const file of new Bun.Glob("**/*.tsx").scan({ cwd: `${import.meta.dir}/../..`, absolute: true })) {
+      if (file.endsWith("/components/ui/checkbox.tsx") || file.endsWith(".test.tsx")) continue;
+      if (/type=["']checkbox["']/.test(await Bun.file(file).text())) offenders.push(file);
+    }
+    expect(offenders).toEqual([]);
   });
 });

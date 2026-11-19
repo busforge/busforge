@@ -15,6 +15,7 @@ import { IconButton } from "@/components/ui/icon-button";
 import { Card, CardContent } from "@/components/ui/card";
 import { SectionNav } from "@/components/SectionNav.tsx";
 import { BreakableText } from "@/components/BreakableText.tsx";
+import { TruncatedText } from "@/components/TruncatedText.tsx";
 import { scrollToSection, useStickyVar } from "@/lib/stickyChrome.ts";
 import { useScrollSpy } from "@/lib/scrollSpy.ts";
 import { flowOf, inlineChildren, keptAt } from "@/lib/blockFlow.ts";
@@ -745,19 +746,22 @@ export function DeviceConfig() {
           stay in view while its parameters scroll. */}
       <header ref={headerRef} className="space-y-3 lg:sticky lg:top-(--bar-h) lg:z-10 lg:-mx-2 lg:border-b lg:border-border/60 lg:bg-background/95 lg:px-2 lg:pt-2 lg:pb-3 lg:backdrop-blur" data-testid="device-header">
         <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">
-          {/* The back button stays with the name, which truncates rather than leaving it alone on a line. */}
-          <div className="flex min-w-0 max-w-full items-center gap-2">
+          {/* The back button stays with the name, which truncates rather than leaving it alone on a line.
+              On a wide window the title group claims 20rem and grows up to its full width: the marks stay
+              beside it, directly after the name, and a long name gives way with an ellipsis. Only when the
+              marks do not fit beside 20rem of title do they move under it as a whole row. */}
+          <div className="flex min-w-0 max-w-full items-center gap-2 sm:max-w-max sm:flex-[1_1_20rem]" data-testid="device-title-group">
             <IconButton asChild variant="ghost" size="icon-sm" label={t("device.back")} className="-ml-1 text-muted-foreground">
               <Link to="/projects/$projectId/devices" params={{ projectId }} search={{ q: search.q, changed: search.changed, b: search.b }}><ChevronLeft className="size-5" /></Link>
             </IconButton>
             <h1 className="flex min-w-0 items-baseline gap-2" data-testid="device-title">
-              <span className={cn("truncate text-xl font-semibold tracking-tight sm:text-2xl", !device?.name && "text-muted-foreground")}>{device?.name || t("common.unnamed")}</span>
+              <TruncatedText text={device?.name || t("common.unnamed")} className={cn("text-xl font-semibold tracking-tight sm:text-2xl", !device?.name && "text-muted-foreground")} testId="device-name" />
               <span className="shrink-0 font-mono text-sm text-muted-foreground">{device?.ia}</span>
             </h1>
           </div>
-          {/* The marks: under the name on a narrow window; on a wide one beside it while a few fit, wrapping
-              among themselves. */}
-          <div className="flex min-w-0 basis-full flex-wrap items-center gap-2 empty:hidden sm:flex-1 sm:basis-64" data-testid="device-marks">
+          {/* The marks: under the name on a narrow window; on a wide one beside it at their own width,
+              wrapping among themselves only on a line of their own. */}
+          <div className="flex min-w-0 basis-full flex-wrap items-center gap-2 empty:hidden sm:flex-initial" data-testid="device-marks">
             <ChangePill changes={device?.changes} size="md" targets={changeTargets} showProgrammed={!!device?.appRef} />
             <CompatibilityBadge view={view} manufacturer={device?.manufacturer} />
             {/* What this device's values are never compared with the device for. Not the product's test

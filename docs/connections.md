@@ -231,7 +231,7 @@ at connect. **One address means one tunnel**, and a second client is refused wit
 addresses with `--addresses`. They must be **free on that line**, which nothing in the protocol can
 verify, so it is an explicit operator decision and is never inferred.
 
-#### The USB limit: extra addresses carry group traffic only
+#### The USB limit: answers reach only the interface's own address
 
 A KNX-USB interface surfaces to the host only two kinds of incoming telegram: group and broadcast
 (always), and connection-oriented point-to-point telegrams addressed to **its own individual
@@ -239,14 +239,24 @@ address** and no other. This is the interface behaving as one KNX device with on
 the bridge nor the USB transport filters anything, and no step in this stack reconfigures the
 interface's address filter.
 
-The consequence is sharp. With a pool that does not contain the interface's own address, broadcast
-work still succeeds (a programming-mode scan, an address assignment) while **every** connection-
-oriented operation fails with `DEVICE_NOT_ANSWERING`: the device answers on the bus, and its reply is
-dropped by the USB interface before it reaches the host. It looks exactly like a dead device.
+The consequence is sharp. A point-to-point frame sent from any other address draws a reply the host
+never sees: the device answers on the bus, and the USB interface drops the answer. Sent as is, every
+connection-oriented operation from an extra tunnel address would fail with `DEVICE_NOT_ANSWERING`,
+exactly like a dead device. The bridge therefore sends point-to-point frames as the interface's own
+address (the management routing below), and plain device management works on every tunnel.
 
-So where this applies, **device management works only on the interface's own address, i.e. exactly
-one tunnel.** Extra addresses are usable for passive and group multiplexing (a second client
-watching the bus) but never for a second programming client.
+**Secured device access works only on the tunnel that holds the interface's own address.** A Data
+Secure frame's MAC binds the source address the client sealed it under, so it cannot leave the bridge
+under another one: the device drops it unanswered, Sync request included. The bridge refuses such a
+frame instead of sending it, confirms it negatively and logs why. Over a TCP tunnel, which Busforge
+tries first, Busforge waits for that confirmation and reports the refused Sync at once as
+`SECURE_SYNC_NOT_CONFIRMED`; over UDP it does not wait for confirmations, so the Sync runs into its
+timeout and reads as `SECURE_SYNC_NO_RESPONSE`, and only the bridge's log says why. Shown on the ABB
+KNX-USB interface with a Jung 400021SE and a GVS AMMA in secure mode: a Sync from an extra tunnel
+address put on the bus as the interface's address stays unanswered, the same Sync from the tunnel
+holding the interface's address is answered at once, and a plain request sent from the extra address
+unchanged draws no answer the host sees. Another tool on such a tunnel (ETS) gets the same negative
+confirmation; how it reports it has not been observed.
 
 This is a property of the USB controller, not of the bridge, and a real KNXnet/IP router does not
 have the limit at all. Which interfaces it has been observed on is in [status.md](status.md); it is
@@ -282,7 +292,8 @@ interface, each of them a real interoperability constraint worth knowing:
   above, the bridge sends a point-to-point frame sourced from the interface's own address, records
   which channel owns the conversation with that device, and routes the reply back to that channel with
   the destination rewritten to its tunnel address. The client never sees it. Group and broadcast
-  frames are never touched.
+  frames are never touched. A secured point-to-point frame is never rewritten: it is refused (see
+  the USB limit above).
 
 ### What the bridge implements, and what it refuses
 

@@ -1,6 +1,7 @@
 import { RotateCcw, Undo2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { FLAGS, flagLetters } from "@/lib/comObjFlags.ts";
@@ -32,8 +33,8 @@ export function FlagEditorPanel({ co, editable, onEdit, onRevert, disabled, test
       {FLAGS.map(({ flag, key }) => (
         <div key={flag} className="flex items-center gap-2">
           <label className={cn("flex flex-1 items-center gap-2", !can.has(flag) && "text-muted-foreground")} title={can.has(flag) ? undefined : t("device.flagNotWritable")}>
-            <input
-              type="checkbox" checked={co.flags[flag]} disabled={disabled || !can.has(flag)} data-testid={`${testId}-${flag}`}
+            <Checkbox
+              checked={co.flags[flag]} disabled={disabled || !can.has(flag)} data-testid={`${testId}-${flag}`}
               onChange={(e) => onEdit({ flags: { [flag]: e.target.checked } })}
             />
             <span>{t(`device.flag${key}`)}{overridden.has(flag) ? "*" : ""}</span>
