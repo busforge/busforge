@@ -19,7 +19,7 @@ import { readEtsRecords, recordedAppXml, type DeviceRecord, type EtsRecords } fr
 // installation's addresses or files are named here.
 
 // Generous: parsing the Jung and the OpenKNX applications alone takes seconds, and the comparison builds
-// every distinct device configuration of thirty-three projects.
+// every distinct device configuration of the corpus projects.
 const TIMEOUT = 300_000;
 
 // Where ETS's record differs from Busforge's image. Each is named and explained in the corpus,

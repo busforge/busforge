@@ -91,9 +91,9 @@ export function imageValueForm(model: AppModel, refId: string, value: string): s
 // complement combined with the sign bit. Encoded as ETS writes it: the smallest
 // exponent whose rounded mantissa fits, the mantissa rounded once from the exact
 // decimal value (the number's shortest decimal form, so 32.45 has the mantissa 3245 / 2^1
-// at exponent 1, not the binary double just above it). Ties go to even; ETS's ties seen so far all had an even
-// lower neighbour, so half-down would match them too. Reference vectors: 0 -> 0x0000,
-// 21.0 -> 0x0C1A, -0.01 -> 0x87FF, 1000 -> 0x361A.
+// at exponent 1, not the binary double just above it). Ties go to even, the magnitude rounded before the sign
+// is applied, as ETS writes them up and down on both signs. Reference vectors: 0 -> 0x0000,
+// 21.0 -> 0x0C1A, -0.01 -> 0x87FF, 1000 -> 0x361A, 20.51 -> 0x0C02, -20.53 -> 0x8BFE.
 // The codes run from -671088.64 (0xF800, mantissa -2048) to 670433.28 (0x7FFE, mantissa 2046 at exponent 15):
 // 0x7FFF is DPT 9's "invalid data", so the nominal maximum 670760.96 has no code, and a value beyond either
 // end is refused, judged before it is rounded. It is never saturated, as a device would read a saturated
