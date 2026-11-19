@@ -153,8 +153,8 @@ What each row does not show:
     declared form, allocation Mode 1) equals ETS's capture of it and has not run.
   - **GVS AMMA, Jung 400021SE, MEAN WELL power supply, Theben MIX 2, Theben DALI gateway**: the full form
     of the full download writes the parameter segment before the com-object, association and address
-    tables, in ETS's order (every capture of an MV-07B0 full download; the order compared with the
-    captures of all but the MEAN WELL); the runs on the units wrote the three tables first. The bytes
+    tables, in ETS's order (every capture of an MV-07B0 full download; the order compared with each
+    of them); the runs on the units wrote the three tables first. The bytes
     written are the same. The OpenKNX RaumController keeps the tables first, as hardware showed it needs.
   - **Theben Meteodata 140 S, Steinel M-008E**: an active text parameter (the Meteodata's EIS 5
     threshold channels) is written as ETS's partial download switching a Meteodata threshold channel on
