@@ -29,6 +29,30 @@ in `apps/server/data/`. Uploaded `.knxproj` / `.knxprod` files are parsed into t
 kept as files. That directory is git-ignored in full and holds real project
 data, so it never leaves the machine.
 
+### An isolated instance
+
+Four environment variables move the pair; unset, each keeps the default above.
+
+| Variable | Read by | Meaning | Default |
+|---|---|---|---|
+| `BUSFORGE_DATA_DIR` | server | The data directory (database, master key, backups); created if missing, relative paths resolve against the working directory. Set but empty is refused | `apps/server/data` |
+| `PORT` | server | The port the server listens on | `3000` |
+| `BUSFORGE_API` | Vite | The server's URL, the target of the `/api` proxy and the bus-monitor WebSocket | `http://localhost:3000` |
+| `BUSFORGE_WEB` | Vite | The dev server's URL; its port is the port Vite listens on, and a busy port is an error instead of a move to the next one | Vite's own `5173` |
+
+`BUSFORGE_API` and `BUSFORGE_WEB` are the variables the smoke framework reads too
+([testing.md](testing.md#variables-of-a-smoke-run)), so one pair of values points the dev server and a UI run at
+the same instance. One command line starts a pair with an empty database on ports of your choice (check
+them with `lsof -iTCP:3917 -iTCP:5917 -sTCP:LISTEN` first, nothing should answer):
+
+```bash
+BUSFORGE_DATA_DIR=$(mktemp -d) PORT=3917 bun run dev:server & BUSFORGE_API=http://localhost:3917 BUSFORGE_WEB=http://localhost:5917 bun run dev:web
+```
+
+Open `http://localhost:5917`. A second pair takes other ports and another directory; the two share
+nothing. A pair started with `BUSFORGE_DATA_DIR` leaves its directory behind: remove it when the run
+is over, and stop the two processes by the PIDs you started (`kill %1 %2` in the same shell).
+
 ## The gate
 
 ```bash

@@ -1,5 +1,5 @@
 import { evidenceBundle } from "./compatibility.ts";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
 import type { Database } from "bun:sqlite";
 import type { AppConfig } from "@busforge/product";
@@ -47,6 +47,16 @@ export interface AppState {
 }
 
 const DEFAULT_DATA_DIR = join(import.meta.dir, "..", "data");
+
+// The server's data directory: BUSFORGE_DATA_DIR, resolved against the working directory, or
+// apps/server/data. A variable that is set but empty is refused, not read as unset: the server would
+// otherwise open the default directory's database where the operator asked for an isolated one.
+export function resolveDataDir(env: Record<string, string | undefined>): string {
+  const dir = env.BUSFORGE_DATA_DIR;
+  if (dir === undefined) return DEFAULT_DATA_DIR;
+  if (dir.trim() === "") throw new Error("BUSFORGE_DATA_DIR is set but empty; give a directory or unset it");
+  return resolve(dir);
+}
 
 export function createState(opts?: { dbPath?: string; dataDir?: string; now?: () => number }): AppState {
   const dataDir = opts?.dataDir ?? DEFAULT_DATA_DIR;

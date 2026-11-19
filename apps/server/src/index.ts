@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { existsSync } from "node:fs";
 import { inspect } from "node:util";
-import { createState, handleApi } from "./app.ts";
+import { createState, handleApi, resolveDataDir } from "./app.ts";
 import { pruneTelegrams } from "./db/telegrams.ts";
 import { pruneTasks } from "./db/tasks.ts";
 import { installShutdown } from "./shutdown.ts";
@@ -25,7 +25,7 @@ process.on("uncaughtException", (e) => say("UNCAUGHT EXCEPTION (server stays up)
 process.on("unhandledRejection", (e) => say("UNHANDLED REJECTION (server stays up)", e));
 process.on("exit", (code) => say(`process exit (code ${code})`));
 
-const state = createState();
+const state = createState({ dataDir: resolveDataDir(process.env) });
 installShutdown(state, say);
 const PORT = Number(process.env.PORT ?? 3000);
 const DIST = join(import.meta.dir, "..", "..", "web", "dist");
