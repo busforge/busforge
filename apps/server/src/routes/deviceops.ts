@@ -104,7 +104,8 @@ function busOpPreamble(state: AppState, projectId: string, deviceId: string): { 
 // writes none of them, and a parameter flash on a device no longer counted never programmed would leave
 // the bytes it reads as FF to a baseline the device was never shown to hold (ParamFlashCtx.neverProgrammed).
 const canDownloadFull = (app: AppConfig | null, peiProgram: boolean) => !peiProgram && !!app && classify(app).capabilities().fullDownload;
-const keepsParams = (app: AppConfig | null) => !!app && classify(app).capabilities().readParams;
+const keepsParams = (app: AppConfig | null) => !!app && classify(app).capabilities().flashParams
+  && [...app.params.values()].some((p) => p.codeSegment !== undefined && p.offset !== undefined);
 const onlyEtsDownloads = (app: AppConfig | null, peiProgram: boolean) => !!app && (peiProgram || classify(app).operationRefusals().fullDownload !== undefined);
 function refuseNeverProgrammed(dev: { neverProgrammed: boolean; peiProgram: boolean }, app: AppConfig | null): void {
   if (!dev.neverProgrammed) return;

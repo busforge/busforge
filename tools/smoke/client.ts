@@ -22,7 +22,7 @@ export interface FlashResult {
   structural?: boolean; // a structural flash: parameters, com-object table and group tables in one write
   confirmedOnly?: { address: number; length: number }[]; // bytes verified on the device's write confirmation alone
   restartUnproven?: boolean; // verified after a restart the device did not confirm
-  alwaysWrite?: boolean; // a dry run of a write that goes out even with diffBytes 0 (it also writes state it does not read)
+  alwaysWrite?: boolean; // a dry run of a write that goes out even with diffBytes 0 (it also writes state it does not read, or what the device holds is not known)
   readsFF?: { address: number; length: number }[]; // a dry run's differing bytes the device reads as FF
   leftFF?: { address: number; length: number }[]; // bytes read as FF the flash leaves, unchanged since the last programming
 }

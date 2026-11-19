@@ -416,5 +416,10 @@ where they are required; raw acquisition is not a way around access control. Wha
   programmed baseline, which for such a device holds its defaults and start values, not what the unit
   holds; its verified result still ends the never-programmed state. On System 7 the group-address flash
   keeps the table's configuration bytes as well. Needs: the table read or written before that state ends.
+- **The System B parameter flash counts the bytes that differ, not the bytes it writes.** Where it takes
+  every owned byte (no stamp record, stamps other than the record, an application not `LOADED`, a device
+  never programmed from this project) its preview and its result name the bytes that differ from its read
+  ("0 bytes written" where the read shows none), though every owned byte goes out. Needs: the result to
+  count the written set, and the preview to say that the write goes out whole.
 - **DCA-replacement plugins, phase 2:** writing a device-specific configuration back.
 - Remaining parity gaps in the configuration view are tracked in [ets-coverage.md](ets-coverage.md).

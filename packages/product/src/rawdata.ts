@@ -6,7 +6,8 @@ import { ProductError } from "./errors.ts";
 
 // A TypeRawData parameter has no byte layout an ETS download has shown, so no image writes one: the segment's
 // <Data> or the unit's bytes stay where it lies. An operation that writes a device's parameters therefore
-// refuses where a raw-data parameter with memory that the configuration activates holds another value:
+// refuses where a raw-data parameter with memory that the configuration activates holds a value nothing shows the
+// device to hold:
 //  - a parameter or structural flash: another value than in the configuration the device was last programmed
 //    with (`base`), or than its default where that configuration did not activate it, compared per parameter of
 //    each module instance whichever of its ParameterRefs places it;

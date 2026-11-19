@@ -654,7 +654,8 @@ export interface FlashOp {
   // covers it, so run it even without a diff and let it finish the load. "refuse": the plan brackets
   // only what differs and could leave it as it is, with or without a diff.
   loadIncomplete?: "rewrite" | "refuse";
-  // Written even where every byte compared is equal: the operation writes state it does not read.
+  // Written even where every byte compared is equal: the operation writes state it does not read, or what
+  // the device holds is not known (FlashResult.alwaysWrite).
   alwaysWrite?: boolean;
   // Filled by `write` with the closing stamp reads of a download that writes the parameters (ImageStamp).
   stamps?: ImageStamp[];
@@ -849,9 +850,9 @@ export interface ParamFlashCtx extends WriteGate {
   // The device has had no configuration of this project verified on it (it was placed, its product replaced,
   // or ETS never downloaded it), so what it holds is not what `baseParams` describes. The System B flash then
   // writes every byte it owns, also where the unit reads them all as the target, whatever the unit's stamps
-  // and the bytes it reads as FF included; every family judges a colour and a calculation against the
-  // application's defaults, as a full download does, and refuses a raw-data parameter in use, whose bytes no
-  // image writes. Absent: the device holds `baseParams`.
+  // and the bytes it reads as FF included; the System B and System 7 flashes judge a colour and a calculation
+  // against the application's defaults, as a full download does, and refuse a raw-data parameter in use,
+  // whose bytes no image writes. Absent: the device holds `baseParams`.
   neverProgrammed?: boolean;
 }
 // Commissioning a device from nothing needs everything at once: the parameters AND the links,
