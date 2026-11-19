@@ -48,6 +48,7 @@ export function addKeys(keys: SecureKeys, device: NamedKey[], group: { raw: numb
 
 // `omitted` names the keys a source holds but did not give: Busforge's project reader takes only the first
 // installation and no tool key of a device without a serial, and a key that is not 16 bytes is left out.
+const KEYRING_NOT_THIS_PASSWORD = new Set(["KEYRING_SIGNATURE_MISMATCH", "KEYRING_PASSWORD_INVALID"]);
 export interface KeySource { file: string; deviceKeys: number; groupKeys: number; omitted: string[] }
 export interface KeyLoad { keys: SecureKeys; read: KeySource[]; notRead: { file: string; reason: string }[] }
 
@@ -73,9 +74,10 @@ export function corpusKeys(root: string, files: string[], passwords: string[]): 
         else omitted = projectKeys(load.keys, file, bytes, pw);
       } catch (e) {
         lastRefusal = describeFailure(e);
-        // A keyring's wrong password shows as a signature that does not verify; a malformed keyring opens with none.
+        // A keyring's wrong password shows as a signature that does not verify, a password a keyring cannot hold
+        // (not printable ASCII) as invalid; a malformed keyring opens with none.
         const code = codeOf(e) ?? "";
-        if (keyring ? code === "KEYRING_SIGNATURE_MISMATCH" : NEEDS_PASSWORD.has(code) || NOT_THIS_PASSWORD.has(code)) continue;
+        if (keyring ? KEYRING_NOT_THIS_PASSWORD.has(code) : NEEDS_PASSWORD.has(code) || NOT_THIS_PASSWORD.has(code)) continue;
         break;
       }
       load.read.push({ file, deviceKeys: load.keys.device.length - before.d, groupKeys: groupKeyCount(load.keys) - before.g, omitted });
@@ -91,7 +93,7 @@ export function corpusKeys(root: string, files: string[], passwords: string[]): 
 function projectKeys(keys: SecureKeys, file: string, bytes: Buffer, password: string | undefined): string[] {
   const p = loadKnxproj(bytes, password, file);
   const omitted: string[] = [];
-  if (p.skippedInstallations) omitted.push(`${p.skippedInstallations} installation(s) after the first, not read`);
+  if (p.skippedInstallations) omitted.push(`${p.skippedInstallations} unread installation(s) after the first`);
   if (p.secureDevicesWithoutSerial) omitted.push(`the tool keys of ${p.secureDevicesWithoutSerial} device(s) without a serial`);
   const key = (what: string, b64: string) => {
     const k = Buffer.from(b64, "base64");

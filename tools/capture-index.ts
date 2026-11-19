@@ -737,7 +737,7 @@ export function renderMarkdown(index: CaptureIndex): string {
   out.push("clear: **tool access** (security control field bit 7: a device's tool key or FDSK), **broadcast** (to 0/0/0),");
   out.push("**group** (to another group address). ETS's log shows neither the control field nor a Sync's access, so its");
   out.push("telegrams name only the destination. **(not opened)**: no key below opened it; **(not shown)**: ETS logged");
-  out.push("it encrypted.", "");
+  out.push("it encrypted; **(truncated)**: shorter than its service's layout, also counted as an undecoded line.", "");
   for (const [s, fs] of [...inside.entries()].sort(([a], [b]) => byText(a, b))) {
     out.push(`- **${s}** (${fs.length}): ${fs.map((f) => `\`${f}\``).join(", ")}`);
   }
@@ -832,16 +832,17 @@ export function propertyAnswerRows(index: CaptureIndex, properties: string[] = [
 }
 
 // What the query cannot show: answers inside secured telegrams no key opened or ETS logged encrypted, on lines
-// that did not decode, and the keys of projects and keyrings that were not read.
+// that did not decode, in files no reader takes, and the keys of projects and keyrings that were not read.
 export function propertyAnswersUnseen(index: CaptureIndex): string[] {
   let unopened = 0, undecoded = 0, undecodedFiles = 0;
   for (const f of index.files) {
-    for (const [n, c] of Object.entries(f.secure.inside)) if (/\((?:not opened|not shown|truncated)\)/.test(n)) unopened += c.sent + c.received;
+    for (const [n, c] of Object.entries(f.secure.inside)) if (/\((?:not opened|not shown)\)/.test(n)) unopened += c.sent + c.received;
     if (f.undecoded.count) { undecoded += f.undecoded.count; undecodedFiles++; }
   }
   return [
-    `${unopened} secured telegrams whose service is not shown (not opened, ETS logged encrypted, truncated)`,
-    `${undecoded} undecoded lines in ${undecodedFiles} files`,
+    `${unopened} secured telegrams whose service is not shown (not opened, ETS logged encrypted)`,
+    `${undecoded} undecoded lines in ${undecodedFiles} files (truncated secured telegrams among them)`,
+    `${index.notIndexed.filter((n) => !n.reason.startsWith("not a telegram log")).length} files that may hold telegrams but no reader here takes`,
     `${index.keys.notRead.length} projects and keyrings not read, so their keys were missing`,
   ];
 }

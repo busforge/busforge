@@ -350,7 +350,8 @@ describe("the keys of the corpus", () => {
         tunnel("ETS->BRIDGE", REQ, "1.1.100", iaToNum("1.1.7"), secured({ key: TOOL_KEY, src: "1.1.100", dst: iaToNum("1.1.7"), scf: 0x90, seq: seq(1), tpci: 0x43, plaintext: Buffer.from([0x03, 0xd5, 0x00, 0x38, 0x10, 0x01]) })),
         tunnel("ETS->BRIDGE", REQ, "1.1.100", iaToNum("1.1.7"), secured({ key: FDSK, src: "1.1.100", dst: iaToNum("1.1.7"), scf: 0x92, seq: seq(2), tpci: 0x47, plaintext: Buffer.alloc(6, 7), serial: SERIAL })),
       ].join("\n"));
-      const index = buildIndex(root, { passwords: ["wrong", "right"], environment: [{ name: "bench FDSK", key: FDSK }] });
+      // A password a keyring cannot hold (not printable ASCII) is passed over like a wrong one.
+      const index = buildIndex(root, { passwords: ["pässword", "wrong", "right"], environment: [{ name: "bench FDSK", key: FDSK }] });
       expect(index.keys).toEqual({
         read: [{ file: "internal/captures/bench.knxkeys", deviceKeys: 1, groupKeys: 0, omitted: [] }],
         notRead: [{ file: "collections/other.knxkeys", reason: expect.stringMatching(/^KEYRING_SIGNATURE_MISMATCH: /) }],
@@ -387,9 +388,9 @@ describe("the keys of the corpus", () => {
       const index = buildIndex(root);
       expect(index.keys.read).toEqual([{
         file: "captures/p.knxproj", deviceKeys: 0, groupKeys: 0,
-        omitted: ["1 installation(s) after the first, not read", "the tool keys of 1 device(s) without a serial", "group key 0/0/1: 15 bytes, not 16"],
+        omitted: ["1 unread installation(s) after the first", "the tool keys of 1 device(s) without a serial", "group key 0/0/1: 15 bytes, not 16"],
       }]);
-      expect(renderMarkdown(index)).toContain("- `captures/p.knxproj`: 0 device, 0 group; not given: 1 installation(s) after the first, not read, the tool keys of 1 device(s) without a serial, group key 0/0/1: 15 bytes, not 16");
+      expect(renderMarkdown(index)).toContain("- `captures/p.knxproj`: 0 device, 0 group; not given: 1 unread installation(s) after the first, the tool keys of 1 device(s) without a serial, group key 0/0/1: 15 bytes, not 16");
     } finally { rmSync(root, { recursive: true }); }
   });
 
@@ -627,7 +628,10 @@ describe("property answers", () => {
       tunnel("BRIDGE->Busforge", IND, "1.1.7", iaToNum("1.1.254"), [0x43, 0x40, 0x07, 0xb0], 0xbc),
       tunnel("BRIDGE->Busforge", IND, "1.1.7", iaToNum("1.1.254"), [0x47, 0xd6, 0x00, 0x38, 0x00, 0x01], 0xbc),
     ].join("\n")));
-    const index: CaptureIndex = { format: INDEX_FORMAT, dirs: ["captures"], keys: NO_KEYS, files: [proxy, ets, other], notIndexed: [] };
+    const index: CaptureIndex = {
+      format: INDEX_FORMAT, dirs: ["captures"], keys: NO_KEYS, files: [proxy, ets, other],
+      notIndexed: [{ file: "a.json", reason: "not a telegram log (.json)" }, { file: "b.lines", reason: "telegram-like lines in a format no reader here takes" }],
+    };
     const rows = propertyAnswerRows(index, ["0/56", "t3.1/9"]);
     expect(rows).toEqual([
       { property: "0/56", elements: 0, errorOctet: false, device: "1.1.7", descriptor0: "0705", tool: "ETS", answers: 2, files: ["p.log"] },
@@ -639,7 +643,7 @@ describe("property answers", () => {
     expect(md).toContain("| 0/56 | 0 | no | 1.1.7 | 0705 | ETS | 2 | `p.log` |");
     expect(md).toContain("No answer of t3.1/9 in the index.");
     // the ETS log lines without a readable data field are what the query cannot see
-    expect(md).toContain("Not in the table: 0 secured telegrams whose service is not shown (not opened, ETS logged encrypted, truncated); 2 undecoded lines in 1 files; 0 projects and keyrings not read, so their keys were missing.");
+    expect(md).toContain("Not in the table: 0 secured telegrams whose service is not shown (not opened, ETS logged encrypted); 2 undecoded lines in 1 files (truncated secured telegrams among them); 1 files that may hold telegrams but no reader here takes; 0 projects and keyrings not read, so their keys were missing.");
     // every answer of the three files: four rows of p.log, two of e.txt, one of q.log
     expect(propertyAnswerRows(index)).toHaveLength(7);
     expect(() => propertyAnswerRows(index, ["0/056", "t17.01/51", "--x"])).toThrow("not a property as the index names it (<object index>/<PID>, t<type>.<instance>/<PID>): 0/056, t17.01/51, --x");

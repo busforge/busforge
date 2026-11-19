@@ -323,8 +323,8 @@ which `tools/secure-capture-decode.ts` prints a single capture with) and the key
 Every tool-access telegram is tried with every device key, whatever its destination, so a secured
 broadcast (ETS assigns a secure device's address by serial with tool-access telegrams to `0/0/0`) opens
 like a point-to-point one; a Sync answer opens against the challenge of the Sync request it answers; a
-tunnelled request, whose source the tool leaves 0.0.0, is opened with the tunnel address the confirmation
-after it names. An
+tunnelled request, whose source the tool leaves 0.0.0, is opened at the next tunnel telegram with the tunnel
+address known by then, which the confirmation right after it carries. An
 opened telegram's inner service counts among the file's services like a plain one, its assigned
 address and object/PID pair included, and `INDEX.md` lists every service seen inside a secured telegram
 with the files that show it, tagged with what the frame shows in clear: tool access, broadcast, group.
@@ -354,7 +354,8 @@ count, error octet, unit, device descriptor 0 (as that capture shows it, `?` whe
 tool, summed over the captures that show it. A unit is its individual address within a capture: captures
 of different installations reuse addresses, so units that share an address and descriptor 0 share a
 row, which names its files. Below the table the query says what it cannot see: secured telegrams whose
-service is not shown, undecoded lines, and projects or keyrings whose keys were not read.
+service is not shown, undecoded lines, files no reader here takes, and projects or keyrings whose keys
+were not read.
 
 ## Why the golden snapshot is not a correctness proof
 

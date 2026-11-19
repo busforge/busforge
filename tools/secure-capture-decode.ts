@@ -46,7 +46,8 @@ for (const line of readFileSync(file, "utf8").split("\n")) {
   const cemi = f.subarray(10);
   const mc = cemi[0];
   const o = 2 + cemi[1];
-  if (cemi.length < o + 9) continue;
+  // an L_Data frame with at least one TPDU octet, as the capture index reads it
+  if (cemi.length < o + 8) continue;
   const ctrl2 = cemi[o + 1];
   const src = cemi.readUInt16BE(o + 2);
   const dst = cemi.readUInt16BE(o + 4);
