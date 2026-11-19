@@ -14,6 +14,7 @@ The hardware smoke framework in `smoke/` has its own document, [`docs/testing.md
 | `paramtest.ts` | One device, one memory read: build the parameter image from files and compare it against the device |
 | `etsdiff.ts` | Diff Busforge's full-download image, segment by segment, against what ETS wrote in a captured full download (the reference-axis gate, see docs/verification.md) |
 | `knxproxy.ts` | KNXnet/IP-over-TCP logging proxy between ETS (or Busforge) and a KNXnet/IP server: the capture `etsdiff.ts` reads (docs/testing.md, "Taking a capture") |
+| `sim-unit-serve.ts` | No bus: serve a simulated System B unit (`sim-unit.ts`, built from a real unit's collection, `sim-units.ts`) behind a KNXnet/IP server, with `knxproxy.ts` logging the tool in front (docs/testing.md, "A simulated unit") |
 | `pcap.ts` | A pcap capture of KNXnet/IP over UDP as the log `knxproxy.ts` writes, so `etsdiff.ts` reads it (docs/testing.md, "Captures in pcap form") |
 | `capture-index.ts` | Offline: index every capture in the private corpus by tool, unit and mask, assigned addresses, services and object/PID pairs, the services inside its secured telegrams (opened with the corpus's keys) and every property answer, and list what it cannot read; `--properties [<property>...]` queries the property answers across the corpus (docs/testing.md, "The capture index") |
 | `secure-capture.ts` | Library: open the Data Secure telegrams of a capture with keys held in memory, from the environment or the corpus's projects and keyrings; `capture-index.ts` and `secure-capture-decode.ts` use it |

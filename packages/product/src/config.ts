@@ -67,14 +67,14 @@ export interface CfgParamView {
   // (calculations.ts annotateCalculations). Filled in by the server.
   calculations?: CfgCalculationMark[];
 }
-export interface CfgCalculationMark {
+// computed: Busforge ran the script and builds the image with its results. defaults: every input is at its default,
+// so the results keep the values the configuration stores, as ETS keeps them. refused: Busforge does not run the
+// calculation and computes none of its results; `refusal` says why by code, which the app names in the user's
+// language, `reason` the same in English.
+export type CalcState = { state: "computed" | "defaults"; reason?: undefined; refusal?: undefined } | { state: "refused"; reason: string; refusal: CalcRefusal };
+export type CfgCalculationMark = CalcState & {
   name: string; // the calculation's Name, else its Id
   role: "input" | "result";
-  // computed: Busforge ran the script and builds the image with its results. defaults: every input is at its default,
-  // so the results keep the values the configuration stores, as ETS keeps them. refused: Busforge does not run the
-  // calculation (`reason`) and computes none of its results.
-  state: "computed" | "defaults" | "refused";
-  reason?: string;
   // A parameter on the other side of the calculation has memory, lies in a property or decides what the configuration
   // places: where Busforge does not run the calculation, a write that changes this parameter is refused.
   otherSideReaches: boolean;
@@ -84,7 +84,14 @@ export interface CfgCalculationMark {
   // Each result: the value Busforge builds the image with (absent where the calculation is refused), and whether an
   // active branch of the configuration places it.
   results: { refId: string; name: string; value?: string; placed: boolean }[];
-}
+};
+// Why Busforge does not run a <ParameterCalculation> (calculations.ts staticRefusal and its run), with the values its
+// text names: func, detail, ref, type, name, value.
+export type CalcRefusalCode =
+  | "lrFunc" | "noScript" | "numericCharRef" | "scriptOutside" | "paramMissing" | "paramType" | "noVariable" | "sharedVariable"
+  | "resultInProperty" | "resultSteers" | "inputNotNumeric" | "numberForText" | "textForNumber" | "notFinite" | "outsideRange"
+  | "typeRejects" | "resultUnset" | "scriptFailed" | "clash" | "unsettled";
+export interface CalcRefusal { code: CalcRefusalCode; params?: Record<string, string> }
 export interface CfgComObjView {
   refId: string; number: number; name: string; functionText: string;
   objectSize: string; dpt: string; flags: ComObjFlags; priority: ComObjPriority;

@@ -14,6 +14,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { basename, join } from "node:path";
+import { gaToNum } from "../packages/knx/src/index.ts";
 import { manufacturerId, manufacturerInfo } from "../packages/product/src/manufacturers.ts";
 import { readZip } from "../packages/project/src/zip.ts";
 import { OPENKNX_RELEASES, type OpenKnxRelease } from "./openknx-releases.ts";
@@ -379,11 +380,6 @@ export const MANUFACTURER_DEMO: Demo = {
   devices: MANUFACTURER_DEVICES,
 };
 
-export const gaRaw = (ga: string): number => {
-  const [main, mid, sub] = ga.split("/").map(Number);
-  return (main << 11) | (mid << 8) | sub;
-};
-
 interface Node { id: string; name: string; type?: string; children: Node[] }
 interface ConfigView { blocks: { items: ({ kind: "comObject"; comObject: { refId: string; gaRaws: number[] } } | { kind: "param"; param: { refId: string; value: string } } | { kind: string })[] }[] }
 
@@ -482,7 +478,7 @@ async function fillDemoProject(call: Call, demo: Demo, projectId: string, produc
     if (spaceId === undefined) throw new Error(`${d.name}: room ${d.room} was not built`);
     await call("PUT", `${dev}/space`, { spaceId });
     for (const [paramRefId, value] of d.params) await call("PUT", `${dev}/params`, { paramRefId, value });
-    for (const [comObjRefId, gas] of d.links) await call("PUT", `${dev}/links`, { comObjRefId, gaRaws: gas.map(gaRaw) });
+    for (const [comObjRefId, gas] of d.links) await call("PUT", `${dev}/links`, { comObjRefId, gaRaws: gas.map(gaToNum) });
 
     // Read the device back: every parameter and link must stand as written.
     const view = await call<ConfigView>("GET", `${dev}/config`);
@@ -497,7 +493,7 @@ async function fillDemoProject(call: Call, demo: Demo, projectId: string, produc
     }
     for (const [ref, gas] of d.links) {
       const got = links.get(ref);
-      if (!got || got.join(",") !== gas.map(gaRaw).join(",")) throw new Error(`${d.name}: object ${ref} links ${got?.join(",") ?? "nothing"}, not ${gas.join(", ")}`);
+      if (!got || got.join(",") !== gas.map(gaToNum).join(",")) throw new Error(`${d.name}: object ${ref} links ${got?.join(",") ?? "nothing"}, not ${gas.join(", ")}`);
     }
     const p = products.get(`${d.appRef} ${d.productRef}`)!;
     const room = demo.floors.flatMap((f) => f.rooms).find((r) => r.key === d.room)!.name;

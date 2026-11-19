@@ -124,6 +124,21 @@ describe("a ParameterCalculation", () => {
     expect(runOf(app({ script: "f = a / 8;", outputs: ["P-7"] }), vals({ "P-1": "20" })).outputs.get(R("P-7"))).toBe("2.5");
   });
 
+  test("each refusal carries its reason by code and the values its text names, for the app to name in the user's language", () => {
+    const on = (calc: Parameters<typeof app>[0], v = vals({ "P-1": "20" })) => runOf(app(calc), v).refusal;
+    expect(on({ func: "calc", outputs: ["P-2"] }, new Map())).toEqual({ code: "lrFunc", params: { func: "calc" } });
+    expect(on({ script: "", outputs: ["P-2"] }, new Map())).toEqual({ code: "noScript" });
+    expect(on({ script: "sel = 1;", outputs: ["P-6"] }, new Map())).toEqual({ code: "resultSteers", params: { ref: R("P-6") } });
+    expect(on({ script: "b = a / 3;", outputs: ["P-2"] })).toEqual({ code: "typeRejects", params: { value: String(20 / 3), ref: R("P-2") } });
+    expect(on({ script: "f = a * 10;", outputs: ["P-7"] })).toEqual({ code: "outsideRange", params: { value: "200", ref: R("P-7") } });
+    expect(on({ script: "if (a > 50) b = a;", outputs: ["P-2"] })).toEqual({ code: "resultUnset", params: { ref: R("P-2") } });
+    // The interpreter's own reason stays as it gives it, in English.
+    expect(on({ script: "b = b + a;", outputs: ["P-2"] })).toEqual({ code: "scriptFailed", params: { detail: expect.stringContaining("reads its result b before setting it") } });
+    expect(on({ script: "function f() {}", outputs: ["P-2"] }, new Map())).toEqual({ code: "scriptOutside", params: { detail: expect.any(String) } });
+    const run = runOf(app({ func: "calc", outputs: ["P-2"] }), new Map());
+    expect(run.reason).toBe("its LRTransformationFunc \"calc\" names a function of the application's script, which Busforge does not run");
+  });
+
   test("a script outside the subset, a script function, a steering result and a type scripts do not run with are refused", () => {
     expect(runOf(app({ script: "b = foo(a);", outputs: ["P-2"] }), vals({ "P-1": "20" })).reason).toContain("undefined variable foo");
     for (const [calc, reason] of [
@@ -163,9 +178,10 @@ describe("a ParameterCalculation", () => {
     const loop = app({ script: "c = b + 1;", inputs: ["P-2"], outputs: ["P-3"] }, { script: "b = c + 1;", inputs: ["P-3"], outputs: ["P-2"] });
     const runs = applyCalculations(loop, vals({ "P-2": "5" }), []).runs;
     expect(runs.map((r) => r.reason)).toEqual([expect.stringContaining("did not settle"), expect.stringContaining("did not settle")]);
+    expect(runs.map((r) => r.refusal)).toEqual([{ code: "unsettled" }, { code: "unsettled" }]);
     expect(() => refuseCalculationWrites(loop, vals({ "P-2": "5" }), [])).toThrow(refused("did not settle"));
     const clash = app({ script: "b = a;", outputs: ["P-2"] }, { script: "b = a + 1;", outputs: ["P-2"] });
-    expect(applyCalculations(clash, vals({ "P-1": "20" }), []).runs.map((r) => r.state)).toEqual(["refused", "refused"]);
+    expect(applyCalculations(clash, vals({ "P-1": "20" }), []).runs.map((r) => r.refusal)).toEqual([{ code: "clash" }, { code: "clash" }]);
   });
 });
 
@@ -216,7 +232,7 @@ describe("the device page of a ParameterCalculation", () => {
   test("says a calculation Busforge does not run is refused, and shows its stored result, with no value computed", () => {
     for (const calc of [{ func: "calc", outputs: ["P-2"] }, { script: "b = b + a;", outputs: ["P-2"] }] as const) {
       const page = rows(app(calc), vals({ "P-1": "20", "P-2": "5" }));
-      expect(page.get(R("P-2"))).toMatchObject({ value: "5", calculations: [{ role: "result", state: "refused", reason: expect.any(String), otherSideReaches: true }] });
+      expect(page.get(R("P-2"))).toMatchObject({ value: "5", calculations: [{ role: "result", state: "refused", reason: expect.any(String), refusal: { code: expect.any(String) }, otherSideReaches: true }] });
       expect(page.get(R("P-2"))!.calculations![0].value).toBeUndefined();
       expect(page.get(R("P-1"))!.calculations).toEqual([expect.objectContaining({ role: "input", state: "refused", results: [{ refId: R("P-2"), name: "B", placed: true }] })]);
     }
