@@ -328,7 +328,9 @@ address and object/PID pair included, and `INDEX.md` lists every service seen in
 with the files that show it, tagged with what the frame shows in clear: tool access, broadcast, group.
 A telegram no key opens stays in the count as `(not opened)`. The keys stay in memory: the index names
 the file a key came from and which keys opened a capture, never a key or a plaintext, and lists each
-project or keyring it could not open with the reason, so an index written without the passwords says so.
+project or keyring it could not open with the reason, so an index written without the passwords says so,
+and the keys a project holds that it did not give (Busforge's project reader takes only the first
+installation and no tool key of a device without a serial; a key that is not 16 bytes is left out).
 
 #### Property answers
 

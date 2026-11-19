@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { gaToNum, iaToNum } from "../packages/knx/src/index.ts";
 import { secureEncode } from "../packages/knx/src/secure.ts";
 import { writeKeyring } from "../packages/project/src/keyring.ts";
+import { storeZip } from "../packages/project/test/ziputil.ts";
 import { addKeys, corpusKeys, emptyKeys, parseKeyList, type SecureKeys } from "./secure-capture.ts";
 import {
   apciName, BUSSARD_ROWS, buildIndex, documentedKeyringPasswords, indexFile, propertyAnswerRows, renderPropertyAnswers, indexText, INDEX_JSON, INDEX_MD, labelDisagrees, PCAP_CLIENT, renderMarkdown, type IndexedFile, type KeySources,
@@ -334,7 +335,7 @@ describe("the keys of the corpus", () => {
       ].join("\n"));
       const index = buildIndex(root, { passwords: ["wrong", "right"], environment: [{ name: "bench FDSK", key: FDSK }] });
       expect(index.keys).toEqual({
-        read: [{ file: "internal/captures/bench.knxkeys", deviceKeys: 1, groupKeys: 0 }],
+        read: [{ file: "internal/captures/bench.knxkeys", deviceKeys: 1, groupKeys: 0, omitted: [] }],
         notRead: [{ file: "collections/other.knxkeys", reason: expect.stringMatching(/^KEYRING_SIGNATURE_MISMATCH: /) }],
         environment: ["bench FDSK"], deviceKeys: 2, groupKeys: 0,
       });
@@ -353,6 +354,24 @@ describe("the keys of the corpus", () => {
       }
       expect(written.toLowerCase()).not.toContain("03d500381001"); // the opened A_PropertyValue_Read
       expect(written.toLowerCase()).not.toContain("070707070707"); // the Sync challenge
+    } finally { rmSync(root, { recursive: true }); }
+  });
+
+  test("a project names the keys it holds but did not give: a device without a serial, a key that is not 16 bytes", () => {
+    const root = mkdtempSync(join(tmpdir(), "capture-index-"));
+    try {
+      for (const d of ["captures", "internal/captures", "collections"]) mkdirSync(join(root, d), { recursive: true });
+      // Synthetic keys: DI-1 has no serial, so the project reader gives no tool key for it; GA 1 carries 15 bytes.
+      const xml = readFileSync(join(import.meta.dir, "../packages/project/test/fixtures/sample-0.xml"), "utf8")
+        .replace('Hardware2ProgramRefId="M-0048_H-1_HP-1">', 'Hardware2ProgramRefId="M-0048_H-1_HP-1"><Security ToolKey="AAECAwQFBgcICQoLDA0ODw==" />')
+        .replace('<GroupAddress Id="P-TEST-0_GA-1" Address="1"', '<GroupAddress Id="P-TEST-0_GA-1" Address="1" Key="AAECAwQFBgcICQoLDA0O"');
+      writeFileSync(join(root, "captures/p.knxproj"), storeZip({ "P-TEST/0.xml": xml }));
+      const index = buildIndex(root);
+      expect(index.keys.read).toEqual([{
+        file: "captures/p.knxproj", deviceKeys: 0, groupKeys: 0,
+        omitted: ["the tool keys of 1 device(s) without a serial", "group key 0/0/1: 15 bytes, not 16"],
+      }]);
+      expect(renderMarkdown(index)).toContain("- `captures/p.knxproj`: 0 device, 0 group; not given: the tool keys of 1 device(s) without a serial, group key 0/0/1: 15 bytes, not 16");
     } finally { rmSync(root, { recursive: true }); }
   });
 
@@ -542,7 +561,7 @@ corpusDescribe("a secure ETS capture opened with the keyring beside it", () => {
     const root = corpusRoot()!;
     const load = corpusKeys(root, [`${dir}/project.knxkeys`], documentedKeyringPasswords(root));
     expect(load.notRead).toEqual([]);
-    expect(load.read).toEqual([{ file: `${dir}/project.knxkeys`, deviceKeys: 2, groupKeys: 3 }]);
+    expect(load.read).toEqual([{ file: `${dir}/project.knxkeys`, deviceKeys: 2, groupKeys: 3, omitted: [] }]);
     const f = indexed(indexFile(root, `${dir}/ets.pcapng`, load.keys));
     expect(f.undecoded.count).toBe(0);
     expect(f.secure.telegrams).toBeGreaterThan(50);

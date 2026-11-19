@@ -46,7 +46,9 @@ export function addKeys(keys: SecureKeys, device: NamedKey[], group: { raw: numb
 
 // ── keys from the corpus ─────────────────────────────────────────────────────
 
-export interface KeySource { file: string; deviceKeys: number; groupKeys: number }
+// `omitted` names the keys a source holds but did not give: Busforge's project reader takes only the first
+// installation and no tool key of a device without a serial, and a key that is not 16 bytes is left out.
+export interface KeySource { file: string; deviceKeys: number; groupKeys: number; omitted: string[] }
 export interface KeyLoad { keys: SecureKeys; read: KeySource[]; notRead: { file: string; reason: string }[] }
 
 // The tool keys and group keys of every ETS project (`.knxproj`) and the tool keys, FDSKs and group keys of
@@ -65,9 +67,10 @@ export function corpusKeys(root: string, files: string[], passwords: string[]): 
     let opened = false;
     for (const pw of keyring ? passwords : [undefined, ...passwords]) {
       const before = { d: load.keys.device.length, g: groupKeyCount(load.keys) };
+      let omitted: string[] = [];
       try {
         if (keyring) keyringKeys(load.keys, file, bytes.toString("utf8"), pw!);
-        else projectKeys(load.keys, file, bytes, pw);
+        else omitted = projectKeys(load.keys, file, bytes, pw);
       } catch (e) {
         lastRefusal = describeFailure(e);
         // A keyring's wrong password shows as a signature that does not verify; any refusal tries the next one.
@@ -75,7 +78,7 @@ export function corpusKeys(root: string, files: string[], passwords: string[]): 
         if (keyring || NEEDS_PASSWORD.has(code) || NOT_THIS_PASSWORD.has(code)) continue;
         break;
       }
-      load.read.push({ file, deviceKeys: load.keys.device.length - before.d, groupKeys: groupKeyCount(load.keys) - before.g });
+      load.read.push({ file, deviceKeys: load.keys.device.length - before.d, groupKeys: groupKeyCount(load.keys) - before.g, omitted });
       opened = true;
       break;
     }
@@ -84,13 +87,29 @@ export function corpusKeys(root: string, files: string[], passwords: string[]): 
   return load;
 }
 
-function projectKeys(keys: SecureKeys, file: string, bytes: Buffer, password: string | undefined): void {
+// Returns what the project holds that it did not give.
+function projectKeys(keys: SecureKeys, file: string, bytes: Buffer, password: string | undefined): string[] {
   const p = loadKnxproj(bytes, password, file);
+  const omitted: string[] = [];
+  if (p.skippedInstallations) omitted.push(`the keys of ${p.skippedInstallations} installation(s) after the first`);
+  if (p.secureDevicesWithoutSerial) omitted.push(`the tool keys of ${p.secureDevicesWithoutSerial} device(s) without a serial`);
+  const key = (what: string, b64: string) => {
+    const k = Buffer.from(b64, "base64");
+    if (k.length !== 16) omitted.push(`${what}: ${k.length} bytes, not 16`);
+    return k.length === 16 ? k : null;
+  };
   const address = new Map(p.devices.map((d) => [d.id, d.ia]));
   for (const s of p.deviceSecurity) {
-    addDevice(keys, { name: `${file} tool key ${address.get(s.deviceId) ?? s.deviceId}`, key: Buffer.from(s.toolKey, "base64") });
+    const name = `tool key ${address.get(s.deviceId) ?? s.deviceId}`;
+    const k = key(name, s.toolKey);
+    if (k) addDevice(keys, { name: `${file} ${name}`, key: k });
   }
-  for (const g of p.groupKeys) addGroup(keys, g.raw, { name: `${file} group key ${numToGa(g.raw)}`, key: Buffer.from(g.key, "base64") });
+  for (const g of p.groupKeys) {
+    const name = `group key ${numToGa(g.raw)}`;
+    const k = key(name, g.key);
+    if (k) addGroup(keys, g.raw, { name: `${file} ${name}`, key: k });
+  }
+  return omitted;
 }
 
 function keyringKeys(keys: SecureKeys, file: string, xml: string, password: string): void {

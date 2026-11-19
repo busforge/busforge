@@ -744,8 +744,11 @@ export function renderMarkdown(index: CaptureIndex): string {
   out.push(`Every secured telegram was tried with the ${k.deviceKeys} device keys (tool keys, FDSKs) or the ${k.groupKeys} group keys loaded, held in`);
   out.push("memory only. A key is named by the first file that holds it; which keys opened a capture's telegrams is in");
   out.push("`index.json` (`secure.openedWith`).", "");
-  const added = k.read.filter((r) => r.deviceKeys + r.groupKeys > 0);
-  for (const r of added) out.push(`- \`${r.file}\`: ${r.deviceKeys} device, ${r.groupKeys} group`);
+  const added = k.read.filter((r) => r.deviceKeys + r.groupKeys > 0 || r.omitted.length > 0);
+  for (const r of added) {
+    const omitted = r.omitted.length ? `; not given: ${r.omitted.join(", ")}` : "";
+    out.push(`- \`${r.file}\`: ${r.deviceKeys} device, ${r.groupKeys} group${omitted}`);
+  }
   if (k.read.length > added.length) out.push(`- ${k.read.length - added.length} more projects and keyrings read, holding no other key`);
   out.push(k.environment.length ? `- from \`${KEYS_ENV}\`: ${k.environment.map((n) => `\`${n}\``).join(", ")}` : `- none from \`${KEYS_ENV}\``);
   out.push("");
