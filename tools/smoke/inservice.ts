@@ -535,7 +535,8 @@ const covers = (rs: Ranges, a: number) => rs.some((x) => a >= x.address && a < x
 const onlyFF = (r: FlashResult): boolean => r.kind === "dryRun" && !r.alwaysWrite && (r.diffBytes ?? 0) > 0
   && (r.readsFF ?? []).reduce((n, x) => n + x.length, 0) === r.diffBytes;
 // A dry run that finds nothing to write: unchanged; for a write that goes out whatever it finds (the
-// System 1 download, which also writes state it does not read), one in which no byte differs; or one that
+// System 1 download, which also writes state it does not read, and the System B parameter flash of a device
+// never programmed from this project), one in which no byte differs; or one that
 // differs only where the unit reads FF, at exactly the bytes the adoption took as not given back (`ff`).
 const sameRanges = (a: Ranges, b: Ranges) => a.length === b.length && a.every((x, i) => x.address === b[i].address && x.length === b[i].length);
 const nothingToWrite = (r: FlashResult, ff: Ranges | undefined): boolean => r.kind === "unchanged" || (r.kind === "dryRun" && r.alwaysWrite === true && r.diffBytes === 0)

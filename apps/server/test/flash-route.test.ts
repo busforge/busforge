@@ -488,6 +488,19 @@ describe("POST /flash: a family that cannot full-download", () => {
     expect(told).toEqual([true, false]);
   });
 
+  // Its application keeps no parameter in the device, so a verified group-address flash ends the state too.
+  test("a never-programmed device whose application keeps no parameters in it ends the state by a group-address flash", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await projectWithApp(state, noParamSegApp);
+    state.db.run("UPDATE devices SET never_programmed = 1 WHERE project_id = ? AND instance_id = ?", [projectId, deviceId]);
+    const np = () => (state.db.query("SELECT never_programmed AS n FROM devices WHERE instance_id = ?").get(deviceId) as { n: number }).n;
+    gaFlashImpl = async () => flashed(true);
+    try {
+      await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/flash-ga`));
+      expect(np()).toBe(0);
+    } finally { gaFlashImpl = realGaFlash; }
+  });
+
   test("param flash, family that cannot full-download -> plain COM_OBJECT_TABLE_STALE (no download offered)", async () => {
     const state = freshState();
     const { projectId, deviceId } = await projectWithApp(state, noParamSegApp);
@@ -575,6 +588,24 @@ corpusDescribe("an IP interface with tunnelling entries", () => {
       expect(res.state).toBe("done");
     }
     expect(reached).toEqual(["params", "links"]);
+  });
+
+  // Its parameters live in the device, so a verified group-address flash, which writes none of them, leaves it never
+  // programmed, and the parameter flash after it is still told so; that flash's verified result ends the state.
+  test("a never-programmed one stays so after a verified group-address flash, and its parameter flash ends it", async () => {
+    const state = freshState();
+    const { projectId, deviceId } = await projectWithApp(state, a0137);
+    state.db.run("UPDATE devices SET never_programmed = 1 WHERE project_id = ? AND instance_id = ?", [projectId, deviceId]);
+    const np = () => (state.db.query("SELECT never_programmed AS n FROM devices WHERE instance_id = ?").get(deviceId) as { n: number }).n;
+    const told: boolean[] = [];
+    gaFlashImpl = async () => flashed(true);
+    paramFlashImpl = async (o) => { told.push(o.neverProgrammed); return flashed(true); };
+    try {
+      await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/flash-ga`));
+      expect(np()).toBe(1);
+      await programmed(state, post(state, `/api/projects/${projectId}/devices/${deviceId}/flash`));
+      expect([np(), told]).toEqual([0, [true]]);
+    } finally { gaFlashImpl = realGaFlash; paramFlashImpl = realParamFlash; }
   });
 });
 

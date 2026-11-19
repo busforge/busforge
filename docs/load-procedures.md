@@ -565,9 +565,10 @@ the group-address download between). `checkedStamps` and `relativeParWriteSet` d
 `tools/etsdiff.test.ts` replays each captured pair of downloads, the decision and the bytes. A device
 never programmed from this project (one whose family keeps the parameter flash because it offers no
 full download, such as an application that declares tunnelling entries) holds nothing its baseline
-describes, so its parameter flash writes every owned byte whatever its stamps, a byte it reads as `FF`
-included, and judges a colour, a raw-data value and a calculation against the application's defaults,
-as the full download does.
+describes, so its parameter flash writes every owned byte whatever its stamps and its read, a byte it
+reads as `FF` included, also where the read shows no difference; it judges a colour and a calculation
+against the application's defaults, as the full download does, and refuses a raw-data parameter in use,
+whose bytes it would keep as the unit holds them (`PARAM_RAW_DATA_UNSUPPORTED`).
 
 **A stamp's CRC is the unit's own.** No tool writes the CRC of a PID 27 element (the region's size
 and control byte may come from the application's load procedure); the unit computes it. On the MDT IP

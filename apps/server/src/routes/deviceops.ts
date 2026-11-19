@@ -99,8 +99,13 @@ function busOpPreamble(state: AppState, projectId: string, deviceId: string): { 
 // and so is one whose hardware carries a PEI program (`peiProgram`, HARDWARE_PEI_PROGRAM_REFUSAL) or whose
 // application names an ETS download plugin (COM_OBJECT_TABLE_DOWNLOAD_PLUGIN): ETS commissions those.
 // A family that cannot be downloaded in full for another reason keeps the surgical flash, the only way
-// it is programmed; its verified result then ends the state (gaEndsNever, paramsEndNever).
+// it is programmed; its verified result then ends the state (gaEndsNever, paramsEndNever). Where the
+// application keeps parameters in the device, only the parameter flash ends it: the group-address flash
+// writes none of them, and a parameter flash on a device no longer counted never programmed would leave
+// the bytes it reads as FF to a baseline the device was never shown to hold (ParamFlashCtx.neverProgrammed).
 const canDownloadFull = (app: AppConfig | null, peiProgram: boolean) => !peiProgram && !!app && classify(app).capabilities().fullDownload;
+const keepsParams = (app: AppConfig | null) => !!app && classify(app).capabilities().flashParams
+  && [...app.params.values()].some((p) => p.codeSegment !== undefined && p.offset !== undefined);
 const onlyEtsDownloads = (app: AppConfig | null, peiProgram: boolean) => !!app && (peiProgram || classify(app).operationRefusals().fullDownload !== undefined);
 function refuseNeverProgrammed(dev: { neverProgrammed: boolean; peiProgram: boolean }, app: AppConfig | null): void {
   if (!dev.neverProgrammed) return;
@@ -645,7 +650,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const { dev, conn, appXml: gaAppXml } = busOpPreamble(state, id, deviceId);
     const gaFamilyApp = loadApp(state, id, deviceId);
     refuseNeverProgrammed(dev, gaFamilyApp);
-    const gaEndsNever = dev.neverProgrammed && !canDownloadFull(gaFamilyApp, dev.peiProgram);
+    const gaEndsNever = dev.neverProgrammed && !canDownloadFull(gaFamilyApp, dev.peiProgram) && !keepsParams(gaFamilyApp);
     const resolved = resolveDeviceLinks(state, id, deviceId);
     const submittedLinks = getDeviceLinks(db, id, deviceId);
     if (!resolved) return err("APP_PROGRAM_MISSING", "application program not found in project", 404);

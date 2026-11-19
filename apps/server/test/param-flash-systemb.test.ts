@@ -502,6 +502,15 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
         expect([res.verified, "leftFF" in res, dev.written.size, dev.mem.get(BASE + k)]).toEqual([true, false, owned, target.bytes[k]]);
       }
     }, 130_000);
+    // Nor where its read shows no difference at all: nothing has shown the bytes it does not give back.
+    test("a never-programmed device whose read equals the target is written all the same", async () => {
+      const dev = seeded();
+      const dry = await classify(cfg).flashParameters(asDev(dev), "07B0", { ...ctx, neverProgrammed: true, dryRun: true });
+      expect(dry).toMatchObject({ kind: "dryRun", diffBytes: 0, alwaysWrite: true });
+      const res = await classify(cfg).flashParameters(asDev(dev), "07B0", { ...ctx, neverProgrammed: true });
+      if (res.kind !== "flashed") throw new Error(`not flashed: ${res.kind}`);
+      expect([res.verified, dev.written.size]).toEqual([true, target.owned.filter((m) => m !== 0).length]);
+    }, 70_000);
     // An application left not LOADED takes every owned byte, the byte read as FF with the project's value.
     test("an application not LOADED takes the byte read as FF as well", async () => {
       const k = kChanged;

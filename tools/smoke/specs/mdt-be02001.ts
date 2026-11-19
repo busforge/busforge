@@ -14,6 +14,7 @@ export const mdtBe02001: DeviceSpec = {
   id: "mdt-be02001",
   device: {
     appRef: "M-0083_H-182-0_HP-00B6-32-9642",
+    appProgramId: "M-0083_A-00B6-32-9642",
     productRef: "M-0083_H-182-0_P-BE.2D02001.2E02",
     ia: "1.1.56",
     mask: "MV-0705",

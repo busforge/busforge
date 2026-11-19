@@ -22,6 +22,7 @@ export const jung400021se: DeviceSpec = {
   id: "jung-400021se",
   device: {
     appRef: "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_HP-7072-21-99A7-O000A",
+    appProgramId: "M-0004_A-7072-21-99A7-O000A",
     productRef: "M-0004_H-4.20.2F.2F.20400021SE-0-O000A_P-400021SE",
     ia: "1.1.204",
     mask: "MV-07B0",

@@ -7,7 +7,8 @@ import { parseAppConfig, classify } from "../src/index.ts";
 setDefaultTimeout(60_000);
 
 // A device never programmed from this project holds nothing the programmed baseline describes: the parameter flash
-// judges what it cannot encode against the application's defaults, as a full download does, not against that baseline.
+// judges a colour and a calculation against the application's defaults, as a full download does, not against that
+// baseline, and refuses a raw-data parameter in use.
 // System B application: P-1 (memory, shown) feeds a <ParameterCalculation> whose other side P-3 has memory; P-4 is raw
 // data with memory, shown.
 const A = "M-0005_A-0001-01-0001";
@@ -27,6 +28,8 @@ const xml = `<?xml version="1.0" encoding="utf-8"?>
 </Static>
 <Dynamic><ParameterBlock Id="${A}_PB-1" Name="Main" Text="Main"><ParameterRefRef RefId="${A}_P-1_R"/><ParameterRefRef RefId="${A}_P-4_R"/></ParameterBlock></Dynamic>
 </ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+// The same application without the raw-data parameter in use.
+const calcOnlyXml = xml.replace(`<ParameterRefRef RefId="${A}_P-4_R"/>`, "");
 // The same application with an HSV colour (P-5, memory, shown), whose bytes no ETS download shows.
 const colourXml = xml
   .replace("</ParameterTypes>", `<ParameterType Id="${A}_PT-HSV"><TypeColor Space="HSV"/></ParameterType></ParameterTypes>`)
@@ -39,20 +42,22 @@ const flash = (values: Map<string, string>, neverProgrammed: boolean, appXml = x
   classify(parseAppConfig(appXml)).flashParameters(untouched, "MV-07B0", { deviceId: "d", appXml, params: values, baseParams: values, moduleInstances: [], dryRun: false, persistBackups: () => "backup", neverProgrammed })
     .then(() => "flashed", (e: { code?: string; message?: string }) => e.code ?? e.message);
 
-test("a calculation input away from its default: refused on a never-programmed device, the same value as the baseline flashed otherwise", async () => {
+test("a calculation input away from its default: refused on a never-programmed device, passed at the same value as the baseline otherwise", async () => {
   const input = new Map([[`${A}_P-1_R`, "8"]]);
-  expect(await flash(input, false)).toBe("the device was used: tableAddr");
-  expect(await flash(input, true)).toBe("PARAM_CALCULATION_UNSUPPORTED");
-  expect(await flash(new Map(), true)).toBe("the device was used: tableAddr");
+  expect(await flash(input, false, calcOnlyXml)).toBe("the device was used: tableAddr");
+  expect(await flash(input, true, calcOnlyXml)).toBe("PARAM_CALCULATION_UNSUPPORTED");
+  expect(await flash(new Map(), true, calcOnlyXml)).toBe("the device was used: tableAddr");
 });
 
-test("a raw-data value away from its default: refused on a never-programmed device, the same value as the baseline flashed otherwise", async () => {
+// No image writes a raw-data value, so the flash would keep the never-programmed device's bytes there, at the default too.
+test("a raw-data parameter in use: refused on a never-programmed device at any value, passed at the same value as the baseline otherwise", async () => {
   const raw = new Map([[`${A}_P-4_R`, "01"]]);
   expect(await flash(raw, false)).toBe("the device was used: tableAddr");
   expect(await flash(raw, true)).toBe("PARAM_RAW_DATA_UNSUPPORTED");
+  expect(await flash(new Map(), true)).toBe("PARAM_RAW_DATA_UNSUPPORTED");
 });
 
-test("a colour in use whose bytes no download shows: refused on a never-programmed device, the same value as the baseline flashed otherwise", async () => {
+test("a colour in use whose bytes no download shows: refused on a never-programmed device, passed at the same value as the baseline otherwise", async () => {
   expect(await flash(new Map(), false, colourXml)).toBe("the device was used: tableAddr");
   expect(await flash(new Map(), true, colourXml)).toBe("PARAM_COLOR_UNSUPPORTED");
 });

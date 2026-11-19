@@ -14,6 +14,7 @@ export const gvsAmma: DeviceSpec = {
   id: "gvs-amma",
   device: {
     appRef: "M-0085_H-AM22AA-16_HP-0072-30-69AA",
+    appProgramId: "M-0085_A-0072-30-69AA",
     productRef: "M-0085_H-AM22AA-16_P-AMMA.2D04.2F06.2ES",
     ia: "1.1.203",
     mask: "MV-07B0",

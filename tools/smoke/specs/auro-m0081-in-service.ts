@@ -18,6 +18,7 @@ export const auroM0081InService: DeviceSpec = {
   id: "auro-m0081-in-service",
   device: {
     appRef: "M-0081_H-GeneratedNumber.2D22017-0_HP-FE01-11-75D9",
+    appProgramId: "M-0081_A-FE01-11-75D9",
     productRef: "M-0081_H-GeneratedNumber.2D22017-0_P-180.2D02",
     ia: "1.1.18",
     mask: "MV-0705",
