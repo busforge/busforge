@@ -176,7 +176,7 @@ export function ProjectsScreen() {
       ) : (
         <div className="grid gap-3 sm:grid-cols-2">
           {projects.map((p) => (
-            <Card key={p.id} className="group cursor-pointer transition-colors hover:border-primary/60" onClick={() => open(p.id)}>
+            <Card key={p.id} className="group min-w-0 cursor-pointer transition-colors hover:border-primary/60" onClick={() => open(p.id)}>
               <CardContent className="flex items-start justify-between gap-3">
                 <ProjectCardBody name={p.name} deviceCount={p.deviceCount} gaCount={p.gaCount} snapshotCount={p.snapshotCount} buildingCount={p.buildingCount} floorCount={p.floorCount} roomCount={p.roomCount} date={p.importedAt} source={p.source} />
                 <ProjectCardMenu
@@ -434,7 +434,8 @@ function ImportDialog({
 
         {analysis ? (
           // Step 2: the same project card as the dashboard, as a confirmation preview.
-          <Card data-testid="import-preview">
+          // min-w-0: the dialog body is a grid whose column would otherwise grow to the full width of an unbroken name.
+          <Card data-testid="import-preview" className="min-w-0">
             <CardContent>
               <ProjectCardBody
                 name={analysis.name}
