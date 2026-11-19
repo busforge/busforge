@@ -9,7 +9,7 @@ import { apdu, parseApdu, tpAck, APCI, type KnxTransport } from "../src/index.ts
 // read req [count, addr(3)] -> resp [0x00, addr(3), data...]; write req [count, addr(3), data]
 // -> resp [0x00, addr(3)]. (Response layout confirmed against a real Jung 400021SE on the bench.)
 class FakeExtTransport implements KnxTransport {
-  assignedIa = 0x0001;
+  assignedIa = 0x11fa; // 1.1.250, on the device's line
   onCemi: ((src: number, dst: number, tpdu: Buffer, isGroup: boolean) => void) | null = null;
   onClosed: ((reason: string) => void) | null = null;
   readonly device = 0x110b; // 1.1.11

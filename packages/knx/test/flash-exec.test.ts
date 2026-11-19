@@ -532,6 +532,7 @@ describe("writes in the device's verify mode (what LdCtrlWriteRelMem Verify=true
     const dev = Object.create(KnxDevice.prototype);
     dev.propRead = async (obj: number, pid: number) => (obj === 0 && pid === 14 ? Buffer.from([control]) : Buffer.alloc(1));
     dev.propReadIfPresent = async () => null; // no PID_MAX_APDU_LENGTH: the classic write with its verify-mode echo
+    dev.routeCrossesCoupler = () => false;
     dev.propWrite = async (obj: number, pid: number, data: Buffer) => {
       propWrites.push({ obj, pid, data: Buffer.from(data) });
       if (obj === 0 && pid === 14) control = data[0];
@@ -736,7 +737,7 @@ describe("master reset over the bus", () => {
   // no-op or wiping the wrong thing, so pin the frame.
   test("builds A_Restart with the MasterReset type and the erase code", async () => {
     const sent: Buffer[] = [];
-    const tun = { assignedIa: 0, onCemi: null, connect: async () => {}, disconnect: async () => {}, sendCemi: async (c: Buffer) => { sent.push(Buffer.from(c)); } };
+    const tun = { assignedIa: 0x12fa, onCemi: null, connect: async () => {}, disconnect: async () => {}, sendCemi: async (c: Buffer) => { sent.push(Buffer.from(c)); } };
     const dev = new KnxDevice(tun as any, "1.2.3");
     await dev.masterReset(ERASE.FACTORY_RESET);
 

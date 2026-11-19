@@ -7,7 +7,7 @@ import { apdu, parseApdu, tpAck, APCI, type KnxTransport } from "../src/index.ts
 // pair (B-1, B), exactly as M-0048 and M-0008 devices do around 0x4008/0x4009.
 // Each readable byte's value is (address & 0xff), so a correct read is trivially checkable.
 class FakeBoundaryTransport implements KnxTransport {
-  assignedIa = 0x0001;
+  assignedIa = 0x11fa; // 1.1.250, on the device's line
   onCemi: ((src: number, dst: number, tpdu: Buffer, isGroup: boolean) => void) | null = null;
   onClosed: ((reason: string) => void) | null = null;
   readonly device = 0x110b; // 1.1.11
@@ -67,7 +67,7 @@ describe("memRead handles device read boundaries without misaligning", () => {
 // A device that declares PID_MAX_APDU_LENGTH (or not) and records the byte count of every
 // MemoryRead it is sent. Unimplemented properties answer with element count 0.
 class ApduTransport implements KnxTransport {
-  assignedIa = 0x0001;
+  assignedIa = 0x11fa; // 1.1.250, on the device's line
   onCemi: ((src: number, dst: number, tpdu: Buffer, isGroup: boolean) => void) | null = null;
   onClosed: ((reason: string) => void) | null = null;
   readonly device = 0x110b;

@@ -400,6 +400,39 @@ Neither is mitigated in code, because a subnet restriction would break legitimat
 use, which is a normal KNXnet/IP deployment. The bridge is a tool for a trusted network. Pointing it
 at a bus that matters from an untrusted network needs a firewall rule, not a hope.
 
+## Devices behind a coupler
+
+A request to a device on another line than the interface crosses at least one coupler (a line or
+backbone coupler, or a KNX IP router acting as one). A coupler forwards a long frame only up to its own
+maximum APDU (`PID_MAX_APDU_LENGTH` of the coupler), and one that predates long frames forwards
+standard frames only. A longer request then never reaches the device, and the download stops
+part-way.
+
+Busforge does not read the couplers on the route, and no capture of ours shows a device behind a
+coupler or how ETS sizes its requests there. So where the interface's own individual address (the
+tunnel address, or the USB interface's) lies on another line than the device's, or the interface does
+not tell its address, every plain request goes as a standard frame (15 APDU octets):
+
+| Request | Data bytes per request |
+|---|---|
+| `A_Memory_Read`, `A_Memory_Write` | 12 |
+| `A_MemoryExtended_Read`, `A_MemoryExtended_Write` | 10 |
+| `A_UserMemory_Write` | 11 |
+| `A_PropertyValue_Read` element data in the answer | 10 |
+| `A_PropertyExtValue_Read`/`_Write` element data | 6 |
+
+The service stays the one the application asks for (a confirmed extended write stays confirmed); only
+the chunks are shorter, so the device holds the same bytes. A request that cannot be split and is
+longer than a standard frame (a long property write of a load procedure) is refused before it is sent
+(`COUPLER_ROUTE_LONG_FRAME`). A secured session is not held to standard frames: none of its requests
+fits one, so it keeps its own sizes and works only through couplers that pass its long frames. On a
+route within the line, the device's and the interface's maximum APDU size the requests as before
+([load-procedures.md](load-procedures.md)).
+
+What a coupler-aware download would need: an ETS download to a device behind a coupler that passes
+long frames, logged through the proxy with ETS's own log of the same minutes, to show whether ETS reads
+the coupler's maximum APDU and which request sizes it then sends.
+
 ## The connection library
 
 Connections live in a single global `connections` table. A project does **not** store connection

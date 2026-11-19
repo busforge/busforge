@@ -97,6 +97,11 @@ depends on is hardware-proven.
   segment the device's CRC does not prove is reported unverified. Needs an ETS capture that reads such
   memory, and a unit with such an application for transfer evidence
   ([device-memory-model.md](device-memory-model.md#a_usermemory-past-64-kb-without-the-extended-services)).
+- **Request sizes through a coupler as ETS sizes them.** A device on another line than the interface
+  gets standard frames only, which every coupler passes but which make a download slower
+  ([connections.md](connections.md#devices-behind-a-coupler)). Needs an ETS download to a device behind
+  a coupler that passes long frames, logged through the proxy with ETS's own log, to show whether ETS
+  reads the coupler's maximum APDU and which sizes it then sends.
 - **Time a large MV-0705 download against the stop grace period.** The 30-minute
   `stop_grace_period` ([deployment.md](deployment.md)) has been measured only against small MV-0705
   images.

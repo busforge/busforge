@@ -14,7 +14,7 @@ setDefaultTimeout(60_000);
 // interface reported our T_ACK for that answer as not sent (L_Data.con negative). `wrongAddressAt`:
 // it answers the request for that address with a fresh frame for another address.
 class RepeatingDevice implements KnxTransport {
-  assignedIa = 0x0001;
+  assignedIa = 0x12fa; // 1.2.250, on the device's line
   onCemi: ((src: number, dst: number, tpdu: Buffer, isGroup: boolean) => void) | null = null;
   onClosed: ((reason: string) => void) | null = null;
   readonly device = 0x1203; // 1.2.3

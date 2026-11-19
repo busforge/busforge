@@ -3,7 +3,7 @@ import type { KnxTransport } from "./transport.ts";
 import { KnxUsbTransport } from "./usb.ts";
 import type { SecureSession } from "./secureSession.ts";
 import { SECURE_APDU_OVERHEAD } from "./secure.ts";
-import { cemiLData, tpConnect, tpDisconnect, tpAck, apdu, parseApdu, iaToNum, propertyExtHead, APCI, type ParsedApdu } from "./frame.ts";
+import { cemiLData, tpConnect, tpDisconnect, tpAck, apdu, parseApdu, iaToNum, numToIa, propertyExtHead, APCI, type ParsedApdu } from "./frame.ts";
 import { KnxError } from "./errors.ts";
 import { decodeDeviceDescriptorResponse, encodeAuthorizeFreeKey, decodeAuthorizeResponse, encodePropertyDescriptionRead, decodePropertyDescription, decodePropertyValueResponse, type PropertyDescription, type PropertyValueResponse } from "./rawcodec.ts";
 
@@ -41,6 +41,12 @@ export const EXT_WRITE_CHUNK = Math.min(Math.max(1, Number(process.env.KNX_EXT_W
 // the 3-byte address. So a device's maximum APDU length minus 5 is the most one chunk may carry.
 const EXT_WRITE_OVERHEAD = 5;
 const PID_MAX_APDU_LENGTH = 56;
+// The APDU of a standard frame (cEMI length field 15). Every coupler forwards it; a long frame only up
+// to the coupler's own maximum APDU, or not at all on a coupler that predates long frames.
+const STANDARD_FRAME_APDU = 15;
+// A_Memory_Read and A_Memory_Write spend 3 octets besides the data: the APCI's second octet with the
+// count, and the 2-byte address.
+const CLASSIC_MEMORY_OVERHEAD = 3;
 // Element count (one octet) and start index (two) of an extended property service. Masking a value
 // out of range would address other elements, so it is refused.
 function assertElements(start: number, count: number): void {
@@ -399,7 +405,14 @@ export class KnxDevice {
   // possibly open in the device (unclosed); a numbered frame the interface confirmed shows the link
   // works again. A control frame proves nothing: over TCP its send ends before the interface confirms.
   // `quiet`: a failure is not noted (a frame the device's T_ACK already proved delivered).
+  // A plain request longer than a standard frame, on a route through a coupler (routeChunk), is refused
+  // here, before it is sent: the coupler may drop it, and the device then closes the connection mid-write.
   private async sendCemi(cemi: Buffer, quiet = false): Promise<void> {
+    const apduLength = cemi[2 + (cemi[1] ?? 0) + 6] ?? 0;
+    if (apduLength > STANDARD_FRAME_APDU && this.routeChunk(0) === STANDARD_FRAME_APDU) {
+      throw new KnxError("COUPLER_ROUTE_LONG_FRAME",
+        `a request of ${apduLength} APDU octets to ${numToIa(this.dst)} would cross a coupler from the interface at ${numToIa(this.me)} as a long frame, which a coupler forwards only up to its own maximum APDU; refusing before it is sent`);
+    }
     const tpci = cemi[2 + (cemi[1] ?? 0) + 7] ?? 0;
     if ((tpci & 0x80) === 0 && this.numberedSinceConnect >= 0) this.numberedSinceConnect++;
     try {
@@ -1020,9 +1033,23 @@ export class KnxDevice {
     this.maxApdu = n;
     return n;
   }
+  // Whether a frame to the device may cross a coupler: the interface's own address (the tunnel's, or a USB
+  // interface's) lies on another line than the device's, or is unknown (0.0.0, a USB interface that does
+  // not publish it). A coupler forwards a long frame only up to its own maximum APDU, which Busforge does
+  // not read, and none of our captures shows a device behind a coupler or how ETS sizes requests there.
+  routeCrossesCoupler(): boolean {
+    return this.me === 0 || this.me >> 8 !== this.dst >> 8;
+  }
+  // The data one plain request carries at most on such a route: a standard frame less the request's own
+  // octets; unbounded on a route within the line. A secured request does not fit a standard frame at all
+  // (SECURE_APDU_OVERHEAD), so a secured session keeps its own sizes there and needs couplers that pass
+  // its long frames.
+  private routeChunk(overhead: number): number {
+    return this.secure === undefined && this.routeCrossesCoupler() ? STANDARD_FRAME_APDU - overhead : Infinity;
+  }
   // The element data one A_PropertyValue_Response carries: the maximum APDU length less the response's
   // APCI, object, property, count and start (5 octets); 15 where the device declares none (standard frame).
-  async propValueDataMax(): Promise<number> { return ((await this.maxApduLength()) ?? 15) - 5; }
+  async propValueDataMax(): Promise<number> { return Math.min(((await this.maxApduLength()) ?? 15) - 5, this.routeChunk(5)); }
   // An optional property: the device answers a property it does not implement with element count 0
   // (and possibly an error byte), which propRead would return as if it were a value. Null here.
   async propReadIfPresent(obj: number, pid: number): Promise<Buffer | null> {
@@ -1035,16 +1062,20 @@ export class KnxDevice {
   }
   // Bytes per A_Memory_Read: 12 fit a standard frame. A device that declares a longer APDU gets
   // requests up to that length (3 octets of APCI and address), capped at EXT_READ_CHUNK: the path
-  // (interface, couplers, a single USB HID report) has its own limit, and that size is what the
-  // extended reads already carry over a KNX-USB interface and an MDT IP interface.
+  // (interface, a single USB HID report) has its own limit, and that size is what the extended reads
+  // already carry over a KNX-USB interface and an MDT IP interface. A route through a coupler holds it
+  // to a standard frame (routeChunk).
   async classicReadChunk(): Promise<number> {
-    return transferChunks(await this.maxApduLength(), this.secure !== undefined).classicRead;
+    return Math.min(transferChunks(await this.maxApduLength(), this.secure !== undefined).classicRead, this.routeChunk(CLASSIC_MEMORY_OVERHEAD));
   }
   // The extended services run at the path limits in a plain session, as they always have; a secured
-  // one also fits them to the device's maximum APDU (transferChunks).
+  // one also fits them to the device's maximum APDU (transferChunks). A route through a coupler holds a
+  // plain session to standard frames (routeChunk).
   private async extChunks(): Promise<ReturnType<typeof transferChunks>> {
     const secured = this.secure !== undefined;
-    return transferChunks(secured ? await this.maxApduLength() : null, secured);
+    const c = transferChunks(secured ? await this.maxApduLength() : null, secured);
+    const ext = this.routeChunk(EXT_WRITE_OVERHEAD), prop = this.routeChunk(EXT_WRITE_OVERHEAD + PROP_EXTRA_OVERHEAD);
+    return { classicRead: Math.min(c.classicRead, this.routeChunk(CLASSIC_MEMORY_OVERHEAD)), extRead: Math.min(c.extRead, ext), extWrite: Math.min(c.extWrite, ext), propRead: Math.min(c.propRead, prop), propWrite: Math.min(c.propWrite, prop) };
   }
   async memRead(addr: number, len: number, chunkBytes?: number, onProgress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<Buffer> {
     // A range past the 16-bit reach of A_Memory_Read is served by A_MemoryExtended where the application
@@ -1054,7 +1085,7 @@ export class KnxDevice {
       return this.memReadExtended(addr, len, undefined, onProgress, signal);
     }
     assertAddressable(addr, len, "memory read");
-    const chunk = chunkBytes ?? await this.classicReadChunk();
+    const chunk = Math.min(chunkBytes ?? await this.classicReadChunk(), this.routeChunk(CLASSIC_MEMORY_OVERHEAD));
     // Place bytes by ADDRESS, never by concatenation. Some M112 devices refuse a single
     // MemoryRead that spans an internal memory boundary (they answer with an empty data
     // response); the old concat-and-advance-by-requested-length loop then produced a buffer
@@ -1147,7 +1178,7 @@ export class KnxDevice {
     if (extended && this.extendedMemory === false) throw this.userMemoryReadRefused(addr, len);
     if (extended) this.assertExtAddressable(addr, len, "extended memory read");
     else assertAddressable(addr, len, "memory read");
-    const chunk = Math.min(Math.max(1, Math.floor(opts.chunk)), extended ? 255 : 63); // count octet / 6-bit APCI count
+    const chunk = Math.min(Math.max(1, Math.floor(opts.chunk)), extended ? 255 : 63, this.routeChunk(extended ? EXT_WRITE_OVERHEAD : CLASSIC_MEMORY_OVERHEAD)); // count octet / 6-bit APCI count
     const pieces: MemPiece[] = [];
     // Adjacent pieces of the same kind join: bytes with bytes, and refusals with the same answer.
     const push = (p: MemPiece) => {
@@ -1263,7 +1294,7 @@ export class KnxDevice {
     }
     assertAddressable(addr, data.length, "memory write");
     if (this.secure !== undefined) transferChunks(null, true); // refuses: no secured write fits a standard frame
-    const chunk = opts.chunk ?? writeChunks(await this.maxApduLength(), await this.interfaceMaxApdu()).classic;
+    const chunk = Math.min(opts.chunk ?? writeChunks(await this.maxApduLength(), await this.interfaceMaxApdu()).classic, this.routeChunk(CLASSIC_MEMORY_OVERHEAD));
     const total = Math.ceil(data.length / chunk);
     let done = 0;
     for (let pos = 0; pos < data.length; ) {
@@ -1314,7 +1345,7 @@ export class KnxDevice {
   }
   async memReadExtended(addr: number, len: number, chunkBytes?: number, onProgress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<Buffer> {
     this.assertExtAddressable(addr, len, "extended memory read");
-    const chunk = Math.min(Math.max(1, chunkBytes ?? (await this.extChunks()).extRead), 255); // the count is a single request octet
+    const chunk = Math.min(Math.max(1, chunkBytes ?? (await this.extChunks()).extRead), 255, this.routeChunk(EXT_WRITE_OVERHEAD)); // the count is a single request octet
     const out = Buffer.alloc(len);
     let pos = 0;
     while (pos < len) {
@@ -1362,7 +1393,7 @@ export class KnxDevice {
     if (this.secure !== undefined) {
       throw new KnxError("USER_MEMORY_UNSUPPORTED", `memory write at ${range} is reached with A_UserMemory, which no ETS capture shows in a secured session; refusing before any request`);
     }
-    const chunk = Math.min(USER_MEMORY_MAX_COUNT, Math.max(1, opts.chunk ?? writeChunks(await this.maxApduLength(), await this.interfaceMaxApdu()).user));
+    const chunk = Math.min(USER_MEMORY_MAX_COUNT, Math.max(1, opts.chunk ?? writeChunks(await this.maxApduLength(), await this.interfaceMaxApdu()).user), this.routeChunk(USER_WRITE_OVERHEAD));
     const total = Math.ceil(data.length / chunk) || 1;
     let done = 0;
     for (let pos = 0; pos < data.length; ) {
@@ -1395,7 +1426,7 @@ export class KnxDevice {
   // The per-chunk return code and the caller's read-back after the restart are the proof.
   async memWriteExtended(addr: number, data: Buffer, opts: { chunk?: number; onProgress?: (done: number, total: number) => void } = {}): Promise<void> {
     this.assertExtAddressable(addr, data.length, "extended memory write");
-    const chunk = Math.min(Math.max(1, opts.chunk ?? (await this.extChunks()).extWrite), 255); // the count is a single request octet
+    const chunk = Math.min(Math.max(1, opts.chunk ?? (await this.extChunks()).extWrite), 255, this.routeChunk(EXT_WRITE_OVERHEAD)); // the count is a single request octet
     const total = Math.ceil(data.length / chunk) || 1;
     let done = 0;
     for (let pos = 0; pos < data.length; ) {
