@@ -134,7 +134,7 @@ export function captureDevice(text: string): number {
   return [...destinations][0];
 }
 
-function memWriteOf(t: Buffer, apci: number): MemWrite | null {
+export function memWriteOf(t: Buffer, apci: number): MemWrite | null {
   if ((apci & 0x3c0) === 0x280) { // A_Memory_Write: count in the APCI's low 6 bits (1-63), 16-bit address
     const n = t[1] & 0x3f, data = t.subarray(4, 4 + n);
     return t.length >= 4 && data.length === n ? { addr: t.readUInt16BE(2), data: Buffer.from(data), service: "A_Memory_Write" } : null;
