@@ -113,8 +113,10 @@ describe("zip reader: offsets and lengths outside the archive", () => {
 
   test("a compressed size running into the central directory is refused", () => {
     const b = sample();
+    // Local header and directory agree on the size, so only the data range check can refuse it.
     b.writeUInt32LE(CD(b), CD(b) + 20);
-    expect(codeOf(() => readZip(b))).toBe("INVALID_KNXPROJ");
+    b.writeUInt32LE(CD(b), 18);
+    expect(thrown(() => readZip(b))).toContain(`data of s.txt (${CD(b)} bytes at 35) runs into the central directory at ${CD(b)}`);
   });
 
   test("a local extra length running past the data is refused", () => {
