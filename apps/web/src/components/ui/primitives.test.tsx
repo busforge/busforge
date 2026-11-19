@@ -6,6 +6,8 @@ import { Badge, BadgeButton } from "./badge.tsx";
 import { Chip } from "./chip.tsx";
 import { Notice } from "./notice.tsx";
 import { Checkbox } from "./checkbox.tsx";
+import { Input } from "./input.tsx";
+import { NativeSelect } from "./native-select.tsx";
 import { TooltipProvider } from "./tooltip.tsx";
 
 const classes = (html: string) => (/class="([^"]*)"/.exec(html)?.[1] ?? "").split(" ");
@@ -173,6 +175,75 @@ describe("a checkbox", () => {
     for await (const file of new Bun.Glob("**/*.tsx").scan({ cwd: `${import.meta.dir}/../..`, absolute: true })) {
       if (file.endsWith("/components/ui/checkbox.tsx") || file.endsWith(".test.tsx")) continue;
       if (/type=["']checkbox["']/.test(await Bun.file(file).text())) offenders.push(file);
+    }
+    expect(offenders).toEqual([]);
+  });
+});
+
+describe("a native select", () => {
+  const select = (html: string) => /<select[^>]*>/.exec(html)![0];
+  const selectClasses = (html: string) => (/class="([^"]*)"/.exec(select(html))?.[1] ?? "").split(" ");
+  const wrapperClasses = (html: string) => (/<span[^>]*class="([^"]*)"/.exec(html)?.[1] ?? "").split(" ");
+  const render = (props: Partial<React.ComponentProps<typeof NativeSelect>> = {}) =>
+    renderToStaticMarkup(
+      <NativeSelect value="b" onChange={() => {}} aria-label="Priority" data-testid="x" {...props}>
+        <option value="a">A</option>
+        <option value="b">B</option>
+      </NativeSelect>
+    );
+
+  test("is a native select that keeps its options, value and attributes, with the combobox chevron beside it", () => {
+    const html = render();
+    expect(html).toContain('<option value="b" selected="">B</option>');
+    expect(select(html)).toContain('aria-label="Priority"');
+    expect(select(html)).toContain('data-testid="x"');
+    expect(html).toContain("lucide-chevrons-up-down");
+  });
+
+  test("has the pointer, the control radius, a hover only while enabled, the focus ring and the disabled look", () => {
+    const c = selectClasses(render());
+    expect(c).toContain("cursor-pointer");
+    expect(c).toContain(CONTROL_RADIUS);
+    expect(c).toContain("focus-visible:ring-[3px]");
+    expect(c).toContain("disabled:cursor-not-allowed");
+    expect(c).toContain("disabled:opacity-50");
+    expect(c.some((x) => x.includes("hover:not-disabled:"))).toBe(true);
+    expect(c.some((x) => x.includes("hover:") && !x.includes("hover:not-disabled:"))).toBe(false);
+    expect(c).not.toContain("rounded-full");
+  });
+
+  test("shows the invalid state of an input and the touch size of an input", () => {
+    const c = selectClasses(render());
+    const input = classes(renderToStaticMarkup(<Input />));
+    for (const x of input.filter((y) => y.includes("aria-invalid:") || y.startsWith("pointer-coarse:h-"))) expect(c).toContain(x);
+    expect(c).toContain("pointer-coarse:h-10");
+  });
+
+  test("is as high as a control of its size: 36 px, or 32 px small", () => {
+    expect(selectClasses(render())).toContain("h-9");
+    expect(selectClasses(render())).not.toContain("h-8");
+    expect(selectClasses(render({ size: "sm" }))).toContain("h-8");
+    expect(selectClasses(render({ size: "sm" }))).not.toContain("h-9");
+    // An attribute-variant height would outrank `pointer-coarse:h-10` and keep the select small on a touch screen.
+    for (const size of ["default", "sm"] as const) expect(selectClasses(render({ size })).filter((x) => /^(data|aria)-\[.*:h-/.test(x))).toEqual([]);
+  });
+
+  test("says it is disabled only when it is", () => {
+    expect(select(render({ disabled: true }))).toContain(' disabled=""');
+    expect(select(render())).not.toContain(' disabled=""');
+  });
+
+  test("takes the caller's layout on its wrapper, not on the select", () => {
+    const html = render({ className: "w-56" });
+    expect(wrapperClasses(html)).toContain("w-56");
+    expect(selectClasses(html)).not.toContain("w-56");
+  });
+
+  test("is the only select in the app: every other one goes through it", async () => {
+    const offenders: string[] = [];
+    for await (const file of new Bun.Glob("**/*.tsx").scan({ cwd: `${import.meta.dir}/../..`, absolute: true })) {
+      if (file.endsWith("/components/ui/native-select.tsx") || file.endsWith(".test.tsx")) continue;
+      if (/<select[\s>]/.test(await Bun.file(file).text())) offenders.push(file);
     }
     expect(offenders).toEqual([]);
   });

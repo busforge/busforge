@@ -9,6 +9,7 @@ import { qk, useConnections } from "../queries.ts";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { NativeSelect } from "@/components/ui/native-select";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
@@ -87,14 +88,13 @@ export function UsbPicker({ value, onChange, disabled }: { value: UsbValue; onCh
           {scanning ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />} {scanning ? t("iface.usbScanning") : t("iface.usbScan")}
         </button>
       </div>
-      <select
-        disabled={disabled}
+      <NativeSelect
+        size="sm" className="w-full" disabled={disabled}
         value={value.usbVendorId != null ? usbKey(value) : ""}
         onChange={(e) => {
           const d = options.find((o) => usbKey({ usbVendorId: o.vendorId, usbProductId: o.productId, usbSerial: o.serial ?? null }) === e.target.value);
           onChange(d ? { usbVendorId: d.vendorId, usbProductId: d.productId, usbSerial: d.serial ?? null } : { usbVendorId: null, usbProductId: null, usbSerial: null });
         }}
-        className="h-8 w-full rounded-md border border-input bg-input/30 px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50"
         data-testid="usb-picker"
       >
         <option value="">{options.length ? t("conn.pick") : t("iface.usbNone")}</option>
@@ -103,7 +103,7 @@ export function UsbPicker({ value, onChange, disabled }: { value: UsbValue; onCh
             {d.product}{d.serial ? ` · ${d.serial}` : ""}
           </option>
         ))}
-      </select>
+      </NativeSelect>
     </div>
   );
 }

@@ -9,6 +9,7 @@ import { mergeDpts, dptSubtypeLabel } from "@/lib/dpts.ts";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { NativeSelect } from "@/components/ui/native-select";
 import { Popover as PopoverPrimitive } from "radix-ui";
 import { Popover, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -275,10 +276,9 @@ function GaDialog({ editor, onClose, projectId, levels, dptSuggestions }: {
           {!isCreate && (
             <div className="space-y-1.5">
               <Label htmlFor="ga-security">{t("groupEdit.security")}</Label>
-              <select id="ga-security" value={security} onChange={(e) => setSecurity(e.target.value as GroupAddressSecurity)} data-testid="ga-security"
-                className="h-9 w-56 rounded-md border border-input bg-input/30 px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50">
+              <NativeSelect id="ga-security" className="w-56" value={security} onChange={(e) => setSecurity(e.target.value as GroupAddressSecurity)} data-testid="ga-security">
                 {(["auto", "on", "off"] as const).map((m) => <option key={m} value={m}>{t(`groupEdit.securityMode.${m}`)}</option>)}
-              </select>
+              </NativeSelect>
               <p className="text-xs text-muted-foreground">{t(`groupEdit.securityHint.${security}`)}</p>
               {security !== editor.security && <p className="text-xs text-warning" data-testid="ga-security-changed">{t("groupEdit.securityRewrite")}</p>}
             </div>

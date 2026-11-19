@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, Calculator, ChevronDown, ChevronLeft, ChevronsUpDown, Cpu, HardDriveDownload, Info, KeyRound, Loader2, LocateFixed, MapPin, MessageSquareWarning, MoreVertical, Puzzle, RadioTower, Repeat2, RotateCcw, Search, ShieldCheck, Stethoscope, X } from "lucide-react";
+import { AlertTriangle, Calculator, ChevronDown, ChevronLeft, Cpu, HardDriveDownload, Info, KeyRound, Loader2, LocateFixed, MapPin, MessageSquareWarning, MoreVertical, Puzzle, RadioTower, Repeat2, RotateCcw, Search, ShieldCheck, Stethoscope, X } from "lucide-react";
 import { Link, useLocation, useNavigate, useParams, useRouter, useSearch } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -22,6 +22,7 @@ import { flowOf, inlineChildren, keptAt } from "@/lib/blockFlow.ts";
 import { matchingItems, norm, underMatchingHeading } from "@/lib/blockFilter.ts";
 import { gridLayout } from "@/lib/blockGrid.ts";
 import { Input } from "@/components/ui/input";
+import { NativeSelect } from "@/components/ui/native-select";
 import { Separator } from "@/components/ui/separator";
 import { Notice } from "@/components/ui/notice";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -1200,24 +1201,19 @@ function ParamRow({ param, compact, changedTitle, revertTitle, reverting, onChan
             <span className="w-full text-sm text-muted-foreground" data-testid={`param-${param.refId}`}>{readOnlyText}</span>
           )
         ) : param.control === "enum" ? (
-          // Native <select>: a device can have 500+ enums; mounting that many
+          // A native select (NativeSelect): a device can have 500+ enums; mounting that many
           // Radix Selects is the page's main render cost. Native is browser-cheap
           // and fully functional, so the whole list stays visible without lag.
-          // Drawn with the comboboxes' chevron, so both kinds of choice look alike.
-          <span className="relative flex w-full">
-            <select
-              value={param.value} onChange={(e) => onChange(e.target.value)} aria-label={label}
-              // Only in a cell: a device has 500+ enums, and the option scan is wasted on a full row.
-              style={compact ? fit(Math.max(0, ...(param.options ?? []).map((o) => o.text.length)), "3rem") : undefined}
-              className="h-9 w-full appearance-none rounded-md border border-input bg-background pr-8 pl-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 pointer-coarse:h-11 pointer-coarse:text-base"
-              data-testid={`param-${param.refId}`}
-            >
-              {/* A value outside the options would otherwise show as the first option. */}
-              {param.options?.some((o) => String(o.value) === param.value) ? null : <option value={param.value} disabled>{t("device.noOption", { value: param.value })}</option>}
-              {param.options?.map((o) => <option key={o.value} value={String(o.value)}>{o.text}</option>)}
-            </select>
-            <ChevronsUpDown className="pointer-events-none absolute top-1/2 right-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          </span>
+          <NativeSelect
+            className="w-full" value={param.value} onChange={(e) => onChange(e.target.value)} aria-label={label}
+            // Only in a cell: a device has 500+ enums, and the option scan is wasted on a full row.
+            style={compact ? fit(Math.max(0, ...(param.options ?? []).map((o) => o.text.length)), "3rem") : undefined}
+            data-testid={`param-${param.refId}`}
+          >
+            {/* A value outside the options would otherwise show as the first option. */}
+            {param.options?.some((o) => String(o.value) === param.value) ? null : <option value={param.value} disabled>{t("device.noOption", { value: param.value })}</option>}
+            {param.options?.map((o) => <option key={o.value} value={String(o.value)}>{o.text}</option>)}
+          </NativeSelect>
         ) : param.control === "number" && param.slider ? (
           // ETS UIHint="Slider": a bounded range with a live numeric readout.
           <span className="flex w-full items-center gap-2" data-testid={`param-${param.refId}`}>

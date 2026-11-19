@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { ApiError, type AssumedValue, type DeviceConfigView } from "../api.ts";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { NativeSelect } from "@/components/ui/native-select";
 import { Notice } from "@/components/ui/notice";
 import { localizeError } from "../lib/apiError.ts";
 
@@ -65,8 +66,6 @@ export function assumeRefusal(e: unknown): AssumeRefusal {
   return { code: e.code, message: e.message, ...(Array.isArray(objects) && objects.every((n) => typeof n === "number") ? { objects } : {}) };
 }
 
-const cls = "h-8 w-full rounded-md border border-input bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring sm:w-64";
-
 // Offered after a read-back whose device links objects no object of its own configuration takes under
 // the values read (`unplacedObjects`): the parameters that may decide this cannot be read, so the user
 // names the values the device runs and reads again with them. Nothing is taken unless that read proves
@@ -89,13 +88,13 @@ export function AssumeValuesPanel({ candidates, unresolved, choices, onChoose, o
               <span className="text-muted-foreground">{c.block}: </span>{c.name}
             </span>
             {c.options ? (
-              <select
-                value={choices[c.refId] ?? ""} onChange={(e) => onChoose(c.refId, e.target.value)} aria-label={`${c.block}: ${c.name}`}
-                className={cls} data-testid={`assume-${c.refId}`} disabled={pending}
+              <NativeSelect
+                size="sm" value={choices[c.refId] ?? ""} onChange={(e) => onChoose(c.refId, e.target.value)} aria-label={`${c.block}: ${c.name}`}
+                className="w-full sm:w-64" data-testid={`assume-${c.refId}`} disabled={pending}
               >
                 <option value="">{t("device.assumeNotAssumed")}</option>
                 {c.options.map((o) => <option key={o.value} value={String(o.value)}>{o.text}</option>)}
-              </select>
+              </NativeSelect>
             ) : (
               <Input
                 type="number" step={1} min={c.min} max={c.max} value={choices[c.refId] ?? ""} placeholder={t("device.assumeNotAssumed")}
