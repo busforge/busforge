@@ -8,6 +8,7 @@ export function importGaps(a: AnalyzeResult) {
     ["import.gapMalformedDevices", a.malformedDevices],
     ["import.gapUnresolvedSenders", a.unresolvedSenders],
     ["import.gapSecureWithoutSerial", a.secureDevicesWithoutSerial],
+    ["import.gapSecretsNotImported", a.secretsNotImported],
     ["import.gapSkippedInstallations", a.skippedInstallations],
     ["import.gapUnassignedDevices", a.unassignedDevices],
     ["import.gapLinksWithoutSender", a.linksWithoutSender],

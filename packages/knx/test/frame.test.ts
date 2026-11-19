@@ -1,5 +1,12 @@
 import { test, expect } from "bun:test";
-import { decodeGroupApdu, formatGa, numToGa } from "../src/frame.ts";
+import { decodeGroupApdu, formatGa, numToGa, parseGa } from "../src/frame.ts";
+
+test("parseGa reads a whole three-level address and nothing out of range or around it", () => {
+  expect(parseGa("0/0/1")).toBe(1);
+  expect(parseGa("31/7/255")).toBe(0xffff);
+  expect(parseGa("2/1/7")).toBe((2 << 11) | (1 << 8) | 7);
+  for (const bad of ["32/0/0", "0/8/0", "0/0/256", "1/2", "1/2/3/4", "a/b/c", " 1/2/3", "1/2/3 ", "001/0/0", "-1/0/0", ""]) expect(parseGa(bad)).toBeNull();
+});
 
 // formatGa is the single level-aware GA formatter. Three-level is main(5)/middle(3)/sub(8),
 // two-level main(5)/sub(11); the raw is a 16-bit address. Hand-derived from the bit grid.

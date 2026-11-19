@@ -35,3 +35,36 @@ test("a KNXnet/IP device's settings: attributes off their own tags, an unparseab
     installation: { Name: "", BCUKey: "4294967295", IPRoutingLatencyTolerance: "2000" },
   }]);
 });
+
+test("the default BCU key is no secret the import leaves out", () => {
+  expect(parseProject(XML, undefined, "x").secretsNotImported).toBe(0);
+});
+
+// Synthetic secrets in the shape of an ETS 6 IP Secure project (backbone key on the installation, a device's
+// authentication code and management password, tunnelling user passwords on its bus interfaces).
+test("KNX IP Secure keys and passwords and a BCU key other than the default are counted as not imported and kept out of the device settings", () => {
+  const backbone = "c3ludGhldGljLWJhY2tib25l";
+  const secured = XML
+    .replace('<Installation Name="" BCUKey="4294967295"', `<Installation Name="" BCUKey="305419896" IPRoutingBackboneKey="${backbone}"`)
+    .replace('<Security ToolKey="a" LoadedToolKey="a" SequenceNumber="1" />',
+      '<Security ToolKey="a" LoadedToolKey="a" SequenceNumber="1" DeviceAuthenticationCode="synthauth" DeviceManagementPassword="synthmgmt" LoadedIPRoutingBackboneKey="c3ludGhldGljLWJhY2tib25l" />'
+      + '<BusInterfaces><BusInterface RefId="M-0083_A-1_BI-1" Password="synthuser1" /><BusInterface RefId="M-0083_A-1_BI-2" Password="" /></BusInterfaces>');
+  const p = parseProject(secured, undefined, "x");
+  // backbone key + BCU key + authentication code + management password + one tunnelling password
+  expect(p.secretsNotImported).toBe(5);
+  const settings = p.deviceKnxIp.find((d) => d.deviceId === "P-0001-0_DI-1")!;
+  expect(settings.installation).toEqual({ Name: "", BCUKey: "", IPRoutingBackboneKey: "", IPRoutingLatencyTolerance: "2000" });
+  const all = JSON.stringify(p);
+  for (const secret of [backbone, "305419896", "synthauth", "synthmgmt", "synthuser1"]) expect(all).not.toContain(secret);
+});
+
+test("the keys and passwords the import leaves out with a device outside the topology or a further installation are counted too", () => {
+  const secured = XML
+    .replace("</Topology></Installation>", '<UnassignedDevices><DeviceInstance Id="P-0001-0_DI-9" Name="" ProductRefId="M-0083_H-1_P-1"><BusInterfaces><BusInterface RefId="M-0083_A-1_BI-1" Password="synthuser9" /></BusInterfaces></DeviceInstance></UnassignedDevices></Topology></Installation>')
+    .replace("</Installation></Installations>", '</Installation><Installation Name="Second" BCUKey="305419896"><Topology><Area Id="P-0001-1_A-1" Address="1"><Line Id="P-0001-1_L-1" Address="1"><DeviceInstance Id="P-0001-1_DI-1" Address="5"><Security ToolKey="a" DeviceManagementPassword="synthmgmt2" /></DeviceInstance></Line></Area></Topology></Installation></Installations>');
+  const p = parseProject(secured, undefined, "x");
+  expect(p.unassignedDevices).toBe(1);
+  expect(p.skippedInstallations).toBe(1);
+  // the unassigned device's tunnelling password, the second installation's BCU key and its device's management password
+  expect(p.secretsNotImported).toBe(3);
+});

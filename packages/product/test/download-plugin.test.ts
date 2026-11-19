@@ -1,9 +1,15 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, setDefaultTimeout } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseAppConfig, parseLoadProcedures, classify, downloadPluginRefusal } from "@busforge/product";
 import { catalogueXml, listCatalogue } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): the test that parses every
+// application of the catalogue takes 3.3-3.8 s with the file alone (load 11-17) and 11.7 s while the tests of
+// packages/knx, packages/product and apps/server run in parallel (load 12-14); the others take up to 0.2 s. Every
+// test gets twenty times the longest measured time.
+setDefaultTimeout(240_000);
 
 // An application that names an ETS download plugin (<Static><Extension EtsDownloadPlugin="{GUID}">) is
 // downloaded by ETS through that plugin. Every ETS capture of ours is of an application without one, so
@@ -91,11 +97,13 @@ describe("a System B application that names an ETS download plugin", () => {
 });
 
 corpusDescribe("the applications of the private corpus", () => {
+  // Parsing all sixteen catalogue applications takes 4.7 s alone on a loaded machine, past the 5 s default
+  // under the parallel check.
   test("name no ETS download plugin, so none of their writes is refused for one", () => {
     const files = listCatalogue();
     expect(files.length).toBeGreaterThan(0);
     for (const f of files) expect(parseAppConfig(catalogueXml(f)).etsDownloadPlugin, f).toBeUndefined();
-  });
+  }, 30_000);
 
   // The MDT BE-02001.02 (MV-0705) carries an empty <Extension />; given a plugin, its System 7 profile
   // withholds the group-address flash and the full download as the System B one does.

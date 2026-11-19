@@ -94,7 +94,7 @@ export function DiagnosticDialog({ projectId, device, taskId: initialTaskId, ope
         {stage === "failed" && (
           <Notice
             icon={<ShieldAlert className="size-4 text-destructive" />} title={t("diagnostic.failedEarly")}
-            body={task ? localizeError(t, task.errorCode, task.error) : errMsg(t, pkgQ.error)} onClose={() => onOpenChange(false)}
+            body={task ? localizeError(t, task.errorCode, task.error, task.errorDetails) : errMsg(t, pkgQ.error)} onClose={() => onOpenChange(false)}
           />
         )}
         {stage === "loading" && <div className="flex justify-center py-10"><Loader2 className="size-5 animate-spin text-muted-foreground" /></div>}

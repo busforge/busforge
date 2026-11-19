@@ -6,8 +6,8 @@ import { cn } from "@/lib/utils"
 
 // Badges and tags: short status or label marks. One radius (the control radius), one height per
 // size, so marks next to each other line up whatever their text. A tone carries meaning only:
-// primary for the user's own pending work, ok/danger for proven success or failure, warning for an
-// unproven state, info for a derived one, neutral for plain labels (docs/design-system.md).
+// warning for every mark that warns, ok/danger for proven success or failure, info for a derived
+// state, primary for the one item a group singles out, neutral for plain labels (docs/design-system.md).
 const badgeVariants = cva(
   "inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-md border font-medium whitespace-nowrap [&>svg]:pointer-events-none [&>svg]:shrink-0",
   {
@@ -17,8 +17,8 @@ const badgeVariants = cva(
         outline: "border-border bg-transparent text-muted-foreground",
         primary: "border-primary/40 bg-primary/10 text-primary",
         ok: "border-ok/40 bg-ok/10 text-ok",
-        info: "border-sky-500/40 bg-sky-500/10 text-sky-300",
-        warning: "border-amber-500/40 bg-amber-500/10 text-amber-300",
+        info: "border-info/40 bg-info/10 text-info",
+        warning: "border-warning/40 bg-warning/10 text-warning",
         danger: "border-destructive/40 bg-destructive/10 text-destructive",
       },
       size: {
@@ -29,11 +29,17 @@ const badgeVariants = cva(
         true: "font-mono",
         false: "",
       },
+      // As tall on a touch screen as a BadgeButton, for a static mark that sits among them.
+      tapHeight: {
+        true: "pointer-coarse:h-8",
+        false: "",
+      },
     },
     defaultVariants: {
       tone: "neutral",
       size: "md",
       mono: false,
+      tapHeight: false,
     },
   }
 )
@@ -46,6 +52,7 @@ function Badge({
   tone,
   size,
   mono,
+  tapHeight,
   asChild = false,
   ...props
 }: React.ComponentProps<"span"> & BadgeVariants & { asChild?: boolean }) {
@@ -54,7 +61,7 @@ function Badge({
     <Comp
       data-slot="badge"
       data-tone={tone ?? "neutral"}
-      className={cn(badgeVariants({ tone, size, mono }), className)}
+      className={cn(badgeVariants({ tone, size, mono, tapHeight }), className)}
       {...props}
     />
   )
@@ -68,15 +75,15 @@ function BadgeButton({
   mono,
   type = "button",
   ...props
-}: React.ComponentProps<"button"> & BadgeVariants) {
+}: React.ComponentProps<"button"> & Omit<BadgeVariants, "tapHeight">) {
   return (
     <button
       data-slot="badge-button"
       data-tone={tone ?? "neutral"}
       type={type}
       className={cn(
-        badgeVariants({ tone, size, mono }),
-        "cursor-pointer outline-none transition-[filter,box-shadow] pointer-coarse:h-8 hover:not-disabled:brightness-125 focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50",
+        badgeVariants({ tone, size, mono, tapHeight: true }),
+        "cursor-pointer outline-none transition-[filter,box-shadow] hover:not-disabled:brightness-125 focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50",
         className
       )}
       {...props}

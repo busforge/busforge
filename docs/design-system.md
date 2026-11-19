@@ -61,12 +61,14 @@ Dark-first. Tokens live in `apps/web/src/index.css` as OKLCH; hex below is for r
 | **`primary`** | **`#f3a44a`** | `0.78 0.14 66` | **Forged-amber brand accent** |
 | `primary-foreground` | `#221202` | `0.2 0.04 66` | Ink on amber |
 | `ok` | `#54c57a` | `0.74 0.15 152` | Success / confirmed state |
+| `warning` | `#ffd32e` | `0.88 0.17 92` | Every mark that warns (yellow, kept apart from the amber brand) |
+| `info` | `#75d5ff` | `0.83 0.11 230` | Derived state, not a warning |
 | `destructive` | `#ea3c3f` | `0.62 0.21 25` | Errors / destructive actions |
 
 **Rules**
 
 - **One accent.** Amber (`primary`) is the only brand color. Everything else is a slate neutral. Don't introduce a second brand hue.
-- `ok` and `destructive` are **status** colors (success, error), not decoration.
+- `ok`, `warning`, `info` and `destructive` are **status** colors (success, warning, derived, error), not decoration. `warning` is yellow, not amber, so a warning never reads as the brand or the primary action.
 - The amber tile uses a subtle top-to-bottom gradient (`#ffc270 → #f3a44a → #e1862a`) for the logo; flat `primary` is fine for UI chips.
 
 ---
@@ -101,7 +103,7 @@ Two families, loaded from Google Fonts in `index.html`.
 ## UI conventions
 
 - **Dark, instrument-like.** Slate surfaces, hairline `border`, generous use of `muted-foreground` for secondary info.
-- **Amber is focal.** Reserve `primary` for the brand, the active/primary action, selection, and the user's pending work. Overuse erases the signal: devices, group addresses and range numbers are neutral slate marks, never amber.
+- **Amber is focal.** Reserve `primary` for the brand, the active/primary action, selection, and the dots that show where the user's pending work is (on an edited value, a section, a floor or room with devices to program). A mark that states a device's state is a badge in its tone, a warning one `warning`, not amber (see [Tone of a badge](#tone-of-a-badge)). Overuse erases the signal: devices, group addresses and range numbers are neutral slate marks, never amber.
 - **Touch screens:** controls grow to a tap target (see the sizes under [Components](#components)). The add, rename and delete actions of a row or heading (`RowActions`) are icon buttons a mouse reveals on hover; a touch screen has no hover, so there one always-visible menu button opens them with their labels. The device header's icon actions (revert, read back, diagnostic) are labelled items of the device menu there. Tooltips on info marks open on a tap.
 - **Radius:** base `0.5rem` (`--radius`); see the radius scale under [Components](#components).
 - **Tooltips** (Radix): instant, multiline; hide secondary detail (DPT/flags) there rather than inline.
@@ -118,7 +120,7 @@ The primitives live in `apps/web/src/components/ui/`. Views use them instead of 
 |---|---|---|
 | `Button` | Every action with a text label | `default` (amber, the one primary action of a view), `outline`, `secondary`, `ghost`, `destructive`, `link`; sizes `xs` 24 px, `sm` 32 px, `default` 36 px, `lg` 40 px (on a touch screen `xs` grows to 36 px, `sm` and `default` to 40 px) |
 | `IconButton` | An action shown only as an icon | Same variants and sizes (`icon-xs` to `icon-lg`, on a touch screen 36 to 40 px). Its `label` is required: the accessible name and the tooltip |
-| `Badge` | A status or label mark that does nothing on click | Tones `neutral`, `outline`, `primary`, `ok`, `info`, `warning`, `danger`; sizes `sm` 20 px, `md` 24 px; `mono` for bus data |
+| `Badge` | A status or label mark that does nothing on click | Tones `neutral`, `outline`, `primary`, `ok`, `info`, `warning`, `danger`; sizes `sm` 20 px, `md` 24 px; `mono` for bus data; `tapHeight` where it sits among `BadgeButton`s, so it grows with them on a touch screen |
 | `BadgeButton` | The same mark when it opens a detail (popover, dialog) | As `Badge`, plus the states of a control; 32 px high on a touch screen |
 | `Chip` | A filter toggle or one choice among a few (IP/USB, transport) | `active`, announced as `aria-pressed` |
 | `Dialog` | A task in a window: a form, a preview, a running read | `backdropClose`, `dismissible` |
@@ -155,7 +157,17 @@ A static `Badge` has none of these, so a mark that does nothing never looks clic
 
 ### Tone of a badge
 
-Tones carry meaning, never decoration. `primary` (amber) marks the user's own pending work ("never programmed", "2 changes"). `ok` and `danger` are reserved for what was proven or failed on hardware. `warning` marks an unproven state (untested, assumed value), `info` a derived one (tested on a related product). Plain labels (manufacturer number, counts) are `neutral` or `outline`. Marks that sit side by side use the same size: device rows use `sm`, page headers `md`.
+Tones carry meaning, never decoration, and one meaning has one tone:
+
+| Tone | Means | Examples |
+|---|---|---|
+| `warning` | **Every mark that warns**: the device does not hold what the project says, or something about it is unproven or left out | "never programmed", "not downloaded in ETS", "2 changes", a security mark, an untested product, an assumed value, every standing warning of the device header |
+| `ok` / `danger` | Proven or failed on hardware; `danger` also a value that cannot be right | "Product: Transfer tested", "Failed on hardware", a value outside its type |
+| `info` | Derived or partial evidence, not a warning | Tested on a sibling, with another version, or for some of the operations |
+| `primary` | The one item a group singles out, never a state | The sending address of a link, the queue count |
+| `neutral` / `outline` | Plain labels | Manufacturer number, counts, "Programmed", "Secure" |
+
+A warning never borrows `primary` because it is the user's own work, nor `danger` because it matters: two warnings in two colours read as two different kinds of thing. Marks that sit side by side use the same size: device rows use `sm`, page headers `md`. The bus monitor's telegram kinds (write, response, read) are labels told apart by colour, not states, and keep their own tones.
 
 A state mark that has a remedy is a `BadgeButton` where the page offers that remedy: in the device page header "never programmed" and "N changes" open the flash (which offers the full download a never-programmed device needs, where Busforge can run one; Commission only where nothing can be flashed), a changed or unknown security object the group-address flash, the compatibility badge its detail. Its tooltip says what the state means and what a click opens. The same mark in a list row stays a plain `Badge`, because the row itself leads to the page. A device imported from ETS that ETS downloaded once but whose parts were edited in ETS afterwards (or never downloaded) shows "Not downloaded in ETS" instead of "never programmed", which would be false for it; its tooltip names the parts, and it opens the same remedy. A device with an application and nothing pending shows a quiet `neutral` "Programmed" mark in the header (never in a row). It is the project's record (ETS's at import, or Busforge's last verified write or read-back), not a read of the device, so it is never `ok`, and its tooltip says that only a read-back shows what the device holds.
 
@@ -163,10 +175,12 @@ A state mark that has a remedy is a `BadgeButton` where the page offers that rem
 
 Two rows:
 
-1. **Who the device is and what state it is in:** back, the device name as the page title with its individual address in mono, the programming state ("never programmed" or "not downloaded in ETS"; or "N changes" and a security mark, either or both; or "programmed") and the compatibility badge, which names what it describes ("Product: …"), since the evidence belongs to the product, not to this unit. All marks `md`, one height, one font.
-2. **What stands against it and what can be done with it:** the standing warnings on the left, the parameter filter after them, and the actions right-aligned as one group (Flash, revert, read back, diagnostic, the menu). A standing warning about the device (what the comparison with the device does not cover, what Busforge does not write, settings it does not support, links the page cannot show) is a `warning` `BadgeButton` with a short label and its count where the count is known; its popover carries the full title and the points.
+1. **Who the device is and what stands against it:** back, the device name as the page title with its individual address in mono, then its marks in one run: the programming state ("never programmed" or "not downloaded in ETS"; or "N changes" and a security mark, either or both; or "programmed"), the compatibility badge, and the standing warnings. All marks `md`, one height (32 px on a touch screen), one font, a short label each; what a mark means in full is in its popover or tooltip, never in its label.
+   - The compatibility badge names what it describes and the axis it shows, shortly: "Product: Transfer tested", not "all tested", since the evidence belongs to the product, not to this unit, and the green state is the transfer axis only. Its popover says it in full (tested for every operation Busforge supports for the device).
+   - A standing warning about the device (what the comparison with the device does not cover, what Busforge does not write, settings it does not support, links the page cannot show, links the import did not take over) is a `warning` `BadgeButton` with a short label and its count where the count is known; its popover carries the full title and the points.
+2. **What can be done with it:** the parameter filter on the left, the actions right-aligned as one group (Flash, revert, read back, diagnostic, the menu).
 
-On a wide window the header stays pinned below the project bar while the parameters scroll, so the device, its state and its actions stay in view; the section index sits below it, and a jump lands each section just under it. On a narrow window the header scrolls with the page and the second row wraps: warnings, then the filter at full width, then the action group on its own line, where Flash takes the free width. Below the header, next to what they act on, stay what concerns single parameters or a read: values to assume, unresolved objects, why a device stays never programmed after a read, values assumed and not yet proven, and the DCA notice.
+On a wide window the header stays pinned below the project bar while the parameters scroll, so the device, its state and its actions stay in view; the section index sits below it, and a jump lands each section just under it. On a narrow window the header scrolls with the page and both rows wrap: the marks under the name, then the filter at full width, then the action group on its own line, where Flash takes the free width. Below the header, next to what they act on, stay what concerns single parameters or a read: values to assume, unresolved objects, why a device stays never programmed after a read, values assumed and not yet proven, and the DCA notice.
 
 ### Filters
 
@@ -178,7 +192,7 @@ A list filter always shows that it is on, and how to undo it:
 - Filter state lives in the URL, so reload, back and a shared link keep it.
 - Typing in a search field never sends the page back to the top: the scroll position stays, and the browser moves it only where its scroll anchoring holds a row in view in place as rows around it drop out. A com-object the URL names that the filter brings back is scrolled to.
 
-A page filter sits in the toolbar row of the page it narrows: on the device page the parameter filter is in the header's second row, in front of the actions, with its match count.
+A page filter sits in the toolbar row of the page it narrows: on the device page the parameter filter leads the header's second row, in front of the actions, with its match count.
 
 ### Dialogs are never a trap
 

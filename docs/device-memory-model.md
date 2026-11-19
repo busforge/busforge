@@ -282,7 +282,8 @@ can edit keeps the stored value and names the computed one beside it. An input n
 its value, also where the configuration does not show the result: the Jung 400021SE's dimming time is
 entered in seconds and milliseconds that the device does not hold, and the page names the hidden
 parameter the image holds and its value. A calculation Busforge does not run marks its parameters as
-not computed, with the reason, in warning tone where a change of them is refused.
+not computed, with the reason in the user's language (a script the interpreter refuses keeps the
+interpreter's own words, in English), in warning tone where a change of them is refused.
 
 ## Ownership rules, in detail
 
@@ -409,14 +410,21 @@ and would leave either the segment's `<Data>` or the unit's bytes where the colo
   its field where the application declares `<Options TextParameterZeroTerminate="true">` and on any
   System 7 application (no System 7 capture shows a field filled), on System 7 a zero over a non-zero
   `<Data>` byte (the Meteodata's `<Data>` holds zeros behind the characters), a field that is not
-  whole bytes from bit 0, and any text parameter of a System 1 application. A read-back leaves such a
-  field out of its comparison instead of refusing the whole read.
+  whole bytes from bit 0, and any text parameter of a System 1 application. A value that begins or ends
+  with a blank is refused as well (`PARAM_TEXT_EDGE_BLANK`): XML keeps those characters, so Busforge
+  reads a value as written, blanks included and character references (`&#x9;`, `&#xA;`) decoded: a
+  `Parameter`'s and a `ParameterRef`'s `Value` and `InitialValue`, an `Assign`'s `Value`, their
+  translations, and a project's `ParameterInstanceRef` `Value` (every other attribute and text node is
+  trimmed, and a value of any other type than text compares and validates without its blanks). No ETS image shows whether ETS writes such blanks into the device or drops them. A
+  read-back leaves such a field out of its comparison instead of refusing the whole read.
 
 - **A device placed in Busforge, or given another product, starts its text parameters at their
   `InitialValue`**, translated into the language the client works in, as ETS does for a device added to a project of that
   language: ETS's download of a synthetic product (bussard's) added to a German project wrote the
-  de-DE `InitialValue` "Bussardhorst Süd", not the `Value` "Buzzard nest". A device imported from
-  ETS keeps the values ETS stored. An `InitialValue` in a form no capture shows (untranslated, on a
+  de-DE `InitialValue` "Bussardhorst Süd", not the `Value` "Buzzard nest". That start value is the
+  parameter's default on the device page: the device's baseline starts at it, so the parameter shows no
+  change and a revert returns to it. A device imported from ETS keeps the values ETS stored. An
+  `InitialValue` in a form no capture shows (untranslated, on a
   `ParameterRef`, beside a `ParameterRef`'s own `Value`, on a parameter that is no text, in a module
   definition)
   refuses the placement (`PARAM_INITIAL_VALUE_UNSUPPORTED`) where it differs from the default and its
