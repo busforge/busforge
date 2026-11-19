@@ -55,6 +55,9 @@ export function recordedAppXml(records: EtsRecords, appId: string): string {
 function recordProject(path: string, password: string | undefined, apps: Record<string, string>): ProjectRecords {
   const bytes = readFileSync(corpusPath(path));
   const proj = loadKnxproj(bytes, password, path);
+  // The import leaves these devices out, so their records would be missing without anything saying so.
+  const left = proj.skippedInstallations + proj.unassignedDevices + proj.malformedDevices;
+  if (left) throw new Error(`${path}: the import leaves out devices (${proj.skippedInstallations} further installations, ${proj.unassignedDevices} unassigned and ${proj.malformedDevices} malformed devices), whose download records would go unrecorded`);
   const catalogue = new Set(listCatalogue());
   const declares = new Map<string, boolean | null>();
   const devices = proj.devices.map((d): DeviceRecord => {
