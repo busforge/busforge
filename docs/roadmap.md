@@ -234,24 +234,25 @@ depends on is hardware-proven.
   collections (no collection reads a security object, and the IP Interface Secure's none of its
   KNXnet/IP parameter object); the router's read-back can, and is pinned on one taken after ETS's
   group-address download.
-- **The short association table in the full download and the structural flash.** A System B unit
+- **The short association table in the structural flash and the partial download.** A System B unit
   that describes its association table with one-byte fields (`PDT_GENERIC_02`, the MDT IP
-  Interface/Router) gets that form from the GA flash, as ETS writes it; the full download and the
-  structural flash build the long form only and refuse such a unit (`ASSOC_TABLE_SHORT_UNSUPPORTED`).
-  ETS's full download of the router writes the short form; the router's full download is refused for
-  its tunnelling entries anyway, and no other product is known to use the short form.
+  Interface/Router) gets that form from the GA flash and the full download, as ETS writes it in both;
+  the structural flash and the partial form of the full download build the long form only and refuse
+  such a unit (`ASSOC_TABLE_SHORT_UNSUPPORTED`), and the structural flash is not offered to an
+  application declaring tunnelling entries. Next capture: ETS's download of a parameter change on the
+  router that alters its com-object table. No other product is known to use the short form.
+- **The router's full download on a unit.** Busforge's full download of the MDT IP Interface/Router
+  equals ETS's capture step for step and byte for byte; it has not run on a unit.
 - **Input-to-output behaviours on a device in service.** The mode places one test link, so only a
   behaviour of that one object (`output`, `heartbeat`) can be observed; an input driving an output
   needs two.
 - **Devices that answer an opaque device descriptor** (IP interfaces) need a different read path or
   secure support; which one is not decided.
-- **KNX IP interfaces as targets.** ETS's captured full download of the MDT IP Interface/Router writes
-  no property of the KNXnet/IP parameter object, and its project instance holds no tunnelling addresses
-  (the box's other application holds them, [device-support.md](device-support.md#known-gaps)).
-  `FULL_DOWNLOAD_TUNNELING_ENTRIES` still refuses that application on its attribute alone. Open decision:
-  let the gate look at the instance's own addresses, so that an application declaring entries whose instance
-  has none is offered the full download once its other refusals are lifted; an instance with addresses keeps
-  waiting for an ETS capture of its download.
+- **KNX IP interfaces with KNXnet/IP settings of their own on System B or System 7.** Their full download
+  is refused (`FULL_DOWNLOAD_TUNNELING_ENTRIES`) where the application declares additional addresses or
+  the instance holds an IP configuration or tunnelling addresses, which ETS writes into the KNXnet/IP
+  parameter object ([device-support.md](device-support.md#known-gaps)). Next capture: ETS's download of
+  such an application, to show what it writes there.
 - **Should the group-address flash run the application's checks?** A declared `CompareProp` (the ABB
   US/U 4.2's application-id check, for example) runs in the parameter flash and the full download, not
   in the group-address flash ([load-procedures.md](load-procedures.md#coverage-across-the-catalogue)).
@@ -341,25 +342,16 @@ where they are required; raw acquisition is not a way around access control. Wha
 
 - **The security object on System 7.** Only System B loads it; the others refuse a secure device's
   GA flash and full download.
-- **Individual-address assignment of a secure device as ETS does it.** Busforge assigns it plain, and a
-  unit in Data Secure mode ignores the plain `A_Restart` that ends programming mode, so it stays in it.
-  ETS finds the unit by its serial (`A_SystemNetworkParameter_Read` of PID 11 while it is in programming
-  mode, `A_IndividualAddressSerialNumber_Read` without), Syncs to `0/0/0` and sends the serial-number
-  write as a secured broadcast, under the FDSK on a reset unit
-  ([knx-secure.md](knx-secure.md#individual-address-assignment)) and under its tool key otherwise, with
-  Data Secure on or off in the project (captured on the Jung 400021SE with it on and off, on the GVS AMMA
-  with it on). On the secured
-  connection that follows it switches the security mode on, writes the tool key and the sending sequence
-  (PID 59) where the project has Data Secure on, reads the security mode where it is off, reads the serial
-  number and ends with a secured confirmed restart ([commissioning.md](commissioning.md)).
 - **Repeat a secured write that fails at the long size at 40 octets,** as ETS does ("switching to
   shorter frames"), and then size secured writes up to the interface's full length as ETS does. Until
   then a secured write uses the interface's announced length only on the interface's own line and
   within the 55 octets shown answered, and a path that carries less than its interface announces fails
   the write.
-- **The sending sequence (PID 59) at an address assignment.** ETS writes it at every address assignment
-  of a unit the project runs in Data Secure, also where nothing is re-activated (the Jung 400021SE and the
-  GVS AMMA). Busforge writes it on a re-activation only; its address assignment is plain (above).
+- **The sending sequence (PID 59) at a re-activation without an address assignment.** ETS writes it at
+  every address assignment of a unit the project runs in Data Secure, and Busforge does the same. Busforge
+  also writes it when it activates a unit reset since its activation; ETS's only run of that case gave the
+  unit its address by serial in the same download, so whether ETS writes it without the assignment needs
+  a capture (a reset unit given its address by button, then a download).
 - **A master reset before downloading a secure-capable application over another one.** Reported for
   ETS (erase code 7 on such a device, none on a fresh one or one holding the same application); not
   captured, as the bench's secure units have one application each. ETS sends a secured confirmed restart

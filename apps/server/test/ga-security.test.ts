@@ -1,7 +1,4 @@
-import { test, expect, describe, afterAll } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { test, expect, describe } from "bun:test";
 import { createState } from "../src/app.ts";
 import { createProject } from "../src/db/projects.ts";
 import { createGroupAddress, createGroupRange } from "../src/db/groupedit.ts";
@@ -9,17 +6,15 @@ import { getGroupKeys, listGroupKeyRows, putGroupKeys } from "../src/db/groupKey
 import { putDeviceSecurity } from "../src/db/deviceSecurity.ts";
 import { setDeviceLink } from "../src/db/deviceparams.ts";
 import { getGaSecurity, applyLinkSecurity, setGaSecurityMode } from "../src/db/gaSecurity.ts";
+import { removeTempDir, tempDir } from "../../../tools/test-temp.ts";
 
 // The rules ETS 6.4.1 was seen to apply to a group address's Data Secure mode (findings §22): a new
 // address linked only to secure devices is secured with a new key, a device without security turns an
 // "Automatisch" address plain for everyone (after a warning) and cannot be linked to an "Erzwungen
 // an" one. A secure device here is one the project holds a tool key for.
 describe("group address security", () => {
-  const tmps: string[] = [];
-  afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
   function setup() {
-    const dir = mkdtempSync(join(tmpdir(), "ga-security-"));
-    tmps.push(dir);
+    const dir = tempDir("ga-security-");
     const state = createState({ dbPath: ":memory:", dataDir: dir });
     const db = state.db;
     createProject(db, "p", "Test", 0);
@@ -37,7 +32,7 @@ describe("group address security", () => {
       applyLinkSecurity(db, "p", device, comObj, gaRaws, { allowPlain }, state.masterKey);
       setDeviceLink(db, "p", device, comObj, gaRaws);
     };
-    return { state, db, ids, keys, link, close: () => { db.close(); rmSync(dir, { recursive: true, force: true }); } };
+    return { state, db, ids, keys, link, close: () => { db.close(); removeTempDir(dir); } };
   }
 
   test("secures an automatic address with a new key when only secure devices are linked to it", () => {

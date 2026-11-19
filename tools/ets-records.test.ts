@@ -37,7 +37,6 @@ const KNOWN_DEVIATIONS = [
 const NOT_COMPARED = [
   "M-0004_A-7072-21-99A7-O000A not loaded: links (1 project)",
   "M-0004_A-7072-21-99A7-O000A not loaded: parameters (2 projects)",
-  "M-0083_A-0137-20-7EB2 refused: FULL_DOWNLOAD_TUNNELING_ENTRIES (1 project)",
   "M-0085_A-0072-30-69AA not loaded: links (8 projects)",
 ];
 
@@ -174,9 +173,9 @@ corpusDescribe("ETS's download record in the corpus projects", () => {
     const named = (k: string) => k.slice(k.indexOf(": ") + 2);
     expect(counted(found)).toEqual(KNOWN_DEVIATIONS.map(named));
     expect(counted(notCompared)).toEqual(NOT_COMPARED);
-    // 324 records of 28 distinct device states, 39546 bytes ETS marks as its own.
+    // 325 records of 29 distinct device states, 42397 bytes ETS marks as its own.
     const distinct = [...outcomes.values()].flatMap((o) => ("refused" in o ? [] : [o.bytes]));
-    expect([compared, distinct.length, distinct.reduce((n, b) => n + b, 0)]).toEqual([324, 28, 39546]);
+    expect([compared, distinct.length, distinct.reduce((n, b) => n + b, 0)]).toEqual([325, 29, 42397]);
   }, TIMEOUT);
 
   // The decoder held against a download whose bytes tools/etsdiff.test.ts pins ("System B full download":

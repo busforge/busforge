@@ -1,10 +1,10 @@
 import { test, expect, describe, afterEach, setDefaultTimeout } from "bun:test";
 import net from "node:net";
 import { readFileSync, rmSync, existsSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeSplitter, parseEndpoint, rewriteSearchEndpoint, logLine, startProxy, isSyncRequest, toolLabel } from "./knxproxy.ts";
 import { parseCapture, memoryImage } from "./etsdiff.ts";
+import { tempDir } from "./test-temp.ts";
 
 // Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 0.3 s with the
 // file alone (load 5-27) and up to 0.3 s with every workspace's tests in parallel (load 5-8). A full check on a busy
@@ -72,7 +72,7 @@ describe("frames", () => {
   test("the proxy started without a tool label refuses to start", () => {
     const env = { ...process.env };
     delete env.PROXY_TOOL;
-    const run = Bun.spawnSync(["bun", join(import.meta.dir, "knxproxy.ts")], { env: { ...env, PROXY_PORT: "0", PROXY_LOG: join(tmpdir(), `knxproxy-refused-${crypto.randomUUID()}.log`) }, timeout: 10_000 });
+    const run = Bun.spawnSync(["bun", join(import.meta.dir, "knxproxy.ts")], { env: { ...env, PROXY_PORT: "0", PROXY_LOG: join(tempDir("knxproxy-"), "refused.log") }, timeout: 10_000 });
     expect(run.exitCode).not.toBe(0);
     expect(run.stderr.toString()).toContain("PROXY_TOOL is required");
   });
@@ -85,7 +85,7 @@ describe("frames", () => {
 });
 
 describe("the proxy on the wire", () => {
-  const log = join(tmpdir(), `knxproxy-${crypto.randomUUID()}.log`);
+  const log = join(tempDir("knxproxy-"), "proxy.log");
   const closers: (() => void)[] = [];
   afterEach(() => { closers.splice(0).forEach((c) => c()); rmSync(log, { force: true }); });
   const listen = (s: net.Server) => new Promise<number>((r) => s.listen(0, "127.0.0.1", () => r((s.address() as net.AddressInfo).port)));

@@ -61,6 +61,41 @@ describe("TaskQueue", () => {
     expect(reachedWrite).toBe(false);
   });
 
+  test("a write that undoes itself on a cancel is cancellable while it writes, and ends as its job says", async () => {
+    const q = new TaskQueue(() => 0);
+    const inWrites = Promise.withResolvers<void>();
+    let undone = false;
+    const t = q.submit({ ...meta("a"), kind: "locate", writes: true, cancelBeforeWrite: true, undoesOnCancel: true }, async (_p, signal, _c, enterWrites) => {
+      enterWrites(); inWrites.resolve();
+      await new Promise<void>((r) => signal.addEventListener("abort", () => r()));
+      undone = true;
+      return { kind: "located", endedBy: "cancel" };
+    });
+    await inWrites.promise;
+    expect(q.get(t.id)).toMatchObject({ state: "running", cancellable: true });
+    expect(q.cancel(t.id)).toBe("running");
+    const done = (await q.wait(t.id))!;
+    expect(done.state).toBe("done");
+    expect(done.result).toEqual({ kind: "located", endedBy: "cancel" });
+    expect(undone).toBe(true);
+  });
+
+  test("a shutdown cancels a write that undoes itself and waits for the undo", async () => {
+    const q = new TaskQueue(() => 0);
+    const inWrites = Promise.withResolvers<void>();
+    let undone = false;
+    const t = q.submit({ ...meta("a"), kind: "locate", writes: true, cancelBeforeWrite: true, undoesOnCancel: true }, async (_p, signal, _c, enterWrites) => {
+      enterWrites(); inWrites.resolve();
+      await new Promise<void>((r) => signal.addEventListener("abort", () => r()));
+      await Bun.sleep(20);
+      undone = true;
+    });
+    await inWrites.promise;
+    await q.shutdown();
+    expect(undone).toBe(true);
+    expect((await q.wait(t.id))!.state).toBe("done");
+  });
+
   test("a cancel accepted while a job wrote nothing stands even if the job then finishes", async () => {
     const q = new TaskQueue(() => 0);
     const go = Promise.withResolvers<void>();

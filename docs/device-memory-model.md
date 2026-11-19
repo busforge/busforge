@@ -379,6 +379,13 @@ mantissa rounded once, at that exponent, from the exact decimal value. 1000 Lux 
 lower neighbour, so a tie like 20.51 (1025.5) is not yet backed by a capture. A mantissa one
 step off passes a read-back unseen, since the device holds what was written.
 
+A DPT-9 value outside -671088.64 to 670433.28 is refused
+(`PARAM_VALUE_OUT_OF_RANGE`), not saturated: `7F FF` is DPT 9's "invalid data", so a saturated maximum
+would tell the device the value is invalid. 670760.96, the nominal maximum, would encode to `7F FF`, so it
+is refused. Saving such a value into a parameter is refused at once (`PARAM_VALUE_NOT_OF_TYPE`), and a
+device that holds `7F FF` is shown as holding no value of that parameter (it reads back as 670760.96,
+which no parameter takes).
+
 ## Which parameter types reach the image at all
 
 Only `Value` (enum/restriction), `Number`, `Float`, `IPAddress`, `Text` and an RGB `Color` are

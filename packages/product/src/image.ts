@@ -94,6 +94,12 @@ export function imageValueForm(model: AppModel, refId: string, value: string): s
 // at exponent 1, not the binary double just above it). Ties go to even; ETS's ties seen so far all had an even
 // lower neighbour, so half-down would match them too. Reference vectors: 0 -> 0x0000,
 // 21.0 -> 0x0C1A, -0.01 -> 0x87FF, 1000 -> 0x361A.
+// The codes run from -671088.64 (0xF800, mantissa -2048) to 670433.28 (0x7FFE, mantissa 2046 at exponent 15):
+// 0x7FFF is DPT 9's "invalid data", so the nominal maximum 670760.96 has no code, and a value beyond either
+// end is refused, judged before it is rounded. It is never saturated, as a device would read a saturated
+// 0x7FFF as invalid data, not as the largest value.
+const DPT9_MIN = -671088.64;
+const DPT9_MAX = 670433.28;
 export function encodeDpt9(value: number): number {
   const m = /^(-?)(\d+)(?:\.(\d+))?(?:e([+-]\d+))?$/.exec(String(value));
   if (!m) throw new RangeError(`DPT 9 cannot encode ${value}`);
@@ -104,17 +110,25 @@ export function encodeDpt9(value: number): number {
   const num = pow10 >= 0 ? digits * 10n ** BigInt(pow10) : digits;
   const den = pow10 >= 0 ? 1n : 10n ** BigInt(-pow10);
   const limit = minus ? 2048n : 2047n;
-  for (let exp = 0; exp <= 15; exp++) {
+  // |value| * 100 in hundredths against the largest code's magnitude (2046 or 2048, times 2^15).
+  if (num > (minus ? 2048n : 2046n) * 32768n * den) {
+    throw new ProductError("PARAM_VALUE_OUT_OF_RANGE", `${value} is outside the range of a DPT 9 float (${DPT9_MIN} to ${DPT9_MAX}; 0x7FFF means invalid data)`);
+  }
+  for (let exp = 0; ; exp++) {
     const d = den << BigInt(exp);
     let q = num / d;
     const twice = (num % d) * 2n;
     if (twice > d || (twice === d && q % 2n === 1n)) q++;
-    if (q <= limit) {
+    if (q <= limit || exp === 15) { // exponent 15 always fits: the value is within the range
       const mant = minus ? -Number(q) : Number(q);
       return (mant < 0 ? 0x8000 : 0) | (exp << 11) | (mant & 0x07ff);
     }
   }
-  return minus ? 0xf800 : 0x7fff; // saturate beyond the representable range
+}
+
+// Whether encodeDpt9 gives the finite number a code.
+export function dpt9Encodable(value: number): boolean {
+  try { encodeDpt9(value); return true; } catch (e) { if (e instanceof ProductError) return false; throw e; }
 }
 
 export function decodeDpt9(raw: number): number {

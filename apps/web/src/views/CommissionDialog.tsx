@@ -107,7 +107,7 @@ export function CommissionDialog({ open, onOpenChange, projectId, device, onComm
     <span className={{
       muted: "flex items-start gap-2 text-muted-foreground",
       ok: "flex items-start gap-2 text-ok",
-      warn: "flex items-start gap-2 text-amber-600 dark:text-amber-400",
+      warn: "flex items-start gap-2 text-warning",
       err: "flex items-start gap-2 text-destructive",
       run: "flex items-start gap-2 text-primary",
     }[tone]}>{icon}{text}</span>
@@ -138,6 +138,7 @@ export function CommissionDialog({ open, onOpenChange, projectId, device, onComm
           ? <span data-testid={addressOnly ? "commission-ok" : undefined}>{line(okIcon, t("commission.assigned", { previous: r.previous, assigned: r.assigned }), "ok")}</span>
           : <span data-testid="commission-fail">{line(warnIcon, t("commission.assignedUnverified", { ia: device.ia }), "err")}</span>}
         {r.verified && !r.progModeCleared && line(warnIcon, t("commission.progModeNotCleared", { error: r.progModeError ?? "?" }), "warn")}
+        {r.secureNotAnswered && line(warnIcon, t("commission.secureNotAnswered", { reason: r.secureNotAnswered }), "warn")}
       </span>
     );
   };

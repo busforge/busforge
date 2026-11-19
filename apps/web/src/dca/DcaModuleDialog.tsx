@@ -29,7 +29,7 @@ export function DcaModuleDialog({ projectId, deviceId, module }: { projectId: st
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button size="sm" variant="outline" className="h-7 gap-1.5" title={module.compatible ? undefined : incompatibleNote} onClick={() => !module.compatible && setAcknowledged(true)}>
-          {module.compatible ? <Puzzle className="size-3.5" /> : <AlertTriangle className="size-3.5 text-amber-500" />}
+          {module.compatible ? <Puzzle className="size-3.5" /> : <AlertTriangle className="size-3.5 text-warning" />}
           {module.compatible ? t("dca.open") : t("dca.openAnyway")}
         </Button>
       </DialogTrigger>
@@ -39,7 +39,7 @@ export function DcaModuleDialog({ projectId, deviceId, module }: { projectId: st
           <DialogTitle className="flex items-center gap-2"><Puzzle className="size-4" /> {module.displayName}</DialogTitle>
         </DialogHeader>
         {!module.compatible && (
-          <p className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
+          <p className="flex items-center gap-1.5 text-xs text-warning">
             <AlertTriangle className="size-3.5 shrink-0" /> {incompatibleNote}
           </p>
         )}

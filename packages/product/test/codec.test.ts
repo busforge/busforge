@@ -69,11 +69,13 @@ describe("float encodings", () => {
   );
   test("DPT9 (2-byte) places and round-trips negatives and the max value", () => {
     expect(buildHex(m, { "R-P9": "21.5" }).slice(0, 4)).toBe("0c33");
-    for (const v of ["0", "-0.01", "-5.12", "670760.96"]) // 670760.96 is the DPT9 max (exact)
+    for (const v of ["0", "-0.01", "-5.12", "670433.28", "-671088.64"]) // the two ends of the range (exact)
       expect(roundtrip(m, { "R-P9": v })["R-P9"]).toBe(v);
   });
-  test("DPT9 saturates beyond its representable range", () => {
-    expect(Number(roundtrip(m, { "R-P9": "1000000000" })["R-P9"])).toBe(670760.96);
+  test("DPT9 refuses a value beyond its range, 670760.96 included (its encoding 0x7FFF is invalid data)", () => {
+    for (const v of ["1000000000", "-1000000000", "670760.96"]) {
+      expect(() => buildHex(m, { "R-P9": v })).toThrow(expect.objectContaining({ code: "PARAM_VALUE_OUT_OF_RANGE" }));
+    }
   });
   test("DPT14 (4-byte IEEE-754) places and round-trips", () => {
     expect(buildHex(m, { "R-P14": "1.5" }).slice(4, 12)).toBe("3fc00000");

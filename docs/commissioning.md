@@ -37,7 +37,8 @@ So the write never runs blind:
                   connection of the descriptor read, as ETS ends it on System 1, System 7 and
                   System B; other masks take the same route without a capture of theirs
                   -> once the device answers at its address again (a rebooting device is
-                     silent), ask who is in programming mode: nobody, or progModeCleared is false
+                     silent; it is asked again until 10 s have passed), ask who is in programming
+                     mode: nobody, or progModeCleared is false
 ```
 
 How ETS ends programming mode after an address assignment, and what Busforge copies of it:
@@ -45,9 +46,12 @@ How ETS ends programming mode after an address assignment, and what Busforge cop
 | Unit | What ETS sends after the descriptor read at the new address | Busforge |
 |---|---|---|
 | A unit without Data Secure (System 1, System 7 on MV-0701 and MV-0705, System B on a simulated unit) | `A_Restart` on that connection, then `T_Disconnect`; where the unit has a device object, a read of `PID_MAX_APDU_LENGTH` and of the serial number comes first | the same frames, without the two reads |
-| A Data Secure unit (the Jung 400021SE with Data Secure on and off in the project, the GVS AMMA with it on) | no `A_IndividualAddress_Write` at all: ETS finds the unit in programming mode by its serial number, writes the address with `A_IndividualAddress_SerialNumber_Write` secured under the tool key, then, on a secured connection, switches the security mode on, writes the tool key and the sending sequence (PID 59 of the security object) when the project has Data Secure on (reads the security mode when it is off), reads the serial number and ends with a secured confirmed restart | the plain route above; a unit in Data Secure mode ignores the plain `A_Restart` ([findings.md](findings.md) §18) and stays in programming mode, which `progModeCleared` reports |
+| A Data Secure unit (the Jung 400021SE with Data Secure on and off in the project, the GVS AMMA with it on) | no `A_IndividualAddress_Write` at all: ETS finds the unit by its serial number, writes the address with `A_IndividualAddress_SerialNumber_Write` secured under the tool key, then, on a secured connection, switches the security mode on, writes the tool key and the sending sequence (PID 59 of the security object) when the project has Data Secure on (reads the security mode when it is off), reads the serial number and ends with a secured confirmed restart | the same frames ([below](#a-data-secure-device)), with the free-address check after the serial read and the programming-mode check after the restart |
 
-No ETS capture shows `PID_PROGMODE` written to end programming mode.
+No ETS capture shows `PID_PROGMODE` written to end programming mode after an address assignment. ETS
+writes it elsewhere: unloading a System B unit (a Theben DALI gateway, MV-07B0), it switches programming
+mode off with `A_PropertyValue_Write` of the device object's PID 54, value `00`, which the unit answers
+with `00`.
 
 An address counts as free when nothing answers there: silence, or, from an interface that
 confirms each frame (an ABB KNX-USB stick behind the bridge, for example, and any interface over
@@ -106,6 +110,55 @@ The same holds after the write: a second unit that missed the read before it but
 sits on the new address too, answers from it, and the verification passes; this is not covered.
 Where units may share a serial, assign their addresses by programming mode.
 
+### A Data Secure device
+
+A device in Data Secure mode takes management only under its tool key, and ETS never sends it the
+plain address write. It gives the device its address by serial number, secured, by broadcast under
+the device's key, and Busforge sends the same frames:
+
+```
+1. probe          A_IndividualAddress_SerialNumber_Read (broadcast, plain)
+                  -> the device answers plain from the address it holds
+                  -> nobody => refuse (SERIAL_NOT_FOUND)
+2. check-free     as above
+3. sync           S-A_Sync_Req (SCF 0x92) to 0/0/0 under the key, the device's serial in clear
+                  -> S-A_Sync_Rsp from the device to 0/0/0
+                  -> none => SECURE_SYNC_NO_RESPONSE, nothing written
+4. write          secured A_IndividualAddress_SerialNumber_Write (broadcast)
+5. verify         secured A_IndividualAddress_SerialNumber_Read (broadcast)
+                  -> answered secured, under the key, from the new address and from nowhere else
+6. connection     to the new address, more than a second after the Sync: plain descriptor read
+                  (FFFF from a unit in secure mode) and PID_MAX_APDU_LENGTH, then the Sync and,
+                  after an FFFF, the descriptor again, secured
+7. configuration  Data Secure on:  PID_SECURITY_MODE switched on, the tool key written to PID 56
+                                   (the same key), the sending sequence written to PID 59
+                  Data Secure off: PID_SECURITY_MODE read twice, nothing written
+                  then the serial number (PID 11), which must be the device's
+8. restart        the confirmed restart (erase code 1), secured; then the device must answer at
+                  its address again and not in programming mode, as above
+```
+
+The route itself needs no programming button, as with the plain serial-number route; the
+commissioning dialog still scans for one device in programming mode before it offers the
+assignment. The key is the device's tool key from the project; where the project runs the unit
+without Data Secure, it is the factory key (FDSK) from its device certificate, which ETS writes as
+the tool key when Data Secure goes off, and the frames are the same except for step 7. Busforge
+tries the tool key first and then the FDSK, as ETS does on a unit reset to its factory key. A tool
+key equal to the FDSK counts as Data Secure off; a tool key without a certificate on file leaves it
+to the unit: in secure mode (plain descriptor `FFFF`) step 7 runs as for Data Secure on, otherwise
+as for off, so nothing switches a unit's security mode on. An answer to the Sync that does not
+authenticate is refused (`SECURE_SYNC_FAILED`). Where no key gets the Sync answered at all, nothing
+has been written, and the plain programming-mode route runs, only for the device with that serial
+in programming mode (`PROG_MODE_NOT_THIS_DEVICE` otherwise); the result's `route` says which route
+the address went (`serial-secured`, `programming-mode`), and `secureNotAnswered` says why the
+secured one did not, which the dialog shows.
+
+A step of 6 or 7 that fails leaves the address assigned and proven under the key, and the device not
+restarted: `SECURE_IA_CONFIG_FAILED`, naming the step. A unit the project runs without Data Secure
+that turns out to be in secure mode under its factory key is one of these (`SECURE_MODE_UNEXPECTED` in
+the details): ETS answers that state in a download with a master reset, which an address assignment
+does not do.
+
 ### Using it
 
 The address the project holds for a device is set in the device menu, **Change individual
@@ -126,7 +179,7 @@ curl -s $P/prog-mode
 # Assign the device the address the project holds for it.
 curl -s -XPOST $P/devices/<device-id>/assign-ia
 # -> {"previous":"15.15.255","assigned":"1.1.5","verified":true,
-#     "progModeCleared":true,"progModeError":null}
+#     "progModeCleared":true,"progModeError":null,"route":"programming-mode"}
 ```
 
 `previous` is where the device answered from before (a factory-fresh device usually reports
@@ -156,6 +209,56 @@ System B unloads the PEI program first and never loads it again
 device page withholds the full download, and the download is refused before anything is sent
 (`HARDWARE_PEI_PROGRAM_UNSUPPORTED`), on System 1 the parameter download too, which is its full download. A never-programmed device of this kind is pointed at ETS, as is a
 change that needs its com-object table rewritten and no structural flash can write.
+
+## Finding a device by its programming LED
+
+Which of twenty identical actuators in a cabinet is `1.1.5`? The device menu's **Find device…**
+switches the device's programming mode on over a connection, so its programming LED lights up, holds it
+for 30 seconds (or until **Switch off**), and switches it off again:
+
+```text
+1. connect       T_Connect to the device's address; read its mask (descriptor)
+2. family gate   System B, or System 7 with property-mapped load control; otherwise LOCATE_UNSUPPORTED_FAMILY,
+                 nothing written
+3. read PID 54   device object, programming mode (bit 0); no element -> LOCATE_NO_PROG_MODE_PROPERTY,
+                 nothing written
+4. write 01      the device answers with the value it holds; not on -> LOCATE_PROG_MODE_NOT_TAKEN
+5. hold          read PID 54 every 2 s: keeps the connection open (a device closes an idle one after 6 s)
+                 and notices the button pressed on the device, which ends the hold
+6. write 00      always, also after an error or a stop; then read PID 54 back: it must read 0
+```
+
+A device already in programming mode (its button pressed) is held and switched off the same way: off is
+the state every run ends in.
+
+Step 6 is the one that matters: a device left in programming mode takes part in the next address
+assignment on its line. If the write or the read-back fails, it is tried once more with the interface's
+transport opened again and a new connection to the device; if that fails too, the task fails with
+`LOCATE_PROG_MODE_LEFT_ON`, and the message asks for the programming button to be pressed until the LED
+is off. A run that broke off before (a read during the hold unanswered) and then switched the mode off
+fails with `LOCATE_INTERRUPTED`, which says the mode is off and read back. While the LED is on the bus queue runs nothing
+else, so no address assignment of this server meets the device in programming mode. A Data Secure
+device is switched under its tool key, like every other access to it.
+
+Refused, and why:
+
+| Device | Why |
+|---|---|
+| System 1 (BCU1) | no device object; programming mode is a memory byte |
+| System 7 with memory-mapped load control (MV-0700, MV-0701) | the ABB US/U 4.2 (MV-0701) answers PID 54 with no element; its programming mode is the memory byte at `0x0060` |
+| Couplers, interfaces, other families | no application family Busforge drives |
+
+Switching programming mode through memory is not done: no ETS capture shows it.
+
+```bash
+# Programming LED on for 30 s, then off and read back; answers 202 with the queued task.
+curl -s -XPOST $P/devices/<device-id>/locate -H 'content-type: application/json' -d '{"seconds":30}'
+# Stop early: cancel the running task. Programming mode still goes off; the result says how it ended.
+curl -s -XPOST $P/tasks/<task-id>/cancel
+# task result: {"kind":"located","endedBy":"time"|"cancel"|"device","heldMs":...,"progModeOff":true}
+```
+
+`seconds` is a whole number from 1 to 120 (`LOCATE_DURATION_INVALID` otherwise).
 
 ## The full download
 

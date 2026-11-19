@@ -36,8 +36,10 @@ const products = () => BUSSARD_SYNTHETIC_TESTED.flatMap(([product, application])
 
 corpusDescribe("bussard's synthetic captures: the System B com-object table of products numbering an object 0", () => {
   // The products whose full download the profile plans, the com-object table included; every other one is refused
-  // by another rule (operationRefusals).
-  const PLANNED = ["syn-assign", "syn-assign-rewrite", "syn-choose-never-shown", "syn-choose-per-ref", "syn-color-param", "syn-com-objects", "syn-dynamic-tests", "syn-hidden-default", "syn-ip-address-param", "syn-ip-enabled-tp", "syn-legacy-patch-always", "syn-minimal", "syn-module-choose", "syn-object-size-ref", "syn-param-calculation", "syn-relseg-fill", "syn-text-initialvalue", "syn-text-undeclared", "syn-union-bitfields", "syn-union-default-range", "syn-user-memory-extmem"];
+  // by another rule (operationRefusals). syn-ip-enabled-tp declares two additional addresses, and ETS's download of it
+  // writes its KNXnet/IP parameter object after the application (its capture's PIDs 51, 66, 67, 76, 55, 53), which no
+  // System B path of Busforge writes (FULL_DOWNLOAD_TUNNELING_ENTRIES).
+  const PLANNED = ["syn-assign", "syn-assign-rewrite", "syn-choose-never-shown", "syn-choose-per-ref", "syn-color-param", "syn-com-objects", "syn-dynamic-tests", "syn-hidden-default", "syn-ip-address-param", "syn-legacy-patch-always", "syn-minimal", "syn-module-choose", "syn-object-size-ref", "syn-param-calculation", "syn-relseg-fill", "syn-text-initialvalue", "syn-text-undeclared", "syn-union-bitfields", "syn-union-default-range", "syn-user-memory-extmem"];
 
   test("every tested MV-07B0 product numbers an object 0, and none is refused for it", () => {
     const all = products();

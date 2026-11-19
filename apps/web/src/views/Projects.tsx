@@ -28,6 +28,7 @@ import { ReportDialog } from "./ReportDialog.tsx";
 import { SourceCodeLink } from "@/components/SourceCodeLink.tsx";
 import { DroppedLinksList } from "@/components/DroppedLinksList.tsx";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Notice } from "@/components/ui/notice";
 import { cn } from "@/lib/utils";
 import { errMsg } from "../lib/apiError.ts";
 
@@ -226,7 +227,7 @@ export function ProjectsScreen() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2">
-              <KeyRound className="size-4 text-amber-500" /> {t("projects.ownKeysTitle", { name: keysTarget?.name })}
+              <KeyRound className="size-4 text-warning" /> {t("projects.ownKeysTitle", { name: keysTarget?.name })}
             </AlertDialogTitle>
             <AlertDialogDescription>{t("projects.ownKeysBody")}</AlertDialogDescription>
           </AlertDialogHeader>
@@ -448,17 +449,17 @@ function ImportDialog({
                 date={analysis.modifiedAt ?? file?.lastModified ?? Date.now()}
               />
               {importGaps(analysis).length > 0 && (
-                <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300" data-testid="import-gaps">
+                <Notice className="mt-3 flex items-start gap-2" data-testid="import-gaps">
                   <AlertTriangle className="mt-0.5 size-4 shrink-0" />
                   <div className="min-w-0 flex-1 space-y-1">
                     <p className="font-medium">{t("import.gapsTitle")}</p>
-                    <ul className="space-y-0.5 text-amber-700/90 dark:text-amber-300/90">
+                    <ul className="space-y-0.5 text-warning/90">
                       {importGaps(analysis).map(({ key, count }) => <li key={key}>{t(key, { count })}</li>)}
                     </ul>
                     {!!analysis.droppedLinks?.length && (
                       <Collapsible>
                         <CollapsibleTrigger asChild>
-                          <Button variant="ghost" size="xs" className="group -ml-2 text-amber-700 dark:text-amber-300" data-testid="dropped-links-toggle">
+                          <Button variant="ghost" size="xs" className="group -ml-2 text-warning" data-testid="dropped-links-toggle">
                             <ChevronDown className="transition-transform group-data-[state=open]:rotate-180" />
                             {t("import.dropped.show", { count: analysis.droppedLinks.length })}
                           </Button>
@@ -470,7 +471,7 @@ function ImportDialog({
                       </Collapsible>
                     )}
                   </div>
-                </div>
+                </Notice>
               )}
             </CardContent>
           </Card>
