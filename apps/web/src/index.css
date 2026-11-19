@@ -44,6 +44,8 @@
 
   /* Status hues used outside shadcn tokens. */
   --ok: oklch(0.74 0.15 152);
+  --warning: oklch(0.88 0.17 92);
+  --info: oklch(0.83 0.11 230);
 
   --chart-1: oklch(0.78 0.14 66);
   --chart-2: oklch(0.7 0.12 200);
@@ -81,6 +83,8 @@
   --input: oklch(0.3 0.014 248);
   --ring: oklch(0.78 0.14 66);
   --ok: oklch(0.74 0.15 152);
+  --warning: oklch(0.88 0.17 92);
+  --info: oklch(0.83 0.11 230);
 }
 
 @theme inline {
@@ -108,6 +112,8 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-ok: var(--ok);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
   --color-chart-3: var(--chart-3);

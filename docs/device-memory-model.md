@@ -282,7 +282,8 @@ can edit keeps the stored value and names the computed one beside it. An input n
 its value, also where the configuration does not show the result: the Jung 400021SE's dimming time is
 entered in seconds and milliseconds that the device does not hold, and the page names the hidden
 parameter the image holds and its value. A calculation Busforge does not run marks its parameters as
-not computed, with the reason, in warning tone where a change of them is refused.
+not computed, with the reason in the user's language (a script the interpreter refuses keeps the
+interpreter's own words, in English), in warning tone where a change of them is refused.
 
 ## Ownership rules, in detail
 
@@ -415,8 +416,10 @@ and would leave either the segment's `<Data>` or the unit's bytes where the colo
 - **A device placed in Busforge, or given another product, starts its text parameters at their
   `InitialValue`**, translated into the language the client works in, as ETS does for a device added to a project of that
   language: ETS's download of a synthetic product (bussard's) added to a German project wrote the
-  de-DE `InitialValue` "Bussardhorst Süd", not the `Value` "Buzzard nest". A device imported from
-  ETS keeps the values ETS stored. An `InitialValue` in a form no capture shows (untranslated, on a
+  de-DE `InitialValue` "Bussardhorst Süd", not the `Value` "Buzzard nest". That start value is the
+  parameter's default on the device page: the device's baseline starts at it, so the parameter shows no
+  change and a revert returns to it. A device imported from ETS keeps the values ETS stored. An
+  `InitialValue` in a form no capture shows (untranslated, on a
   `ParameterRef`, beside a `ParameterRef`'s own `Value`, on a parameter that is no text, in a module
   definition)
   refuses the placement (`PARAM_INITIAL_VALUE_UNSUPPORTED`) where it differs from the default and its

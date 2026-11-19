@@ -15,6 +15,7 @@ import {
   EVIDENCE_BUNDLE_SCHEMA, MATRIX_OPERATIONS, type EvidenceBundle, type EvidenceRecord, type EvidenceAxis, type MatrixProduct,
   type MatrixRow, type MatrixCell, type OperationState, type OperationVerdict, type MatrixOperation,
 } from "../packages/product/src/index.ts";
+import { gaFromLevels } from "../packages/knx/src/frame.ts";
 import { catalogueDir, catalogueXml, corpusPath } from "./corpus.ts";
 import { SPECS } from "./smoke/specs/index.ts";
 
@@ -80,8 +81,8 @@ const PRIVATE_TEXT: [RegExp, string][] = [
 const RAW = String.raw`(?:0x[0-9a-f]{1,4}|\d{1,5})\b`;
 const GA_FORMS: [RegExp, (m: RegExpExecArray) => number[]][] = [
   [/(?<![\w./])(\d{1,2})\/(\d{1,2})\/(\d{1,3})(?![\w/]|\.\w)/g, (m) => {
-    const [main, mid, sub] = [Number(m[1]), Number(m[2]), Number(m[3])];
-    return main <= 31 && mid <= 7 && sub <= 255 ? [(main << 11) | (mid << 8) | sub] : [];
+    const n = gaFromLevels(Number(m[1]), Number(m[2]), Number(m[3]));
+    return n === null ? [] : [n];
   }],
   [new RegExp(String.raw`(?:->|\bgroup address(?:es)?|\bGA|\bproject)\s*(${RAW}(?:\s*(?:\+|,)\s*${RAW})*)(?!\s*group address)`, "gi"), (m) =>
     m[1].split(/\s*[+,]\s*/).map((v) => (/^0x/i.test(v) ? parseInt(v, 16) : Number(v))).filter((n) => n <= 0xffff)],

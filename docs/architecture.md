@@ -78,7 +78,10 @@ literal segments and method. There is no path-pattern library.
 thrown value, so `ApiError`, `ProductError`, `KnxprojError` and `KnxError` all reach the client as
 a stable code without the server importing those classes. The web app localises the code
 (`errors.<CODE>` in `apps/web/src/locales/{en,de}.ts`) and falls back to the English message. A new
-refusal therefore means: a new code, and a new entry in both locale files.
+refusal therefore means: a new code, and a new entry in both locale files. Facts a refusal carries beside
+its code go out as `details` (a task's `errorDetails`), from an `ApiError` or a `KnxError` alike; where
+they have a sentence of their own (`errorDetails.*` in the locale files, e.g. the error code a load-state
+machine names), the app adds it to the localized text in the user's language.
 
 `AppState` carries `{ db, bus, dataDir, masterKey, now, queue, appCache }`. `createState` **refuses
 to start** when the database holds sealed Data Secure tool keys and no master key is available,

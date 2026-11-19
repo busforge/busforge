@@ -17,7 +17,7 @@ describe("the note on an unchanged result that differs in constant parameters", 
   test("names each parameter, in the warning colour", () => {
     const html = renderToStaticMarkup(<ConstantsDifferNote result={unchanged({ constantsDiffer: [marker, { paramRefId: "x", label: "Other" }] })} />);
     expect(html).toContain('data-testid="flash-constants-differ"');
-    expect(html).toMatch(/class="[^"]*text-amber-600[^"]*dark:text-amber-400/);
+    expect(html).toMatch(/class="[^"]*\btext-warning\b/);
     expect(html).toContain("Wert $AA, Downloaderkennung, Other");
     expect(html).toContain("That is no change");
   });

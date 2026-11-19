@@ -1,9 +1,15 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, setDefaultTimeout } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseAppConfig, parseLoadProcedures, classify, downloadPluginRefusal } from "@busforge/product";
 import { catalogueXml, listCatalogue } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
+
+// Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): the test that parses every
+// application of the catalogue takes 3.3-3.8 s with the file alone (load 11-17) and 11.7 s while the tests of
+// packages/knx, packages/product and apps/server run in parallel (load 12-14); the others take up to 0.2 s. Every
+// test gets twenty times the longest measured time.
+setDefaultTimeout(240_000);
 
 // An application that names an ETS download plugin (<Static><Extension EtsDownloadPlugin="{GUID}">) is
 // downloaded by ETS through that plugin. Every ETS capture of ours is of an application without one, so

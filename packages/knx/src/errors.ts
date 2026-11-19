@@ -9,7 +9,9 @@
 // invariants / API misuse (a payload that is too long, a wrong-length key) stay as plain
 // Error: they are programmer errors, not conditions a user can act on.
 export class KnxError extends Error {
-  constructor(public readonly code: string, message: string) {
+  // `details`: structured facts behind the refusal the UI shows in the user's language (e.g. the error
+  // code a load-state machine names), sent to the client as the task's errorDetails or the error's details.
+  constructor(public readonly code: string, message: string, public readonly details?: Record<string, unknown>) {
     super(message);
     this.name = "KnxError";
   }
