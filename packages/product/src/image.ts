@@ -400,11 +400,7 @@ function decode(img: Buffer, offset: number, bit: number, type: ParamType): stri
   if (type.base === "Float") {
     if (type.littleEndian) return undefined; // mirror encode's refusal
     if (type.sizeInBit === 32) return offset + 4 > img.length ? undefined : String(img.readFloatBE(offset));
-    if (type.sizeInBit === 16) {
-      if (offset + 2 > img.length) return undefined;
-      const raw = img.readUInt16BE(offset);
-      return raw === 0x7fff ? undefined : String(decodeDpt9(raw)); // invalid data: encode writes no such code
-    }
+    if (type.sizeInBit === 16) return offset + 2 > img.length ? undefined : String(decodeDpt9(img.readUInt16BE(offset)));
     return undefined; // unknown float width: no codec (mirrors encode's refusal)
   }
   if (type.base !== "Value" && type.base !== "Number") return undefined; // time/other

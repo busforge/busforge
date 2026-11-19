@@ -73,7 +73,7 @@ describe("DPT-9 float codec", () => {
     expect(encodeDpt9(670433.27)).toBe(0x7ffe); // 67043327 / 2^15 = 2045.99997 -> 2046
   });
 
-  test("a parameter takes no value the float has no code for, and reads 0x7FFF back as no value", () => {
+  test("a parameter takes no value the float has no code for, so a device holding 0x7FFF holds no value of it", () => {
     const type: CfgType = { id: "T", base: "Float", kind: "TypeFloat", sizeInBit: 16, signed: false, enums: [] };
     expect(takesValue(type, "1000000")).toBe(false);
     expect(takesValue(type, " 670760.96 ")).toBe(false);
@@ -82,7 +82,8 @@ describe("DPT-9 float codec", () => {
     expect(takesValue({ ...type, sizeInBit: 32 }, "1000000")).toBeUndefined();
     const img = buildParameterImage(model(), 4, new Map());
     img.writeUInt16BE(0x7fff, 4);
-    expect(decodeParameterImage(model(), 4, img).has("R-P-float")).toBe(false);
+    const held = decodeParameterImage(model(), 4, img).get("R-P-float")!;
+    expect(takesValue(type, held)).toBe(false); // what the device holds is no value of its parameter
     img.writeUInt16BE(0x7ffe, 4);
     expect(decodeParameterImage(model(), 4, img).get("R-P-float")).toBe("670433.28");
   });
