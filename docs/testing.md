@@ -536,8 +536,17 @@ and visible in the report, which is the difference between an exception and a si
 A spec with `provision: "import-knxproj"` whose device has a tool key in the project file is run
 securely end to end: the server gets the keys from the import, and the runner reads the same file for
 its own connections to the device (reboot, load states, firmware), which open a secure session. Neither the
-keys nor the password reach the report or the evidence records. On top of the capabilities and
-behaviours such a run adds:
+keys nor the password reach the report or the evidence records. The file is the bench's ETS project in the
+[private corpus](#the-private-corpus) (`device.knxprod`, corpus-relative; `BENCH_ETS_PROJECT` in
+`tools/corpus.ts`), its password the bench ETS project's (`BUSFORGE_SMOKE_KNXPROJ_PASSWORD`); a run without the
+corpus is refused before it touches the bus. ETS writes a new tool key whenever it switches a unit's Data Secure
+on again, and an export taken before that no longer opens the unit (`SECURE_SYNC_NO_RESPONSE`), so a bench
+session that does so replaces the path with its new export.
+`tools/smoke/spec-projects.test.ts` pins that each such file holds the spec's unit, its tool key and the group
+keys its secured reads use; that the key is the one the unit holds today only a bench run shows. The bridge
+sends every point-to-point frame as the interface's own address, and a secured frame's MAC binds the address it
+was sealed under, so a secure unit answers only over the tunnel that has that address: start the bench bridge
+for such a run without `--addresses`, so its one tunnel is that one. On top of the capabilities and behaviours such a run adds:
 
 | Phase | What must hold |
 |---|---|

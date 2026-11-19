@@ -27,6 +27,7 @@ import { observeReboot, restartInConnection, judgeRestoredConfig, judgeLoadState
 import { transportOf, gitRevision, sha256, readFirmwareRevision } from "../evidence.ts";
 import { KnxIpTunnel, KnxDevice, KnxError, lsmState, SecureSession, iaToNum, numToIa, gaToNum, type KnxTransport } from "../../packages/knx/src/index.ts";
 import { loadKnxproj } from "../../packages/project/src/index.ts";
+import { corpusPath } from "../corpus.ts";
 import { FaultProxy } from "./faultproxy.ts";
 import { connectTunnel, onFreshTunnel, isLinkLost } from "./tunnel.ts";
 import { runInService, planInService, optionProblems, inServiceFileKey, memorySnapshot, type InServiceIo, type InServiceOptions, type FoundConfiguration } from "./inservice.ts";
@@ -445,6 +446,8 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number, opts: I
     }
     const password = process.env.BUSFORGE_SMOKE_KNXPROJ_PASSWORD ?? "";
     if (imported && (!spec.device.knxprod || !password)) throw new Stop("preflight", "refused: import-knxproj needs device.knxprod in the spec and BUSFORGE_SMOKE_KNXPROJ_PASSWORD set");
+    let importedFile: string | undefined;
+    if (imported) { try { importedFile = corpusPath(spec.device.knxprod!); } catch (e) { throw new Stop("preflight", `refused: ${e instanceof Error ? e.message : String(e)}`); } }
     if (spec.provision === "in-service") { const p = optionProblems(spec, opts); if (p.length) throw new Stop("preflight", `refused: ${p.join("; ")}`); }
     if (inServiceFile && !password) throw new Stop("preflight", "refused: the installation's project file needs its password in BUSFORGE_SMOKE_KNXPROJ_PASSWORD");
     try { await witness.connect(); await witness.close(); } catch (e) { throw new Stop("preflight", `bench bridge unreachable: ${e instanceof Error ? e.message : String(e)}`); }
@@ -459,7 +462,7 @@ async function runSpec(spec: DeviceSpec, channel: Channel, seed: number, opts: I
       // The project file carries the device's configuration and, for a Data Secure device, its keys:
       // the server gets them through the import, the runner reads the same file for its own bench
       // connections. Nothing key-bearing is written into the report.
-      const file = resolve(join(import.meta.dir, "..", ".."), spec.device.knxprod!);
+      const file = importedFile!;
       const bytes = readFileSync(file);
       const proj = await client.importProject(bytes, basename(file), password);
       pid = proj.id;
