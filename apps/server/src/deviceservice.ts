@@ -626,7 +626,8 @@ export function buildGaDevicesView(state: AppState, projectId: string, raw: numb
 // project has no application program for the device, the
 // configuration refuses the application (`refusal`, its code), the object belongs to a module instance
 // the device's configuration does not have now, the application has no such object, or the object is
-// one the configuration does not show (a module object its current parameters hide). `unrecoverable`:
+// one the configuration does not show (an object its current parameters hide, top-level or module).
+// `unresolved` is null for an object the configuration shows. `unrecoverable`:
 // no link made in Busforge can reach the object (every case but the last), so the entry is no open
 // work and the warning does not count it. Each ETS address carries its address where its raw value is
 // known, its name and `inProject` where the project holds it now.
@@ -711,7 +712,7 @@ function droppedLinkViews(links: DroppedLink[], deviceOf: (deviceId: string) => 
     const co = "objs" in d.objects ? d.objects.objs.get(l.comObjRefId) : undefined;
     const app = "app" in d.objects ? d.objects.app : null;
     const declared = !co && app ? declaredObject(app, l.comObjRefId, "objs" in d.objects ? d.objects.instances : [], lang) : null;
-    const unresolved = co ? null : "objs" in d.objects ? (declared ? missingObject(l.comObjRefId, d.objects.instances) : "notInApplication") : d.objects.unresolved;
+    const unresolved = co ? (co.shown ? null : "notInConfiguration") : "objs" in d.objects ? (declared ? missingObject(l.comObjRefId, d.objects.instances) : "notInApplication") : d.objects.unresolved;
     const shown = co ?? declared;
     const view: DroppedLinkView = {
       deviceId: l.deviceId, ia: d.dev.ia, deviceName: d.dev.name, comObjRefId: l.comObjRefId,

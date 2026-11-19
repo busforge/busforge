@@ -97,6 +97,32 @@ describe("the links an import did not take over", () => {
     expect(html).not.toContain("no longer has");
   });
 
+  test("a reason that holds for the whole device is told once at the head of its group, never on each entry", () => {
+    const refused = (n: number, o: Partial<DroppedLink> = {}) => entry({ comObjRefId: `O-${n}_R-${n}`, comObjNumber: n, unresolved: "refused", refusal: "PARAM_TEST_UNSUPPORTED", unrecoverable: true, ...o });
+    const html = renderToStaticMarkup(<DroppedLinksList links={[refused(1), refused(2), refused(3)]} />);
+    expect(html.match(/data-testid="dropped-device-reason"/g)).toHaveLength(1);
+    expect(html.match(/The device&#x27;s configuration cannot be shown/g)).toHaveLength(1);
+    expect(html.match(/data-testid="dropped-object"/g)).toHaveLength(3);
+    // The reason stands before the first entry, so it heads the group.
+    expect(html.indexOf("dropped-device-reason")).toBeLessThan(html.indexOf('data-testid="dropped-object"'));
+    const bare = renderToStaticMarkup(<DroppedLinksList links={[entry({ unresolved: "noApplication", unrecoverable: true }), entry({ comObjRefId: "O-2_R-2", unresolved: "noApplication", unrecoverable: true })]} />);
+    expect(bare.match(/The device&#x27;s application program is not in the project/g)).toHaveLength(1);
+  });
+
+  test("each device tells its own reason once, an entry's own reason stays on the entry", () => {
+    const other = { deviceId: "D-2", ia: "1.1.6", deviceName: "Hall actuator" };
+    const links = [
+      entry({ unresolved: "refused", refusal: "PARAM_TEST_UNSUPPORTED", unrecoverable: true }),
+      entry({ ...other, unresolved: "noApplication", unrecoverable: true }),
+      entry({ ...other, comObjRefId: "O-7_R-7", comObjNumber: null, unresolved: "notInApplication", unrecoverable: true }),
+    ];
+    const html = renderToStaticMarkup(<DroppedLinksList links={links} />);
+    expect(html.match(/data-testid="dropped-device-reason"/g)).toHaveLength(2);
+    // The second device's second entry is no device-wide case: its sentence stays on it.
+    expect(html.match(/The device&#x27;s application program has no such object/g)).toHaveLength(1);
+    expect(html.match(/The device&#x27;s application program is not in the project/g)).toHaveLength(1);
+  });
+
   test("a list of open entries only has no such group", () => {
     expect(renderToStaticMarkup(<DroppedLinksList links={[open]} />)).not.toContain("dropped-unrecoverable");
   });

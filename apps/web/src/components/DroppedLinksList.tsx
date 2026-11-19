@@ -65,6 +65,22 @@ export function DroppedLinksList({ links, projectId, showDevice = true }: { link
   );
 }
 
+// A reason that holds for the whole device (it has no application, or its configuration is refused), told once
+// at the head of the device's group and left off its entries.
+const isDeviceWide = (u: DroppedLink["unresolved"]): u is "noApplication" | "refused" => u === "noApplication" || u === "refused";
+
+function DeviceReason({ link }: { link: DroppedLink | undefined }) {
+  const { t } = useTranslation();
+  if (!link) return null;
+  return (
+    <p className="text-xs text-muted-foreground" data-testid="dropped-device-reason">
+      {link.unresolved === "refused"
+        ? t("import.dropped.objectRefused", { reason: localizeError(t, link.refusal, link.refusal) })
+        : t(UNRESOLVED_TEXT.noApplication)}
+    </p>
+  );
+}
+
 function ObjectsByDevice({ links, projectId, showDevice, testId }: { links: DroppedLink[]; projectId?: string; showDevice: boolean; testId: string }) {
   const { t } = useTranslation();
   const byDevice = new Map<string, DroppedLink[]>();
@@ -76,6 +92,7 @@ function ObjectsByDevice({ links, projectId, showDevice, testId }: { links: Drop
             <DeviceLabel name={objs[0].deviceName} ia={objs[0].ia} />
           </Link>
         : <DeviceLabel name={objs[0].deviceName} ia={objs[0].ia} />)}
+      <DeviceReason link={objs.find((o) => isDeviceWide(o.unresolved))} />
       <ul className="space-y-2">
         {objs.map((o, i) => (
           <li key={i} className="space-y-1 rounded-md border border-border/60 bg-background/40 px-2.5 py-2" data-testid="dropped-object">
@@ -87,13 +104,7 @@ function ObjectsByDevice({ links, projectId, showDevice, testId }: { links: Drop
                     <span className="min-w-0 break-all font-mono text-xs text-muted-foreground">{o.comObjRefId}</span>
                   </>}
               {(o.comObjName || o.functionText) && <span className="truncate text-foreground">{[o.comObjName, o.functionText].filter(Boolean).join(" · ")}</span>}
-              {o.unresolved && (
-                <span className="text-muted-foreground">
-                  {o.unresolved === "refused"
-                    ? t("import.dropped.objectRefused", { reason: localizeError(t, o.refusal, o.refusal) })
-                    : t(UNRESOLVED_TEXT[o.unresolved])}
-                </span>
-              )}
+              {o.unresolved && !isDeviceWide(o.unresolved) && <span className="text-muted-foreground">{t(UNRESOLVED_TEXT[o.unresolved])}</span>}
             </p>
             <div className="flex flex-wrap items-center gap-1.5">
               {o.gas.map((g, j) => g.inProject && g.address !== null

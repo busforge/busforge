@@ -137,6 +137,22 @@
   scroll-margin-top: calc(var(--bar-h, 0px) + var(--page-header-h, 0px) + var(--section-nav-h, 0px) + 0.75rem);
 }
 
+/* A vertically scrolling surface that shows a shadow on each edge with more content behind it (the two cover
+   gradients scroll with the content and hide the fixed shadows once the end is reached). The surface keeps
+   its own background colour, which the covers use: set `--scroll-shadow-bg` where it is not the popover's. */
+@utility scroll-shadow-y {
+  --scroll-shadow-bg: var(--popover);
+  background-image:
+    linear-gradient(var(--scroll-shadow-bg) 30%, transparent),
+    linear-gradient(transparent, var(--scroll-shadow-bg) 70%),
+    radial-gradient(farthest-side at 50% 0, color-mix(in oklch, var(--foreground) 22%, transparent), transparent),
+    radial-gradient(farthest-side at 50% 100%, color-mix(in oklch, var(--foreground) 22%, transparent), transparent);
+  background-position: center top, center bottom, center top, center bottom;
+  background-size: 100% 2rem, 100% 2rem, 100% 0.625rem, 100% 0.625rem;
+  background-attachment: local, local, scroll, scroll;
+  background-repeat: no-repeat;
+}
+
 /* The tick and the dash of the Checkbox primitive (components/ui/checkbox.tsx), drawn in the ink on amber. */
 @layer components {
   [data-slot="checkbox"]::before {
