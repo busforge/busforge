@@ -92,7 +92,7 @@ and the interface's maximum frame length, as ETS does. Writes longer than 12 byt
 bytes (extended) have run on no device yet.
 
 **One KNX USB interface model.** The USB transport is proven on one interface model. Its limits
-(chunk sizes, management only on the interface's own address) are properties of that controller and
+(chunk sizes, point-to-point answers delivered only to the interface's own address) are properties of that controller and
 may differ on yours.
 
 The full list of what is implemented but not shown on hardware is
