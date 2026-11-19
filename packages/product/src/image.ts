@@ -168,8 +168,14 @@ export const imageWritableType = (t: { base: string; colorSpace?: string }): boo
 const LATIN_AMBIGUOUS = new Set([0xa4, 0xa6, 0xa8, 0xb4, 0xb8, 0xbc, 0xbd, 0xbe]);
 const latinShown = (c: number) => c <= 0x7f || (c >= 0xa0 && c <= 0xff && !LATIN_AMBIGUOUS.has(c));
 
+// A value that begins or ends with a blank (what String.prototype.trim removes) is refused: the catalogue
+// and the project keep those characters (parseAppConfig, the project's parse), and no ETS image shows
+// whether ETS writes them or drops them.
+const hasEdgeBlank = (s: string): boolean => s !== s.trim();
+
 function textChars(type: ParamType, where: string, valStr: string): Buffer {
   const refuse = (why: string): never => { throw new ProductError("PARAM_TEXT_UNSUPPORTED", `a ${where}: "${valStr}" ${why}`); };
+  if (hasEdgeBlank(valStr)) throw new ProductError("PARAM_TEXT_EDGE_BLANK", `a ${where}: "${valStr}" begins or ends with a blank, and no ETS image shows whether ETS writes it into the device`);
   if (valStr.includes("\0")) refuse("holds a zero character, whose bytes no ETS image shows");
   const codes = Array.from(valStr, (c) => c.codePointAt(0)!);
   if (codes.every((c) => c <= 0x7f)) return Buffer.from(valStr, "latin1");
@@ -189,6 +195,10 @@ export const textLength = (type: ParamType, valStr: string): number => textChars
 
 // The inverse of textChars: undefined where encode would not write these bytes.
 function textOfChars(type: ParamType, chars: Buffer): string | undefined {
+  const s = charsText(type, chars);
+  return s === undefined || hasEdgeBlank(s) ? undefined : s;
+}
+function charsText(type: ParamType, chars: Buffer): string | undefined {
   if (chars.every((b) => b <= 0x7f)) return chars.toString("latin1");
   if (type.textEncoding === undefined) return chars.every(latinShown) ? chars.toString("latin1") : undefined;
   if (type.textEncoding !== "utf-8") return undefined;

@@ -17,19 +17,7 @@ import { KnxDevice } from "./device.ts";
 import { cemiLDataGroup, apduUnnumbered, parseApdu, numToIa, iaToNum, APCI, BROADCAST } from "./frame.ts";
 import { KnxError } from "./errors.ts";
 
-// The device object's programming-mode property (PID_PROGMODE). Writing 0 switches the mode
-// off: leaving it on would make the device answer the NEXT assignment too.
-const OBJ_DEVICE = 0;
-const PID_PROGMODE = 54;
-
-// How programming mode ends once the address is assigned: by writing PID_PROGMODE 0, or by
-// A_Restart, which a device without a device object (a BCU1, mask 0012) needs and which is what
-// ETS sends there after reading the descriptor at the new address.
-export type ProgModeEnd = "property" | "restart";
-
 export interface AssignIaOptions {
-  // The route for the mask the device reports at its new address ("MV-0012"). Without it, PID_PROGMODE.
-  progModeEnd?: (mask: string) => ProgModeEnd;
   // How long to listen for A_IndividualAddress_Response frames. Devices answer within
   // milliseconds; the default is generous because the window is also the only thing standing
   // between us and a missed second device in programming mode.
@@ -90,10 +78,10 @@ const NACK_TRIES = 3;
 async function addressAnswers(tun: KnxTransport, ia: string, lineAlive: boolean): Promise<boolean> {
   return (await answerAt(tun, ia, lineAlive, false)) !== null;
 }
-// What answers at `ia`: null for nobody, else the mask from its descriptor ("" when a device is
-// there but did not hand its descriptor out). `keep`: a device that handed its descriptor out stays
-// connected and is returned for the caller to go on with and disconnect.
-type Answer = { mask: string; dev: KnxDevice | null };
+// What answers at `ia`: null for nobody, else a device (`dev` null when it is there but did not hand
+// its descriptor out). `keep`: a device that handed its descriptor out stays connected and is returned
+// for the caller to go on with and disconnect.
+type Answer = { dev: KnxDevice | null };
 async function answerAt(tun: KnxTransport, ia: string, lineAlive: boolean, keep: boolean): Promise<Answer | null> {
   for (let i = 0; ; i++) {
     try { return await answerAtOnce(tun, ia, keep); }
@@ -108,16 +96,16 @@ async function answerAtOnce(tun: KnxTransport, ia: string, keep: boolean): Promi
   let kept = false;
   try {
     await dev.connect();
-    const mask = await dev.deviceDescriptor();
+    await dev.deviceDescriptor();
     kept = keep;
-    return { mask, dev: keep ? dev : null };
+    return { dev: keep ? dev : null };
   } catch (e) {
     if (e instanceof KnxError && e.code === "DEVICE_NOT_ANSWERING") return null; // silence: absent
     // A T_Disconnect answering our request: a device is there (in another tool's connection, or
     // one that missed our T_Connect), so the address is taken.
-    if (e instanceof KnxError && e.code === "DEVICE_CLOSED_CONNECTION") return { mask: "", dev: null };
+    if (e instanceof KnxError && e.code === "DEVICE_CLOSED_CONNECTION") return { dev: null };
     // A device that acknowledged and sent another service is there too.
-    if (e instanceof KnxError && e.code === "ANSWER_SERVICE_MISMATCH") return { mask: "", dev: null };
+    if (e instanceof KnxError && e.code === "ANSWER_SERVICE_MISMATCH") return { dev: null };
     throw e; // a transport failure is not evidence of a free address
   } finally {
     if (!kept) { try { await dev.disconnect(); } catch { /* nothing was connected */ } }
@@ -148,8 +136,8 @@ export interface AssignIaResult {
 //      new address. "Does something answer at `ia`?" is not enough on its own, because an
 //      unrelated device already sitting at `ia` answers that just as well, which would turn a
 //      write that never landed into a green result. Then confirm it is reachable there.
-//   5. Switch programming mode off, so the device does not also answer the next assignment, on the
-//      route `progModeEnd` names for the mask the device reported in step 4.
+//   5. Switch programming mode off, so the device does not also answer the next assignment: A_Restart
+//      on the connection of the descriptor read, as ETS ends it on System 1, System 7 and System B.
 export async function assignIndividualAddress(tun: KnxTransport, ia: string, opts: AssignIaOptions = {}): Promise<AssignIaResult> {
   const { probeMs = 3000, settleMs = 1000, onProgress } = opts;
 
@@ -187,8 +175,7 @@ export async function assignIndividualAddress(tun: KnxTransport, ia: string, opt
       `${ia} was written but the device did not take it (${where}); it may still hold ${previous}. Read the bus before continuing.`);
   }
   // ...and it is reachable there for real management, not just for the broadcast probe. The
-  // connection stays open: the restart route goes on on it, as ETS sends A_Restart right behind the
-  // descriptor read.
+  // connection stays open for the restart that ends programming mode below.
   const reached = await answerAt(tun, ia, true, true);
   if (reached === null) {
     throw new KnxError("IA_WRITE_UNVERIFIED",
@@ -198,28 +185,36 @@ export async function assignIndividualAddress(tun: KnxTransport, ia: string, opt
   // Programming mode off. A device left in programming mode silently takes part in the NEXT
   // assignment, so a failure here is carried out with its reason rather than swallowed, even
   // though the address itself is by now assigned and verified.
+  //
+  // ETS ends it with A_Restart on the connection of its descriptor read at the new address, on every
+  // family a capture shows (private corpus: internal/captures/hager-th001/ets-ia-assign-proxy.log, System 1;
+  // internal/captures/progmode-end-2026-11-19/d1-*, d3-*, MV-0705 and MV-0701; bussard's syn-minimal/assign,
+  // a simulated MV-07B0), and writes no PID_PROGMODE. Where the device has a device object ETS reads
+  // PID_MAX_APDU_LENGTH and the serial number between the two; Busforge does not, they are reads. A unit
+  // in Data Secure mode ignores a plain A_Restart (docs/findings.md §18): ETS addresses such a unit by its
+  // serial number and restarts it under its tool key, which this plain route does not do, so the probe below
+  // reports it still in programming mode.
   onProgress?.("prog-mode-off");
-  const route = opts.progModeEnd?.(reached.mask) ?? "property";
   let progModeCleared = false;
   let progModeError: string | null = null;
   let dev = reached.dev;
   try {
-    if (route === "restart" && dev) {
-      // The probe below decides whether the mode ended, so a restart the interface confirmed
-      // negatively (the device rebooting before its acknowledgement) is not read here.
-      await dev.sendRestart();
-      await dev.disconnect();
-      dev = null;
-      await sleep(settleMs);
+    // A device that closed the connection instead of handing out its descriptor is reached again.
+    if (!dev) { dev = new KnxDevice(tun, ia); await dev.connect(); }
+    // The probe below decides whether the mode ended, so a restart the interface confirmed
+    // negatively (the device rebooting before its acknowledgement) is not read here.
+    await dev.sendRestart();
+    await dev.disconnect();
+    dev = null;
+    await sleep(settleMs);
+    // A rebooting device answers nothing, so silence to the probe proves the mode ended only once the
+    // device answers at its address again (the MDT BE-02001.02 is back about 2 s after the restart).
+    if (await answerAt(tun, ia, true, false) === null) {
+      progModeError = `the device does not answer at ${ia} after the restart, so whether it left programming mode is not known`;
     } else {
-      if (dev) { await dev.disconnect(); dev = null; }
-      if (route === "restart") throw new KnxError("IA_PROG_MODE_UNCLEARED", "the device did not stay connected for the restart that ends its programming mode");
-      dev = new KnxDevice(tun, ia);
-      await dev.connect();
-      await dev.propWrite(OBJ_DEVICE, PID_PROGMODE, Buffer.from([0]));
+      progModeCleared = (await readProgModeDevices(tun, probeMs)).length === 0;
+      if (!progModeCleared) progModeError = "the device still answers in programming mode after the restart";
     }
-    progModeCleared = (await readProgModeDevices(tun, probeMs)).length === 0;
-    if (!progModeCleared) progModeError = `the device still answers in programming mode after the ${route === "restart" ? "restart" : "write"}`;
   } catch (e) {
     progModeError = e instanceof Error ? e.message : String(e);
   } finally {

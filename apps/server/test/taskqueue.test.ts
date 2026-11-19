@@ -106,6 +106,24 @@ describe("TaskQueue", () => {
     expect(task?.error).toContain("TUNNEL_CON_TIMEOUT: the interface did not confirm the frame");
   });
 
+  test("keeps the facts of the refusal that left the device unloaded, for the app to show", async () => {
+    const q = new TaskQueue(() => 0);
+    const cause = Object.assign(new KnxError("LOAD_STATE_UNEXPECTED", "LSM 4 not LOADING after LOAD (got ERROR)", { lsmErrorCode: 13 }), { leftUnloaded: true });
+    const j = q.enqueue(meta("d1"), async () => { throw cause; });
+    expect(j).rejects.toBe(cause);
+    const task = q.list("p1").find((t) => t.deviceId === "d1");
+    expect(task).toMatchObject({ state: "error", errorCode: "FLASH_INTERRUPTED_UNLOADED", errorDetails: { lsmErrorCode: 13 } });
+  });
+
+  test("keeps the facts of a coded bus refusal", async () => {
+    const q = new TaskQueue(() => 0);
+    const cause = new KnxError("LOAD_STATE_UNEXPECTED", "LSM 4 not LOADED (got ERROR)", { lsmErrorCode: "none" });
+    const j = q.enqueue(meta("d1"), async () => { throw cause; });
+    expect(j).rejects.toBe(cause);
+    const task = q.list("p1").find((t) => t.deviceId === "d1");
+    expect(task).toMatchObject({ state: "error", errorCode: "LOAD_STATE_UNEXPECTED", errorDetails: { lsmErrorCode: "none" } });
+  });
+
   test("exposes live phase + chunk progress", async () => {
     const q = new TaskQueue(() => 0);
     const gate = defer();

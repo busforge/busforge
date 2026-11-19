@@ -69,11 +69,21 @@ export function appProgramId(appRef: string): string {
 // An xs:boolean attribute: "true" or "1" (ETS 4 writes the digits, later versions the words).
 const xsBool = (v: unknown): boolean => { const t = text(v); return t === "true" || t === "1"; };
 
+// The parser of a project's 0.xml. A ParameterInstanceRef's Value is the parameter's value as the file
+// writes it, blanks at either end included (XML keeps them, and a text parameter writes them into the
+// device); every other attribute and text node is trimmed. Character references (ETS writes a tab, CR or
+// LF in an attribute as &#x9;, &#xD;, &#xA;) are decoded.
+const project0Parser = () => new XMLParser({
+  ignoreAttributes: false, attributeNamePrefix: "", isArray: () => false, trimValues: false, htmlEntities: true,
+  attributeValueProcessor: (name, v, jPath) => (name === "Value" && String(jPath).endsWith(".ParameterInstanceRef") ? v : v.trim()),
+  tagValueProcessor: (_tag, v) => v.trim(),
+});
+
 // `applications`: the application program of each Hardware2Program the archive's Hardware.xml describes
 // ("" where it names none, or none Busforge can tell apart from a PEI program); a device whose
 // Hardware2Program it lacks takes the program its id names (appProgramId).
 export function parseProject(xml0: string, projectXml: string | undefined, fallbackName: string, productNames: Map<string, string> = new Map(), busInterfaceIndex: ReadonlyMap<string, number> = new Map(), productTranslations: ReadonlyMap<string, string[]> = new Map(), applications: ReadonlyMap<string, string> = new Map()): Project {
-  const p = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", isArray: () => false });
+  const p = project0Parser();
   const doc = p.parse(xml0) as XmlNode;
 
   // A project can hold several installations. Busforge imports the first and reports how many it
@@ -99,17 +109,18 @@ export function parseProject(xml0: string, projectXml: string | undefined, fallb
   buildGaIdMap(scope, gaIdToRaw);
   const linkResults = devices.map((d) => ({ deviceId: d.id, ...parseDeviceLinks(scope, d, gaIdToRaw) }));
   const deviceLinks = linkResults.map(({ deviceId, links }) => ({ deviceId, links }));
-  const droppedLinks = linkResults.flatMap((r) => r.dropped);
+  const droppedLinks = linkResults.flatMap((r) => r.listed);
   const deviceComObjOverrides = devices.map((d) => ({ deviceId: d.id, overrides: parseDeviceComObjOverrides(scope, d) })).filter((o) => o.overrides.length > 0);
-  const securities = devices.map((d) => parseDeviceSecurity(scope, d.id));
-  const deviceSecurity = securities.filter((x): x is DeviceSecurity => x !== undefined && x !== "noSerial");
-  const secureDevicesWithoutSerial = securities.filter((x) => x === "noSerial").length;
+  const securities = devices.map((d) => parseDeviceSecurity(scope, d.id)).filter((x): x is DeviceSecurity => x !== undefined);
+  const deviceSecurity = securities.filter((s) => s.serialNumber !== "");
+  const toolKeysWithoutSerial = securities.filter((s) => s.serialNumber === "").map(({ deviceId, toolKey }) => ({ deviceId, toolKey }));
+  const secretsNotImported = countSecretsNotImported(installations.length ? installations : kids(installation), doc);
   const { secureSenders, unresolvedSenders } = parseSecureSenders(scope, devices, busInterfaceIndex);
   const deviceKnxIp = devices.map((d) => parseDeviceKnxIp(xml0, scope, d.id, productNames, productTranslations)).filter((x): x is DeviceKnxIp => x !== undefined);
 
   return {
-    name: parseName(projectInfo, installation, fallbackName), groupAddressLevels, topology, locations, devices, groupRanges, groupAddresses, deviceParams, deviceModules, deviceLinks, deviceComObjOverrides, deviceSecurity, deviceKnxIp, groupKeys, secureSenders, unresolvedSenders, secureDevicesWithoutSerial,
-    malformedDevices, skippedInstallations, unassignedDevices, ...droppedLinkCounts(droppedLinks), droppedLinks,
+    name: parseName(projectInfo, installation, fallbackName), groupAddressLevels, topology, locations, devices, groupRanges, groupAddresses, deviceParams, deviceModules, deviceLinks, deviceComObjOverrides, deviceSecurity, deviceKnxIp, groupKeys, secureSenders, unresolvedSenders, toolKeysWithoutSerial, secretsNotImported,
+    malformedDevices, skippedInstallations, unassignedDevices, ...droppedLinkCounts(linkResults.flatMap((r) => r.dropped)), droppedLinks,
   };
 }
 
@@ -134,27 +145,54 @@ function parseGroupAddressLevels(projectInfo: XmlNode | undefined, installation:
 }
 
 // A device's Data-Secure commissioning secrets, or undefined for a non-secure device.
-// The tool key lives in the device's nested <Security ToolKey="..b64.."> element
-// (present only once ETS secure-commissioned it); the 6-byte device serial used for the
-// Sync request is the DeviceInstance's own SerialNumber attribute. SequenceNumber here is
-// the group/data counter, kept for completeness; tool-access programming syncs its own.
+// The tool key lives in the device's nested <Security ToolKey="..b64.."> element; the 6-byte
+// device serial used for the Sync request is the DeviceInstance's own SerialNumber attribute.
+// SequenceNumber here is the group/data counter, kept for completeness; tool-access programming
+// syncs its own.
 //
 // ETS generates a tool key as soon as a secure device is added, before it has ever reached the
-// device; such a device has no SerialNumber yet, and without one no Sync can be run against it. It
-// is reported as "noSerial" (counted by the caller) instead of stored with a key nothing can use.
-function parseDeviceSecurity(doc: XmlNode, deviceId: string): DeviceSecurity | "noSerial" | undefined {
+// device; such a device has no SerialNumber yet (serialNumber ""), and without one no Sync can be
+// run against it. The caller gives that key apart (toolKeysWithoutSerial).
+function parseDeviceSecurity(doc: XmlNode, deviceId: string): DeviceSecurity | undefined {
   const dev = findDeviceInstance(doc, deviceId);
   const sec = dev?.Security;
   // A non-secure device has no <Security> child; a stray Security="Off" attribute
   // parses to a string, not an object, so the ToolKey lookup safely yields nothing.
   if (!isNode(sec) || sec.ToolKey === undefined) return undefined;
-  if (!text(dev?.SerialNumber)) return "noSerial";
   return {
     deviceId,
     toolKey: text(sec.ToolKey),
     serialNumber: text(dev?.SerialNumber),
     sequenceNumber: text(sec.SequenceNumber),
   };
+}
+
+// The BCU key ETS writes when the project sets none (0xFFFFFFFF, the free access key).
+const DEFAULT_BCU_KEY = "4294967295";
+// <Installation> attributes that hold a key: their values are kept nowhere (see parseDeviceKnxIp).
+const SECRET_INSTALLATION_ATTRS = ["IPRoutingBackboneKey", "BCUKey"] as const;
+const isSecretSet = (name: string, value: string | undefined): boolean => !!value && !(name === "BCUKey" && value === DEFAULT_BCU_KEY);
+
+// The keys and passwords the project holds that Busforge does not use and does not import, in every
+// installation and on every device, those the import leaves out with their installation or as outside the
+// topology included: KNX IP Secure's backbone key, each device's authentication code and management
+// password, each tunnelling user's password, and a BCU key other than the default. The copies ETS records as
+// loaded into a device (LoadedIPRoutingBackboneKey and the hashes) are the same secrets and are not counted again.
+function countSecretsNotImported(installations: XmlNode[], doc: XmlNode): number {
+  let n = installations.reduce((sum, inst) => sum + SECRET_INSTALLATION_ATTRS.filter((a) => isSecretSet(a, attr(inst[a]))).length, 0);
+  for (const dev of allDeviceInstances(doc)) {
+    const sec = node(dev.Security);
+    for (const a of ["DeviceAuthenticationCode", "DeviceManagementPassword"]) if (attr(sec?.[a])) n++;
+    for (const bi of kids(node(dev.BusInterfaces)?.BusInterface)) if (attr(bi.Password)) n++;
+  }
+  return n;
+}
+
+// Every DeviceInstance below `n`, wherever it sits (descends into arrays: see buildGaIdMap).
+function allDeviceInstances(n: unknown): XmlNode[] {
+  if (Array.isArray(n)) return n.flatMap(allDeviceInstances);
+  if (!isNode(n)) return [];
+  return [...kids(n.DeviceInstance), ...Object.entries(n).filter(([k]) => k !== "DeviceInstance").flatMap(([, v]) => allDeviceInstances(v))];
 }
 
 // An element's attributes as text, read off its start tag in the source: the parsed node holds its
@@ -168,6 +206,14 @@ function attrsOfTag(tag: string): Record<string, string> {
 function startTag(xml: string, name: string, from = 0): string {
   const m = new RegExp(`<${name}(?=[\\s/>])[^>]*>`).exec(xml.slice(from));
   return m ? m[0] : "";
+}
+
+// The installation's attributes with the value of each one that holds a key emptied: the name says the
+// project sets it, the key itself stays out of the unsealed device settings.
+export function withoutInstallationSecrets(attrs: Record<string, string>): Record<string, string> {
+  const out = { ...attrs };
+  for (const a of SECRET_INSTALLATION_ATTRS) if (isSecretSet(a, out[a])) out[a] = "";
+  return out;
 }
 
 // The KNXnet/IP settings a DeviceInstance carries besides its parameters, or undefined for a device
@@ -192,7 +238,7 @@ function parseDeviceKnxIp(xml0: string, doc: XmlNode, deviceId: string, productN
     securityAttributes: Object.keys(secAttrs),
     toolKeyLoaded: secAttrs.ToolKey !== undefined && secAttrs.ToolKey === secAttrs.LoadedToolKey,
     busInterfaces: kids(node(dev?.BusInterfaces)?.BusInterface).length,
-    installation: attrsOfTag(startTag(xml0, "Installation")),
+    installation: withoutInstallationSecrets(attrsOfTag(startTag(xml0, "Installation"))),
   };
 }
 
@@ -302,8 +348,11 @@ function moduleInstanceIds(n: unknown, out = new Set<string>()): Set<string> {
 // the tokens of an assignment whose sending address is not known (connectors without a single <Send>,
 // or a sending address not in the tree). Lists as well the com-objects whose module instance the device
 // no longer has (ETS leaves such refs behind when a module goes away): their links are stored, but no
-// com-object of the device carries them, so they are never programmed.
-function parseDeviceLinks(scope: XmlNode, d: Device, gaIdToRaw: Map<string, number>): { links: { comObjRefId: string; gaRaws: number[] }[]; dropped: DroppedLink[] } {
+// com-object of the device carries them, so they are never programmed. `dropped` is per ref, the counts'
+// source; `listed` is the list of them, where the entry of a com-object that two refs share carries the
+// ETS addresses of both, as the object's links are those of both (an address of the other ref is not
+// one an entry linked again by hand could count as a stand-in).
+function parseDeviceLinks(scope: XmlNode, d: Device, gaIdToRaw: Map<string, number>): { links: { comObjRefId: string; gaRaws: number[] }[]; dropped: DroppedLink[]; listed: DroppedLink[] } {
   const dev = findDeviceInstance(scope, d.id);
   // Merge by RefId: two ComObjectInstanceRefs on one device can share a RefId (synthetic
   // module-instance ids, or a malformed export). Stored per (refId, slot), two separate
@@ -313,12 +362,15 @@ function parseDeviceLinks(scope: XmlNode, d: Device, gaIdToRaw: Map<string, numb
   const byRef = new Map<string, number[]>();
   const instances = moduleInstanceIds(dev?.ModuleInstances);
   const dropped: DroppedLink[] = [];
+  const etsIdsByKey = new Map<string, string[]>();
   const gasOf = (ids: string[]) => ids.map((etsId) => { const raw = gaIdToRaw.get(etsId); return raw === undefined ? { etsId } : { etsId, raw }; });
   for (const c of kids(node(dev?.ComObjectInstanceRefs)?.ComObjectInstanceRef)) {
     const key = comObjKey(d, text(c.RefId));
     const tokens = linkTokens(c);
+    const ids = tokens ?? connectorIds(node(c.Connectors));
+    etsIdsByKey.set(key, [...(etsIdsByKey.get(key) ?? []), ...ids]);
     if (tokens === undefined) {
-      dropped.push({ deviceId: d.id, comObjRefId: key, reason: "noSingleSender", gas: gasOf(connectorIds(node(c.Connectors))) });
+      dropped.push({ deviceId: d.id, comObjRefId: key, reason: "noSingleSender", gas: gasOf(ids) });
       continue;
     }
     if (!tokens.length) continue;
@@ -337,7 +389,12 @@ function parseDeviceLinks(scope: XmlNode, d: Device, gaIdToRaw: Map<string, numb
     if (existing) existing.push(...gaRaws);
     else byRef.set(key, gaRaws);
   }
-  return { links: [...byRef].map(([comObjRefId, gaRaws]) => ({ comObjRefId, gaRaws })), dropped };
+  const listed = dropped.map((l) => {
+    const own = new Set(l.gas.map((g) => g.etsId));
+    const others = [...new Set(etsIdsByKey.get(l.comObjRefId)!.filter((id) => !own.has(id)))];
+    return others.length ? { ...l, gas: [...l.gas, ...gasOf(others)] } : l;
+  });
+  return { links: [...byRef].map(([comObjRefId, gaRaws]) => ({ comObjRefId, gaRaws })), dropped, listed };
 }
 
 // A device's com-object flags and priority set in the project (COM_OBJ_INSTANCE_ATTRS), per
@@ -378,8 +435,7 @@ function parseDeviceModules(doc: XmlNode, deviceId: string) {
 // every device; the hardware read-back harnesses work one device at a time and only
 // need this. Throws on an unknown id rather than returning a misleading empty map.
 export function deviceParamValues(xml0: string, deviceId: string): { appRef: string; values: Map<string, string> } {
-  const p = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", isArray: () => false });
-  const dev = findDeviceInstance(p.parse(xml0) as XmlNode, deviceId);
+  const dev = findDeviceInstance(project0Parser().parse(xml0) as XmlNode, deviceId);
   if (!dev) throw new Error(`device ${deviceId} not found`);
   const values = new Map<string, string>();
   for (const r of kids(node(dev.ParameterInstanceRefs)?.ParameterInstanceRef)) if (r.Value !== undefined) values.set(text(r.RefId), text(r.Value));

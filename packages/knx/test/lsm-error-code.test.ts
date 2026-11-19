@@ -45,7 +45,7 @@ const READ_ERROR_CODE = "03d5041c1001";
 async function refusal(code: number | null | "refused" | "silent") {
   const tun = new ErroredLsmDevice(code);
   const dev = new KnxDevice(tun, "1.2.4", undefined, timeouts);
-  const err = await runLoadPlan(dev, [{ op: "connect" }, { op: "load", lsm: 4 }]).then(() => null, (e: { code?: string; message?: string }) => e);
+  const err = await runLoadPlan(dev, [{ op: "connect" }, { op: "load", lsm: 4 }]).then(() => null, (e: { code?: string; message?: string; details?: Record<string, unknown> }) => e);
   await dev.disconnect();
   return { err, sent: tun.sent };
 }
@@ -56,11 +56,14 @@ describe("a load-state machine that went to ERROR", () => {
     expect(sent).toEqual([LOAD, READ_STATE, READ_ERROR_CODE]);
     expect(err?.code).toBe("LOAD_STATE_UNEXPECTED");
     expect(err?.message).toBe("LSM 4 not LOADING after LOAD (got ERROR); its error code (PID 28) is 13, maximal table length exceeded");
+    // The app names the code in the user's language from the refusal's details.
+    expect(err?.details).toEqual({ lsmErrorCode: 13 });
   });
 
   test("a value DPT 20.011 does not define is named as such", async () => {
     const { err } = await refusal(0x42);
     expect(err?.message).toEndWith("its error code (PID 28) is 66, a value DPT 20.011 does not define");
+    expect(err?.details).toEqual({ lsmErrorCode: 66 });
   });
 
   test("a device without the property is still refused, and says it gives no code", async () => {
@@ -68,6 +71,7 @@ describe("a load-state machine that went to ERROR", () => {
     expect(sent).toEqual([LOAD, READ_STATE, READ_ERROR_CODE]);
     expect(err?.code).toBe("LOAD_STATE_UNEXPECTED");
     expect(err?.message).toEndWith("(got ERROR); the device gives no error code for it (PID 28)");
+    expect(err?.details).toEqual({ lsmErrorCode: "none" });
   });
 
   test("an octet behind an answer with no element is not taken for an error code", async () => {
@@ -80,6 +84,7 @@ describe("a load-state machine that went to ERROR", () => {
     expect(sent.slice(0, 3)).toEqual([LOAD, READ_STATE, READ_ERROR_CODE]);
     expect(err?.code).toBe("LOAD_STATE_UNEXPECTED");
     expect(err?.message).toMatch(/^LSM 4 not LOADING after LOAD \(got ERROR\); its error code \(PID 28\) could not be read: /);
+    expect(err?.details).toEqual({ lsmErrorCode: "unreadable" });
   });
 });
 
@@ -98,15 +103,17 @@ function stateStub(state: number) {
 describe("the error code is not asked", () => {
   test("of a load-state machine in another state than ERROR", async () => {
     const { dev, reads } = stateStub(1); // LOADED
-    const err = await runLoadPlan(dev, [{ op: "load", lsm: 4 }]).then(() => null, (e: { message?: string }) => e);
+    const err = await runLoadPlan(dev, [{ op: "load", lsm: 4 }]).then(() => null, (e: { message?: string; details?: unknown }) => e);
     expect(err?.message).toBe("LSM 4 not LOADING after LOAD (got LOADED)");
+    expect(err?.details).toBeUndefined();
     expect(reads).toEqual(["prop 4/5"]);
   });
 
   test("of a memory-mapped load-state machine, which has no such property", async () => {
     const { dev, reads } = stateStub(3); // ERROR
-    const err = await runLoadPlan(dev, [{ op: "load", lsm: 3 }], { memMappedLsms: true }).then(() => null, (e: { message?: string }) => e);
+    const err = await runLoadPlan(dev, [{ op: "load", lsm: 3 }], { memMappedLsms: true }).then(() => null, (e: { message?: string; details?: unknown }) => e);
     expect(err?.message).toBe("LSM 3 not LOADING after LOAD (got ERROR)");
+    expect(err?.details).toBeUndefined();
     expect(reads).toEqual(["mem 46828"]);
   });
 });
