@@ -355,11 +355,18 @@ broadcast under the device's tool key (or, where the project runs it without Dat
 FDSK), then the security object's network configuration and a secured confirmed restart on a
 connection to the new address. The frames, the order and the fallback to the plain route are in
 [commissioning.md](commissioning.md#a-data-secure-device). Under a key the device does not hold, the
-broadcast Sync goes unanswered and nothing is written. On the plain route, which a device without a
-key or certificate on file takes, a unit still in secure mode ignores the plain `A_Restart`
-afterwards (the Jung 400021SE), which the assignment reports. The Jung also ignores a
-master reset (A_Restart with erase code 0x02 or 0x07) sent through its secured session: no answer,
-nothing reset. Its only way back to the factory key is the physical reset
+broadcast Sync goes unanswered and nothing is written. The plain route, which a device without a key
+or certificate on file takes, ends programming mode as ETS does on every family shown (System 1,
+MV-0705, MV-0701, and System B on a simulated unit): with a basic `A_Restart` on the connection of the
+descriptor read, never by writing the device object's programming-mode property (PID 54). A unit still
+in secure mode ignores that plain restart (the Jung 400021SE,
+[findings.md](findings.md#18-a-device-in-secure-mode-ignores-a-plain-a_restart)), which the plain
+assignment reports. The Jung also ignores Busforge's master reset (A_Restart with erase code 0x02 or
+0x07) sent through its secured session: no answer, nothing reset. ETS's secured confirmed restart with
+erase code 7, which it sends when the project switches the unit's Data Secure off, the Jung answers
+without error and restarts; the unit then still opens under its tool key, and ETS switches the
+security mode off and writes the factory key into the tool key property (PID 56) itself. The only way
+back to the factory key that Busforge has shown is the physical reset
 ([findings.md](findings.md#19-what-a-factory-fresh-secure-device-demands-of-the-activation)).
 
 **ETS assigns a secure device's address by serial number in Data Secure.** Its full download of the
@@ -377,26 +384,45 @@ the tool key of its earlier activation):
    address to `0/0/0`: serial, domain address `0000`, two octets `00`.
 4. Then the activation and download, point to point under the FDSK.
 
-On a device in secure mode ETS runs the same steps under the tool key (the Jung 400021SE and the GVS
-AMMA, with and without the programming button pressed), and on the Jung with Data Secure off in the
-project under the FDSK, which the unit then holds as its tool key. Without the button ETS asks
-`A_IndividualAddressSerialNumber_Read`, plain, instead of the PID 11 read of step 1. A connection to
-the new address follows: a plain descriptor read (`FFFF` from a unit in secure mode, read again
-secured after the Sync) and `PID_MAX_APDU_LENGTH`, the Sync with the serial field zero, then with
-Data Secure on the security mode switched on, the tool key written again (the same key) and the
-sending sequence (PID 59), with it off the security mode read twice, then the serial (PID 11) and a
-secured confirmed restart. Busforge sends these frames ([commissioning.md](commissioning.md#a-data-secure-device)).
+**ETS assigns the address of a unit in Data Secure mode the same way under its tool key**, with or
+without programming mode (the Jung 400021SE, the GVS AMMA-04/06.S). It never sends the plain
+`A_IndividualAddress_Write` and never writes PID 54. The frames, after ETS's opening probe of the
+project address (a T_Connect and descriptor read, then a T_Disconnect):
 
-**ETS sets the device's sending sequence at every address assignment with Data Secure on.** Right
-after the tool key and under it, ETS writes PID 59 of the security object (one 6-octet element): the
-value of the millisecond clock its tool sequence starts at. The device answers that write, and every
-later frame, from that sequence on, and ETS records it as the device's sequence number in the
-project. It does so with and without a re-activation (the Jung and the GVS AMMA), not with Data Secure
-off, and not when it activates a device for the first time or switches a device's security mode on
+1. `A_SystemNetworkParameter_Read` of PID 11 with test info `01` (who is in programming mode),
+   answered with the serial number by a unit in programming mode. Where no programming button was
+   pressed it goes unanswered about every 3 s, ETS offers the serial number instead, and sends the
+   plain `A_IndividualAddressSerialNumber_Read` broadcast, which the unit answers plainly.
+2. A secured Sync to `0/0/0`, then the secured serial-number write and read, both broadcasts under the
+   tool key.
+3. A T_Connect to the new address, a plain descriptor read (`FFFF` from a unit in secure mode) and a
+   plain read of PID 56 of the device object, a Sync with the serial field zero, and a secured
+   descriptor read.
+4. A `FunctionPropertyExtCommand` on PID 51 of the security object (`000001`, security mode on), a PID
+   56 write of the security object (the tool key, the same key, so the device still opens under it
+   afterwards), a PID 59 write, a PID 11 read.
+5. A secured `ConfirmedRestart` (erase code ConfirmedRestart, channel 0), which ends the assignment.
+
+The same route runs with Data Secure switched off in the project (the unit keeps its tool key, the
+FDSK), with these differences: ETS reads PID 51 twice (`FunctionPropertyExtState_Read`) instead of
+writing it, sends no secured descriptor read (the plain one shows the mask), and writes neither PID 56
+nor PID 59. Busforge sends these frames from step 2 on, the plain serial-number read in place of step 1
+([commissioning.md](commissioning.md#a-data-secure-device)).
+
+**ETS sets the device's sending sequence at every address assignment of a unit the project runs in
+Data Secure.** Right after the tool key and under it, ETS writes PID 59 of the security object (one
+6-octet element): the value of the millisecond clock its tool sequence starts at. The device answers
+that write, and every later frame, from that sequence on, and ETS records it as the device's sequence
+number in the project. ETS writes it in every assignment run with Data Secure on, with and without
+programming mode, and none where Data Secure is off in the project. It writes none when it activates a
+device for the first time (the Jung and the GVS AMMA), nor when it switches a unit's security mode on
 again with a new key in a download. Busforge writes it in its secured address assignment, and in its
 [activation](#activation-from-the-device-certificate) where a key was on file and the device opened
 only under its FDSK (reset since its activation): ETS's run that showed it there also gave the device
 its address by serial, and whether a re-activation without an assignment writes it is not captured.
+
+A download of a secure-capable application onto a unit that holds another application is not
+captured: the secure units on the bench hold one application each.
 
 ## Programming a secure device
 

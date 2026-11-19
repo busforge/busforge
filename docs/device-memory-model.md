@@ -367,6 +367,13 @@ while every read-back check still passed. The float width is derived from `Encod
 ("IEEE-754 Single" gives 32 bits, "DPT 9" gives 16), and the codec refuses any other width
 rather than writing a wrong-sized value.
 
+A DPT-9 value is encoded as ETS writes it: the smallest exponent whose mantissa fits, the
+mantissa rounded once, at that exponent, from the exact decimal value. 1000 Lux is `36 1A`
+(100000 / 2^6 = 1562.5 → 1562); ETS's download of an MDT BE-02001.02 shows it. 10000 is
+`4F A1` (1953.125 → 1953). A tie goes to the even mantissa; every tie ETS has shown had an even
+lower neighbour, so a tie like 20.51 (1025.5) is not yet backed by a capture. A mantissa one
+step off passes a read-back unseen, since the device holds what was written.
+
 ## Which parameter types reach the image at all
 
 Only `Value` (enum/restriction), `Number`, `Float`, `IPAddress`, `Text` and an RGB `Color` are
@@ -410,8 +417,13 @@ and would leave either the segment's `<Data>` or the unit's bytes where the colo
   its field where the application declares `<Options TextParameterZeroTerminate="true">` and on any
   System 7 application (no System 7 capture shows a field filled), on System 7 a zero over a non-zero
   `<Data>` byte (the Meteodata's `<Data>` holds zeros behind the characters), a field that is not
-  whole bytes from bit 0, and any text parameter of a System 1 application. A read-back leaves such a
-  field out of its comparison instead of refusing the whole read.
+  whole bytes from bit 0, and any text parameter of a System 1 application. A value that begins or ends
+  with a blank is refused as well (`PARAM_TEXT_EDGE_BLANK`): XML keeps those characters, so Busforge
+  reads a value as written, blanks included and character references (`&#x9;`, `&#xA;`) decoded: a
+  `Parameter`'s and a `ParameterRef`'s `Value` and `InitialValue`, an `Assign`'s `Value`, their
+  translations, and a project's `ParameterInstanceRef` `Value` (every other attribute and text node is
+  trimmed, and a value of any other type than text compares and validates without its blanks). No ETS image shows whether ETS writes such blanks into the device or drops them. A
+  read-back leaves such a field out of its comparison instead of refusing the whole read.
 
 - **A device placed in Busforge, or given another product, starts its text parameters at their
   `InitialValue`**, translated into the language the client works in, as ETS does for a device added to a project of that
@@ -505,9 +517,22 @@ for this family; OpenKNX devices run the open thelsing/knx stack, so it is read 
 firmware that consumes it (`group_object_table_object.cpp`, `group_object.cpp`), and Kaenx's
 independent implementation agrees bit for bit.
 
+An object numbered 0 has no entry: entry 0 is the count. ETS 6.4.1, downloading products that
+number their objects from 0 into a device simulator
+([third-party test data](testing.md#third-party-test-data)), writes the count (the highest object
+number) in that place, the entries of objects 1 and up after it, and links object 0's group
+addresses to object 0 in the association table: objects 0 (`C W`) and 1 (`C R T`) give
+`00 01 4B 00` without links and `00 01 4F 00` with both linked. Busforge writes the same. What a
+device does with object 0 is not shown, and no manufacturer's application in the test corpus
+numbers a System B object 0 outside a module. A write that would have to carry object 0's flags is refused: a project
+override of them (`COM_OBJECT_OVERRIDE_UNWRITABLE`) and a secured group address on it
+(`COM_OBJECT_NUMBER_INVALID`). An application that declares no object numbered 1 or higher would
+get a table of no entries, which no capture shows; its full download and group-address flash are
+refused before they are offered (`COM_OBJECT_TABLE_EMPTY`). The device page offers no flag
+edit on object 0, and a read-back takes no flags of it.
+
 A configuration that activates no object (every output of the GVS AMMA disabled) still gets the
-table: ETS writes the declared count with every entry `0x0000`, and so does Busforge. Only an
-application that declares no object at all is refused (`COM_OBJECT_TABLE_EMPTY`).
+table: ETS writes the declared count with every entry `0x0000`, and so does Busforge.
 
 The size field is the KNX "value field type" code, which is genuinely irregular (5 bytes is
 code 15, not 11), so it is written out rather than computed. The size comes from ETS's

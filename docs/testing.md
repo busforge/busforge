@@ -265,7 +265,9 @@ holds Busforge's `A_UserMemory_Write` requests against ETS's, frame by frame. Th
 the commit it was taken from and carries bussard's licence.
 `tools/bussard-text.test.ts` holds the bytes of two products' text parameters beyond ASCII against ETS's.
 `tools/bussard-unfilled-allocation.test.ts` holds the full download's request and segment bytes of an
-unfilled parameter-segment allocation against ETS's.
+unfilled parameter-segment allocation against ETS's. `tools/bussard-com-object-zero.test.ts` holds
+the System B com-object table of the products that number an object 0 (on two of them its count and
+object 1 only, see the test), and the three tables of one with group addresses on it, against ETS's.
 
 ### The capture index
 
@@ -357,6 +359,39 @@ of different installations reuse addresses, so units that share an address and d
 row, which names its files. Below the table the query says what it cannot see: secured telegrams whose
 service is not shown, undecoded lines, files no reader here takes, and projects or keyrings whose keys
 were not read.
+
+## A simulated unit
+
+`tools/sim-unit.ts` is one System B unit (MV-07B0) on the `KnxTransport` seam, which
+`KnxIpServer` puts on the network like the USB stick behind the bridge: ETS or Busforge download
+into it over KNXnet/IP as into a real unit, and `tools/knxproxy.ts` in front logs the run as a
+capture. It is built from a read-only collection of a real unit of the product (identity, every
+property and description the unit answered, where it placed its segments and what they held) and
+checked against the product's application program (mask, declared property compares); what only the
+unit's captures show (how it takes a restart, the authorization key it accepts, how long its line
+took to confirm a frame) is written next to it in `tools/sim-units.ts`, with the captures named.
+
+It models the transport layer of one connection, the descriptor, authorization, property and memory
+services, the load-state machines with their table references and the memory-control-block CRC, verify mode and
+the restart. Everything else it refuses: a line in its log and in `refusals`, and no answer, so the
+tool's own timeout ends a run where an invented byte would have let it go on.
+
+The units it simulates, and how each is held to its captures (`tools/sim-unit.test.ts`, with the
+private corpus):
+
+| Unit | ETS's downloads replayed | Busforge's full download |
+|---|---|---|
+| MEAN WELL KNX-40E-1280D power supply | Every request of ETS's six captured downloads (a link, a parameter, the revert, the full download, a parameter that shows an object, on and off), in order into one unit: every frame the simulator answers (its control field too, where the interface reports the frame type) and every confirmation on the line equal the unit's | Through `KnxIpServer` and the proxy, with the server's download task: the bracket from the first unload to the restart equals the capture of the same download into the unit in every frame both ways (each TPDU without its sequence number, the unit's control field, every confirmation on the line); the session before it and the verification after it differ by Busforge's own changes since that capture, which the test names |
+
+```bash
+BUSFORGE_CORPUS=... bun run tools/sim-unit-serve.ts meanwell-knx40e --tool ETS --log ./capture.log \
+  [--port 3700] [--proxy-port 3701] [--advertise <this host's ip>]
+```
+
+The tool connects to the proxy port over KNXnet/IP TCP; the simulator's own lines go to
+`<log>.sim.txt`, and Ctrl-C prints its refusals. A download into the simulator is evidence on no axis
+of [evidence-contract.md](evidence-contract.md) by itself: it shows what a tool sends given the
+simulator's answers, and the answers are a real unit's only as far as the table above says.
 
 ## Why the golden snapshot is not a correctness proof
 

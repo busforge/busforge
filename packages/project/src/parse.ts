@@ -69,11 +69,21 @@ export function appProgramId(appRef: string): string {
 // An xs:boolean attribute: "true" or "1" (ETS 4 writes the digits, later versions the words).
 const xsBool = (v: unknown): boolean => { const t = text(v); return t === "true" || t === "1"; };
 
+// The parser of a project's 0.xml. A ParameterInstanceRef's Value is the parameter's value as the file
+// writes it, blanks at either end included (XML keeps them, and a text parameter writes them into the
+// device); every other attribute and text node is trimmed. Character references (ETS writes a tab, CR or
+// LF in an attribute as &#x9;, &#xD;, &#xA;) are decoded.
+const project0Parser = () => new XMLParser({
+  ignoreAttributes: false, attributeNamePrefix: "", isArray: () => false, trimValues: false, htmlEntities: true,
+  attributeValueProcessor: (name, v, jPath) => (name === "Value" && String(jPath).endsWith(".ParameterInstanceRef") ? v : v.trim()),
+  tagValueProcessor: (_tag, v) => v.trim(),
+});
+
 // `applications`: the application program of each Hardware2Program the archive's Hardware.xml describes
 // ("" where it names none, or none Busforge can tell apart from a PEI program); a device whose
 // Hardware2Program it lacks takes the program its id names (appProgramId).
 export function parseProject(xml0: string, projectXml: string | undefined, fallbackName: string, productNames: Map<string, string> = new Map(), busInterfaceIndex: ReadonlyMap<string, number> = new Map(), productTranslations: ReadonlyMap<string, string[]> = new Map(), applications: ReadonlyMap<string, string> = new Map()): Project {
-  const p = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", isArray: () => false });
+  const p = project0Parser();
   const doc = p.parse(xml0) as XmlNode;
 
   // A project can hold several installations. Busforge imports the first and reports how many it
@@ -348,7 +358,9 @@ function parseDeviceLinks(scope: XmlNode, d: Device, gaIdToRaw: Map<string, numb
   // module-instance ids, or a malformed export). Stored per (refId, slot), two separate
   // rows would collide on the slot index and abort the whole import. Merging their GAs
   // keeps the assignments and never crashes; for the normal (unique-RefId) case it is a
-  // no-op that preserves document order.
+  // no-op that preserves document order, except that an address linked twice (within a ref or by
+  // both refs) is kept once at its first position, so the sending address stays first and the
+  // list passes setLink's duplicate check.
   const byRef = new Map<string, number[]>();
   const instances = moduleInstanceIds(dev?.ModuleInstances);
   const dropped: DroppedLink[] = [];
@@ -375,9 +387,9 @@ function parseDeviceLinks(scope: XmlNode, d: Device, gaIdToRaw: Map<string, numb
       continue;
     } else if (gaRaws.length < tokens.length) dropped.push({ deviceId: d.id, comObjRefId: key, reason: "addressNotInProject", gas: gasOf(tokens) });
     if (!gaRaws.length) continue;
-    const existing = byRef.get(key);
-    if (existing) existing.push(...gaRaws);
-    else byRef.set(key, gaRaws);
+    const merged = byRef.get(key) ?? [];
+    for (const raw of gaRaws) if (!merged.includes(raw)) merged.push(raw);
+    byRef.set(key, merged);
   }
   const listed = dropped.map((l) => {
     const own = new Set(l.gas.map((g) => g.etsId));
@@ -425,8 +437,7 @@ function parseDeviceModules(doc: XmlNode, deviceId: string) {
 // every device; the hardware read-back harnesses work one device at a time and only
 // need this. Throws on an unknown id rather than returning a misleading empty map.
 export function deviceParamValues(xml0: string, deviceId: string): { appRef: string; values: Map<string, string> } {
-  const p = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", isArray: () => false });
-  const dev = findDeviceInstance(p.parse(xml0) as XmlNode, deviceId);
+  const dev = findDeviceInstance(project0Parser().parse(xml0) as XmlNode, deviceId);
   if (!dev) throw new Error(`device ${deviceId} not found`);
   const values = new Map<string, string>();
   for (const r of kids(node(dev.ParameterInstanceRefs)?.ParameterInstanceRef)) if (r.Value !== undefined) values.set(text(r.RefId), text(r.Value));

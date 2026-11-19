@@ -559,8 +559,8 @@ const floatXml = `<?xml version="1.0" encoding="utf-8"?>
 </ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
 
 test("a DPT-9 float default the codec must round: encode writes the rounded bytes, decode returns the rounded value, owned iff written", () => {
-  // Hand-derived bytes for "21.001" per encodeDpt9 (image.ts): mant = round(21.001*100)
-  // = 2100; 2100 > 2047, so mant = round(2100/2) = 1050, exp = 1; raw = (1<<11) | 1050
+  // Hand-derived bytes for "21.001" per encodeDpt9 (image.ts): 2100.1 does not fit at
+  // exp 0, so exp = 1 and mant = round(2100.1/2 = 1050.05) = 1050; raw = (1<<11) | 1050
   // = 0x0C1A. That equals the canonical encoding of 21.0 (image.ts reference vector),
   // i.e. the ".001" is below DPT-9 resolution here and is rounded away at encode time.
   const app = parseAppConfig(floatXml);
@@ -586,7 +586,7 @@ test("a non-canonical DPT-9 <Data> pattern decodes to its value but re-encodes t
   // The inactive P-G keeps the manufacturer bytes DE AD. Hand-derived decode
   // (decodeDpt9): sign set, exp = (0xDEAD>>11)&0xF = 11, mant = 0x6AD = 1709 -> 1709 -
   // 2048 = -339; value = -339 * 2^11 / 100 = -6942.72. Re-encoding that value
-  // (encodeDpt9): mant = -694272, halved 9 times (each step even, so no rounding loss)
+  // (encodeDpt9): -694272 / 2^9 = -1356 exactly, the smallest exponent that fits
   // -> mant = -1356, exp = 9; raw = 0x8000 | (9<<11) | (-1356 & 0x7FF = 0x2B4) =
   // 0xCAB4. Same value, minimal exponent: the encoder normalizes, so decode->encode is
   // NOT byte-identity on a non-canonical stored pattern. This is exactly why the

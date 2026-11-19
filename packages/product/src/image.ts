@@ -88,15 +88,33 @@ export function imageValueForm(model: AppModel, refId: string, value: string): s
 
 // KNX 2-byte float (DPT 9.xxx): bit15 sign, bits14-11 exponent, bits10-0 mantissa.
 // value = 0.01 * mantissa * 2^exponent, the mantissa being an 11-bit two's
-// complement combined with the sign bit. Reference vectors: 0 -> 0x0000,
-// 21.0 -> 0x0C1A, -0.01 -> 0x87FF.
+// complement combined with the sign bit. Encoded as ETS writes it: the smallest
+// exponent whose rounded mantissa fits, the mantissa rounded once from the exact
+// decimal value (the number's shortest decimal form, so 32.45 has the mantissa 3245 / 2^1
+// at exponent 1, not the binary double just above it). Ties go to even; ETS's ties seen so far all had an even
+// lower neighbour, so half-down would match them too. Reference vectors: 0 -> 0x0000,
+// 21.0 -> 0x0C1A, -0.01 -> 0x87FF, 1000 -> 0x361A.
 export function encodeDpt9(value: number): number {
-  let mant = Math.round(value * 100);
-  let exp = 0;
-  while (mant > 2047 || mant < -2048) { mant = Math.round(mant / 2); exp++; }
-  if (exp > 15) { exp = 15; mant = mant < 0 ? -2048 : 2047; } // saturate beyond representable range
-  const sign = mant < 0 ? 0x8000 : 0;
-  return sign | ((exp & 0x0f) << 11) | (mant & 0x07ff);
+  const m = /^(-?)(\d+)(?:\.(\d+))?(?:e([+-]\d+))?$/.exec(String(value));
+  if (!m) throw new RangeError(`DPT 9 cannot encode ${value}`);
+  const [, minus, int, frac = "", e10 = "0"] = m;
+  // |value| * 100 = digits * 10^pow10, an exact rational.
+  const digits = BigInt(int + frac);
+  const pow10 = 2 - frac.length + Number(e10);
+  const num = pow10 >= 0 ? digits * 10n ** BigInt(pow10) : digits;
+  const den = pow10 >= 0 ? 1n : 10n ** BigInt(-pow10);
+  const limit = minus ? 2048n : 2047n;
+  for (let exp = 0; exp <= 15; exp++) {
+    const d = den << BigInt(exp);
+    let q = num / d;
+    const twice = (num % d) * 2n;
+    if (twice > d || (twice === d && q % 2n === 1n)) q++;
+    if (q <= limit) {
+      const mant = minus ? -Number(q) : Number(q);
+      return (mant < 0 ? 0x8000 : 0) | (exp << 11) | (mant & 0x07ff);
+    }
+  }
+  return minus ? 0xf800 : 0x7fff; // saturate beyond the representable range
 }
 
 export function decodeDpt9(raw: number): number {
@@ -168,8 +186,14 @@ export const imageWritableType = (t: { base: string; colorSpace?: string }): boo
 const LATIN_AMBIGUOUS = new Set([0xa4, 0xa6, 0xa8, 0xb4, 0xb8, 0xbc, 0xbd, 0xbe]);
 const latinShown = (c: number) => c <= 0x7f || (c >= 0xa0 && c <= 0xff && !LATIN_AMBIGUOUS.has(c));
 
+// A value that begins or ends with a blank (what String.prototype.trim removes) is refused: the catalogue
+// and the project keep those characters (parseAppConfig, the project's parse), and no ETS image shows
+// whether ETS writes them or drops them.
+const hasEdgeBlank = (s: string): boolean => s !== s.trim();
+
 function textChars(type: ParamType, where: string, valStr: string): Buffer {
   const refuse = (why: string): never => { throw new ProductError("PARAM_TEXT_UNSUPPORTED", `a ${where}: "${valStr}" ${why}`); };
+  if (hasEdgeBlank(valStr)) throw new ProductError("PARAM_TEXT_EDGE_BLANK", `a ${where}: "${valStr}" begins or ends with a blank, and no ETS image shows whether ETS writes it into the device`);
   if (valStr.includes("\0")) refuse("holds a zero character, whose bytes no ETS image shows");
   const codes = Array.from(valStr, (c) => c.codePointAt(0)!);
   if (codes.every((c) => c <= 0x7f)) return Buffer.from(valStr, "latin1");
@@ -189,6 +213,10 @@ export const textLength = (type: ParamType, valStr: string): number => textChars
 
 // The inverse of textChars: undefined where encode would not write these bytes.
 function textOfChars(type: ParamType, chars: Buffer): string | undefined {
+  const s = charsText(type, chars);
+  return s === undefined || hasEdgeBlank(s) ? undefined : s;
+}
+function charsText(type: ParamType, chars: Buffer): string | undefined {
   if (chars.every((b) => b <= 0x7f)) return chars.toString("latin1");
   if (type.textEncoding === undefined) return chars.every(latinShown) ? chars.toString("latin1") : undefined;
   if (type.textEncoding !== "utf-8") return undefined;

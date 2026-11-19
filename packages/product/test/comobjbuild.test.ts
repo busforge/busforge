@@ -1,6 +1,6 @@
 import { test, expect, describe } from "bun:test";
 import {
-  buildComObjectTable, buildComObjectTableMv0705, comObjectEntry, objectSizeInBits, programIdStamp,
+  buildComObjectTable, buildComObjectTableMv0705, comObjectEntry, objectSizeInBits, programIdStamp, refuseObjectZeroOverride,
   parseAppConfig, buildDeviceConfig, ProductError,
   type CfgComObjImage,
 } from "@busforge/product";
@@ -69,8 +69,24 @@ describe("one com-object table entry", () => {
     expect(code("20 Bytes")).toBe(26); // the contiguous run from 15 bytes = code 21
   });
 
-  test("a com-object numbered 0 is REFUSED (entry 0 of the table is its count)", () => {
-    expect(() => buildComObjectTable(new Map([[0, obj({ number: 0 })]]), 1, new Set([0]))).toThrow(/1-based|number 0/i);
+  // ETS 6.4.1 into a device simulator (bussard's synthetic MV-07B0 products, objects 0 "C W" and 1 "C R T"):
+  // the table is 00 01 4B 00 without links and 00 01 4F 00 with both linked. Object 0 has no entry, its place
+  // is the count; tools/bussard-com-object-zero.test.ts holds this against the captures.
+  test("a com-object numbered 0 gets no entry: its place is the count, as ETS writes it", () => {
+    const zero = obj({ number: 0, flags: { read: false, write: true, comm: true, transmit: false, update: false, readOnInit: false } });
+    const one = obj({ number: 1, flags: { read: true, write: false, comm: true, transmit: true, update: false, readOnInit: false } });
+    expect(buildComObjectTable(new Map([[0, zero], [1, one]]), 1, new Set()).toString("hex")).toBe("00014b00");
+    expect(buildComObjectTable(new Map([[0, zero], [1, one]]), 1, new Set([0, 1])).toString("hex")).toBe("00014f00");
+  });
+
+  test("a table that would hold no entry, object 0 its only object, is refused", () => {
+    expect(() => buildComObjectTable(new Map([[0, obj({ number: 0 })]]), 0, new Set([0]))).toThrow(/numbered 1 or higher/i);
+  });
+
+  test("a project override on object 0 is refused: no table entry carries it", () => {
+    const active = new Map([[0, obj({ number: 0 })], [1, obj({ number: 1 })]]);
+    expect(() => refuseObjectZeroOverride(active, new Map([[0, { flags: { read: true } }]]))).toThrow(/object #0/);
+    expect(() => refuseObjectZeroOverride(active, new Map([[0, { flags: { read: false } }], [1, { flags: { read: true } }]]))).not.toThrow();
   });
 
   test("a flags+size combination round-trips as the firmware would decode it", () => {
@@ -147,7 +163,7 @@ describe("the whole table", () => {
   });
 
   test("an application that declares no com-object at all is refused, not written as an empty table", () => {
-    expect(() => buildComObjectTable(new Map(), 0, new Set())).toThrow(/declares no communication objects/i);
+    expect(() => buildComObjectTable(new Map(), 0, new Set())).toThrow(/declares no communication object numbered 1 or higher/i);
   });
 });
 
