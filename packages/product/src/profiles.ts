@@ -476,7 +476,7 @@ async function runDeclaredChecks(dev: KnxDevice, coverage: ParCoverage): Promise
     const { ok, got } = await compareDeclaredProp(dev, c.obj, c.pid, c.expect, c.mask);
     if (!ok) {
       throw new ProductError("LOAD_PROC_CHECK_FAILED",
-        `load-procedure check failed: object ${c.obj} property ${c.pid} reads ${got.toString("hex")} but the application declares ${c.expect.toString("hex")} (wrong hardware or application version?)`);
+        `load-procedure check failed: object ${c.obj} property ${c.pid} reads ${got ? got.toString("hex") : "no element"} but the application declares ${c.expect.toString("hex")} (wrong hardware or application version?)`);
     }
   }
 }
@@ -546,8 +546,8 @@ async function currentStamps(dev: KnxDevice, record: ImageStamp[] | undefined): 
   if (!checked.length) return null;
   const read: ImageStamp[] = [];
   for (const r of (record ?? []).filter((x) => x.obj !== OBJ.ADDR_TABLE && x.obj !== OBJ.ASSOC_TABLE)) {
-    const v = await dev.propRead(r.obj, PID.MCB_TABLE, r.element);
-    if (v.length !== MCB_ELEMENT_BYTES) throw new ProductError("STAMP_UNREADABLE", `object ${r.obj} answered memory-control-block element ${r.element} with ${v.length} bytes, not 8`);
+    const v = await dev.propReadIfPresent(r.obj, PID.MCB_TABLE, r.element);
+    if (v?.length !== MCB_ELEMENT_BYTES) throw new ProductError("STAMP_UNREADABLE", `object ${r.obj} answered memory-control-block element ${r.element} with ${v ? `${v.length} bytes` : "no element"}, not 8 bytes`);
     read.push({ obj: r.obj, element: r.element, hex: v.toString("hex") });
   }
   return { equal: checked.every((c) => read.find((x) => x.obj === c.obj && x.element === c.element)?.hex === c.hex), read };
@@ -1349,8 +1349,8 @@ export class SystemBProfile extends DeviceProfile {
     // take the structural bracket this form is made of (structuralFirmwareOff).
     if (proc.preferPartialIfLoaded && closesAtOnce(this.requireCfg("full download")) && !persistsOnLoadCompleted(this.requireCfg("full download"))) {
       const cfg = this.requireCfg("full download");
-      const id = await dev.propRead(OBJ.APP_PROGRAM, PID.PROGRAM_ID);
-      if (id.equals(programIdStamp(cfg)) && await allLoaded(dev, [OBJ.APP_PROGRAM, OBJ.COMOBJ_TABLE, OBJ.ASSOC_TABLE, OBJ.ADDR_TABLE])) {
+      const id = await dev.propReadIfPresent(OBJ.APP_PROGRAM, PID.PROGRAM_ID);
+      if (id?.equals(programIdStamp(cfg)) && await allLoaded(dev, [OBJ.APP_PROGRAM, OBJ.COMOBJ_TABLE, OBJ.ASSOC_TABLE, OBJ.ADDR_TABLE])) {
         const size = images().target.size;
         const paramsMcb = await readMcbTable(dev, LSM, size);
         if (paramsMcb && paramsMcb.reduce((n, r) => n + r.size, 0) === size) return this.downloadPartialForm(dev, mask, ctx, proc, images, paramsMcb, assocForm);
@@ -2391,14 +2391,13 @@ export class System7Profile extends DeviceProfile {
     const planned = new Map([false, ...(proc.preferPartialIfLoaded ? [true] : [])].map((holds) => [holds, builtBefore(() => this.planSystem7Full(mask, { ...ctx, proc, unitHoldsApplication: holds }))]));
     // App-id pre-flight, virgin-aware. The checks come from the download's OWN "full" steps (not
     // the "par" list), so a CompareProp declared AppliesTo="full" is never missed. A match = the
-    // device already holds this application (re-commission); an all-zero read = a virgin device
+    // device already holds this application (re-commission); an all-zero read, or no element, = a virgin device
     // (the intended from-nothing case); a DIFFERENT non-zero application is refused, so a full
     // download never lands the wrong app's image on a device. Unmodeled *steps* are refused by the
     // planner (planAbsoluteFullDownload's default case), which walks the same "full" list.
     for (const c of declaredPropChecks(proc, "full")) {
       const { ok, got } = await compareDeclaredProp(dev, c.obj, c.pid, c.expect, c.mask);
-      const virgin = got.length === 0 || got.every((b) => b === 0);
-      if (!ok && !virgin) {
+      if (!ok && got && got.some((b) => b !== 0)) {
         throw new ProductError("LOAD_PROC_CHECK_FAILED",
           `object ${c.obj} property ${c.pid} reads ${got.toString("hex")} but this application is ${c.expect.toString("hex")}; refusing to commission a different application onto this device`);
       }
@@ -2408,15 +2407,15 @@ export class System7Profile extends DeviceProfile {
     // to tell (ABB US/U 4.2, Gira M-0008 captures). The declared form reads nothing first.
     // A unit holding another application (a non-zero program id that is not this one) is not overwritten:
     // which application a device runs is the user's decision, made in the project, not the download's.
-    const id = await dev.propRead(OBJ.COMOBJ_TABLE, PID.PROGRAM_ID);
-    if (id.length && id.some((x) => x !== 0) && !id.equals(programIdStamp(cfg))) {
+    const id = await dev.propReadIfPresent(OBJ.COMOBJ_TABLE, PID.PROGRAM_ID);
+    if (id && id.some((x) => x !== 0) && !id.equals(programIdStamp(cfg))) {
       throw new ProductError("LOAD_PROC_CHECK_FAILED", `the device holds program id ${id.toString("hex")} where this application is ${programIdStamp(cfg).toString("hex")}; refusing to commission a different application onto it`);
     }
     let unitHoldsApplication = false;
     if (proc.preferPartialIfLoaded) {
       const states = [];
       for (const obj of [OBJ.ADDR_TABLE, OBJ.ASSOC_TABLE, OBJ.COMOBJ_TABLE]) states.push(await lsmState(dev, obj, isMemoryMappedLsm(mask)));
-      unitHoldsApplication = id.equals(programIdStamp(cfg)) && states.every((st) => st === STATE.LOADED);
+      unitHoldsApplication = id !== null && id.equals(programIdStamp(cfg)) && states.every((st) => st === STATE.LOADED);
     }
     const form = absoluteFullForm(proc, unitHoldsApplication);
     const stepRefusal = absoluteFullStepRefusal(proc, form);

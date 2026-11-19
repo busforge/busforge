@@ -401,8 +401,8 @@ describe("runLoadPlan (generic load-procedure executor)", () => {
 });
 
 describe("compareDeclaredProp (LdCtrlCompareProp)", () => {
-  // Only propRead is used, so a one-method stub suffices.
-  const devAnswering = (hex: string) => ({ propRead: async () => Buffer.from(hex, "hex") }) as unknown as KnxDevice;
+  // Only propReadIfPresent is used, so a one-method stub suffices; null is an answer of no element.
+  const devAnswering = (hex: string | null) => ({ propReadIfPresent: async () => (hex === null ? null : Buffer.from(hex, "hex")) }) as unknown as KnxDevice;
 
   test("exact match is ok", async () => {
     const r = await compareDeclaredProp(devAnswering("0083123421"), 0, 78, Buffer.from("0083123421", "hex"));
@@ -426,7 +426,14 @@ describe("compareDeclaredProp (LdCtrlCompareProp)", () => {
   test("plain mismatch is not ok and `got` carries the device value", async () => {
     const r = await compareDeclaredProp(devAnswering("aabb"), 0, 78, Buffer.from("aacc", "hex"));
     expect(r.ok).toBe(false);
-    expect(r.got.toString("hex")).toBe("aabb");
+    expect(r.got?.toString("hex")).toBe("aabb");
+  });
+
+  test("an answer of no element is no value: never a match, not even for an all-zero expectation", async () => {
+    for (const expect_ of ["00000000", "0083123421"]) {
+      const r = await compareDeclaredProp(devAnswering(null), 0, 78, Buffer.from(expect_, "hex"));
+      expect(r).toEqual({ ok: false, got: null });
+    }
   });
 
   test("device value longer than the expectation is not ok", async () => {
@@ -512,8 +519,8 @@ describe("segment CRC (how a 21601-byte image is verified with one property read
       expect(mcbProvenRegions(mixed, bytes)).toBeNull();
     });
     test("readMcbTable reads until the regions cover the size or the device answers no further element, and takes no block read only in part", async () => {
-      const answering = (n: number) => ({ propRead: async (_o: number, _p: number, element: number) => {
-        if (element > n) return Buffer.alloc(0);
+      const answering = (n: number) => ({ propReadIfPresent: async (_o: number, _p: number, element: number) => {
+        if (element > n) return null;
         const b = Buffer.alloc(8); b.writeUInt32BE(10, 0); b.writeUInt16BE(element, 6); return b;
       } }) as unknown as KnxDevice;
       expect((await readMcbTable(answering(3), 4))?.map((e) => e.crc)).toEqual([1, 2, 3]);

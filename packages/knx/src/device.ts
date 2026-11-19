@@ -857,15 +857,16 @@ export class KnxDevice {
     const r = await this.request((s) => apdu(s, APCI.DEVICE_DESCRIPTOR_READ), true);
     return "MV-" + r!.data.toString("hex").toUpperCase();
   }
+  // The value of `count` elements from `start`. A device answers a property it lacks, or a read it
+  // refuses, with element count 0 (and possibly an error octet behind it): that is refused here, never
+  // returned as the value. ETS 6 fails such a read alike ("Empty response"). A caller for which an
+  // absent property is an answer reads it with propReadIfPresent.
   async propRead(obj: number, pid: number, start = 1, count = 1): Promise<Buffer> {
-    const tail = Buffer.from([obj, pid, (count << 4) | ((start >> 8) & 0x0f), start & 0xff]);
-    const r = await this.request((s) => apdu(s, APCI.PROPERTY_READ, tail), true);
-    const d = r!.data;
-    const echoedStart = d.length < 4 ? -1 : ((d[2] & 0x0f) << 8) | d[3];
-    if (d.length < 4 || d[0] !== obj || d[1] !== pid || (d[2] >> 4 > 0 && echoedStart !== start)) {
-      throw new KnxError("PROPERTY_RESPONSE_MISMATCH", `a read of object ${obj} PID ${pid} from ${start} was answered for ${d.length < 4 ? "no property" : `object ${d[0]} PID ${d[1]} from ${echoedStart}`}`);
+    const v = await this.propReadCounted(obj, pid, start, count);
+    if (v.count !== count) {
+      throw new KnxError("PROPERTY_READ_REFUSED", `object ${obj} PID ${pid} from ${start}: the device answered ${v.count} of ${count} element(s)${v.count === 0 && v.value.length ? ` (error octet(s) ${v.value.toString("hex")})` : ""}`);
     }
-    return r!.data.subarray(4); // skip obj,pid,start echo
+    return v.value;
   }
   // ---- extended property services (object type + instance, see APCI.PROPERTY_EXT_*) ----
   // Each answer echoes the 5-octet property address; one for another property is refused, never
@@ -1111,15 +1112,11 @@ export class KnxDevice {
   async propValueDataMax(): Promise<number> {
     return Math.min(((await this.maxApduLength()) ?? STANDARD_FRAME_APDU) - PROPERTY_ANSWER_OVERHEAD, this.routeChunk(PROPERTY_ANSWER_OVERHEAD));
   }
-  // An optional property: the device answers a property it does not implement with element count 0
-  // (and possibly an error byte), which propRead would return as if it were a value. Null here.
-  async propReadIfPresent(obj: number, pid: number): Promise<Buffer | null> {
-    const tail = Buffer.from([obj, pid, 1 << 4, 1]);
-    const r = await this.request((s) => apdu(s, APCI.PROPERTY_READ, tail), true);
-    if (r!.data.length >= 2 && (r!.data[0] !== obj || r!.data[1] !== pid)) {
-      throw new KnxError("PROPERTY_RESPONSE_MISMATCH", `a read of object ${obj} PID ${pid} was answered for object ${r!.data[0]} PID ${r!.data[1]}`);
-    }
-    return r!.data.length < 4 || r!.data[2] >> 4 === 0 ? null : r!.data.subarray(4);
+  // One element of an optional property, from `start`: the device answers a property it does not
+  // implement, or an element past its end, with element count 0 (and possibly an error octet). Null here.
+  async propReadIfPresent(obj: number, pid: number, start = 1): Promise<Buffer | null> {
+    const v = await this.propReadCounted(obj, pid, start, 1);
+    return v.count === 0 ? null : v.value;
   }
   // Bytes per A_Memory_Read: 12 fit a standard frame. A device that declares a longer APDU gets
   // requests up to that length (3 octets of APCI and address), capped at EXT_READ_CHUNK: the path
@@ -1314,9 +1311,8 @@ export class KnxDevice {
   // device into, or out of, programming mode).
   async setVerifyMode(on: boolean): Promise<void> {
     const cur = await this.propRead(0, PID.DEVICE_CONTROL);
-    // An empty answer means the device declined the read, not that the byte is zero. Treating the
-    // two as the same would write a FABRICATED device-control byte back, clearing programming mode
-    // and whatever else lives in it.
+    // An element without its octet is no device-control byte either: taking it as zero would write a
+    // FABRICATED device-control byte back, clearing programming mode and whatever else lives in it.
     if (cur.length === 0) {
       throw new KnxError("DEVICE_CONTROL_UNREADABLE",
         "the device did not answer a read of its device-control property, so its verify mode cannot be set without inventing the rest of that byte");

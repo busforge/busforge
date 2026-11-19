@@ -4,6 +4,7 @@ import { parseAppConfig, parseLoadProcedures, buildDeviceConfig, resolveModuleIn
 import { classify } from "../src/deviceprofile.ts";
 import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
+import { absentIfEmpty, refusedIfEmpty } from "../../../packages/product/test/property-reads.ts";
 
 // The structural flash (DeviceProfile.flashStructure) against a simulated device: it writes a change
 // that alters the com-object table, verifies it after the restart, and never reports verified what
@@ -38,14 +39,15 @@ corpusDescribe("the structural flash against real applications", () => {
     setExtendedMemoryServices() {}
     acceptUnprovenRestart() {}
     async memWrite(addr: number, data: Buffer) { this.writes.push({ addr, len: data.length }); for (let i = 0; i < data.length; i++) this.mem.set(addr + i, data[i]); }
-    async propRead(obj: number, pid: number) {
+    async propertyAnswer(obj: number, pid: number) {
       if (pid === 5) return Buffer.from([this.state.get(obj) ?? STATE.UNLOADED]);
       if (pid === 7) { const a = this.addr.get(obj) ?? 0; return Buffer.from([(a >> 24) & 0xff, (a >> 16) & 0xff, (a >> 8) & 0xff, a & 0xff]); }
       return this.props.get(`${obj}/${pid}`) ?? Buffer.alloc(0);
     }
     // The association table described as the long form (PDT_GENERIC_04), as the tables this unit holds.
     async propertyDescription(obj: number, pid: number) { return { objectIndex: obj, pid, propertyIndex: 0, writable: true, pdt: 0x14, maxElements: 1, readLevel: 3, writeLevel: 3 }; }
-    async propReadIfPresent() { return null; }
+    async propRead(obj: number, pid: number) { return refusedIfEmpty(await this.propertyAnswer(obj, pid), obj, pid); }
+    async propReadIfPresent(obj: number, pid: number) { return absentIfEmpty(await this.propertyAnswer(obj, pid)); }
     // The stamps the download's closing reads take (PID 27), on a standard-frame device.
     async propValueDataMax() { return 10; }
     async propReadCounted(obj: number, pid: number, start: number, count = 1) { return { objectIndex: obj, pid, count, start, value: Buffer.alloc(8 * count) }; }

@@ -3,6 +3,7 @@ import { LSM, STATE, type KnxDevice } from "@busforge/knx";
 import { parseAppConfig, classify, buildRelativeSegmentTarget, type ComObjectLink } from "@busforge/product";
 import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
+import { absentIfEmpty, refusedIfEmpty } from "./property-reads.ts";
 
 // Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 3.0 s with the
 // file alone (load 5-27) and up to 3.0 s with every workspace's tests in parallel (load 5-8). A full check on a busy
@@ -42,13 +43,14 @@ corpusDescribe("the GVS AMMA's closing PID 67 write, through the profile", () =>
     async tableAddr(obj: number) { return A[obj] ?? 0; }
     async memRead(addr: number, len: number) { const b = Buffer.alloc(len); for (let i = 0; i < len; i++) b[i] = this.mem.get(addr + i) ?? 0; return b; }
     async memWrite(addr: number, data: Buffer) { this.log.push("mem"); for (let i = 0; i < data.length; i++) this.mem.set(addr + i, data[i]); }
-    async propReadIfPresent() { return null; }
+    async propRead(obj: number, pid: number) { return refusedIfEmpty(await this.propertyAnswer(obj, pid), obj, pid); }
+    async propReadIfPresent(obj: number, pid: number) { return absentIfEmpty(await this.propertyAnswer(obj, pid)); }
     // The stamps the download's closing reads take (PID 27), on a standard-frame device.
     async propValueDataMax() { return 10; }
     async propReadCounted(obj: number, pid: number, start: number, count = 1) { return { objectIndex: obj, pid, count, start, value: Buffer.alloc(8 * count) }; }
     // The association table described as the long form (PDT_GENERIC_04), as the tables this unit holds.
     async propertyDescription(obj: number, pid: number) { return { objectIndex: obj, pid, propertyIndex: 0, writable: true, pdt: 0x14, maxElements: 1, readLevel: 3, writeLevel: 3 }; }
-    async propRead(obj: number, pid: number) {
+    async propertyAnswer(obj: number, pid: number) {
       if (pid === 5) return Buffer.from([this.state.get(obj) ?? STATE.UNLOADED]);
       if (pid === 7) return Buffer.from([0, 0, (A[obj] >> 8) & 0xff, A[obj] & 0xff]);
       if (obj === 4 && pid === 66) { this.log.push("read 4/66"); return Buffer.from("007230", "hex"); }

@@ -291,6 +291,8 @@ const en = {
     MEMORY_SERVICES_UNDECIDED: "It is not known which memory services this device's application takes (its SupportsExtendedMemoryServices option is not known), so Busforge does not access the memory that depends on it.",
     USER_MEMORY_UNSUPPORTED: "This device keeps memory above the classic 64 KB range, and its application does not declare the extended memory services. Busforge writes such memory as ETS does (A_UserMemory), but only as far as an ETS download it knows shows it: it does not read that memory, write across the 64 KB boundary or write it in a secured session, and refuses before sending anything.",
     DEVICE_MAX_APDU_INVALID: "The device declares a maximum telegram length too short to carry a memory write, so Busforge does not write to it.",
+    PROPERTY_RESPONSE_INVALID: "The device answered a property read with fewer octets than a property answer carries, so Busforge does not trust the answer.",
+    PROPERTY_READ_REFUSED: "The device answered a property read without a value (it does not have that property, or it refused the read), where Busforge needs the value. Busforge stopped instead of taking the answer as one.",
     PROPERTY_EXT_READ_REFUSED: "The device returned no value for a property of one of its interface objects (its security object, or the KNXnet/IP parameter object of an IP interface).",
     PROPERTY_EXT_WRITE_REFUSED: "The device refused a write to a property of one of its interface objects (its security object, or the KNXnet/IP parameter object of an IP interface).",
     PROPERTY_ADDRESS_INVALID: "Busforge refused to address a device property outside the range the service can carry.",

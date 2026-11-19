@@ -4,6 +4,7 @@ import { parseAppConfig, buildRelativeSegmentTarget, parseLoadProcedures } from 
 import { classify } from "../src/deviceprofile.ts";
 import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
+import { absentIfEmpty, refusedIfEmpty } from "../../../packages/product/test/property-reads.ts";
 
 // Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 31.0 s with the
 // file alone (load 5-27) and up to 31.0 s with every workspace's tests in parallel (load 5-8). A full check on a busy
@@ -61,10 +62,11 @@ corpusDescribe("the System B parameter flash against the real M-0162 application
     setExtendedMemoryServices() {}
     async setVerifyMode() {}
     async memWrite(addr: number, data: Buffer) { this.writes++; for (let i = 0; i < data.length; i++) { this.mem.set(addr + i, data[i]); this.written.add(addr + i); } }
-    async propRead(obj: number, pid: number) { if (pid === 27) return Buffer.from(this.stamps.get(obj) ?? this.stamp, "hex"); if (pid === 5) return Buffer.from([this.state.get(obj) ?? STATE.UNLOADED]); if (pid === 7) return Buffer.from([0, 0, (await this.tableAddr(obj)) >> 8, (await this.tableAddr(obj)) & 0xff]); return Buffer.alloc(0); }
+    async propRead(obj: number, pid: number) { return refusedIfEmpty(await this.propertyAnswer(obj, pid), obj, pid); }
+    async propReadIfPresent(obj: number, pid: number) { return absentIfEmpty(await this.propertyAnswer(obj, pid)); }
+    async propertyAnswer(obj: number, pid: number) { if (pid === 27) return Buffer.from(this.stamps.get(obj) ?? this.stamp, "hex"); if (pid === 5) return Buffer.from([this.state.get(obj) ?? STATE.UNLOADED]); if (pid === 7) return Buffer.from([0, 0, (await this.tableAddr(obj)) >> 8, (await this.tableAddr(obj)) & 0xff]); return Buffer.alloc(0); }
     // The association table described as the long form (PDT_GENERIC_04), as the tables this unit holds.
     async propertyDescription(obj: number, pid: number) { return { objectIndex: obj, pid, propertyIndex: 0, writable: true, pdt: 0x14, maxElements: 1, readLevel: 3, writeLevel: 3 }; }
-    async propReadIfPresent() { return null; }
     // The stamps the download's closing reads take (PID 27), on a standard-frame device.
     async propValueDataMax() { return 10; }
     async propReadCounted(obj: number, pid: number, start: number, count = 1) { return { objectIndex: obj, pid, count, start, value: pid === 27 ? Buffer.concat(Array.from({ length: count }, () => Buffer.from(this.stamps.get(obj) ?? this.stamp, "hex"))) : Buffer.alloc(8 * count) }; }

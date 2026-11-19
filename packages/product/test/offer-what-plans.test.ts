@@ -3,6 +3,7 @@ import { STATE, type KnxDevice } from "@busforge/knx";
 import { parseAppConfig, parseLoadProcedures, assessParCoverage, classify, maskInfo, planSystem7GaFlash, type AppConfig, type ComObjectLink, type KnxIpDevice } from "../src/index.ts";
 import { catalogueXml, listCatalogue } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
+import { absentIfEmpty, refusedIfEmpty } from "./property-reads.ts";
 
 // Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 0.4 s with the
 // file alone (load 5-27) and up to 0.3 s with every workspace's tests in parallel (load 5-8). A full check on a busy
@@ -144,7 +145,9 @@ class MockDevice {
   async authorizeFreeKey() { return 0; } // the level the Gira granted ETS's free key
   async memWrite(addr: number, data: Buffer) { this.writes++; data.forEach((b, i) => this.mem.set(addr + i, b)); }
   programId = Buffer.alloc(0);
-  async propRead(obj: number, pid: number) {
+  async propRead(obj: number, pid: number) { return refusedIfEmpty(await this.propertyAnswer(obj, pid), obj, pid); }
+  async propReadIfPresent(obj: number, pid: number) { return absentIfEmpty(await this.propertyAnswer(obj, pid)); }
+  async propertyAnswer(obj: number, pid: number) {
     this.propReads.push(`${obj}/${pid}`);
     if (pid === 5) return Buffer.from([STATE.LOADED]);
     if (obj === 3 && pid === 13) return this.programId;

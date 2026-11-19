@@ -5,6 +5,7 @@
 // memory or a property the collection did not read throws, so no path runs on invented bytes.
 import { STATE, transferChunks, type KnxDevice, type PropertyDescription } from "@busforge/knx";
 import { isMemoryMappedLsm } from "../src/masks.ts";
+import { absentIfEmpty, refusedIfEmpty } from "./property-reads.ts";
 
 const MM_CTRL = 0x0104, MM_STATE = 46825;
 
@@ -67,7 +68,7 @@ export class CollectedUnit {
     if (v !== null && v.length === 0) throw new Error("the collection holds an empty maximum APDU length (object 0 PID 56)");
     return transferChunks(v === null ? null : v.length >= 2 ? v.readUInt16BE(0) : v[0], false).classicRead;
   }
-  async tableAddr(obj: number) { let a = 0; for (const x of this.prop(obj, 7) ?? []) a = (a << 8) | x; return a; }
+  async tableAddr(obj: number) { let a = 0; for (const x of await this.propRead(obj, 7)) a = (a << 8) | x; return a; }
   async memRead(addr: number, len: number) {
     const out = Buffer.alloc(len);
     for (let i = 0; i < len; i++) {
@@ -105,12 +106,14 @@ export class CollectedUnit {
     if (!d) throw new Error(`the collection did not read the description of property ${obj}/${pid}`);
     return d;
   }
-  async propRead(obj: number, pid: number, start = 1) { return this.prop(obj, pid, start) ?? Buffer.alloc(0); }
-  async propReadIfPresent(obj: number, pid: number) { const v = this.prop(obj, pid); return v?.length ? v : null; }
+  async propRead(obj: number, pid: number, start = 1) { return refusedIfEmpty(this.prop(obj, pid, start) ?? Buffer.alloc(0), obj, pid, start); }
+  async propReadIfPresent(obj: number, pid: number, start = 1) { return absentIfEmpty(this.prop(obj, pid, start) ?? Buffer.alloc(0)); }
   async propReadCounted(obj: number, pid: number, start: number, count = 1) {
-    const value = Buffer.concat(Array.from({ length: count }, (_, i) => this.prop(obj, pid, start + i) ?? Buffer.alloc(0)));
+    // The elements up to the first one the unit refused: an answer of no element where it refused the first.
+    const elements: Buffer[] = [];
+    for (let i = 0; i < count; i++) { const v = this.prop(obj, pid, start + i); if (v === null) break; elements.push(v); }
     this.ops.push(`read ${obj}/${pid}#${start}${count > 1 ? `x${count}` : ""}`);
-    return { objectIndex: obj, pid, count, start, value };
+    return { objectIndex: obj, pid, count: elements.length, start, value: Buffer.concat(elements) };
   }
   async propWrite(obj: number, pid: number, data: Buffer, start = 1) {
     if (pid === 5 && isMemoryMappedLsm(this.mask)) throw new Error(`a PID 5 write to object ${obj} on memory-mapped mask ${this.mask}: its load controls go to 0x0104, and no capture shows how it takes this`);

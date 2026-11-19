@@ -238,9 +238,11 @@ export function planSystemBGaFlash(tables: { addr: Buffer; assoc: Buffer; comObj
 // LdCtrlCompareProp support: read a declared property and compare it against the
 // procedure's expected value (the pre-download hardware/application check ETS runs).
 // Trailing-zero padding in the expected value is tolerated: ETS pads InlineData to a
-// fixed width while devices return the property's real element size.
-export async function compareDeclaredProp(dev: KnxDevice, obj: number, pid: number, expect: Buffer, mask?: Buffer): Promise<{ ok: boolean; got: Buffer }> {
-  const got = await dev.propRead(obj, pid);
+// fixed width while devices return the property's real element size. A device that answers no
+// element gives no value to compare: `got` null, never a match.
+export async function compareDeclaredProp(dev: KnxDevice, obj: number, pid: number, expect: Buffer, mask?: Buffer): Promise<{ ok: boolean; got: Buffer | null }> {
+  const got = await dev.propReadIfPresent(obj, pid);
+  if (got === null) return { ok: false, got };
   // With a mask, only the bytes the mask selects must match (ABB's app-id check masks out the
   // manufacturer + version and compares only the application number). Without one, the read must
   // equal the declared value (a shorter read is accepted only if the missing tail is all zero).
@@ -466,8 +468,8 @@ export async function readMcbTable(dev: KnxDevice, obj: number, size = Infinity)
   const entries: McbEntry[] = [];
   for (let element = 1, covered = 0; covered < size; element++) {
     if (element > MCB_MAX_ELEMENTS) return null;
-    const e = await dev.propRead(obj, PID.MCB_TABLE, element);
-    if (e.length < MCB_ELEMENT_BYTES) break;
+    const e = await dev.propReadIfPresent(obj, PID.MCB_TABLE, element);
+    if (e === null || e.length < MCB_ELEMENT_BYTES) break;
     entries.push({ size: e.readUInt32BE(0), control: e[4], crc: e.readUInt16BE(6) });
     covered += e.readUInt32BE(0);
   }

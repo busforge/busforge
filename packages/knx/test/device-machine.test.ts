@@ -95,6 +95,45 @@ describe("KnxDevice request machine (frame level)", () => {
     }
   });
 
+  test("a read of a needed value refuses an answer of no element, the error octet behind it never taken as the value", async () => {
+    // PROPERTY_RESPONSE seq 0: obj 00, pid 07, count 0 / start 1 (00 01), then the device's error octet 07,
+    // with it and without it; and one element of the later element 2 that was not asked for.
+    for (const [answer, code] of [
+      [[0x43, 0xd6, 0x00, 0x07, 0x00, 0x01, 0x07], "PROPERTY_READ_REFUSED"],
+      [[0x43, 0xd6, 0x00, 0x07, 0x00, 0x01], "PROPERTY_READ_REFUSED"],
+      [[0x43, 0xd6, 0x00, 0x07, 0x10, 0x02, 0x12], "PROPERTY_RESPONSE_MISMATCH"],
+    ] as const) {
+      const tun = new FakeTransport();
+      const dev = new KnxDevice(tun, "1.1.11", undefined, FAST);
+      tun.handler = (tpdu) => {
+        if (ignorable(tpdu)) return;
+        const p = parseApdu(tpdu);
+        if (p.apci !== APCI.PROPERTY_READ) return;
+        tun.reply([0xc2 | (p.seq << 2)]);
+        tun.reply([...answer]);
+      };
+      const failure = await dev.propRead(0, 7).then((v) => v, (e: unknown) => e);
+      expect(failure).toBeInstanceOf(KnxError);
+      expect((failure as KnxError).code).toBe(code);
+      if (answer.length === 7 && code === "PROPERTY_READ_REFUSED") expect((failure as KnxError).message).toContain("error octet(s) 07");
+    }
+  });
+
+  test("an optional element past the property's end reads as absent: the element asked for goes out, and no element is null", async () => {
+    const tun = new FakeTransport();
+    const dev = new KnxDevice(tun, "1.1.11", undefined, FAST);
+    tun.handler = (tpdu) => {
+      if (ignorable(tpdu)) return;
+      const p = parseApdu(tpdu);
+      if (p.apci !== APCI.PROPERTY_READ) return;
+      tun.reply([0xc2 | (p.seq << 2)]);
+      tun.reply([0x43, 0xd6, 0x04, 0x1b, 0x00, 0x03, 0x07]); // obj 04, pid 1b (27), count 0, start 3, error octet
+    };
+    expect(await dev.propReadIfPresent(4, 27, 3)).toBeNull();
+    // PROPERTY_READ seq 0: obj 04, pid 1b, count 1 / start 3 = 10 03.
+    expect(tun.sent.filter((f) => !ignorable(f))[0].toString("hex")).toBe("43d5041b1003");
+  });
+
     test("retransmission: an unACKed request is resent byte-identically (same seq) after the ACK timeout", async () => {
     const tun = new FakeTransport();
     const dev = new KnxDevice(tun, "1.1.11", undefined, FAST);

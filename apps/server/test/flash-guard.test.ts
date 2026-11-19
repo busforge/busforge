@@ -39,7 +39,7 @@ corpusDescribe("LoadProcedure par coverage guard", () => {
     const xml = fixture("M-0083_A-00B4-32-3919.xml.gz");
     const profile = classify(parseAppConfig(xml));
     const err = await profile
-      .flashParameters(dev({ propRead: async () => Buffer.from("baadf00d", "hex") }), "0705", ctxFor(xml))
+      .flashParameters(dev({ propReadIfPresent: async () => Buffer.from("baadf00d", "hex") }), "0705", ctxFor(xml))
       .then(() => null, (e) => e);
     expect(err).toBeInstanceOf(ProductError);
     expect((err as ProductError).code).toBe("LOAD_PROC_CHECK_FAILED");
@@ -50,7 +50,7 @@ corpusDescribe("LoadProcedure par coverage guard", () => {
     const profile = classify(parseAppConfig(xml));
     // device returns the property's real 6-byte width; the procedure declares 10 padded bytes
     const stub = dev({
-      propRead: async () => Buffer.from("0000000002AA", "hex"),
+      propReadIfPresent: async () => Buffer.from("0000000002AA", "hex"),
       memRead: async () => { throw new Error("BACKUP-READ-REACHED"); },
     });
     const err = await profile.flashParameters(stub, "0705", ctxFor(xml)).then(() => null, (e) => e);
@@ -61,7 +61,7 @@ corpusDescribe("LoadProcedure par coverage guard", () => {
     const xml = fixture("M-0048_A-9071-20-F258-O00EF.xml.gz");
     const profile = classify(parseAppConfig(xml));
     const err = await profile
-      .flashParameters(dev({ propRead: async () => Buffer.from("ffff", "hex") }), "07B0", ctxFor(xml))
+      .flashParameters(dev({ propReadIfPresent: async () => Buffer.from("ffff", "hex") }), "07B0", ctxFor(xml))
       .then(() => null, (e) => e);
     expect(err).toBeInstanceOf(ProductError);
     expect((err as ProductError).code).toBe("LOAD_PROC_CHECK_FAILED");
@@ -85,8 +85,8 @@ corpusDescribe("the M-0081_A-FE01-11-75D9 full download's pre-flight", () => {
   const ctx = { ...ctxFor(xml), ia: "1.2.7", links: [] };
   const PROGRAM_ID = Buffer.from("0081fe0111", "hex");
   const reads: string[] = [];
-  const unit = (programId: Buffer) => dev({
-    propRead: async (obj: number, pid: number) => {
+  const unit = (programId: Buffer | null) => dev({
+    propReadIfPresent: async (obj: number, pid: number) => {
       reads.push(`${obj}/${pid}`);
       if (obj === 3 && pid === 13) return programId;
       throw new Error(`unexpected property read ${obj}/${pid}`);
@@ -99,7 +99,7 @@ corpusDescribe("the M-0081_A-FE01-11-75D9 full download's pre-flight", () => {
     reads.length = 0;
     expect(pastPreflight(await run(unit(PROGRAM_ID)))).toBe(true);
     expect(pastPreflight(await run(unit(Buffer.alloc(5))))).toBe(true);
-    expect(pastPreflight(await run(unit(Buffer.alloc(0))))).toBe(true);
+    expect(pastPreflight(await run(unit(null)))).toBe(true); // no element: no application
     expect(new Set(reads)).toEqual(new Set(["3/13"]));
   });
   test("a unit that holds another application is refused with LOAD_PROC_CHECK_FAILED", async () => {

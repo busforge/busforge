@@ -7,6 +7,7 @@ import {
   buildComObjectTable, buildComObjectTableMv0705, decodeComObjectTable, decodeComObjectTableMv0705, deviceComObjOverrideRows, comObjFlagsDiffering, changedEntryBits,
   type CfgComObjImage, type ComObjInstanceOverride, type ObservedComObjFlags,
 } from "../src/index.ts";
+import { absentIfEmpty, refusedIfEmpty } from "./property-reads.ts";
 
 // Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 3.7 s with the
 // file alone (load 5-27) and up to 3.5 s with every workspace's tests in parallel (load 5-8). A full check on a busy
@@ -171,12 +172,13 @@ corpusDescribe("a System B unit holding a flag the project does not record", () 
     // The association table described as the long form (PDT_GENERIC_04), as the tables this unit holds.
     pdt = 0x14;
     async propertyDescription(obj: number, pid: number) { return { objectIndex: obj, pid, propertyIndex: 0, writable: true, pdt: this.pdt, maxElements: 1, readLevel: 3, writeLevel: 3 }; }
-    async propRead(obj: number, pid: number) {
+    async propRead(obj: number, pid: number) { return refusedIfEmpty(await this.propertyAnswer(obj, pid), obj, pid); }
+    async propReadIfPresent(obj: number, pid: number) { return absentIfEmpty(await this.propertyAnswer(obj, pid)); }
+    async propertyAnswer(obj: number, pid: number) {
       if (pid === 5) return Buffer.from([this.state.get(obj) ?? STATE.UNLOADED]);
       if (pid === 7) { const a = this.addr.get(obj) ?? 0; return Buffer.from([(a >> 24) & 0xff, (a >> 16) & 0xff, (a >> 8) & 0xff, a & 0xff]); }
       return Buffer.alloc(0);
     }
-    async propReadIfPresent() { return null; }
     async propValueDataMax() { return 10; }
     async propReadCounted(obj: number, pid: number, start: number, count = 1) { return { objectIndex: obj, pid, count, start, value: Buffer.alloc(8 * count) }; }
     async propWrite(obj: number, pid: number, data: Buffer) {

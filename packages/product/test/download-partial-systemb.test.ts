@@ -5,6 +5,7 @@ import {
 } from "@busforge/product";
 import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
+import { absentIfEmpty, refusedIfEmpty } from "./property-reads.ts";
 
 // Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 12.5 s with the
 // file alone (load 5-27) and up to 12.3 s with every workspace's tests in parallel (load 5-8). A full check on a busy
@@ -78,7 +79,9 @@ corpusDescribe("System B full download on a unit holding the application (mock u
     }
     // The association table described as the long form (PDT_GENERIC_04), as the tables this unit holds.
     async propertyDescription(obj: number, pid: number) { return { objectIndex: obj, pid, propertyIndex: 0, writable: true, pdt: 0x14, maxElements: 1, readLevel: 3, writeLevel: 3 }; }
-    async propRead(obj: number, pid: number, start = 1) {
+    async propRead(obj: number, pid: number, start = 1) { return refusedIfEmpty(await this.propertyAnswer(obj, pid, start), obj, pid, start); }
+    async propReadIfPresent(obj: number, pid: number, start = 1) { return absentIfEmpty(await this.propertyAnswer(obj, pid, start)); }
+    async propertyAnswer(obj: number, pid: number, start = 1) {
       const check = declaredPropChecks(cfg.loadProcedures, "full").find((c) => c.obj === obj && c.pid === pid);
       if (check) return check.expect; // the hardware type the application declares, as the unit reports it
       if (pid === PID_LSM) return Buffer.from([this.state.get(obj) ?? STATE.UNLOADED]);

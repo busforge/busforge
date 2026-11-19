@@ -409,9 +409,9 @@ export async function secureIdentify(
   const identify = (creds?: SecureCreds) => withDeviceSession(connection, ia, null, onProgress, async (dev, mask) => {
     // Device object (0), serial-number property (PID 11). A device in secure mode answers a plain
     // read with no element (the Jung 400021SE): no serial then, never an empty one.
-    const sn = await dev.propRead(0, 11);
+    const sn = await dev.propReadIfPresent(0, 11);
     const securityMode = await readSecurityMode(dev);
-    return { secure: creds !== undefined, mask, serial: sn.length > 0 ? sn.toString("hex") : null, securityMode };
+    return { secure: creds !== undefined, mask, serial: sn?.length ? sn.toString("hex") : null, securityMode };
   }, creds);
   if (!secure) return identify();
   try {

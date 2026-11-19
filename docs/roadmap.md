@@ -132,12 +132,10 @@ depends on is hardware-proven.
   through a fresh tunnel each time; a `KnxIpTunnel` used directly (tools) and reopened without a
   disconnect leaks its earlier UDP socket and, after a failed connect, sends its disconnect for the
   earlier channel. Close the old socket on every connect and disconnect only an established channel.
-- **Echo checks on every management answer.** A memory read refuses an answer for another address,
-  a repeated data frame is dropped at the transport layer, and every request takes only its own
-  answer service. `propRead` still takes a property answer for another object, PID or start: a late
-  answer to an abandoned earlier property read would be taken as its own. Check the echo, as
-  `propReadIfPresent` does. A data frame the device addresses to another tool's address is also still
-  taken (and acknowledged) by the session.
+- **Echo checks on every management answer.** A memory read refuses an answer for another address, a
+  property read one for another object, PID or start, a repeated data frame is dropped at the
+  transport layer, and every request takes only its own answer service. A data frame the device
+  addresses to another tool's address is still taken (and acknowledged) by the session as the answer.
 - **The stale answer after a cut-off flash, on hardware.** That a session straight after a write cut
   inside its load bracket drops the device's repeated answer and reads the real mask is shown against
   a scripted device only ([findings.md](findings.md) §31). A cut on the bench with the transport
