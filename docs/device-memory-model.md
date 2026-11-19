@@ -84,6 +84,13 @@ nor written to the image. This is the mechanism ETS uses and it mirrors what the
 does at runtime, where the controlling value routes execution down one path and the code for
 the other path is never entered.
 
+The `default` branch belongs to a controlling ParameterRef that is itself placed (a reached
+`ParameterRefRef`, or, for a memoryless parameter, the `ParamRefId` heading a reached block): a choose
+on a ref nothing places takes only the branches its tests match, not its default. Where no ETS download
+shows the default branch (an `Access="None"` ref, or a parameter with memory that only heads a block),
+both readings are built and a configuration they image differently is refused
+([findings.md](findings.md#11-a-choose-on-a-parameterref-nothing-places-takes-no-default-branch)).
+
 `buildDeviceConfig` (`packages/product/src/config.ts`) walks the Dynamic tree with the
 current values and collects `imageValues`: the effective value of every parameter reached in
 the active branches. That includes `Access="None"` internal parameters, which ETS hides from
@@ -370,9 +377,11 @@ rather than writing a wrong-sized value.
 A DPT-9 value is encoded as ETS writes it: the smallest exponent whose mantissa fits, the
 mantissa rounded once, at that exponent, from the exact decimal value. 1000 Lux is `36 1A`
 (100000 / 2^6 = 1562.5 → 1562); ETS's download of an MDT BE-02001.02 shows it. 10000 is
-`4F A1` (1953.125 → 1953). A tie goes to the even mantissa; every tie ETS has shown had an even
-lower neighbour, so a tie like 20.51 (1025.5) is not yet backed by a capture. A mantissa one
-step off passes a read-back unseen, since the device holds what was written.
+`4F A1` (1953.125 → 1953). A tie goes to the even mantissa, up or down, and a negative value
+rounds its magnitude the same way: ETS writes 20.51 as `0C 02` (1025.5 → 1026), 20.53 as `0C 02`
+(1026.5 → 1026) and -20.51 and -20.53 both as `8B FE` (-1026), and rounds 41.03 (1025.75) to `14 02`
+rather than truncating it, shown by ETS's downloads of the same MDT input. A mantissa one step
+off passes a read-back unseen, since the device holds what was written.
 
 A DPT-9 value outside -671088.64 to 670433.28 is refused
 (`PARAM_VALUE_OUT_OF_RANGE`), not saturated: `7F FF` is DPT 9's "invalid data", so a saturated maximum
@@ -497,7 +506,11 @@ That per-instance base comes from one of two interchangeable sources:
   `<Allocators>` to compute the identical value. The counter is `Start + cumulative
   Allocates`, walked over the visibility-resolved active tree, with `<Repeat Count="k">`
   instantiating k copies. The re-run was validated against real multi-channel devices,
-  reproducing all 67 of their project-pinned module instances exactly.
+  reproducing all 67 of their project-pinned module instances exactly. Its walk evaluates the
+  chooses on its own, with each default branch decided as the configuration decides it; a re-run
+  set holding an instance of a `<Module>` the configuration does not reach is refused
+  (`MODULE_INSTANCES_UNREACHED`), because that instance has moved the allocators every later one
+  starts from.
 
 Both memory models resolve module offsets, and both have been exercised on hardware
 ([status.md](status.md)).

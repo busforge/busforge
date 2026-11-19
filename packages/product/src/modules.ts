@@ -1,5 +1,5 @@
 import type { AppConfig, DynNode, ModuleInstance } from "./appconfig.ts";
-import { matchTest } from "./config.ts";
+import { defaultBranchOf, matchTest, unsettledDefaultRefusal } from "./config.ts";
 import { ProductError } from "./errors.ts";
 
 // A module argument's value as a number where it is used as one (a memory base offset, a com-object
@@ -24,11 +24,35 @@ export const moduleArgNumber = (value: string): number => (/^-?\d+$/.test(value)
 // binds an argument to an allocator takes the current counter and advances it by that
 // argument's `allocates`. A `<Repeat Count="k">` replays its body k times, so a six-channel
 // block yields six instances at start, start+allocates, ... A `choose` descends only into
-// the matching branch, so inactive device variants neither render nor allocate.
+// the matching branch, so inactive device variants neither render nor allocate. Its default branch is taken
+// where the configuration takes it (config.ts defaultBranchOf), with the refs placed by reached ParameterRefRefs
+// and the refs heading reached blocks found by walking until they settle. Where no ETS download decides a default
+// branch, the instances are allocated with it taken and without, and refused (CHOOSE_DEFAULT_UNSETTLED) where the
+// two differ.
 export function resolveModuleInstances(app: AppConfig, env: Map<string, string>): ModuleInstance[] {
+  const settled = (takeOpen: boolean) => {
+    let seen = { placed: new Set<string>(), heads: new Set<string>() };
+    const same = (a: Set<string>, b: Set<string>) => a.size === b.size && [...a].every((r) => b.has(r));
+    for (let pass = 0; ; pass++) {
+      const run = allocate(app, env, seen, takeOpen);
+      if (same(run.placed, seen.placed) && same(run.heads, seen.heads)) return run;
+      if (pass >= 50) throw new ProductError("CONFIG_NOT_RESOLVABLE", "the application's parameter visibility does not settle while its module instances are allocated");
+      seen = run;
+    }
+  };
+  const taken = settled(true);
+  if (!taken.open.size) return taken.out;
+  if (JSON.stringify(settled(false).out) !== JSON.stringify(taken.out)) throw unsettledDefaultRefusal([...taken.open]);
+  return taken.out;
+}
+
+// One allocation walk over the placement `before` found. `open`: the chooses whose default branch it took or left
+// by `takeOpen` alone.
+function allocate(app: AppConfig, env: Map<string, string>, before: { placed: Set<string>; heads: Set<string> }, takeOpen: boolean): { out: ModuleInstance[]; placed: Set<string>; heads: Set<string>; open: Set<string> } {
   const alloc = new Map<string, number>();
   for (const a of app.allocators.values()) alloc.set(a.id, a.start);
   const out: ModuleInstance[] = [];
+  const placed = new Set<string>(), heads = new Set<string>(), open = new Set<string>();
   const miCount = new Map<string, number>(); // module-node id -> instances seen so far (for MI-n)
 
   const strip = (id: string) => (id.startsWith(`${app.id}_`) ? id.slice(app.id.length + 1) : id);
@@ -50,6 +74,7 @@ export function resolveModuleInstances(app: AppConfig, env: Map<string, string>)
     for (const n of nodes) {
       switch (n.kind) {
         case "block":
+          if (n.paramRefId) heads.add(rewrite(n.paramRefId));
           walk(n.children, rewrite);
           break;
         case "container":
@@ -58,12 +83,19 @@ export function resolveModuleInstances(app: AppConfig, env: Map<string, string>)
           break;
         case "choose": {
           // ETS evaluates EVERY matching <when>, not just the first (see config.ts
-          // selectWhens); the default fires only when none match. Allocation must walk the
-          // same branches the config/image walk does, or a from-scratch device's instance
-          // set would diverge from ETS's.
+          // selectWhens); the default is taken only when none match, by defaultBranchOf. Allocation
+          // must walk the same branches the config/image walk does, or a from-scratch device's
+          // instance set would diverge from ETS's.
           const v = effVal(n.paramRefId, rewrite);
           const matched = n.whens.filter((x) => !x.isDefault && x.test !== undefined && matchTest(x.test, v));
-          const branches = matched.length ? matched : n.whens.filter((x) => x.isDefault);
+          const def = n.whens.find((x) => x.isDefault);
+          const id = rewrite(n.paramRefId);
+          let branches = matched;
+          if (!matched.length && def) {
+            const rule = defaultBranchOf(app, n.paramRefId, before.placed.has(id), before.heads.has(id));
+            if (rule === "open" && def.children.length) open.add(id);
+            branches = rule === "take" || (rule === "open" && takeOpen) ? [def] : [];
+          }
           for (const w of branches) walk(w.children, rewrite);
           break;
         }
@@ -103,15 +135,17 @@ export function resolveModuleInstances(app: AppConfig, env: Map<string, string>)
           walk(def.dynamic, childRewrite);
           break;
         }
-        // Leaves. This walk exists to reproduce ETS's ALLOCATOR bookkeeping, and none of these
-        // carry children or consume an allocator, so there is nothing here to do. They are listed
-        // rather than left to a `default`, so that a node kind added later cannot be skipped
-        // silently by a walk that decides where a module's memory lands.
-        case "paramRef": case "comObjRef": case "separator": case "button": case "assign": case "unsupported":
+        // Leaves. None carries children or consumes an allocator; a ParameterRefRef places its ref, which
+        // decides a later pass's default branches. They are listed rather than left to a `default`, so that
+        // a node kind added later cannot be skipped silently by a walk that decides where a module's memory lands.
+        case "paramRef":
+          placed.add(rewrite(n.refId));
+          break;
+        case "comObjRef": case "separator": case "button": case "assign": case "unsupported":
           break;
       }
     }
   };
   walk(app.dynamic, (s) => s);
-  return out;
+  return { out, placed, heads, open };
 }

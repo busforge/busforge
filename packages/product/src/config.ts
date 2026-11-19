@@ -264,6 +264,13 @@ export interface DeviceConfigBuild extends DeviceConfigView {
   // (device value, a placed sibling ref's value, ref or parameter default) against the final
   // working values after the walk. An unknown ref yields only a value stored under that id.
   paramValue: (refId: string) => string | undefined;
+  // The reading in which the chooses whose default branch no ETS download decides (unsettledChooses, by ref id) do
+  // not take it, where it reaches other values with memory than this one but the same com-objects. The segment
+  // builders build both and refuse where their bytes differ (buildDeviceConfig).
+  otherReading?: DeviceConfigBuild;
+  unsettledChooses?: string[];
+  // The Module nodes (by id) the image pass reached.
+  modulesReached: Set<string>;
 }
 
 interface Scope {
@@ -404,12 +411,80 @@ const textParamPlaceholder = /\{\{0(?::([^{}]*))?\}\}/g;
 const fillTextParam = (text: string, value: string | undefined): string =>
   value === undefined ? text : text.replace(textParamPlaceholder, (_m, def: string | undefined) => (value !== "" ? value : def ?? ""));
 
+// A choose on a ParameterRef no active branch places takes no default branch (docs/findings.md, "A choose on a
+// ParameterRef nothing places takes no default branch"); one on a memoryless parameter heading a reached block
+// takes it. ETS's downloads show both; none shows a choose on an Access="None" ref nothing places (an internal
+// value no branch places by design) or on a parameter with memory that only heads a reached block. Such a choose
+// is built both ways: other com-objects refuse the configuration here, its view included; other values with
+// memory are left to the segment builders, which refuse where the two readings make other bytes.
 export function buildDeviceConfig(
   app: AppConfig,
   overrides: Map<string, string>,
   lang?: string,
   moduleInstances: ModuleInstance[] = [],
 ): DeviceConfigBuild {
+  const taken = buildDeviceConfigReading(app, overrides, lang, moduleInstances, true);
+  if (!taken.unsettled.size) return taken.build;
+  const skipped = buildDeviceConfigReading(app, overrides, lang, moduleInstances, false).build;
+  const unsettledChooses = [...taken.unsettled];
+  const same = (x: unknown, y: unknown) => JSON.stringify(x) === JSON.stringify(y);
+  // Other com-objects make another com-object table.
+  const objects = (b: DeviceConfigBuild) => [...b.imageComObjects].sort((x, y) => x[0] - y[0]);
+  if (!same(objects(taken.build), objects(skipped))) throw unsettledDefaultRefusal(unsettledChooses);
+  // A value without memory or property reaches no byte, except as the input of a calculation; what it gates shows
+  // in the other entries.
+  const calculated = new Set([...app.calculationRefs].map((r) => resolveParamRef(app, r)?.param?.id));
+  const reaches = (refId: string) => {
+    const p = resolveParamRef(app, refId)?.param;
+    return !!p && (holdsValue(p) || calculated.has(p.id));
+  };
+  const byId = (x: string, y: string) => x.localeCompare(y);
+  const imageInput = (b: DeviceConfigBuild) => [
+    [...b.imageValues].filter(([r]) => reaches(r)).sort((x, y) => byId(x[0], y[0])),
+    [...b.rejectedRefs].filter(reaches).sort(byId),
+  ];
+  if (same(imageInput(taken.build), imageInput(skipped))) return taken.build;
+  return { ...taken.build, otherReading: skipped, unsettledChooses };
+}
+
+// Whether a parameter's value is held by the device: in memory or in a property.
+const holdsValue = (p: CfgParam): boolean => p.hasMemory || !!p.onProperty;
+
+// What a choose none of whose tests matches does with its default branch: takes it on a ParameterRef an active
+// branch places ("take"), and on a memoryless parameter heading a reached block; not on a ref nothing places
+// ("skip"); "open" where no ETS download decides it (buildDeviceConfig). Shared with the module allocator.
+export function defaultBranchOf(app: AppConfig, defRefId: string, placed: boolean, heads: boolean): "take" | "skip" | "open" {
+  const ref = app.refs.get(defRefId);
+  if (!ref || placed) return "take";
+  const param = app.params.get(ref.paramId);
+  if (heads) return param && holdsValue(param) ? "open" : "take";
+  return (ref.access ?? param?.access) === "None" ? "open" : "skip";
+}
+
+// Module instances the allocators were re-run for (resolveModuleInstances) are refused where one belongs to a Module
+// node the configuration does not reach: the allocator evaluates the chooses on its own, and an instance it placed in
+// a branch the configuration does not take has advanced the allocators the instances after it start from.
+export function refuseUnreachedInstances(app: AppConfig, build: DeviceConfigBuild, instances: ModuleInstance[]): void {
+  const off = instances.filter((mi) => !build.modulesReached.has(`${app.id}_${mi.refId}`));
+  if (off.length) {
+    throw new ProductError("MODULE_INSTANCES_UNREACHED", `the module instances re-run for this configuration include ${off.length} the configuration does not reach (e.g. ${off[0].id}), so where the instances after them lie in memory is not known; a device imported from an ETS project carries ETS's own instances`);
+  }
+}
+
+// Every reading of a configuration: the build, and the other reading where it has one (buildDeviceConfig).
+export const readingsOf = (b: DeviceConfigBuild): DeviceConfigBuild[] => (b.otherReading ? [b, b.otherReading] : [b]);
+
+export const unsettledDefaultRefusal = (chooses: string[] | undefined) => new ProductError("CHOOSE_DEFAULT_UNSETTLED",
+  `this configuration images differently depending on whether a <choose> takes its default branch${chooses?.length ? ` (on ${chooses.slice(0, 5).join(", ")})` : ""}: its ParameterRef is Access="None" and no active branch places it, or it has memory and only heads a reached block, and no ETS download shows which; an ETS download of this application in this configuration settles it`);
+
+function buildDeviceConfigReading(
+  app: AppConfig,
+  overrides: Map<string, string>,
+  lang: string | undefined,
+  moduleInstances: ModuleInstance[],
+  // Whether a choose whose default branch no ETS download decides takes it (buildDeviceConfig).
+  takeOpenDefaults: boolean,
+): { build: DeviceConfigBuild; unsettled: Set<string> } {
   const language = resolveLanguage(app, lang);
   // A from-scratch device (placed from the catalogue, no imported 0.xml) has no pinned
   // module instances. Re-run the allocators to synthesise the same set ETS would compile,
@@ -451,6 +526,11 @@ export function buildDeviceConfig(
   // fixed before the walks below, and all of them read the same one. It is found by walking the tree
   // until it no longer changes.
   let placement = new Map<string, Set<string>>();
+  // The ParameterRefs (instance-scoped) heading a reached ParameterBlock: placed for a choose's default branch,
+  // not for the value they resolve to. Fixed with `placement`.
+  let headed = new Set<string>();
+  // The chooses (by instance-scoped ref id) whose default branch only takeOpenDefaults decides.
+  const unsettled = new Set<string>();
   const refsOfParam = new Map<string, string[]>();
   for (const r of app.refs.values()) (refsOfParam.get(r.paramId) ?? refsOfParam.set(r.paramId, []).get(r.paramId)!).push(r.id);
   const storedOn = (refIds: string[], scope: Scope, e: Map<string, string>): string | undefined => {
@@ -513,17 +593,32 @@ export function buildDeviceConfig(
   // param (bits 0-1) AND whose whens "0 1"/"2 3 4" place a union member (bits 2-3), so
   // every P-1 value matches two whens and ETS places both. First-match-wins left the
   // union bits unwritten (hardware-confirmed on an RMG 8 S: P-1=0 -> UP-11=2, P-1=2 -> UP-12=0).
+  //
+  // The default branch belongs to a ParameterRef an active branch places. A choose on a ref nothing places takes
+  // no default branch: ETS's full downloads of bussard's syn-choose-never-shown (a never-shown parameter) and
+  // syn-choose-per-ref (the unplaced second ref of a shown parameter) leave the com-object of the only, default
+  // branch out, and the second's download with that ref placed writes it. Its tests still count: the Jung
+  // 400021SE's choose on its unplaced R-1 and the OpenKNX RaumController's on unplaced internal values place what
+  // ETS writes. A memoryless parameter heading a reached block counts as placed: on the Gira, Theben and ABB
+  // products the captures show, ETS takes the default branch of a choose on such a page parameter.
   const selectWhens = (defParamRefId: string, whens: DynWhen[], scope: Scope, e: Map<string, string> = env): DynWhen[] => {
     // A choose on a union member that no active branch places matches none of its tests: that
     // member holds no value, since its union's memory belongs to whichever member is placed (GVS
     // AMMA, ETS partial download: tests of 0 on the idle Forced/Delay/Counter members
     // placed no object in ETS). An unset Merker still reads as 0 here.
-    if (isUnplacedUnionMember(defParamRefId, scope, e)) { const def = whens.find((w) => w.isDefault); return def ? [def] : []; }
-    const v = Number(resolve(defParamRefId, scope, e) ?? 0);
-    const matched = whens.filter((w) => !w.isDefault && w.test !== undefined && matchTest(w.test, v));
-    if (matched.length) return matched;
+    if (!isUnplacedUnionMember(defParamRefId, scope, e)) {
+      const v = Number(resolve(defParamRefId, scope, e) ?? 0);
+      const matched = whens.filter((w) => !w.isDefault && w.test !== undefined && matchTest(w.test, v));
+      if (matched.length) return matched;
+    }
     const def = whens.find((w) => w.isDefault);
-    return def ? [def] : [];
+    if (!def) return [];
+    const ref = app.refs.get(defParamRefId);
+    const placed = !!ref && !!placement.get(scope.rewrite(ref.paramId))?.has(defParamRefId);
+    const rule = defaultBranchOf(app, defParamRefId, placed, headed.has(scope.rewrite(defParamRefId)));
+    if (rule !== "open") return rule === "take" ? [def] : [];
+    if (def.children.length) unsettled.add(scope.rewrite(defParamRefId));
+    return takeOpenDefaults ? [def] : [];
   };
 
   // A parameter's label as ETS shows it: the ParameterRef's own Text where it declares a non-empty
@@ -844,8 +939,9 @@ export function buildDeviceConfig(
   };
   // The placement the walks read (see resolve): the image pass's traversal, recording only which
   // refs it places, repeated until the placement it finds is the one it walked with.
-  const findPlacement = (): Map<string, Set<string>> => {
+  const findPlacement = (): { found: Map<string, Set<string>>; heads: Set<string> } => {
     const found = new Map<string, Set<string>>();
+    const heads = new Set<string>();
     const penv = new Map(overrides);
     const visit = (nodes: DynNode[], scope: Scope) => {
       for (const n of nodes) {
@@ -858,29 +954,35 @@ export function buildDeviceConfig(
           }
           case "assign": penv.set(scope.rewrite(n.target), n.value ?? (n.source ? resolve(n.source, scope, penv) ?? "" : "")); break;
           case "choose": for (const w of selectWhens(n.paramRefId, n.whens, scope, penv)) visit(w.children, scope); break;
-          case "container": case "block": visit(n.children, scope); break;
+          case "container": visit(n.children, scope); break;
+          case "block": if (n.paramRefId) heads.add(scope.rewrite(n.paramRefId)); visit(n.children, scope); break;
           case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) visit(def.dynamic, makeScope(n.refId, def, inst)); break; }
           case "comObjRef": case "button": case "separator": case "unsupported": break;
         }
       }
     };
     visit(app.dynamic, TOP);
-    return found;
+    return { found, heads };
   };
-  const samePlacement = (a: Map<string, Set<string>>, b: Map<string, Set<string>>) =>
-    a.size === b.size && [...a].every(([k, v]) => { const w = b.get(k); return !!w && w.size === v.size && [...v].every((x) => w.has(x)); });
+  const sameSet = (a: Set<string>, b: Set<string>) => a.size === b.size && [...a].every((x) => b.has(x));
+  const samePlacement = (a: { found: Map<string, Set<string>>; heads: Set<string> }, b: { found: Map<string, Set<string>>; heads: Set<string> }) =>
+    sameSet(a.heads, b.heads) && a.found.size === b.found.size && [...a.found].every(([k, v]) => { const w = b.found.get(k); return !!w && sameSet(v, w); });
   // A placement seen before without having settled is a cycle: the application admits no single
   // reading of its shared values, and picking one of the cycle's states would be a guess.
-  const seen: Map<string, Set<string>>[] = [];
+  const seen: { found: Map<string, Set<string>>; heads: Set<string> }[] = [];
   for (;;) {
     const next = findPlacement();
-    if (samePlacement(next, placement)) break;
+    const current = { found: placement, heads: headed };
+    if (samePlacement(next, current)) break;
     if (seen.some((p) => samePlacement(p, next))) {
       throw new ProductError("CONFIG_NOT_RESOLVABLE", "the application's parameter visibility does not settle: which parameter references are active keeps changing with the values they share");
     }
-    seen.push(placement);
-    placement = next;
+    seen.push(current);
+    placement = next.found;
+    headed = next.heads;
   }
+  // Only the walks over the settled placement decide which defaults are open.
+  unsettled.clear();
 
   const roots: Node[] = [];
   const outsideEveryContainer: CfgItem[] = [];
@@ -903,6 +1005,7 @@ export function buildDeviceConfig(
   // UI env (which would mis-select branches controlled by a later Assign).
   const imageValues = new Map<string, string>();
   const imageComObjects = new Map<number, CfgComObjImage>();
+  const modulesReached = new Set<string>();
   const imgEnv = new Map(overrides);
   const imgCollect = (nodes: DynNode[], scope: Scope) => {
     for (const n of nodes) {
@@ -946,7 +1049,7 @@ export function buildDeviceConfig(
         // paramRef/comObjRef children walked here, exactly as in a list block.
         case "button": break;
         case "container": case "block": imgCollect(n.children, scope); break;
-        case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) imgCollect(def.dynamic, makeScope(n.refId, def, inst)); break; }
+        case "module": { modulesReached.add(n.id); const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) imgCollect(def.dynamic, makeScope(n.refId, def, inst)); break; }
         // Neither owns a byte of the parameter image: a separator is a caption, and an unsupported
         // node is one the config layer already refuses to render. Listed rather than defaulted, so
         // a node kind added later cannot silently drop out of the image the device is programmed
@@ -1025,7 +1128,9 @@ export function buildDeviceConfig(
     throw new ProductError("CONFIG_VIEW_INCOMPLETE", `the configuration view does not match the active communication objects (not listed: ${unlisted.slice(0, 10).join(", ") || "none"}; listed but inactive: ${inactive.slice(0, 10).join(", ") || "none"}); their links would be lost`);
   }
 
-  return { blocks, hasModules: app.hasModules, dca: app.dca, imageValues, rejectedRefs, imageComObjects, maxComObjectNumber, paramValue: (refId) => resolve(refId, TOP) };
+  const build: DeviceConfigBuild = { blocks, hasModules: app.hasModules, dca: app.dca, imageValues, rejectedRefs, imageComObjects, maxComObjectNumber, modulesReached, paramValue: (refId) => resolve(refId, TOP) };
+  if (!moduleInstances.length) refuseUnreachedInstances(app, build, instances);
+  return { build, unsettled };
 }
 
 // One com-object of an application program's full declaration, resolved the way the

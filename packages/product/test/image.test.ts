@@ -48,8 +48,20 @@ describe("DPT-9 float codec", () => {
     // internal/captures/progmode-end-2026-11-19/h1-mdt-lux1000-download.log line 351:
     // MEMORY_WRITE 44a4 001d361a0000010000000000).
     expect(encodeDpt9(1000)).toBe(0x361a);
-    // Values KNXBench reports from ETS 6.4 (its logs are private, so a lead, not our capture). Every tie
-    // here and above has an even lower neighbour, so none tells half-to-even from half-down; 25000 tells
+    // Ties to even in both directions and on both signs: ETS 6.4.1, the same input B as
+    // "Werte/Szenen umschalten" with four values at 0x44A6, 0x44AA, 0x44AE, 0x44B2 (private corpus
+    // internal/captures/restart-end-2026-11-19/, lines 351, 359 and 367 of each log).
+    // b1-mdt-lux-ties-download.log, DPT 9.004:
+    expect(encodeDpt9(20.51)).toBe(0x0c02); // 2051 / 2 = 1025.5 -> 1026 (half-down: 0C01)
+    expect(encodeDpt9(20.53)).toBe(0x0c02); // 2053 / 2 = 1026.5 -> 1026 (half-up: 0C03)
+    expect(encodeDpt9(41.02)).toBe(0x1402); // 4102 / 4 = 1025.5 -> 1026
+    expect(encodeDpt9(41.03)).toBe(0x1402); // 4103 / 4 = 1025.75 -> 1026 (truncation: 1401)
+    // b2-mdt-temp-neg-ties-download.log, DPT 9.001: the magnitude rounds as above, then takes the sign.
+    expect(encodeDpt9(-20.51)).toBe(0x8bfe); // -1025.5 -> -1026 (toward zero: 8BFF)
+    expect(encodeDpt9(-20.53)).toBe(0x8bfe); // -1026.5 -> -1026 (away from zero or floor: 8BFD)
+    expect(encodeDpt9(-41.02)).toBe(0x93fe);
+    expect(encodeDpt9(-41.03)).toBe(0x93fe);
+    // Values KNXBench reports from ETS 6.4 (its logs are private, so a lead, not our capture): 25000 tells
     // rounding from truncation, 32.45 the decimal value from the double 3245.0000000000005.
     expect(encodeDpt9(32.09)).toBe(0x0e44); // 3209 / 2 = 1604.5 -> 1604
     expect(encodeDpt9(32.45)).toBe(0x0e56); // 3245 / 2 = 1622.5 -> 1622

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseAppConfig } from "../src/appconfig.ts";
 import { buildDeviceConfig, matchTest, resolveLanguage, type CfgParamView, type CfgItem } from "../src/config.ts";
+import { buildAbsoluteSegmentTargets, buildRelativeSegmentTarget } from "../src/deviceimage.ts";
 
 const xml = readFileSync(join(import.meta.dir, "fixtures", "sample-app.xml"), "utf8");
 const app = parseAppConfig(xml);
@@ -792,6 +793,94 @@ test("a placement that never settles is refused, not picked", () => {
       <choose ParamRefId="M-TEST_A-41_P-1_R-B"><when test="0"><ParameterRefRef RefId="M-TEST_A-41_P-1_R-A" /></when></choose>
     </ParameterBlock></ChannelIndependentBlock></Dynamic></ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
   expect(() => buildDeviceConfig(parseAppConfig(xml), new Map())).toThrow(/does not settle/);
+});
+
+// A choose's default branch belongs to a ParameterRef an active branch places; on a ref nothing places it is not
+// taken (bussard's syn-choose-never-shown and syn-choose-per-ref, tools/bussard-com-object-zero.test.ts), while a
+// ref heading a reached block counts as placed (the Gira, Theben and ABB page parameters). For an Access="None"
+// ref no ETS download shows it: both readings are built, and a configuration they image differently is refused.
+describe("a choose on a ParameterRef nothing places", () => {
+  const xml = (opts: { access?: string; head?: "page" | "gate"; gateMemory?: boolean; place?: boolean; branch?: string; absolute?: boolean } = {}) => `<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-TEST">
+    <ApplicationPrograms><ApplicationProgram Id="M-TEST_A-44" ApplicationNumber="44" ApplicationVersion="1" MaskVersion="${opts.absolute ? "MV-0705" : "MV-07B0"}" Name="Unplaced" DefaultLanguage="en-US">
+    <Static><ParameterTypes>
+      <ParameterType Id="M-TEST_A-44_PT-N"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="9" /></ParameterType>
+      <ParameterType Id="M-TEST_A-44_PT-Page"><TypeNone /></ParameterType>
+    </ParameterTypes><Parameters>
+      <Parameter Id="M-TEST_A-44_P-G" Name="Gate" ParameterType="M-TEST_A-44_PT-N" Text="Gate" Value="0"${opts.gateMemory ? '><Memory CodeSegment="M-TEST_A-44_RS-4" Offset="1" BitOffset="0" /></Parameter>' : " />"}
+      <Parameter Id="M-TEST_A-44_P-Page" Name="Page" ParameterType="M-TEST_A-44_PT-Page" Text="Page" Value="" />
+      <Parameter Id="M-TEST_A-44_P-V" Name="Value" ParameterType="M-TEST_A-44_PT-N" Text="Value" Value="3"><Memory CodeSegment="M-TEST_A-44_RS-4" Offset="0" BitOffset="0" /></Parameter>
+    </Parameters><ParameterRefs>
+      <ParameterRef Id="M-TEST_A-44_P-G_R-1" RefId="M-TEST_A-44_P-G"${opts.access ? ` Access="${opts.access}"` : ""} />
+      <ParameterRef Id="M-TEST_A-44_P-Page_R-1" RefId="M-TEST_A-44_P-Page" />
+      <ParameterRef Id="M-TEST_A-44_P-V_R-1" RefId="M-TEST_A-44_P-V" />
+    </ParameterRefs>
+    <Code>${opts.absolute ? '<AbsoluteSegment Id="M-TEST_A-44_RS-4" Address="256" Size="2"><Data>AAA=</Data></AbsoluteSegment>' : '<RelativeSegment Id="M-TEST_A-44_RS-4" LoadStateMachine="4" Size="2"><Data>AAA=</Data></RelativeSegment>'}</Code>
+    <ComObjectTable>
+      <ComObject Id="M-TEST_A-44_O-1" Name="O1" Number="1" Text="Object 1" FunctionText="" ObjectSize="1 Bit" DatapointType="DPST-1-1" ReadFlag="Enabled" WriteFlag="Enabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled" />
+    </ComObjectTable><ComObjectRefs><ComObjectRef Id="M-TEST_A-44_O-1_R-1" RefId="M-TEST_A-44_O-1" /></ComObjectRefs>
+    </Static><Dynamic><ChannelIndependentBlock>
+      <ParameterBlock Id="M-TEST_A-44_PB-1" Name="m" Text="Main"${opts.head ? ` ParamRefId="${opts.head === "page" ? "M-TEST_A-44_P-Page_R-1" : "M-TEST_A-44_P-G_R-1"}"` : ""}>
+        <ParameterRefRef RefId="M-TEST_A-44_P-V_R-1" />
+        ${opts.place ? '<ParameterRefRef RefId="M-TEST_A-44_P-G_R-1" />' : ""}
+        <choose ParamRefId="${opts.head === "page" ? "M-TEST_A-44_P-Page_R-1" : "M-TEST_A-44_P-G_R-1"}">
+          <when test="7"><ParameterSeparator Id="M-TEST_A-44_PS-1" Text="seven" /></when>
+          <when default="true">${opts.branch ?? '<ComObjectRefRef RefId="M-TEST_A-44_O-1_R-1" />'}</when>
+        </choose>
+      </ParameterBlock>
+    </ChannelIndependentBlock></Dynamic></ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+  const objects = (v: ReturnType<typeof buildDeviceConfig>) => [[...v.imageComObjects.keys()], comObjs(v).length];
+
+  test("a ref of a shown parameter that nothing places takes no default branch", () => {
+    expect(objects(buildDeviceConfig(parseAppConfig(xml()), new Map()))).toEqual([[], 0]);
+  });
+
+  test("the same ref, placed, takes it", () => {
+    expect(objects(buildDeviceConfig(parseAppConfig(xml({ place: true })), new Map()))).toEqual([[1], 1]);
+  });
+
+  test("its tests still count: a value stored on it that matches one takes that branch", () => {
+    const v = buildDeviceConfig(parseAppConfig(xml()), new Map([["M-TEST_A-44_P-G_R-1", "7"]]));
+    expect(v.blocks.flatMap((b) => b.items).some((i) => i.kind === "separator" && i.text === "seven")).toBe(true);
+  });
+
+  test("a page parameter heading a reached block is placed, so its choose takes the default branch", () => {
+    expect(objects(buildDeviceConfig(parseAppConfig(xml({ head: "page" })), new Map()))).toEqual([[1], 1]);
+  });
+
+  test("any memoryless parameter heading a reached block is placed so, as the ABB US/U 4.2's numeric page parameters", () => {
+    expect(objects(buildDeviceConfig(parseAppConfig(xml({ head: "gate" })), new Map()))).toEqual([[1], 1]);
+  });
+
+  test("a parameter with memory that only heads a reached block decides no default branch ETS shows: refused where it matters", () => {
+    expect(() => buildDeviceConfig(parseAppConfig(xml({ head: "gate", gateMemory: true })), new Map())).toThrow(expect.objectContaining({ code: "CHOOSE_DEFAULT_UNSETTLED" }));
+    // Its tests still count, and its value is the one stored on it.
+    const v = buildDeviceConfig(parseAppConfig(xml({ head: "gate", gateMemory: true })), new Map([["M-TEST_A-44_P-G_R-1", "7"]]));
+    expect(v.blocks.flatMap((b) => b.items).some((i) => i.kind === "separator" && i.text === "seven")).toBe(true);
+  });
+
+  test("an Access=\"None\" ref whose default branch changes the image is refused", () => {
+    expect(() => buildDeviceConfig(parseAppConfig(xml({ access: "None" })), new Map())).toThrow(expect.objectContaining({ code: "CHOOSE_DEFAULT_UNSETTLED" }));
+  });
+
+  test("an Access=\"None\" ref whose default branch leaves the image as it is builds, with the branch shown", () => {
+    const app = parseAppConfig(xml({ access: "None", branch: '<ParameterSeparator Id="M-TEST_A-44_PS-2" Text="note" />' }));
+    const v = buildDeviceConfig(app, new Map());
+    expect(v.blocks.flatMap((b) => b.items).some((i) => i.kind === "separator" && i.text === "note")).toBe(true);
+    expect(buildRelativeSegmentTarget(app, new Map(), 4)!.bytes.toString("hex")).toBe("0300");
+  });
+
+  test("an Access=\"None\" ref whose default branch changes only a parameter's bytes is refused by the image build", () => {
+    const app = parseAppConfig(xml({ access: "None", branch: '<Assign TargetParamRefRef="M-TEST_A-44_P-V_R-1" Value="9" />' }));
+    expect(buildDeviceConfig(app, new Map()).imageValues.get("M-TEST_A-44_P-V_R-1")).toBe("9");
+    expect(() => buildRelativeSegmentTarget(app, new Map(), 4)).toThrow(expect.objectContaining({ code: "CHOOSE_DEFAULT_UNSETTLED" }));
+  });
+
+  test("the same on an absolute segment", () => {
+    const branch = (value: string) => `<Assign TargetParamRefRef="M-TEST_A-44_P-V_R-1" Value="${value}" />`;
+    expect(() => buildAbsoluteSegmentTargets(parseAppConfig(xml({ access: "None", absolute: true, branch: branch("9") })), new Map())).toThrow(expect.objectContaining({ code: "CHOOSE_DEFAULT_UNSETTLED" }));
+    // An Assign of the value the parameter holds anyway leaves the bytes as they are.
+    expect(buildAbsoluteSegmentTargets(parseAppConfig(xml({ access: "None", absolute: true, branch: branch("3") })), new Map())[0].bytes.toString("hex")).toBe("0300");
+  });
 });
 
 // Links are resolved against the view, so every active object needs a place in it. Theben places
