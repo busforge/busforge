@@ -46,7 +46,9 @@ time, because a relative segment's address is only assigned by the alloc step. `
 (1 byte) and zero bytes to 10 (Auro, Address 0 Count 0: `03 04` and eight zero bytes; TheLuxa P300,
 Address 17875 Count 1: `03 04 45 D3 01 00 00 00 00 00`), and the same fields in the `0x0104` control
 on a memory-mapped mask; a count beyond one byte is refused, and it asserts the LSM stays LOADING.
-The planner encodes it from the declared attributes ([rule R4](#the-rules-by-level)).
+The planner encodes it from the declared attributes ([rule R4](#the-rules-by-level)). `taskPtr`,
+`taskCtrl2`, `masterReset`, `declaredWriteProp` and `settle` run the further steps the synthetic
+captures show ETS running ([below](#steps-run-as-the-synthetic-captures-show-them)).
 
 Two transports drive the same events:
 
@@ -249,6 +251,35 @@ ProductProcedure and MergedProcedure of the catalogue fixtures except one class,
 - **DefaultProcedure devices** (legacy BCU1/BCU2, nothing in the XML), refused as the explicit
   gap named in the styles table above, except the System 1 download below.
 
+### Steps run as the synthetic captures show them
+
+Each step below is run by the full download where a synthetic capture (an ETS 6 download of a
+fabricated product into a device simulator, [third-party test data](testing.md#third-party-test-data))
+shows it, and only there. `tools/bussard-load-steps.test.ts` runs Busforge's full download of each such
+product against a unit that answers as the simulator answered ETS (`tools/download-sim.ts`). On System 7
+it holds every load control, property write, property description read, restart and connection to
+ETS's, frame for frame, and every byte written to ETS's; on System B the load controls from the parameter
+segment's allocation to the tables' first bracket and the master reset's frames (the segment bytes are
+held by `tools/bussard-unfilled-allocation.test.ts`). It is reference evidence for what ETS sends, none
+for what a device does with it: no device has run one of these steps.
+
+| Step | Where it runs | What goes out | Capture |
+| --- | --- | --- | --- |
+| `LdCtrlDelay` | System 7 declared form, right between the last `LoadCompleted` and the restart, shorter than a device's 6 s connection timeout | nothing; the restart that many milliseconds later | MV-0701: 200 ms declared, 211 ms between the last `LoadCompleted` and `A_Restart` |
+| `LdCtrlMasterReset` | System 7 declared form on a memory-mapped mask (MV-0701), before the first load-state event, erase code 6 or 5 on channel 0 | the confirmed `A_Restart` with the declared erase code and channel (`81 06 00`), which must answer error 0 and process time 0 (`A1 00 0000`); `T_Disconnect`; about a second later `T_Connect`, `A_DeviceDescriptor_Read` (the same mask as before, else refused) and PID 56; no authorization again | MV-0701: codes 6 then 5 after the connect |
+| `LdCtrlMasterReset` | System B full download (declared form) of an application without Data Secure, right after the parameter segment's allocation in the same merge block, erase code 1 or 4 on channel 0 | the same; Busforge then sets verify mode again, which a restart may clear | MV-07B0: codes 1 and 4 after `LdCtrlRelSegment` LSM 4, before the tables' brackets |
+| `LdCtrlTaskPtr`, `LdCtrlTaskCtrl2` | System 7 declared form on a property-mapped mask (MV-0705), inside their load-state machine's bracket | PID 5 `03 03` InitPtr, SavePtr, SerialPtr, `00 00`; PID 5 `03 05` Callback, Address, Seg0, Seg1; each answered LOADING | MV-0705: `03 03 4410 4414 4418 00 00`, `03 05 441C 4400 0700 4440` |
+| `LdCtrlWriteProp` with `InlineData` inside a load bracket | System 7 declared form on a memory-mapped mask (MV-0701), to object 3 inside the application's bracket (LSM 3), at its declared place, not to PID 5, 7, 13 or 27 | `A_PropertyDescription_Read` of the property, then `Count` elements in one `A_PropertyValue_Write`; the property must be described writable and the data exactly `Count` elements of the width the description's generic type gives, else it is refused (inside the bracket: the description is the device's answer) | MV-0701: object 3 PID 204, two 5-octet elements, between the segments' writes and the task segment |
+| `LdCtrlAbsSegment` in RAM (MemType 2) that no segment of the application defines | System 7 declared form | the declaration; nothing written or read there | MV-0705: a 48-octet stack segment at `0x0710` |
+
+The parameter download runs none of these steps but the RAM segment: an application that declares one for it (no
+`AppliesTo`, or `par`) keeps its parameter download refused, as no capture shows ETS's parameter
+download of such an application; a System B full download is offered all the same where it runs the
+step itself (the master reset). A parameter download declares no segment, so the RAM segment does not
+concern it. An application asking for ETS's partial form with such a RAM segment, and one with a
+parameter placed in a property next to a property write inside a load bracket, are refused
+(`FULL_DOWNLOAD_SEGMENT_UNKNOWN`, `FULL_DOWNLOAD_STEP_UNSUPPORTED`): no capture shows either.
+
 ### Steps refused until a capture shows them
 
 Each step below is refused today, coded, before anything is written. The count is of the 17
@@ -267,13 +298,14 @@ implemented.
 | `LegacyPatchManufacturerIdInTaskSegment` with an `OriginalManufacturer` of another maker (`TASK_SEGMENT_MANUFACTURER_UNSUPPORTED`) | 0 (the ABB declares the option without one) | reported: the task segment carries the original manufacturer | an ETS download of such an OEM application (a Busch-Jaeger application is reported) |
 | Sizes of one segment that disagree (`LOAD_PROCEDURE_SIZE_MISMATCH`) | 0 | synthetic capture: ETS takes the load procedure's sizes, not the segment's; it allocates and writes 128 of a 256-byte segment, writes inside a write's `Size` up to the last byte that differs from the fill, and leaves the bytes between two declared parts of a segment untouched | lifting what refuses two of the captured products besides (a Mode 1 allocation declared for the parameter download too, a segment only the procedure declares), then building the image from the procedure's sizes, pinned to those captures |
 | The unfilled allocation (`RelSegment` Mode 0) for the full download of a segment without `<Data>`, of one with a `<Mask>`, or of an application asking for ETS's partial form (`FULL_DOWNLOAD_STEP_UNSUPPORTED`) | 0 | synthetic capture, without `<Data>`: the request `03 0B <size> 00 <fill>`, the bytes up to the last parameter's written (3 and 5 of 16), the rest not touched; with a `<Mask>` and in the partial form: none | writing only the bytes ETS writes and verifying them alone, the rest left unowned, pinned to those captures; an ETS download of the other two |
-| `LdCtrlDelay` (`LOAD_STEP_UNSUPPORTED`, `FULL_DOWNLOAD_STEP_UNSUPPORTED`) | 0 | synthetic capture: a pause, nothing on the wire (200 ms before the restart) | the pause in the planner, pinned to the capture; Hager and Berker MV-0701 are reported to declare it |
-| `LdCtrlMapError` beyond the mask's own PEI unload | 0 | synthetic capture: nothing on the wire; what ETS does when the device answers the mapped error is not shown | an ETS download onto a device that answers it; Siemens MV-07B0 applications are reported to declare it |
+| `LdCtrlDelay` in a parameter download, in a System B download, elsewhere in a System 7 full download, or of 6 s or more (`LOAD_STEP_UNSUPPORTED`, `FULL_DOWNLOAD_STEP_UNSUPPORTED`) | 0 | synthetic capture: a pause, nothing on the wire, between the last `LoadCompleted` and the restart of a System 7 full download only | an ETS download of an application declaring it there; Hager and Berker MV-0701 are reported to declare it |
+| `LdCtrlMapError` beyond the mask's own PEI unload | 0 | synthetic capture: nothing on the wire, in a System B ProductProcedure (a procedure style the System B download does not run); what ETS does when the device answers the mapped error is not shown | a System B download that runs the application's own procedure, and an ETS download onto a device that answers the mapped error; Siemens MV-07B0 applications are reported to declare it |
 | `LdCtrlInvokeFunctionProp` | 0 | reported: `A_FunctionPropertyCommand` (by object index) or its extended form (by object type), return code 00 for success, the description of PID 53 read after each call | an ETS download of one of the Berker or Hager MV-0701 applications, or a Gira application, reported to declare it |
-| `LdCtrlMasterReset` | 0 | synthetic capture: `A_Restart` master reset with the declared erase code and channel, then a new connection; reported for a Hager MV-0701 application: `A_FunctionPropertyCommand` to object 5 PID 52 instead | an ETS download onto a device, to tell when ETS takes which |
-| `LdCtrlWriteProp` before the last `LoadCompleted` (other than System B's PID 27) | 0 | synthetic capture: written at its declared place, inside the load bracket too; reported: after `A_PropertyDescription_Read`, one element of the width the description gives, the inline data zero-extended (object 5 PID 51, `01` before the unloads, `02` before the restart) | Hager and Berker MV-0701 |
+| `LdCtrlMasterReset` in a parameter download, on MV-0705, after a load-state event on System 7, elsewhere than right after the parameter segment's allocation on System B, with another erase code or channel than the captures show, in a Data Secure System B application, or in an application asking for ETS's partial form | 0 | synthetic capture: where it runs ([above](#steps-run-as-the-synthetic-captures-show-them)); reported for a Hager MV-0701 application: `A_FunctionPropertyCommand` to object 5 PID 52 instead | an ETS download onto a device, to tell when ETS takes which, and of an application declaring it in those places |
+| `LdCtrlWriteProp` before the last `LoadCompleted` (other than System B's PID 27), except with `InlineData` to object 3 inside the application's bracket on MV-0701 | 0 | synthetic capture: written at its declared place, before the first allocation, between the allocations and the last `LoadCompleted` and on System B after PID 13; a parameter placed in the property written by the step that names the property; reported: object 5 PID 51, `01` before the unloads, `02` before the restart, the inline data zero-extended to the element's width | modelling a parameter placed in a property, then the places System B shows, pinned to those captures; Hager and Berker MV-0701 |
 | `LdCtrlDeclarePropDesc` with `LdCtrlWriteProp Count` (parameters placed in properties) | 0 | reported: nothing on the wire for the declaration; the write's inline data is a template the parameters overlay, at most 15 elements per write, the current elements read first | Hager TX/TY devices (MV-07B0) |
-| `LdCtrlTaskPtr`, `LdCtrlTaskCtrl2` | 0 | synthetic capture: PID 5 `03 03` InitPtr, SavePtr, SerialPtr, zero to 10 bytes; `03 05` Callback, Address, Seg0, Seg1; each in declared order | the encodings in the planner, pinned to the captures |
+| `LdCtrlTaskPtr`, `LdCtrlTaskCtrl2` on a memory-mapped mask (MV-0701), or outside their bracket | 0 | synthetic capture: on MV-0705 only ([above](#steps-run-as-the-synthetic-captures-show-them)) | an ETS download of an MV-0701 application declaring them |
+| `LdCtrlAbsSegment` that no segment of the application defines, other than in RAM, or a RAM one over a segment of the application (`FULL_DOWNLOAD_SEGMENT_UNKNOWN`) | 0 | synthetic capture: a RAM segment declared and not written ([above](#steps-run-as-the-synthetic-captures-show-them)); the others not shown | an ETS download of such an application |
 | `LdCtrlCompareRelMem` | 0 | not described | two MDT applications are reported to declare it |
 | `<choose>` inside a load procedure | 0 | synthetic capture: only the branch the parameter values select reaches the wire | the branch selection in the planner, pinned to the captures; an MDT time switch (MV-0705) is reported to declare it |
 | `LdCtrlWriteMem` | 0 (an MDT IP router's application, MV-091A, in a house project export declares it, refused as a coupler anyway) | reported: a plain memory write | a coupler download |

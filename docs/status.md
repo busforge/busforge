@@ -46,7 +46,7 @@ All hardware verification is on **twisted pair**.
 | Flash parameters (surgical) | yes | hardware | Change applied and reverted, byte-checked each way, on both memory models and on module/channel devices. Writes the bytes ETS's parameter download writes: on a property-mapped System 7 mask every byte a parameter covers, on a memory-mapped one the bytes that differ from the unit ([load-procedures.md](load-procedures.md#the-rules-by-level)); on System B every owned byte. |
 | Flash group addresses (surgical) | yes | hardware | System B rewrites the com-object table, and on the one manufacturer shown to need it also holds the application object in its own load bracket. System 7, in both LSM styles, sets each object's linked bit in the table the device holds, as ETS does, where the application names its segment (see [Known unproven](#known-unproven)). On System 7 both tables are unloaded and declared where ETS puts them, by rule ([load-procedures.md](load-procedures.md#the-rules-by-level)); shown on hardware on the Auro M-0081_A-FE01, the Gira M-0008, the Theben TheLuxa P300, the Theben Meteodata 140 S, the ABB US/U 4.2 and the MDT BE-02001.02 (device notes and smoke specs below). |
 | Full download / first-time commissioning without ETS | yes | hardware | Proven on System B (relative) and on both System 7 LSM styles: memory-mapped (MV-0701) and property-mapped (MV-0705). Authors the com-object table on System B and, where the application names its segment, on both System 7 LSM styles: the manufacturer's template with the active objects' config bytes and link bits. The form follows the catalogue: the declared procedure in its order (`LdCtrlTaskCtrl1` encoded from its attributes), or ETS's partial form on a unit holding an application that declares `PreferPartialDownloadIfApplicationLoaded` ([load-procedures.md](load-procedures.md#the-rules-by-level)). On the Gira M-0008, the Auro M-0081_A-FE01, the Theben TheLuxa P300 and the Theben Meteodata 140 S it ran only onto a unit already holding the application, so not as first-time commissioning, and the hardware proof is the sequence and the bytes: every planned byte already equalled the unit (on the two Theben devices all but a download marker the unit clears itself), so no changed configuration byte was transferred by a full download; the parameter and group-address flash on the same units show that (device notes below). |
-| Individual-address assignment via programming mode | yes | hardware | Refuses unless exactly one device is in programming mode and the target address is free; the result is proven by talking to the device on its new address. Programming mode then ends by `A_Restart` on the connection of the descriptor read, the frames ETS sends on the Hager TH001 (System 1), the MDT BE-02001.02 (MV-0705) and the ABB US/U 4.2 (MV-0701) (tests hold Busforge's frames to the services transcribed from those captures; ETS reads two properties before its restart, Busforge leaves the reads out). Busforge then checks that the device answers at its address again and that nobody answers in programming mode; shown on the Hager TH001: the address verified, no device in programming mode 1 s after the restart (before the device was required to answer again). A unit with a tool key or a device certificate on file takes the secured serial-number route below first. |
+| Individual-address assignment via programming mode | yes | hardware | Refuses unless exactly one device is in programming mode and the target address is free; the result is proven by talking to the device on its new address. Programming mode then ends by `A_Restart` on the connection of the descriptor read, the frames ETS sends on the Hager TH001 (System 1), the MDT BE-02001.02 (MV-0705) and the ABB US/U 4.2 (MV-0701) (tests hold Busforge's frames to the services transcribed from those captures; ETS reads two properties before its restart, Busforge leaves the reads out). Busforge then checks that the device answers at its address again and that nobody answers in programming mode; shown on the Hager TH001: the address verified, no device in programming mode 1 s after the restart (before the device was required to answer again); shown through the endpoint on the MDT BE-02001.02 and the ABB US/U 4.2: each moved to another address and back, verified, the restart confirmed by the interface, the device answering again at its address and none in programming mode afterwards. Not run on a System B unit without Data Secure. A unit with a tool key or a device certificate on file takes the secured serial-number route below first. |
 | Individual-address assignment of a KNX Data Secure unit by serial number, secured | yes | hardware | ETS's frames ([commissioning.md](commissioning.md#a-data-secure-device)): the serial-number write as a secured broadcast under the tool key, then on the new address the security mode, the tool key and the sending sequence (PID 59) and a secured confirmed restart; tests hold the plaintexts and the frame forms to ETS's captures of the Jung 400021SE (Data Secure on and off) and the GVS AMMA (on). Shown by Busforge through its endpoint on the Jung 400021SE and the GVS AMMA with Data Secure on: each moved to another address and back, verified under its key, out of programming mode afterwards (the Jung also from programming mode switched on), security mode still on. The Data Secure off route under the FDSK and the fallback from tool key to FDSK to the plain route are tested against a simulated unit only. |
 | Individual-address assignment by serial number (no button press) | yes | hardware | The path used to commission a factory device that cannot be reached physically. A serial that does not tell the device apart is refused (`SERIAL_NOT_UNIQUE`): `000000000000` and `FFFFFFFFFFFF` before anything reaches the bus, a serial answered from two addresses before the write (tested against a simulated bus only). |
 | Find a device by its programming LED (programming mode on over a connection, held, off) | yes (System B; System 7 with property-mapped load control) | hardware (MDT BE-02001.02, MV-0705; Jung 400021SE, MV-07B0, under Data Secure) | Writes the device object's PID 54 := 1, holds, and always ends with PID 54 := 0 read back, also after an error or a stop; a failure to show it off is an error naming the programming button ([commissioning.md](commissioning.md#finding-a-device-by-its-programming-led)). On both units, through the device page (on the MDT stopped early, on the Jung to the end of its time): a second tunnel's programming-mode probe saw the unit in programming mode during the hold and nobody afterwards. The LED itself was not watched. ETS switches the mode off the same way on a System B unit. System 1 and the memory-mapped System 7 masks are refused before anything is written (the ABB US/U 4.2 answers PID 54 with no element, shown on the bench). |
@@ -151,11 +151,13 @@ What each row does not show:
     segment without `<Data>` and an active colour keep the unit's bits.
   - **Theben DALI gateway**: the full download onto a unit that does not hold the application (the
     declared form, allocation Mode 1) equals ETS's capture of it and has not run.
-  - **GVS AMMA, Jung 400021SE, MEAN WELL power supply, Theben MIX 2, Theben DALI gateway**: the full form
-    of the full download writes the parameter segment before the com-object, association and address
-    tables, in ETS's order (every capture of an MV-07B0 full download; the order compared with each
-    of them); the runs on the units wrote the three tables first. The bytes
-    written are the same. The OpenKNX RaumController keeps the tables first, as hardware showed it needs.
+  - **Jung 400021SE, MEAN WELL power supply, Theben MIX 2, Theben DALI gateway**: the full form of the
+    full download writes the parameter segment before the com-object, association and address tables, in
+    ETS's order (every capture of an MV-07B0 full download; the order compared with each of them); the
+    runs on these units wrote the three tables first. The bytes written are the same. On the GVS AMMA that
+    order ran under its secure session onto a unit holding the application, verified and read back without
+    drift, its load-state steps those of ETS's capture. The OpenKNX RaumController keeps the tables first,
+    as hardware showed it needs.
   - **Theben Meteodata 140 S, Steinel M-008E**: an active text parameter (the Meteodata's EIS 5
     threshold channels) is written as ETS's partial download switching a Meteodata threshold channel on
     writes it, its characters and zeros to the end of the field (capture comparison); on the Meteodata
@@ -575,13 +577,13 @@ report a device family as working on the strength of a passing test suite.
 
 ## Known unproven
 
-- **Ending programming mode by `A_Restart` after an address assignment is shown by Busforge on one
-  product.** ETS ends it that way on the Hager TH001 (System 1), the MDT BE-02001.02 (MV-0705), the ABB
-  US/U 4.2 (MV-0701) and a simulated MV-07B0 (System B) unit
+- **Ending programming mode by `A_Restart` after an address assignment has not run on a System B unit
+  without Data Secure.** ETS ends it that way on the Hager TH001 (System 1), the MDT BE-02001.02 (MV-0705),
+  the ABB US/U 4.2 (MV-0701) and a simulated MV-07B0 (System B) unit
   ([third-party test data](testing.md#third-party-test-data)), and writes no `PID_PROGMODE`; tests hold
   Busforge's frames to the services transcribed from the first three captures. Busforge has run it on the
-  Hager TH001 only, where its check ran before the device was required to answer again. Other masks
-  take the same route without a capture of theirs.
+  Hager TH001 (its check ran before the device was required to answer again), the MDT BE-02001.02 and the
+  ABB US/U 4.2. Other masks take the same route without a capture of theirs.
 
 - **The secured address assignment of a unit the project runs without Data Secure has not run on
   hardware.** Busforge sends it under the unit's FDSK with ETS's frames of that case (the Jung 400021SE),
@@ -657,6 +659,17 @@ report a device family as working on the strength of a passing test suite.
   ([device-memory-model.md](device-memory-model.md#system-b-layout)). No manufacturer's application in
   the corpus numbers a System B object 0 outside a module. A project override of object 0's flags and a
   secured group address on it are refused.
+- **The load steps run as the synthetic captures show them have run on no device.** A full download
+  runs a pause (`LdCtrlDelay`), a master reset (`LdCtrlMasterReset`, MV-0701 before the first load-state
+  event, System B right after the parameter segment's allocation, each with the erase codes the captures
+  show), the task pointers (`LdCtrlTaskPtr`, `LdCtrlTaskCtrl2`, MV-0705), a property write with inline
+  data inside the application's load bracket (MV-0701) and a RAM segment only the procedure declares as
+  ETS's downloads of bussard's synthetic products into a device simulator show them, run against a
+  simulated unit (offline match: on System 7 every load control and every byte equal to ETS's, on System
+  B the load controls around the master reset and its frames,
+  [load-procedures.md](load-procedures.md#steps-run-as-the-synthetic-captures-show-them)). No
+  application of a real product in the corpus declares one of them. Each step elsewhere is refused, the
+  RAM segment aside, in a parameter download too.
 - **Our image equals what ETS would write** is checked only where an ETS capture of the same
   device exists (`tools/etsdiff.ts`, its records shipped with the others, [compatibility.md](compatibility.md)). Full
   download: the MDT BE-02001.02, the ABB US/U 4.2, the GVS AMMA, the Jung 400021SE and the MEAN WELL

@@ -281,6 +281,11 @@ unfilled parameter-segment allocation against ETS's. `tools/bussard-com-object-z
 the System B com-object table of the products that number an object 0, among them the two whose object 2
 hangs on a choose on a ParameterRef nothing places (with that ref placed, too), and the three tables of one
 with group addresses on it, against ETS's.
+`tools/bussard-load-steps.test.ts` runs Busforge's full download of the products declaring a load step
+ETS runs (a pause, a master reset, the task pointers, a property write inside a load bracket, a RAM
+segment only the procedure declares) against `tools/download-sim.ts`, a unit that answers as the
+simulator answered ETS, and holds the frames Busforge sends to ETS's, frame for frame, and the bytes it
+writes to ETS's.
 
 ### The capture index
 

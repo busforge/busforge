@@ -8,7 +8,7 @@ import { buildComObjectTable, comObjectTableRefusal, refuseObjectZeroOverride, p
 import { buildDeviceConfig, type DeviceCapabilities, type CfgComObjImage, type DeviceConfigBuild } from "./config.ts";
 import { decodeParameterImage, decodeAbsoluteImage, imageValueForm } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
-import { assessParCoverage, declaredPropChecks, relParamFillByte, relParamFullMode, declaredMcbWrites, unrunGrpSteps, lsmIdx, stepAddress, type ParCoverage, type LoadProcedures, type McbWrite } from "./loadproc.ts";
+import { assessParCoverage, fullDownloadParCoverage, systemBMasterResets, declaredPropChecks, relParamFillByte, relParamFullMode, declaredMcbWrites, unrunGrpSteps, lsmIdx, stepAddress, type ParCoverage, type LoadProcedures, type McbWrite } from "./loadproc.ts";
 import { planAbsoluteParFlash, buildAbsoluteParFlash, absoluteStructuralBuild, planRelativeParFlash, planRelativeStructuralFlash, planRelativePartialFullDownload, changedOwned, differentialMask, declaredMcbRegions, type McbRegion, planAbsoluteStructuralFlash, absoluteStructuralImages, differingBytes, planAbsoluteFullDownload, absoluteFullStepRefusal, fullDownloadSegmentRefusal, absoluteFullForm, withClosing, withConfirmedRestart, planSystem7GaFlash, planSystem7TableBrackets, fullDownloadImageDigest, procedureSizeRefusal, relativeFullDownloadRefusal, type AbsFullSegment } from "./deviceflash.ts";
 import { maskInfo, isMemoryMappedLsm, type MemoryModel, type SystemFamily } from "./masks.ts";
 import { type AppConfig, type ModuleInstance } from "./appconfig.ts";
@@ -400,6 +400,13 @@ function parRefusal(coverage: ParCoverage, what: string): OperationRefusal | nul
 // Guard a par download against its own declared load procedure.
 function assertParCoverage(proc: LoadProcedures, model: "absolute" | "relative"): ParCoverage {
   const coverage = assessParCoverage(proc, model);
+  refuse(parRefusal(coverage, "parameter download"));
+  return coverage;
+}
+
+// The same for the System B full download, which runs a master reset the parameter download refuses.
+function assertFullParCoverage(proc: LoadProcedures): ParCoverage {
+  const coverage = fullDownloadParCoverage(proc);
   refuse(parRefusal(coverage, "parameter download"));
   return coverage;
 }
@@ -1233,7 +1240,8 @@ export class SystemBProfile extends DeviceProfile {
     const par = parRefusal(assessParCoverage(this.cfg.loadProcedures, "relative"), "parameter download");
     const grp = parRefusal({ blocked: unrunGrpSteps(this.cfg.loadProcedures), skipped: [], checks: [] }, "group-address flash");
     const table = downloadPluginRefusal(this.cfg) ?? comObjectTableRefusal(this.cfg);
-    const full = par ?? relativeFullDownloadRefusal(this.cfg, this.cfg.loadProcedures) ?? table ?? declaredKnxIpRefusal(this.cfg);
+    // The full download runs a master reset the parameter download refuses (fullDownloadParCoverage).
+    const full = parRefusal(fullDownloadParCoverage(this.cfg.loadProcedures), "parameter download") ?? relativeFullDownloadRefusal(this.cfg, this.cfg.loadProcedures) ?? table ?? declaredKnxIpRefusal(this.cfg);
     const links = grp ?? table;
     return {
       ...(par ? { flashParams: par } : {}),
@@ -1265,7 +1273,7 @@ export class SystemBProfile extends DeviceProfile {
   private planSystemBFull(_mask: string, ctx: FullDownloadInputs, images?: () => SystemBImages): FullDownloadBuild & { target: RelativeSegmentTarget; comObj: Buffer; addr: Buffer; assoc: Buffer; security?: SecurityObjectTables } {
     const cfg = this.requireCfg("full download");
     const proc = ctx.proc;
-    assertParCoverage(proc, "relative");
+    assertFullParCoverage(proc);
     refuseKnxIpSettings(cfg, ctx.knxIp);
     // What the application wants the parameter segment pre-filled with (0 for most, 0xFF for e.g. the
     // GVS AMMA). Threaded into the plan so the allocation and the bytes left out agree with it. The
@@ -1284,7 +1292,7 @@ export class SystemBProfile extends DeviceProfile {
     // secure procedure closes with the confirmed restart (IsSecureEnabled), the plain one with A_Restart.
     const plan = withClosing(withConfirmedRestart(planSystemBFullDownload({
       params: target.bytes, paramsInImage: fullDownloadImageCoverage(cfg, target.owned), comObj, addr, assoc, programId: programIdStamp(cfg),
-    }, fillByte, requireReboot, declaredMcbWrites(proc, target.size), security, true, closesAtOnce(cfg), filled), proc.secureEnabled), proc, "full");
+    }, fillByte, requireReboot, declaredMcbWrites(proc, target.size), security, true, closesAtOnce(cfg), filled, systemBMasterResets(proc, cfg.mask)), proc.secureEnabled), proc, "full");
     const imageBytes = target.size + comObj.length + addr.length + assoc.length;
 
     return {
@@ -1397,7 +1405,7 @@ export class SystemBProfile extends DeviceProfile {
     // The device's own declared pre-flight (hardware type / application id) still runs: a full
     // download to the wrong hardware is the most expensive mistake available here.
     const proc = this.requireCfg("full download").loadProcedures;
-    const coverage = assertParCoverage(proc, "relative");
+    const coverage = assertFullParCoverage(proc);
     refuseKnxIpSettings(this.requireCfg("full download"), ctx.knxIp);
     // For either form, with the association table in its long form; the unit's form is asked below.
     const images = builtBefore(() => this.systemBImages(this.requireCfg("full download"), { ...ctx, proc }));
@@ -2053,8 +2061,9 @@ export class System7Profile extends DeviceProfile {
     if ("refusal" in ga) out.flashLinks = ga.refusal;
     // Checked before the KNXnet/IP settings, so the procedure is the reason given where both apply. Offered
     // where one form can run; the unit's state picks the form at download time.
-    const declared = this.canAuthor() ? absoluteFullStepRefusal(cfg.loadProcedures, "declared") : null;
-    const partial = declared && cfg.loadProcedures.preferPartialIfLoaded ? absoluteFullStepRefusal(cfg.loadProcedures, "partial") : declared;
+    const mm = isMemoryMappedLsm(this.mask);
+    const declared = this.canAuthor() ? absoluteFullStepRefusal(cfg.loadProcedures, "declared", mm) : null;
+    const partial = declared && cfg.loadProcedures.preferPartialIfLoaded ? absoluteFullStepRefusal(cfg.loadProcedures, "partial", mm) : declared;
     const full = (declared && partial) ?? (this.canAuthor() ? fullDownloadSegmentRefusal(cfg, cfg.loadProcedures) : null);
     if (full) out.fullDownload = full;
     // Only the writes that put a com-object table into the device: a group-address flash with no table
@@ -2073,7 +2082,7 @@ export class System7Profile extends DeviceProfile {
   // holds it (downloadFull refuses FULL_DOWNLOAD_APPLICATION_NOT_LOADED), so a unit left without it goes
   // back to ETS.
   override fullDownloadLoadsApplication(): boolean {
-    return super.fullDownloadLoadsApplication() && !(this.cfg && absoluteFullStepRefusal(this.cfg.loadProcedures, "declared"));
+    return super.fullDownloadLoadsApplication() && !(this.cfg && absoluteFullStepRefusal(this.cfg.loadProcedures, "declared", isMemoryMappedLsm(this.mask)));
   }
 
   private canAuthor(): boolean {
@@ -2408,7 +2417,7 @@ export class System7Profile extends DeviceProfile {
       throw new ProductError("FULL_DOWNLOAD_UNSUPPORTED",
         `property-mapped device (mask ${mask}) declares no <ComObjectTable CodeSegment>; cannot author its com-object table, refusing to write a manufacturer-default L3`);
     }
-    refuse(absoluteFullStepRefusal(proc, absoluteFullForm(proc, ctx.unitHoldsApplication ?? false)) ?? fullDownloadSegmentRefusal(cfg, proc) ?? downloadPluginRefusal(cfg));
+    refuse(absoluteFullStepRefusal(proc, absoluteFullForm(proc, ctx.unitHoldsApplication ?? false), !propertyMapped) ?? fullDownloadSegmentRefusal(cfg, proc) ?? downloadPluginRefusal(cfg));
     refuseKnxIpSettings(cfg, ctx.knxIp);
     const instances = cfg.hasModules ? (ctx.moduleInstances?.length ? ctx.moduleInstances : resolveModuleInstances(cfg, ctx.params)) : [];
     refuseColorWrites(cfg, ctx.params, instances, false);
@@ -2501,8 +2510,8 @@ export class System7Profile extends DeviceProfile {
       unitHoldsApplication = id !== null && id.equals(programIdStamp(cfg)) && states.every((st) => st === STATE.LOADED);
     }
     const form = absoluteFullForm(proc, unitHoldsApplication);
-    const stepRefusal = absoluteFullStepRefusal(proc, form);
-    if (stepRefusal && form === "declared" && proc.preferPartialIfLoaded && !absoluteFullStepRefusal(proc, "partial")) {
+    const stepRefusal = absoluteFullStepRefusal(proc, form, isMemoryMappedLsm(mask));
+    if (stepRefusal && form === "declared" && proc.preferPartialIfLoaded && !absoluteFullStepRefusal(proc, "partial", isMemoryMappedLsm(mask))) {
       throw new ProductError("FULL_DOWNLOAD_APPLICATION_NOT_LOADED",
         `the device does not hold this application loaded (program id ${programIdStamp(cfg).toString("hex")}, load-state machines 1-3), and the procedure ETS runs on such a device cannot be executed: ${stepRefusal.message}`);
     }
