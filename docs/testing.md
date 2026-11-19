@@ -462,7 +462,7 @@ what the product cannot know:
 
 | Field | Meaning |
 |---|---|
-| `device` | `appRef`, `productRef`, target individual address, expected mask. Refs are pinned **verbatim** from `GET /api/catalog/products` and `GET .../config`, never reconstructed, so a typo is a compile error rather than a silent no-op |
+| `device` | `appRef`, `appProgramId` (the application the device runs), `productRef`, target individual address, expected mask. Refs are pinned **verbatim** from `GET /api/catalog/products` and `GET .../config`, never reconstructed, so a typo is a compile error rather than a silent no-op. The runner refuses a catalogue product or a project device that runs another application than `appProgramId`, and `tools/smoke/spec-applications.test.ts` pins every spec's id against the corpus |
 | `provision` | `skip-if-present` (the device already answers on its address, unattended), `require-prog-mode` (the operator presses the programming button), `import-knxproj` (the project is imported from `device.knxprod`, password in `BUSFORGE_SMOKE_KNXPROJ_PASSWORD`; the only way a KNX Data Secure device's keys reach the server. The run ends with a restore to the file's configuration, also after a failure) or `in-service` (a commissioned device in use, see [Devices in service](#devices-in-service)) |
 | `inService` | `in-service` only: the fingerprint and the steps the run may write |
 | `precondition` | A human-run step printed before provisioning |
@@ -615,7 +615,7 @@ data and the steps, nothing else:
 ```ts
 export const exampleInService: DeviceSpec = {
   id: "<product>-in-service",
-  device: { appRef: "…", productRef: "…", ia: "1.1.x", mask: "MV-…" },   // verbatim, as for every spec
+  device: { appRef: "…", appProgramId: "…", productRef: "…", ia: "1.1.x", mask: "MV-…" },   // verbatim, as for every spec; appProgramId is the application the device runs
   provision: "in-service",
   inService: {
     fingerprint: [
@@ -861,7 +861,7 @@ devices exercise, and nothing else. Which specs pass, in which channel, is in [s
 
 1. Import the product, place the device in a project, and read `GET /api/catalog/products` and
    `GET /api/projects/<pid>/devices/<did>/config`.
-2. Copy `appRef`, `productRef`, parameter refs and com-object refs **verbatim** into a new
+2. Copy `appRef`, `appProgramId`, `productRef`, parameter refs and com-object refs **verbatim** into a new
    `tools/smoke/specs/<id>.ts`. Never reconstruct a ref by hand: a fabricated ref fails preflight,
    and a plausible one is worse.
 3. Declare the baseline `configure` that makes the behaviour's objects visible, then the behaviours

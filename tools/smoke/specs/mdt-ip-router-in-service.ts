@@ -28,6 +28,7 @@ export const mdtIpRouterInService: DeviceSpec = {
   id: "mdt-ip-router-in-service",
   device: {
     appRef: "M-0083_H-135-3_HP-0137-20-7EB2",
+    appProgramId: "M-0083_A-0137-20-7EB2",
     productRef: "M-0083_H-135-3_P-SCN.2DIP000.2E03",
     ia: "1.1.91",
     mask: "MV-07B0",
