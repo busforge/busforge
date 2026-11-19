@@ -94,6 +94,11 @@ export function imageValueForm(model: AppModel, refId: string, value: string): s
 // at exponent 1, not the binary double just above it). Ties go to even; ETS's ties seen so far all had an even
 // lower neighbour, so half-down would match them too. Reference vectors: 0 -> 0x0000,
 // 21.0 -> 0x0C1A, -0.01 -> 0x87FF, 1000 -> 0x361A.
+// The range is -671088.64 (0xF800) to 670433.28 (0x7FFE): 0x7FFF is DPT 9's "invalid data", so a value
+// whose encoding is 0x7FFF, and one beyond either end, has no encoding. It is refused, never saturated,
+// as a device would read a saturated 0x7FFF as invalid data, not as the largest value.
+const DPT9_MIN = -671088.64;
+const DPT9_MAX = 670433.28;
 export function encodeDpt9(value: number): number {
   const m = /^(-?)(\d+)(?:\.(\d+))?(?:e([+-]\d+))?$/.exec(String(value));
   if (!m) throw new RangeError(`DPT 9 cannot encode ${value}`);
@@ -111,10 +116,12 @@ export function encodeDpt9(value: number): number {
     if (twice > d || (twice === d && q % 2n === 1n)) q++;
     if (q <= limit) {
       const mant = minus ? -Number(q) : Number(q);
-      return (mant < 0 ? 0x8000 : 0) | (exp << 11) | (mant & 0x07ff);
+      const raw = (mant < 0 ? 0x8000 : 0) | (exp << 11) | (mant & 0x07ff);
+      if (raw === 0x7fff) break;
+      return raw;
     }
   }
-  return minus ? 0xf800 : 0x7fff; // saturate beyond the representable range
+  throw new ProductError("PARAM_VALUE_OUT_OF_RANGE", `${value} is outside the range of a DPT 9 float (${DPT9_MIN} to ${DPT9_MAX}; 0x7FFF means invalid data)`);
 }
 
 export function decodeDpt9(raw: number): number {

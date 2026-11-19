@@ -56,9 +56,15 @@ describe("DPT-9 float codec", () => {
     expect(encodeDpt9(-12.5)).toBe(0x831e);
     // Rounded once at the final exponent: 1000000 / 2^9 = 1953.125 -> 1953.
     expect(encodeDpt9(10000)).toBe(0x4fa1);
-    // Beyond the range: the largest mantissa at exponent 15.
-    expect(encodeDpt9(1e9)).toBe(0x7fff);
-    expect(encodeDpt9(-1e9)).toBe(0xf800);
+  });
+
+  test("refuses a value outside the range instead of saturating, 0x7FFF being DPT 9's invalid data", () => {
+    // The ends of the range: the largest mantissa at exponent 15, 0x7FFF itself excluded.
+    expect(encodeDpt9(670433.28)).toBe(0x7ffe);
+    expect(encodeDpt9(-671088.64)).toBe(0xf800);
+    for (const v of [670760.96, 670600.01, 1e9, -672000,-1e9, 1e21]) {
+      expect(() => encodeDpt9(v)).toThrow(expect.objectContaining({ code: "PARAM_VALUE_OUT_OF_RANGE" }));
+    }
   });
 
   corpusTest("the MDT BE-02001.02 input B sending 1000 Lux: Busforge's image holds the 12 bytes ETS wrote", () => {
