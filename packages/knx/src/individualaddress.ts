@@ -244,26 +244,34 @@ export async function assignIndividualAddress(tun: KnxTransport, ia: string, opt
 
 const SERIAL_LEN = 6;
 
+// A serial number of all zeros or all ones is what a unit holds where none was ever written into it
+// (cleared or erased memory), so any number of units can hold it and a serial-number service would
+// reach every one of them.
 function serialBytes(serial: string): Buffer {
   const b = Buffer.from(serial.replace(/[^0-9a-f]/gi, ""), "hex");
   if (b.length !== SERIAL_LEN) {
     throw new KnxError("SERIAL_INVALID", `"${serial}" is not a 6-byte KNX serial number (e.g. 00FA00000032)`);
+  }
+  if (b.every((x) => x === 0x00) || b.every((x) => x === 0xff)) {
+    throw new KnxError("SERIAL_NOT_UNIQUE",
+      `the serial number ${b.toString("hex").toUpperCase()} is not set on the unit and does not tell it apart from others; assign its address by programming mode`);
   }
   return b;
 }
 
 // Ask, by broadcast, which address the device with this serial number currently holds. Only that
 // device answers (the firmware compares the serial against its own PID_SERIAL_NUMBER), so an empty
-// result means it is not on this line, not that something went wrong.
+// result means it is not on this line, not that something went wrong. Two addresses answering for
+// one serial mean it is not unique on this line, and that is refused.
 export async function readAddressBySerial(tun: KnxTransport, serial: string, probeMs = 3000): Promise<string | null> {
   const want = serialBytes(serial);
-  let found: number | null = null;
+  const found = new Set<number>();
   const prev = tun.onCemi;
   tun.onCemi = (src, _dst, tpdu, isGroup) => {
     if (!isGroup) return;
     const p = parseApdu(tpdu);
     // The response repeats the serial number; the device's address is the frame's SOURCE.
-    if (p.apci === APCI.IA_SERIAL_RESPONSE && p.data.subarray(0, SERIAL_LEN).equals(want)) found = src;
+    if (p.apci === APCI.IA_SERIAL_RESPONSE && p.data.subarray(0, SERIAL_LEN).equals(want)) found.add(src);
   };
   try {
     await tun.sendCemi(cemiLDataGroup(tun.assignedIa, BROADCAST, apduUnnumbered(APCI.IA_SERIAL_READ, want)));
@@ -271,7 +279,11 @@ export async function readAddressBySerial(tun: KnxTransport, serial: string, pro
   } finally {
     tun.onCemi = prev;
   }
-  return found === null ? null : numToIa(found);
+  if (found.size > 1) {
+    throw new KnxError("SERIAL_NOT_UNIQUE",
+      `devices on ${[...found].sort((a, b) => a - b).map(numToIa).join(", ")} all answer for the serial number ${serial}; a serial-number write would reach each of them. Assign their addresses by programming mode`);
+  }
+  return found.size === 0 ? null : numToIa([...found][0]);
 }
 
 // A_IndividualAddress_SerialNumber_Write: serial (6) + the new address (2) + 4 reserved zero bytes.

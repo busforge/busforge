@@ -1,7 +1,7 @@
 import { test, expect, describe, setDefaultTimeout } from "bun:test";
 import type { KnxTransport } from "../src/transport.ts";
 import { parseCemiLData } from "../src/transport.ts";
-import { assignIndividualAddress, readProgModeDevices, writeIndividualAddress } from "../src/individualaddress.ts";
+import { assignAddressBySerial, assignIndividualAddress, readAddressBySerial, readProgModeDevices, writeIndividualAddress } from "../src/individualaddress.ts";
 import { apduUnnumbered, parseApdu, iaToNum, numToIa, APCI, BROADCAST } from "../src/frame.ts";
 import { KnxError } from "../src/errors.ts";
 
@@ -24,9 +24,10 @@ class SimDevice {
   // `closes`: answer every numbered frame with a T_Disconnect, as a device in another tool's
   // connection (or one that missed our T_Connect) does.
   // `mask`: what A_DeviceDescriptor_Read answers. `noProperties`: a device without interface objects
-  // (a BCU1), which leaves a property write unanswered.
+  // (a BCU1), which leaves a property write unanswered. `serial`: what the serial-number services match.
   mask = "07b0";
   noProperties = false;
+  serial = "";
   constructor(public ia: string, public progMode: boolean, public takesWrite = true, public deafFor = 0, public closes = false) {}
 }
 
@@ -56,7 +57,20 @@ class SimBus implements KnxTransport {
     const p = parseApdu(tpdu);
 
     if (isGroup && dst === BROADCAST) {
-      this.wire.push(p.apci === APCI.INDIVIDUAL_ADDRESS_READ ? "IA_Read" : p.apci === APCI.INDIVIDUAL_ADDRESS_WRITE ? "IA_Write" : "broadcast");
+      this.wire.push(p.apci === APCI.INDIVIDUAL_ADDRESS_READ ? "IA_Read" : p.apci === APCI.INDIVIDUAL_ADDRESS_WRITE ? "IA_Write"
+        : p.apci === APCI.IA_SERIAL_READ ? "IA_SerialRead" : p.apci === APCI.IA_SERIAL_WRITE ? "IA_SerialWrite" : "broadcast");
+      const bySerial = () => this.devices.filter((d) => d.serial !== "" && Buffer.from(d.serial, "hex").equals(p.data.subarray(0, 6)));
+      if (p.apci === APCI.IA_SERIAL_READ) {
+        // every device holding that serial answers, from its own address, repeating the serial
+        for (const d of bySerial()) this.deliver(iaToNum(d.ia), BROADCAST, apduUnnumbered(APCI.IA_SERIAL_RESPONSE, Buffer.concat([p.data.subarray(0, 6), Buffer.alloc(4)])), true);
+        return;
+      }
+      if (p.apci === APCI.IA_SERIAL_WRITE) {
+        const ia = numToIa((p.data[6] << 8) | p.data[7]);
+        this.broadcastWrites.push(ia);
+        for (const d of bySerial()) d.ia = ia;
+        return;
+      }
       if (p.apci === APCI.INDIVIDUAL_ADDRESS_READ) {
         // every device in programming mode answers, with its own address as the frame source
         for (const d of this.devices.filter((x) => x.progMode)) {
@@ -137,6 +151,14 @@ describe("assigning an individual address", () => {
     expect(virgin.progMode).toBe(false);  // and will not answer the next assignment
     expect(bus.broadcastWrites).toEqual([NEW_IA]);
     expect(bus.progModeWrites).toBe(1);
+    // From the write on, ETS's frames on a System B unit (mask 07B0, private corpus
+    // internal/captures/busforge-secure-download.log, the Jung 400021SE's two assignments): the read that
+    // finds the device there, the descriptor read on its own connection, closed, then PID_PROGMODE 0 on a
+    // new one, the read that finds nobody in programming mode, and the close.
+    expect(bus.wire.slice(bus.wire.indexOf("IA_Write"))).toEqual([
+      "IA_Write", "IA_Read", `${NEW_IA} T_Connect`, `${NEW_IA} DescRead`, `${NEW_IA} T_ACK`, `${NEW_IA} T_Disconnect`,
+      `${NEW_IA} T_Connect`, `${NEW_IA} PropWrite`, `${NEW_IA} T_ACK`, "IA_Read", `${NEW_IA} T_Disconnect`,
+    ]);
   }, 100_000); // the "is the target free?" probe waits out a silent address (3 tries x 1.5 s)
 
   test("ends programming mode with A_Restart where the caller names the restart for the device's mask", async () => {
@@ -316,4 +338,46 @@ describe("assigning an individual address", () => {
     expect((err as KnxError).code).toBe("IA_WRITE_UNVERIFIED");
     expect(stubborn.ia).toBe("15.15.255"); // and it is honest about where the device still is
   }, 100_000); // two silent-address probes: the pre-check and the post-write verify
+});
+
+describe("assigning an individual address by serial number", () => {
+  const withSerial = (ia: string, serial: string) => Object.assign(new SimDevice(ia, false), { serial });
+
+  test("assigns to the device with that serial, and proves it by that serial", async () => {
+    const unit = withSerial("15.15.255", "00fa01020304");
+    const bus = new SimBus([unit, withSerial("15.15.255", "00fa01020305")]);
+
+    const res = await assignAddressBySerial(bus, "00FA01020304", NEW_IA, fast);
+
+    expect(res).toEqual({ previous: "15.15.255", assigned: NEW_IA, verified: true, progModeCleared: true, progModeError: null });
+    expect(unit.ia).toBe(NEW_IA);
+    expect(bus.devices[1].ia).toBe("15.15.255");
+  }, 100_000); // one silent-address probe: the free-address check
+
+  for (const serial of ["000000000000", "FFFFFFFFFFFF", "00:00:00:00:00:00", "ff-ff-ff-ff-ff-ff"]) {
+    test(`refuses the unset serial ${serial} before anything reaches the bus`, async () => {
+      const bus = new SimBus([withSerial("15.15.255", "000000000000"), withSerial("15.15.255", "ffffffffffff")]);
+
+      const err = await assignAddressBySerial(bus, serial, NEW_IA, fast).then(() => null, (e) => e);
+
+      expect((err as KnxError).code).toBe("SERIAL_NOT_UNIQUE");
+      expect(bus.wire).toEqual([]);
+      expect(bus.devices.map((d) => d.ia)).toEqual(["15.15.255", "15.15.255"]);
+    });
+  }
+
+  test("refuses a serial two devices answer for, naming both, and writes nothing", async () => {
+    const bus = new SimBus([withSerial("1.1.7", "00fa01020304"), withSerial("15.15.255", "00fa01020304")]);
+
+    const err = await assignAddressBySerial(bus, "00fa01020304", NEW_IA, fast).then(() => null, (e) => e);
+
+    expect((err as KnxError).code).toBe("SERIAL_NOT_UNIQUE");
+    expect((err as KnxError).message).toContain("1.1.7, 15.15.255");
+    expect(bus.wire).toEqual(["IA_SerialRead"]);
+    expect(bus.broadcastWrites).toEqual([]);
+  });
+
+  test("a read of a serial nobody holds is an empty answer, not an error", async () => {
+    expect(await readAddressBySerial(new SimBus([withSerial("1.1.7", "00fa01020304")]), "00fa09090909", 20)).toBeNull();
+  });
 });

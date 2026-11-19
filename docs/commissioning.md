@@ -75,12 +75,24 @@ target address back first and make sure it is genuinely unused.
 
 ### Assignment by serial number, without the button
 
-`A_IndividualAddress_SerialNumber_Write` names exactly one device, so it needs neither the
-programming button nor a unique responder. That is not a convenience: it is the only thing
-that works when several virgin devices share a bus, because they all sit on the factory
-address `15.15.255` and nothing else can tell them apart. A point-to-point read at that
-address returns whichever device answers first, so it cannot be trusted for identification
-either.
+`A_IndividualAddress_SerialNumber_Write` reaches every device that holds the serial number it
+names, so it needs neither the programming button nor a unique responder, as long as the serial
+is unique. That is not a convenience: it is the only thing that works when several virgin
+devices share a bus, because they all sit on the factory address `15.15.255` and nothing else
+can tell them apart. A point-to-point read at that address returns whichever device answers
+first, so it cannot be trusted for identification either.
+
+A serial number is not unique by itself, so Busforge refuses the write (`SERIAL_NOT_UNIQUE`)
+where the serial cannot tell the device apart:
+
+- `000000000000` and `FFFFFFFFFFFF`, what a unit holds where no serial number was ever written
+  into it, are refused before anything reaches the bus.
+- Before the write, the serial-number read must be answered from exactly one address; two
+  addresses answering for one serial refuse the assignment, naming both.
+
+Devices that share a serial and sit on the same address (two virgin units on `15.15.255`)
+answer from one address, so the read cannot tell them apart and Busforge does not see the case.
+Where units may share a serial, assign their addresses by programming mode.
 
 ### Using it
 
