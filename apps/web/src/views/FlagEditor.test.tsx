@@ -28,9 +28,9 @@ describe("a com-object's flags on the device page", () => {
   test("only the bits the device's download writes can be edited", () => {
     const html = panel(co());
     const input = (name: string) => html.match(new RegExp(`<input[^>]*data-testid="flags-4-${name}"[^>]*>`))![0];
-    expect(input("read")).not.toContain("disabled");
-    expect(input("update")).toContain("disabled");
-    expect(input("comm")).toContain("disabled");
+    expect(input("read")).not.toContain(' disabled=""');
+    expect(input("update")).toContain(' disabled=""');
+    expect(input("comm")).toContain(' disabled=""');
     expect(html.match(/<select[^>]*>/)![0]).not.toContain("disabled");
   });
 

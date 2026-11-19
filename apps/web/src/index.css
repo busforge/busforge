@@ -137,6 +137,50 @@
   scroll-margin-top: calc(var(--bar-h, 0px) + var(--page-header-h, 0px) + var(--section-nav-h, 0px) + 0.75rem);
 }
 
+/* The tick and the dash of the Checkbox primitive (components/ui/checkbox.tsx), drawn in the ink on amber. */
+@layer components {
+  [data-slot="checkbox"]::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: var(--primary-foreground);
+    -webkit-mask: var(--checkbox-mark) center / 100% 100% no-repeat;
+    mask: var(--checkbox-mark) center / 100% 100% no-repeat;
+    opacity: 0;
+  }
+  [data-slot="checkbox"]:checked {
+    --checkbox-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 8.5l3 3 6-7'/%3E%3C/svg%3E");
+  }
+  [data-slot="checkbox"]:indeterminate {
+    --checkbox-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round'%3E%3Cpath d='M4 8h8'/%3E%3C/svg%3E");
+  }
+  [data-slot="checkbox"]:checked::before,
+  [data-slot="checkbox"]:indeterminate::before {
+    opacity: 1;
+  }
+}
+
+/* Forced colors replace every author fill and drop the focus ring's box-shadow: system colours keep checked
+   and indeterminate apart from empty and give keyboard focus an outline.
+   Outside the layers, so these win over the box's utility classes. */
+@media (forced-colors: active) {
+  [data-slot="checkbox"]:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+  [data-slot="checkbox"]:checked,
+  [data-slot="checkbox"]:indeterminate {
+    forced-color-adjust: none;
+    background: Highlight;
+    border-color: Highlight;
+  }
+  [data-slot="checkbox"]:checked::before,
+  [data-slot="checkbox"]:indeterminate::before {
+    forced-color-adjust: none;
+    background: HighlightText;
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

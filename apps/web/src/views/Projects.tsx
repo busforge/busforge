@@ -9,6 +9,7 @@ import { qk, useProjects, useVersion } from "../queries.ts";
 import { importGaps } from "../lib/importGaps.ts";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher.tsx";
@@ -232,7 +233,7 @@ export function ProjectsScreen() {
             <AlertDialogDescription>{t("projects.ownKeysBody")}</AlertDialogDescription>
           </AlertDialogHeader>
           <label className="flex items-start gap-2 text-sm">
-            <input type="checkbox" className="mt-1" checked={keysExported} onChange={(e) => setKeysExported(e.target.checked)} data-testid="keys-exported" />
+            <Checkbox className="mt-0.5 pointer-coarse:mt-0" checked={keysExported} onChange={(e) => setKeysExported(e.target.checked)} data-testid="keys-exported" />
             <span>{t("projects.ownKeysAck")}</span>
           </label>
           <AlertDialogFooter>
