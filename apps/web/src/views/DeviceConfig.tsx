@@ -18,7 +18,8 @@ import { BreakableText } from "@/components/BreakableText.tsx";
 import { scrollToSection, useStickyVar } from "@/lib/stickyChrome.ts";
 import { useScrollSpy } from "@/lib/scrollSpy.ts";
 import { flowOf, inlineChildren, keptAt } from "@/lib/blockFlow.ts";
-import { gridCells, gridColumns, matchingItems } from "@/lib/blockGrid.ts";
+import { matchingItems, norm, underMatchingHeading } from "@/lib/blockFilter.ts";
+import { gridLayout } from "@/lib/blockGrid.ts";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Notice } from "@/components/ui/notice";
@@ -168,7 +169,6 @@ const flagWords = (co: CfgComObjView, t: TFn) => {
 
 const comObjLabel = (c: CfgComObjView) => c.functionText || c.name;
 const isItemChanged = (it: CfgItem) => (it.kind === "param" && !!it.param.changed) || (it.kind === "comObject" && (!!it.comObject.changed || !!it.comObject.flagsChanged));
-const norm = (s?: string) => (s ?? "").toLowerCase();
 
 export function DeviceConfig() {
   const { t } = useTranslation();
@@ -383,8 +383,8 @@ export function DeviceConfig() {
   // rows (param name/value, com-object label, separator or button label, with
   // the rest of their grid row or the rows below a matching heading) are kept.
   // The group header always renders as context when any of its children
-  // survive. An inline block is part
-  // of its parent's page: a matching page reveals it, and its place moves to the
+  // survive. An inline block is part of its parent's page: a matching page or
+  // a matching heading above it reveals it, and its place moves to the
   // parent's rows that are still shown.
   const filteredGroups = useMemo(() => {
     if (!q) return groups;
@@ -407,7 +407,8 @@ export function DeviceConfig() {
         shown.set(b.id, [b.items, items]);
       };
       for (const c of g.children) {
-        const cMatch = headMatch || norm(c.name).includes(q) || (!!c.inline && !!c.parentId && matched.has(c.parentId));
+        const parent = c.inline && c.parentId ? blockById.get(c.parentId) : undefined;
+        const cMatch = headMatch || norm(c.name).includes(q) || (!!parent && (matched.has(parent.id) || (c.at !== undefined && underMatchingHeading(parent, c.at, q))));
         if (cMatch) matched.add(c.id);
         const items = cMatch ? c.items : keep(c);
         if (cMatch || items.length > 0) show(c, items);
@@ -421,7 +422,7 @@ export function DeviceConfig() {
         out.push({ head: { ...g.head, items: headItems }, children: placed });
     }
     return out;
-  }, [groups, q]);
+  }, [groups, blockById, q]);
   // Per group, the inline blocks each of its blocks carries on its page.
   const groupInline = useMemo(() => filteredGroups.map((g) => inlineChildren([g.head, ...g.children])), [filteredGroups]);
   const matchCount = useMemo(
@@ -663,12 +664,11 @@ export function DeviceConfig() {
     block.layout ? renderGrid(block, keyPrefix) : block.items.map((item, i) => renderItem(item, `${keyPrefix}-${i}`));
 
   // ETS grid: <Rows>/<Columns> declare the geometry (column widths, and for a Table the
-  // header captions), every item names its cell. Cells are rendered in place (gridCells,
-  // gridColumns); items WITHOUT a cell (com-objects, or an item whose Cell we could not
-  // read) follow below the grid instead of disappearing.
+  // header captions), every item names its cell. Cells are rendered in place (gridLayout);
+  // items WITHOUT a cell (com-objects, or an item whose Cell we could not read) follow
+  // below the grid instead of disappearing.
   const renderGrid = (block: CfgBlock, keyPrefix: string) => {
-    const { cells, loose } = gridCells(block);
-    const { col, template } = gridColumns(block, gridCells(blockById.get(block.id) ?? block).cells);
+    const { cells, loose, row: rowAt, col, template } = gridLayout(block, blockById.get(block.id) ?? block);
     // A Table shows the authored headers, so it needs a leading column for the row
     // captions and a leading row for the column captions; a Grid has neither.
     const table = block.layout === "Table";
@@ -681,13 +681,13 @@ export function DeviceConfig() {
             {table && block.cols?.map((c, i) => c.text ? (
               <span key={`${keyPrefix}-ch-${i}`} style={{ gridRow: 1, gridColumn: col.get(i + 1)! + 1 }} className="border-b border-border/40 pb-1 text-xs font-semibold text-muted-foreground">{c.text}</span>
             ) : null)}
-            {table && block.rows?.map((r, i) => r.text ? (
-              <span key={`${keyPrefix}-rh-${i}`} style={{ gridRow: i + 2, gridColumn: 1 }} className="pr-2 text-sm text-muted-foreground">{r.text}</span>
+            {table && block.rows?.map((r, i) => r.text && rowAt.has(i + 1) ? (
+              <span key={`${keyPrefix}-rh-${i}`} style={{ gridRow: rowAt.get(i + 1)! + 1, gridColumn: 1 }} className="pr-2 text-sm text-muted-foreground">{r.text}</span>
             ) : null)}
             {[...cells].map(([key, items]) => {
               const [row, c] = key.split(",").map(Number);
               return (
-                <div key={`${keyPrefix}-${key}`} style={{ gridRow: row + off, gridColumn: col.get(c)! + off }} className="min-w-0">
+                <div key={`${keyPrefix}-${key}`} style={{ gridRow: rowAt.get(row)! + off, gridColumn: col.get(c)! + off }} className="min-w-0">
                   {items.map((item, i) => renderItem(item, `${keyPrefix}-${key}-${i}`, true))}
                 </div>
               );
@@ -1125,7 +1125,9 @@ function ParamRow({ param, compact, changedTitle, revertTitle, reverting, onChan
   // value needs: the widest value it can hold, in `ch` of its own font, plus its padding.
   const fit = (chars: number, pad: string) => (compact ? { minWidth: `calc(${Math.min(Math.max(chars, 1), 24)}ch + ${pad})` } : undefined);
   const digits = (n?: number) => (n !== undefined && Number.isInteger(n) && Math.abs(n) < 1e10 ? String(n).length : 0);
-  const numberFit = fit(Math.max(local.length, digits(param.min), digits(param.max)), "2.75rem"); // padding, border, spinner
+  // From the committed value, so the column does not move while a value is typed.
+  const shown = compact ? display(param.value) : "";
+  const numberFit = fit(Math.max(shown.length, digits(param.min), digits(param.max)), "2.75rem"); // padding, border, spinner
 
   // ETS TypePicture: the product's image alone across the row, aligned as its type says. Without the
   // file in the catalogue the row says so instead of showing an empty box.
@@ -1204,7 +1206,7 @@ function ParamRow({ param, compact, changedTitle, revertTitle, reverting, onChan
           <span className="relative flex w-full">
             <select
               value={param.value} onChange={(e) => onChange(e.target.value)} aria-label={label}
-              style={fit(Math.max(0, ...(param.options ?? []).map((o) => o.text.length)), "3rem")}
+              style={compact ? fit(Math.max(0, ...(param.options ?? []).map((o) => o.text.length)), "3rem") : undefined}
               className="h-9 w-full appearance-none rounded-md border border-input bg-background pr-8 pl-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 pointer-coarse:h-11 pointer-coarse:text-base"
               data-testid={`param-${param.refId}`}
             >
@@ -1237,7 +1239,7 @@ function ParamRow({ param, compact, changedTitle, revertTitle, reverting, onChan
             style={numberFit} className="w-full font-mono" data-testid={`param-${param.refId}`}
           />
         ) : param.control === "text" ? (
-          <Input className="w-full" style={fit(local.length, "1.75rem")} value={local} onChange={(e) => setLocal(e.target.value)} onBlur={() => local !== param.value && onChange(local)} aria-label={label} data-testid={`param-${param.refId}`} />
+          <Input className="w-full" style={fit(shown.length, "1.75rem")} value={local} onChange={(e) => setLocal(e.target.value)} onBlur={() => local !== param.value && onChange(local)} aria-label={label} data-testid={`param-${param.refId}`} />
         ) : param.control === "color" ? (
           // TypeColor (RGB): native colour picker. Values are stored as #RRGGBB;
           // ETS uses upper-case, so normalise typed/picked input to upper-case to
@@ -1261,7 +1263,7 @@ function ParamRow({ param, compact, changedTitle, revertTitle, reverting, onChan
                 onChange={(e) => setLocal(e.target.value)}
                 onBlur={commitDuration}
                 onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
-                style={fit(Math.max(local.length, 8), "1.75rem")} className="w-full font-mono"
+                style={fit(Math.max(shown.length, 8), "1.75rem")} className="w-full font-mono"
               />
               <span className="shrink-0 text-xs text-muted-foreground tabular-nums">= {param.value} s</span>
             </span>

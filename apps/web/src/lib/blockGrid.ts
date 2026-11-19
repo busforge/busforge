@@ -1,25 +1,64 @@
-import type { CfgBlock, CfgItem } from "../api.ts";
+import type { CfgBlock, CfgCell, CfgItem } from "../api.ts";
 
-// How an ETS Grid/Table ParameterBlock (Layout=) is laid out, and what the parameter filter keeps of a
-// block. ETS places a grid's items by Cell="row,column" in the geometry its <Rows>/<Columns> declare.
+// How an ETS Grid/Table ParameterBlock (Layout=) is laid out. ETS places a grid's items by
+// Cell="row,column" in the geometry its <Rows>/<Columns> declare.
 
-const placed = (item: CfgItem) => (item.kind === "comObject" || item.kind === "unsupported" ? undefined : item.cell);
+// Where an item sits in its grid; com-objects and unsupported elements never have a cell.
+export const cellOf = (item: CfgItem): CfgCell | undefined => (item.kind === "comObject" || item.kind === "unsupported" ? undefined : item.cell);
 
-export interface GridCells {
+export interface GridLayout {
   // The items of each cell, keyed "row,col" (authored numbering), in authored order.
   cells: Map<string, CfgItem[]>;
   // The items without a cell (com-objects, an item whose Cell could not be read): they follow the grid.
   loose: CfgItem[];
+  // The rendered grid row and column of each authored row and column that is shown (1-based, before a
+  // Table's caption row and column).
+  row: Map<number, number>;
+  col: Map<number, number>;
+  // The CSS grid-template-columns, a Table's caption column first.
+  template: string;
 }
 
-// The cells of a grid block. Several items can land in one cell (two active choose branches), so a cell
-// holds a list and drops none, except a separator repeating one the cell already holds: ETS draws the
-// items of one cell on top of each other, so two identical labels read as one.
-export function gridCells(block: CfgBlock): GridCells {
+// The layout of `shown`, the items of `configured` (the block as the configuration shows it) that are on
+// screen (the same items when nothing is filtered).
+// - Several items can land in one cell (two active choose branches), so a cell holds a list and drops
+//   none, except a separator repeating one the cell already holds: ETS draws the items of one cell on top
+//   of each other, so two identical labels read as one.
+// - The columns come from `configured`, so a search does not move them. A column no item (and, in a
+//   Table, no caption) occupies is left out: a choose that shows a few of many authored columns would
+//   otherwise leave a gap per empty column and squeeze the rest.
+// - The rows are those `shown` occupies, and while nothing is filtered a Table's captioned rows too.
+// - ETS authors widths as percentages; OpenKNX calibration grids declare over 200 %, so shown columns
+//   that add up to more than 100 % share the width in that proportion, and less leaves the rest free.
+//   A column is never narrower than its content: a label breaks only between words, a control keeps the
+//   minimum width it asks for, and a grid that does not fit scrolls in its box.
+export function gridLayout(shown: CfgBlock, configured: CfgBlock): GridLayout {
+  const { cells, loose } = gridCells(shown);
+  const table = shown.layout === "Table";
+  const cols = new Set<number>();
+  for (const item of configured.items) { const cell = cellOf(item); if (cell) cols.add(cell.col); }
+  if (table) configured.cols?.forEach((c, i) => { if (c.text) cols.add(i + 1); });
+  const rows = new Set<number>();
+  for (const item of shown.items) { const cell = cellOf(item); if (cell) rows.add(cell.row); }
+  if (table && shown.items === configured.items) configured.rows?.forEach((r, i) => { if (r.text) rows.add(i + 1); });
+  const colOrder = [...cols].sort((a, b) => a - b);
+  const widths = colOrder.map((c) => width(configured.cols?.[c - 1]?.width));
+  const pct = widths.reduce((n, w) => n + (w.pct ?? 0), 0);
+  const tracks = widths.map((w) => `minmax(min-content, ${w.pct !== undefined ? `${w.pct}fr` : w.track})`);
+  // What the shown percentages leave of the width stays free, as in ETS.
+  if (pct > 0 && pct < 100) tracks.push(`minmax(0px, ${100 - pct}fr)`);
+  return {
+    cells, loose,
+    row: numbering(rows), col: numbering(cols),
+    template: [...(table ? ["auto"] : []), ...tracks].join(" "),
+  };
+}
+
+function gridCells(block: CfgBlock): Pick<GridLayout, "cells" | "loose"> {
   const cells = new Map<string, CfgItem[]>();
   const loose: CfgItem[] = [];
   for (const item of block.items) {
-    const cell = placed(item);
+    const cell = cellOf(item);
     if (!cell) { loose.push(item); continue; }
     const key = `${cell.row},${cell.col}`;
     const at = cells.get(key);
@@ -30,69 +69,12 @@ export function gridCells(block: CfgBlock): GridCells {
   return { cells, loose };
 }
 
-export interface GridColumns {
-  // The rendered grid column of each authored column that is shown (1-based, before a Table's caption column).
-  col: Map<number, number>;
-  // The CSS grid-template-columns of the shown columns, a Table's caption column first.
-  template: string;
-}
+const numbering = (lines: Set<number>) => new Map([...lines].sort((a, b) => a - b).map((n, i) => [n, i + 1]));
 
-// The columns a grid block shows and how wide each one is, from the cells of the block as configured
-// (unfiltered, so a search does not move the columns). A column no item (and, in a Table, no caption)
-// occupies is left out: a choose that shows a few of many authored columns would otherwise
-// leave a gap per empty column and squeeze the rest. ETS authors widths as percentages that need not add
-// up to 100 (OpenKNX calibration grids declare over 200 %), so a percentage is the column's share of the
-// free width. A column is never narrower than its content: a label breaks between words, never inside
-// one, and a control keeps the minimum width it asks for; a grid that does not fit scrolls in its box.
-export function gridColumns(block: CfgBlock, cells: Map<string, CfgItem[]>): GridColumns {
-  const used = new Set<number>();
-  for (const key of cells.keys()) used.add(Number(key.split(",")[1]));
-  if (block.layout === "Table") block.cols?.forEach((c, i) => { if (c.text) used.add(i + 1); });
-  const order = [...used].sort((a, b) => a - b);
-  const col = new Map(order.map((c, i) => [c, i + 1]));
-  const tracks = order.map((c) => `minmax(min-content, ${share(block.cols?.[c - 1]?.width)})`);
-  return { col, template: [...(block.layout === "Table" ? ["auto"] : []), ...tracks].join(" ") };
-}
-
-// An authored column width as a track's maximum. Anything that is not a plain length would invalidate
-// the whole grid-template-columns declaration and collapse the block, so it becomes an auto track.
-function share(w?: string): string {
+// An authored column width: a percentage, or a track maximum. Anything that is not a plain length would
+// invalidate the whole grid-template-columns declaration and collapse the block, so it becomes auto.
+function width(w?: string): { pct?: number; track: string } {
   const pct = w?.match(/^(\d+(?:\.\d+)?)%$/);
-  if (pct) return `${pct[1]}fr`;
-  return w && /^\d+(\.\d+)?(px|rem|em)$/.test(w) ? w : "auto";
-}
-
-const norm = (s?: string) => (s ?? "").toLowerCase();
-
-// Whether an item matches the search term: a parameter by its text or value, a com-object by its
-// function or name, a separator or a button by its label.
-export function itemMatches(item: CfgItem, q: string): boolean {
-  if (!q) return false;
-  switch (item.kind) {
-    case "param": return norm(item.param.name).includes(q) || norm(item.param.value).includes(q);
-    case "comObject": return norm(item.comObject.functionText || item.comObject.name).includes(q) || norm(item.comObject.name).includes(q);
-    case "separator": return norm(item.text).includes(q);
-    case "button": return norm(item.button.text).includes(q);
-    case "unsupported": return false;
-  }
-}
-
-// The items of `block` the search term keeps, the same objects in authored order. In a grid a match
-// keeps its whole row, so a value stands next to its label and a label next to its values; a match on a
-// Table's column caption keeps the whole table. In a list a matching text separator keeps the rows
-// below it, up to the next one; any other row is kept when it matches itself.
-export function matchingItems(block: CfgBlock, q: string): CfgItem[] {
-  if (!q) return [];
-  if (block.layout) {
-    if (block.layout === "Table" && block.cols?.some((c) => norm(c.text).includes(q))) return block.items;
-    const rows = new Set<number>();
-    block.rows?.forEach((r, i) => { if (block.layout === "Table" && norm(r.text).includes(q)) rows.add(i + 1); });
-    for (const item of block.items) { const cell = placed(item); if (cell && itemMatches(item, q)) rows.add(cell.row); }
-    return block.items.filter((item) => { const cell = placed(item); return cell ? rows.has(cell.row) : itemMatches(item, q); });
-  }
-  let section = false;
-  return block.items.filter((item) => {
-    if (item.kind === "separator" && item.text && item.uiHint !== "HorizontalRuler") section = itemMatches(item, q);
-    return section || itemMatches(item, q);
-  });
+  if (pct) return { pct: Number(pct[1]), track: "" };
+  return { track: w && /^\d+(\.\d+)?(px|rem|em)$/.test(w) ? w : "auto" };
 }

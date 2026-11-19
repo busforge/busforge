@@ -1,73 +1,48 @@
 import { describe, expect, test } from "bun:test";
-import type { CfgBlock, CfgItem, CfgParamView } from "../api.ts";
-import { gridCells, gridColumns, itemMatches, matchingItems } from "./blockGrid.ts";
+import type { CfgBlock, CfgCell, CfgItem, CfgParamView } from "../api.ts";
+import { gridLayout } from "./blockGrid.ts";
 
-const at = (row: number, col: number) => ({ cell: { row, col } });
-const sep = (text: string, cell?: { row: number; col: number }, uiHint = ""): CfgItem => ({ kind: "separator", text, uiHint, ...(cell ? { cell } : {}) });
-const param = (name: string, value: string, cell?: { row: number; col: number }): CfgItem =>
-  ({ kind: "param", param: { refId: name, name, value, control: "number" } as CfgParamView, ...(cell ? { cell } : {}) });
+const sep = (text: string, cell: CfgCell, uiHint = ""): CfgItem => ({ kind: "separator", text, uiHint, cell });
+const param = (name: string, cell: CfgCell): CfgItem => ({ kind: "param", param: { refId: name, name, value: "1", control: "number" } as CfgParamView, cell });
 const grid = (items: CfgItem[], extra: Partial<CfgBlock> = {}): CfgBlock => ({ id: "G", name: "", level: 1, layout: "Grid", items, ...extra });
+const c = (row: number, col: number): CfgCell => ({ row, col });
 
-describe("gridCells", () => {
+describe("gridLayout", () => {
   test("keeps every item of a cell, drops a separator the cell already holds, and lists cell-less items apart", () => {
     const co: CfgItem = { kind: "comObject", comObject: { number: 1, name: "o" } as never };
-    const cells = gridCells(grid([sep("1.05", at(1, 6).cell, "Headline"), sep("1.05", at(1, 6).cell, "Headline"), param("a", "1", at(1, 6).cell), sep("x", at(1, 6).cell), co]));
-    expect(cells.cells.get("1,6")!.map((i) => (i.kind === "separator" ? i.text : i.kind))).toEqual(["1.05", "param", "x"]);
-    expect(cells.loose).toEqual([co]);
+    const b = grid([sep("1.05", c(1, 6), "Headline"), sep("1.05", c(1, 6), "Headline"), param("a", c(1, 6)), sep("x", c(1, 6)), co]);
+    const { cells, loose } = gridLayout(b, b);
+    expect(cells.get("1,6")).toEqual([b.items[0], b.items[2], b.items[3]]);
+    expect(loose).toEqual([co]);
   });
-});
-
-describe("gridColumns", () => {
-  test("leaves out the columns no item occupies and takes a percentage as a share of the free width", () => {
-    const b = grid([sep("label", at(1, 1).cell), param("p", "1", at(1, 4).cell)], { cols: [{ width: "23%" }, { width: "6%" }, { width: "5%" }, { width: "7.5%" }] });
-    const { col, template } = gridColumns(b, gridCells(b).cells);
+  test("leaves out the columns no item occupies and shares the width by the percentages when they exceed 100", () => {
+    const b = grid([sep("label", c(1, 1)), param("p", c(1, 4))], { cols: [{ width: "80%" }, { width: "6%" }, { width: "5%" }, { width: "30%" }] });
+    const { col, template } = gridLayout(b, b);
     expect([...col]).toEqual([[1, 1], [4, 2]]);
-    expect(template).toBe("minmax(min-content, 23fr) minmax(min-content, 7.5fr)");
+    expect(template).toBe("minmax(min-content, 80fr) minmax(min-content, 30fr)");
+  });
+  test("percentages under 100 leave the rest of the width free", () => {
+    const b = grid([sep("a", c(1, 1)), param("b", c(1, 2))], { cols: [{ width: "45%" }, { width: "20.5%" }] });
+    expect(gridLayout(b, b).template).toBe("minmax(min-content, 45fr) minmax(min-content, 20.5fr) minmax(0px, 34.5fr)");
   });
   test("a plain length stays, anything else and an undeclared column become auto", () => {
-    const b = grid([param("a", "1", at(1, 1).cell), param("b", "1", at(1, 2).cell), param("c", "1", at(1, 3).cell)], { cols: [{ width: "120px" }, { width: "*" }] });
-    expect(gridColumns(b, gridCells(b).cells).template).toBe("minmax(min-content, 120px) minmax(min-content, auto) minmax(min-content, auto)");
+    const b = grid([param("a", c(1, 1)), param("b", c(1, 2)), param("c", c(1, 3))], { cols: [{ width: "120px" }, { width: "*" }] });
+    expect(gridLayout(b, b).template).toBe("minmax(min-content, 120px) minmax(min-content, auto) minmax(min-content, auto)");
   });
-  test("a Table keeps its caption column and every column that carries a caption", () => {
-    const b = grid([param("a", "1", at(1, 1).cell)], { layout: "Table", cols: [{ text: "A", width: "50%" }, { width: "25%" }, { text: "C", width: "25%" }] });
-    const { col, template } = gridColumns(b, gridCells(b).cells);
-    expect([...col]).toEqual([[1, 1], [3, 2]]);
-    expect(template).toBe("auto minmax(min-content, 50fr) minmax(min-content, 25fr)");
+  test("the columns come from the configured block, the rows from the shown items", () => {
+    const b = grid([sep("a", c(1, 1)), param("x", c(1, 3)), sep("b", c(5, 1)), param("y", c(5, 2))]);
+    const shown = { ...b, items: [b.items[2], b.items[3]] };
+    const { col, row, cells } = gridLayout(shown, b);
+    expect([...col]).toEqual([[1, 1], [2, 2], [3, 3]]);
+    expect([...row]).toEqual([[5, 1]]);
+    expect([...cells.keys()]).toEqual(["5,1", "5,2"]);
   });
-});
-
-describe("itemMatches", () => {
-  test("matches a separator and a button by their labels", () => {
-    expect(itemMatches(sep("Haltedauer"), "halte")).toBe(true);
-    expect(itemMatches({ kind: "button", button: { text: "Ermitteln", handler: "h" } }, "ermit")).toBe(true);
-    expect(itemMatches(sep("Haltedauer"), "")).toBe(false);
-  });
-});
-
-describe("matchingItems", () => {
-  const label = sep("Haltedauer", at(1, 1).cell);
-  const value = param("", "30", at(1, 2).cell);
-  const other = sep("Entfernung", at(2, 1).cell);
-  const far = param("", "8", at(2, 2).cell);
-  test("in a grid a matching label keeps its whole row, and a matching value its label", () => {
-    const b = grid([label, value, other, far]);
-    expect(matchingItems(b, "haltedauer")).toEqual([label, value]);
-    expect(matchingItems(b, "30")).toEqual([label, value]);
-    expect(matchingItems(b, "nothing")).toEqual([]);
-  });
-  test("in a grid a cell-less item is kept only when it matches itself", () => {
-    const co: CfgItem = { kind: "comObject", comObject: { number: 4, name: "Haltedauer Objekt" } as never };
-    expect(matchingItems(grid([label, value, co, other]), "haltedauer")).toEqual([label, value, co]);
-  });
-  test("a Table row caption keeps its row, a column caption the whole table", () => {
-    const b = grid([value, far], { layout: "Table", rows: [{ text: "Erste" }, { text: "Zweite" }], cols: [{}, { text: "Wert" }] });
-    expect(matchingItems(b, "zweite")).toEqual([far]);
-    expect(matchingItems(b, "wert")).toEqual([value, far]);
-  });
-  test("in a list a matching heading keeps the rows below it up to the next heading", () => {
-    const a = param("a", "1"), b = param("b", "2"), c = param("c", "3");
-    const block: CfgBlock = { id: "L", name: "", level: 1, items: [sep("Startverzögerung"), a, sep("", undefined, "HorizontalRuler"), b, sep("Sonst"), c] };
-    expect(matchingItems(block, "startverz")).toEqual([block.items[0], a, block.items[2], b]);
-    expect(matchingItems(block, "c")).toEqual([c]);
+  test("a Table keeps its caption column, its captioned columns, and its captioned rows only while nothing is filtered", () => {
+    const b = grid([param("a", c(2, 1))], { layout: "Table", cols: [{ text: "A", width: "50%" }, { width: "25%" }, { text: "C", width: "50%" }], rows: [{ text: "R1" }, { text: "R2" }] });
+    const all = gridLayout(b, b);
+    expect([...all.col]).toEqual([[1, 1], [3, 2]]);
+    expect(all.template).toBe("auto minmax(min-content, 50fr) minmax(min-content, 50fr)");
+    expect([...all.row]).toEqual([[1, 1], [2, 2]]);
+    expect([...gridLayout({ ...b, items: [...b.items] }, b).row]).toEqual([[2, 1]]);
   });
 });
