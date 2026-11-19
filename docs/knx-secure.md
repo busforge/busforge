@@ -517,8 +517,8 @@ device need more than that:
   segment at `0x0100`, while its IP settings, tunnelling addresses and name are device properties of
   the project that it takes in its KNXnet/IP parameter object. Its download writes both, as ETS does
   ([load-procedures.md](load-procedures.md#system-1-the-mv-0012-download)). The MDT IP Interface/Router
-  (MV-07B0) does have a System B parameter segment, but its tunnelling entries are not modeled
-  ([device-support.md](device-support.md#known-gaps)).
+  (MV-07B0) does have a System B parameter segment, and its instance holds none of those settings: the
+  box's System 1 application holds them ([device-support.md](device-support.md#known-gaps)).
 - **A device that is itself the bus gateway** can be flashed over its own connection: the MDT IP
   Interface Secure's confirmed restart has been shown to keep its tunnels, and Busforge's verify read
   went over the same tunnel afterwards. Another gateway's restart may drop the connection carrying the

@@ -323,6 +323,18 @@ export function planSystemBFullDownload(tables: {
   const unplaced = mcb.find((m) => !([P, C, A, D] as number[]).includes(m.obj));
   if (unplaced) throw new Error(`an MCB entry for object ${unplaced.obj}, which this download does not allocate`);
   const mcbFor = (obj: number): LoadStep[] => mcb.filter((m) => m.obj === obj).map((m) => ({ op: "writeProp", obj, pid: PID.MCB_TABLE, start: m.element, data: m.data, echoPrefix: m.echoPrefix }));
+  const tableWrites: LoadStep[] = [
+    { op: "writeSegment", lsm: C, bytes: tables.comObj, echo: true, verify: false },
+    { op: "writeSegment", lsm: A, bytes: tables.assoc, echo: true, verify: false },
+    { op: "writeSegment", lsm: D, bytes: tables.addr, echo: true, verify: false },
+  ];
+  // Of a filled segment the runs ETS writes (fillAllocatedRuns); the allocation set every other byte
+  // to the fill. An unfilled segment holds nothing the download did not write, so it is written
+  // whole, every byte equal to the fill too. Every chunk is echo-checked as it is written (verify
+  // mode, below), and the device's CRCs over the finished segment (or its read-back) prove the whole
+  // segment after the restart.
+  const paramWrites = (filled ? fillAllocatedRuns(tables.params, tables.paramsInImage, fillByte) : [{ offset: 0, bytes: tables.params }])
+    .map((r): LoadStep => ({ op: "writeSegment", lsm: P, offset: r.offset, bytes: r.bytes, echo: true, verify: false }));
   return [
     // The application's load procedure declares `LdCtrlWriteRelMem ... Verify="true"`, and this is
     // what that means: the device answers every memory write. Without it a write that the device
@@ -346,23 +358,15 @@ export function planSystemBFullDownload(tables: {
     { op: "load", lsm: C, assert: false }, { op: "alloc", lsm: C, size: tables.comObj.length }, ...mcbFor(C),
     { op: "load", lsm: D, assert: false }, { op: "alloc", lsm: D, size: tables.addr.length }, ...mcbFor(D),
     { op: "load", lsm: A, assert: false }, { op: "alloc", lsm: A, size: tables.assoc.length }, ...mcbFor(A),
-    // The THREE SMALL TABLES GO FIRST, and the 21601-byte parameter image last. Hardware-found,
-    // and the reason is worth writing down because it cost a device: writing the parameter image
-    // first leaves the device's flash subsystem with a full erase-block buffer sitting exactly at
-    // the boundary the tables land behind, and the table writes that follow are then dropped or
-    // kill it outright (it discards its whole configuration on the next boot). Writing the small
-    // tables before the long haul avoids that entirely. The load-state brackets are all open
-    // either way, so the order of the writes inside them is ours to choose.
-    { op: "writeSegment", lsm: C, bytes: tables.comObj, echo: true, verify: false },
-    { op: "writeSegment", lsm: A, bytes: tables.assoc, echo: true, verify: false },
-    { op: "writeSegment", lsm: D, bytes: tables.addr, echo: true, verify: false },
-    // Of a filled segment the runs ETS writes (fillAllocatedRuns); the allocation set every other byte
-    // to the fill. An unfilled segment holds nothing the download did not write, so it is written
-    // whole, every byte equal to the fill too. Every chunk is echo-checked as it is written (verify
-    // mode, above), and the device's CRCs over the finished segment (or its read-back) prove the whole
-    // segment after the restart.
-    ...(filled ? fillAllocatedRuns(tables.params, tables.paramsInImage, fillByte) : [{ offset: 0, bytes: tables.params }])
-      .map((r): LoadStep => ({ op: "writeSegment", lsm: P, offset: r.offset, bytes: r.bytes, echo: true, verify: false })),
+    // The writes in ETS's order, the parameter segment first, then the com-object, association and
+    // address tables: every ETS capture of an MV-07B0 full download writes them so (the Theben MIX 2
+    // and DALI-Gateway, the MEAN WELL power supply, the MDT IP Interface/Router, and the OpenKNX
+    // RaumController too). On thelsing/knx (`closeAtOnce` false) Busforge writes the THREE SMALL TABLES
+    // FIRST, and the 21601-byte parameter image last. Hardware-found, and it cost a device: writing the
+    // parameter image first leaves that firmware's flash subsystem with a full erase-block buffer
+    // sitting exactly at the boundary the tables land behind, and the table writes that follow are then
+    // dropped or kill it outright (it discards its whole configuration on the next boot).
+    ...(closeAtOnce ? [...paramWrites, ...tableWrites] : [...tableWrites, ...paramWrites]),
     ...(security ? planSecurityObjectLoad(security) : []),
     { op: "stampAppId", lsm: P, data: tables.programId },
     { op: "loadCompleted", lsm: P }, { op: "loadCompleted", lsm: C, assert: false },

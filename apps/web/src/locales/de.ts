@@ -278,7 +278,7 @@ const de: Messages = {
     IA_INVALID: "Das ist keine gültige physikalische Adresse. Format: Bereich.Linie.Gerät, zum Beispiel 1.2.3.",
     IA_TAKEN: "Ein anderes Gerät in diesem Projekt benutzt diese Adresse bereits.",
     IA_REQUIRED: "Eine physikalische Adresse ist erforderlich.",
-    FULL_DOWNLOAD_TUNNELING_ENTRIES: "Diese IP-Schnittstelle bedient Tunnelverbindungen über Adressen, die Busforge noch nicht schreibt. Ein vollständiger Download würde die Schnittstelle ohne sie neu belegen, deshalb lehnt Busforge ihn ab. Parameter- und Gruppenadress-Flash bleiben verfügbar.",
+    FULL_DOWNLOAD_TUNNELING_ENTRIES: "Das Projekt gibt dieser IP-Schnittstelle Tunneladressen oder eine IP-Konfiguration, die ETS beim Download in ihr KNXnet/IP-Parameterobjekt schreibt. Der vollständige Download von Busforge schreibt sie nicht und würde die Schnittstelle ohne sie neu belegen, deshalb lehnt Busforge ihn ab. Parameter- und Gruppenadress-Flash bleiben verfügbar.",
     FULL_DOWNLOAD_UNSUPPORTED: "Die Erstinbetriebnahme dieses Geräts wird noch nicht unterstützt: sein Speichermodell hat einen vollständigen Download noch nie überstanden, deshalb lehnt Busforge ab, statt es halb zu beschreiben.",
     COM_OBJECT_SIZE_UNKNOWN: "Ein Kommunikationsobjekt gibt eine Datenpunktgröße an, die Busforge nicht als KNX-Value-Field-Type ausdrücken kann. Eine geratene Größe wird nicht geschrieben.",
     COM_OBJECT_TABLE_EMPTY: "Diese Applikation deklariert keine Kommunikationsobjekte, es gibt also keine Objekttabelle zu schreiben.",

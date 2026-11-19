@@ -120,7 +120,7 @@ value.
 | Gira Tastsensor 3 (M-0008) | MV-0705 | absolute, dynamic tables | hardware | hardware, ETS's bracket and the changed byte, the segment stamp equal to the one after ETS's download (see below) | hardware, add and remove with the tables re-declared, exactly the bytes of ETS's image, wire and stamps equal to ETS's (see below) | hardware, exactly the bytes of ETS's image, shown on the wire; on a unit already holding the application, every planned byte already equal (see below) | hardware: answers a group read after the download and after each flash; the GA flash's new association not observed (the object has no read flag) |
 | Theben TheLuxa P300 (M-0048, MV-0705 product) | MV-0705 | absolute, dynamic tables | hardware | hardware, ETS's bracket, the changed byte and the download marker (see below) | hardware, add and remove with the tables re-declared as one region, wire equal to ETS's (see below) | hardware, declared order with `LdCtrlTaskCtrl1`, exactly the bytes of ETS's image, wire equal to ETS's; on a unit already holding the application, every byte but the download marker already equal (see below) | hardware: answers group reads after each write, an added address answers and stops after its removal |
 | Theben Meteodata 140 S (M-0048, MV-0701 product) | MV-0701 | absolute, dynamic tables, memory-mapped LSM | hardware | hardware, ETS's bracket over `0x0104`, the changed byte and the download marker, wire equal to ETS's (see below) | hardware, add and remove with the tables re-declared as one region, every byte ETS wrote equal (see below) | hardware, declared order with `LdCtrlTaskCtrl1` over `0x0104`, the bytes of ETS's image; on a unit already holding the application, every byte but the download marker already equal (see below) | hardware: answers group reads after each write, an added address answers and stops after its removal |
-| MDT IP Interface/Router (KNX Data Secure) | MV-07B0 in the product data, opaque on the bus (`0xFFFF` to plain reads) | relative (product data); none exposed plainly | hardware, under a secured session | hardware, under a secured session; the password field on the write confirmation (see below) | hardware, under a secured session: a link added and removed, each verified; its plan equals ETS's group-address downloads (see below) | refused (`FULL_DOWNLOAD_TUNNELING_ENTRIES`, see below) | hardware: the linked object answers a group read on the added address |
+| MDT IP Interface/Router (KNX Data Secure) | MV-07B0 in the product data, opaque on the bus (`0xFFFF` to plain reads) | relative (product data); none exposed plainly | hardware, under a secured session | hardware, under a secured session; the password field on the write confirmation (see below) | hardware, under a secured session: a link added and removed, each verified; its plan equals ETS's group-address downloads (see below) | capture comparison: steps, all four segments (the association table in the short form) and the security object equal to ETS's full download; not run on a unit. Refused where the project gives the instance KNXnet/IP settings (`FULL_DOWNLOAD_TUNNELING_ENTRIES`, see below) | hardware: the linked object answers a group read on the added address |
 | MDT IP Interface Secure (KNX Data Secure) | MV-0012 in the product data, opaque on the bus (`0xFFFF` to plain reads) | System 1, EEPROM segment at `0x0100` | hardware, Busforge's read-back under the secure session, on a unit ETS programmed: no drift; its memory (collector) holds in every parameter byte Busforge's image of the project, the group tables empty (reference) | hardware, under the secured session through the unit's own tunnel: every write equal to ETS's download, in ETS's order, verified (segment and KNXnet/IP properties read back), the unit's memory afterwards equal to its memory after ETS's download (see below) | not applicable: the application has no group objects (`SYSTEM1_GROUP_TABLES_UNCAPTURED`) | the same procedure as the parameter download (no partial download); run on its own route in both channels of the device-in-service spec, verified | the unit kept serving the tunnels it carries (the download's own and the other clients'), with the same individual addresses, through the restart |
 | Hager TH001 RS 232 interface (M-0009, no application program) | MV-0012 | System 1, no application | not applicable: no application; its identity and EEPROM read by the collector | not applicable | not applicable | not applicable: the address is all it takes; assigned by programming mode on hardware, programming mode ended by the restart as ETS does, verified | not shown |
 
@@ -149,6 +149,11 @@ What each row does not show:
     segment without `<Data>` and an active colour keep the unit's bits.
   - **Theben DALI gateway**: the full download onto a unit that does not hold the application (the
     declared form, allocation Mode 1) equals ETS's capture of it and has not run.
+  - **GVS AMMA, Jung 400021SE, MEAN WELL power supply, Theben MIX 2, Theben DALI gateway**: the full form
+    of the full download writes the parameter segment before the com-object, association and address
+    tables, in ETS's order (every capture of an MV-07B0 full download; compared step by step on the MIX
+    2 and the MDT IP Interface/Router); the runs on the units wrote the three tables first. The bytes
+    written are the same. The OpenKNX RaumController keeps the tables first, as hardware showed it needs.
   - **Theben Meteodata 140 S, Steinel M-008E**: an active text parameter (the Meteodata's EIS 5
     threshold channels) is written as ETS's partial download switching a Meteodata threshold channel on
     writes it, its characters and zeros to the end of the field (capture comparison); on the Meteodata
@@ -469,12 +474,16 @@ What each row does not show:
   ETS (`NEVER_PROGRAMMED_USE_ETS`).
 - **MDT IP interfaces.** The IP Interface/Router application is System B and Data Secure, so the
   group-address flash plans it with its security object when the project holds its tool key, and
-  plain without one; with the tool key it ran on one, for a plain address (device notes above). No System B path writes its tunnelling addresses
-  (`AdditionalAddresses`); ETS's own full download of the IP Interface/Router application writes none either, and its
-  project instance holds none ([device-support.md](device-support.md#known-gaps)), but no run of
-  Busforge's shows what such a download does to the interface's tunnels, so the full download of a System B or System 7 application declaring tunnelling
-  entries is refused before any bus traffic (`FULL_DOWNLOAD_TUNNELING_ENTRIES`, unit- and route-tested)
-  and not offered ([device-support.md](device-support.md#known-gaps)). The IP Interface Secure (System
+  plain without one; with the tool key it ran on one, for a plain address (device notes above). Its full
+  download is ETS's: ETS's capture of it accesses no property of the KNXnet/IP parameter object, its
+  project instance holds no tunnelling addresses or IP configuration, and Busforge's plan equals the
+  capture in its steps, its four segments (the association table in the short form the unit describes)
+  and the security object's elements (`tools/etsdiff.test.ts`). It has not run on a unit; the house unit
+  is a separate step. No System B or System 7 path writes the KNXnet/IP parameter object, so the full
+  download is refused before any bus traffic and not offered where the application declares additional
+  addresses or the instance holds KNXnet/IP settings (`FULL_DOWNLOAD_TUNNELING_ENTRIES`, unit- and
+  route-tested, [device-support.md](device-support.md#known-gaps)). The structural flash is not offered
+  to the router (it builds the long association table only). The IP Interface Secure (System
   1) writes them as ETS does, in the KNXnet/IP parameter object. Its download, ETS's and Busforge's,
   ran through the unit's own tunnel; the unit took every write before its confirmed restart and kept
   its tunnels through the restart. A download that changes its IP or tunnelling addresses is refused

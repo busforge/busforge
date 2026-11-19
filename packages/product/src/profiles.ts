@@ -319,24 +319,42 @@ export function fullDownloadImageCoverage(app: AppConfig, owned: ReadonlyArray<n
   return owned.map((o, i) => (mask[i] || o ? 0xff : 0));
 }
 
-// An IP interface serves its tunnelling connections from individual addresses outside the parameter
-// image and the load procedure (MaxTunnelingUserEntries of them, the project's AdditionalAddresses).
-// A full download unloads and reallocates every load object; no Busforge path writes those addresses
-// and no capture shows what ETS writes for them, so the full download of such an application is
-// refused until they are modeled. A declaration that is not a number counts as declaring entries.
+// An IP interface's KNXnet/IP settings: the additional individual addresses it serves its tunnelling
+// connections from, and its IP configuration. ETS writes them into the KNXnet/IP parameter object (object
+// type 11) when it downloads the application they belong to (the MV-0012 capture: PIDs 53, 55, 60-62). No
+// System B or System 7 path of Busforge writes that object, and a full download unloads and reallocates
+// every load object, so the full download is refused where the device holds such settings: where its
+// application declares additional addresses (AdditionalAddressesCount; ETS gives every instance that many,
+// so the project holds them even where an archive does not carry them), or where the project gives the
+// instance an IP configuration or additional addresses. MaxTunnelingUserEntries alone does not: the MDT IP
+// Interface/Router's System B application declares four, its instance holds no settings (the box's System 1
+// application holds and writes them), and ETS's full download of it accesses no property of object type 11.
+// A declaration that is not a number counts as declaring addresses.
 export const declaresTunnelingEntries = (app: AppConfig): boolean => app.maxTunnelingUserEntries !== 0;
-// Whether the tunnelling entries are what keeps the full download from this application: its profile
-// would offer it without them. An application refused for its family anyway reports that instead.
-export const fullDownloadRefusedForTunnelingEntries = (app: AppConfig): boolean =>
-  declaresTunnelingEntries(app) && classify({ ...app, maxTunnelingUserEntries: 0 }).capabilities().fullDownload;
-// Always refuses an application declaring entries, with the code the download route answers.
-function refuseTunnelingEntries(app: AppConfig): void {
-  if (!declaresTunnelingEntries(app)) return;
-  if (!fullDownloadRefusedForTunnelingEntries(app)) {
-    throw new ProductError("FULL_DOWNLOAD_UNSUPPORTED", "this application cannot be commissioned from scratch (and it declares tunnelling addresses no Busforge path writes)");
+export const declaresAdditionalAddresses = (app: AppConfig): boolean => app.additionalAddressesCount !== 0;
+export const holdsKnxIpSettings = (knxIp: Pick<KnxIpDevice, "ipConfig" | "additionalAddresses"> | null | undefined): boolean =>
+  !!knxIp && (knxIp.ipConfig !== null || knxIp.additionalAddresses.length > 0);
+export const KNXIP_SETTINGS_REFUSAL: OperationRefusal = {
+  code: "FULL_DOWNLOAD_TUNNELING_ENTRIES",
+  message: "the device holds KNXnet/IP settings (tunnelling addresses or an IP configuration) that ETS writes into its KNXnet/IP parameter object and no full download of Busforge writes; refusing a full download that would reallocate the interface without them",
+};
+// Whether these settings are what keeps the full download from this device: its profile would offer it
+// without them. A device refused for its family anyway reports that instead.
+function fullDownloadRefusedForKnxIp(app: AppConfig, knxIp: Pick<KnxIpDevice, "ipConfig" | "additionalAddresses"> | null | undefined): boolean {
+  return (declaresAdditionalAddresses(app) || holdsKnxIpSettings(knxIp)) && classify({ ...app, additionalAddressesCount: 0 }).capabilities().fullDownload;
+}
+// What the device's KNXnet/IP settings in the project keep Busforge from, on top of its application's own
+// refusals (operationRefusals), as hardwareRefusals for its hardware. System 1 writes the settings itself.
+export function knxIpRefusals(app: AppConfig, knxIp: Pick<KnxIpDevice, "ipConfig" | "additionalAddresses"> | null | undefined): OperationRefusals {
+  return classify(app).memoryModel !== "bcu1" && fullDownloadRefusedForKnxIp(app, knxIp) ? { fullDownload: KNXIP_SETTINGS_REFUSAL } : {};
+}
+// The planners' and the download's own refusal, with the code the download route answers.
+function refuseKnxIpSettings(app: AppConfig, knxIp: Pick<KnxIpDevice, "ipConfig" | "additionalAddresses"> | null | undefined): void {
+  if (!declaresAdditionalAddresses(app) && !holdsKnxIpSettings(knxIp)) return;
+  if (!fullDownloadRefusedForKnxIp(app, knxIp)) {
+    throw new ProductError("FULL_DOWNLOAD_UNSUPPORTED", "this application cannot be commissioned from scratch (and the device holds KNXnet/IP settings no Busforge full download writes)");
   }
-  throw new ProductError("FULL_DOWNLOAD_TUNNELING_ENTRIES",
-    `this application declares ${app.maxTunnelingUserEntries} tunnelling address(es) (MaxTunnelingUserEntries), which no Busforge path writes; refusing a full download that would reallocate the interface without them`);
+  throw new ProductError(KNXIP_SETTINGS_REFUSAL.code, KNXIP_SETTINGS_REFUSAL.message);
 }
 
 // An operation the application itself keeps Busforge from running, with the code and message the
@@ -601,7 +619,8 @@ async function assocEntryBytes(dev: KnxDevice): Promise<2 | 4> {
   if (form === "undescribed") throw new ProductError("ASSOC_TABLE_FORMAT_UNKNOWN", "the unit describes no table property of its association table object, so the width of its entries is not known; refusing to write it");
   return form;
 }
-// The full download and the structural flash build the association table in its long form only.
+// The structural flash builds the association table in its long form only: no capture shows ETS's structural
+// bracket on a unit describing the short one.
 async function requireLongAssoc(dev: KnxDevice, what: string): Promise<4> {
   if ((await assocEntryBytes(dev)) !== 4) throw new ProductError("ASSOC_TABLE_SHORT_UNSUPPORTED", `the unit's association table holds one byte per group index and object number, which Busforge's ${what} does not build; refusing to write it`);
   return 4;
@@ -969,6 +988,9 @@ export interface FullDownloadInputs {
   unitHoldsApplication?: boolean;
   unitMemory?: RelativeUnitMemory;
   knxIp?: KnxIpDevice; // as ParamFlashCtx.knxIp
+  // System B: the width of the unit's association table entries, as the unit describes the table
+  // (assocEntryBytes), read before the download. Absent: 4, the long form.
+  assocEntryBytes?: 2 | 4;
 }
 // What a System B unit holding the application has in its application segment and com-object table,
 // read before the partial form: the bytes, where each segment is, and the memory-control-block regions
@@ -1147,6 +1169,10 @@ export class SystemBProfile extends DeviceProfile {
     // to read them from, so don't claim its params verify. Group tables are always present.
     const hasParamSegment = this.hasParamSegment();
     const refused = this.operationRefusals();
+    // The structural flash builds the association table in its long form only (requireLongAssoc). The one
+    // unit of an application declaring tunnelling entries Busforge knows, the MDT IP Interface/Router,
+    // describes the short form, and no capture shows ETS's bracket of a structural change on it, so the
+    // structural flash is not offered to such an application rather than offered and refused at the unit.
     return {
       readParams: hasParamSegment, readLinks: true, flashParams: !refused.flashParams, flashLinks: !refused.flashLinks,
       fullDownload: this.fullDownloadOffered() && !refused.fullDownload,
@@ -1164,7 +1190,7 @@ export class SystemBProfile extends DeviceProfile {
 
   // Both downloads run the mask's base bracket parameterized by the application's fragments, so a
   // fragment step without a disposition refuses the parameter flash and the full download alike. The
-  // procedure is checked before the tunnelling entries, so it is the reason given where both apply.
+  // procedure is checked before the KNXnet/IP settings, so it is the reason given where both apply.
   // The group-address flash refuses a step named for it ("grp" or "all") that it does not run.
   override operationRefusals(): OperationRefusals {
     if (!this.cfg) return {};
@@ -1185,9 +1211,10 @@ export class SystemBProfile extends DeviceProfile {
   }
 
   // A full download needs the parameter segment to fill AND an application to author the
-  // com-object table from; without either there is nothing to commission.
+  // com-object table from; without either there is nothing to commission. An application declaring
+  // additional addresses holds KNXnet/IP settings on every instance (refuseKnxIpSettings).
   private fullDownloadOffered(): boolean {
-    return this.hasParamSegment() && !!this.cfg && !declaresTunnelingEntries(this.cfg);
+    return this.hasParamSegment() && !!this.cfg && !declaresAdditionalAddresses(this.cfg);
   }
 
   planFullDownload(mask: string, inputs: FullDownloadInputs): FullDownloadBuild {
@@ -1204,7 +1231,7 @@ export class SystemBProfile extends DeviceProfile {
     const cfg = this.requireCfg("full download");
     const proc = ctx.proc;
     assertParCoverage(proc, "relative");
-    refuseTunnelingEntries(cfg);
+    refuseKnxIpSettings(cfg, ctx.knxIp);
     // What the application wants the parameter segment pre-filled with (0 for most, 0xFF for e.g. the
     // GVS AMMA). Threaded into the plan so the allocation and the bytes left out agree with it. The
     // allocation is the filled one (Mode 1, and with fill 0 where the application declares none) or the
@@ -1243,7 +1270,7 @@ export class SystemBProfile extends DeviceProfile {
     const cfg = this.requireCfg("full download");
     const proc = ctx.proc;
     assertParCoverage(proc, "relative");
-    refuseTunnelingEntries(cfg);
+    refuseKnxIpSettings(cfg, ctx.knxIp);
     const unit = ctx.unitMemory;
     if (!unit) {
       throw new ProductError("FULL_DOWNLOAD_UNIT_UNKNOWN", "the unit holds this application, so the download takes ETS's partial form, which writes only what the unit does not hold; it cannot be planned without the unit's application segment and com-object table");
@@ -1312,8 +1339,10 @@ export class SystemBProfile extends DeviceProfile {
     // Communication flag on every other object, so the com-object table build needs to know them.
     const linked = new Set(ctx.links.map((l) => l.comObjNum));
     const comObj = buildComObjectTable(withInstanceOverrides(view.imageComObjects, ctx.comObjectOverrides), view.maxComObjectNumber, linked);
-    const { addr, assoc } = buildGroupTables(ctx.links);
-    refuseTablesOverCapacity(cfg, addr, assoc);
+    // The entry counts do not depend on the association table's form, so the capacity is checked on the long one.
+    const counted = buildGroupTables(ctx.links);
+    refuseTablesOverCapacity(cfg, counted.addr, counted.assoc);
+    const { addr, assoc } = (ctx.assocEntryBytes ?? 4) === 4 ? counted : buildGroupTables(ctx.links, ctx.assocEntryBytes);
     const security = ctx.security ? buildSecurityObject(ctx.links, comObj.readUInt16BE(0), ctx.security.groupKeys, secureSenders(ctx.security, ctx.ia)) : undefined;
     return { target, comObj, addr, assoc, security };
   }
@@ -1333,11 +1362,13 @@ export class SystemBProfile extends DeviceProfile {
     // download to the wrong hardware is the most expensive mistake available here.
     const proc = this.requireCfg("full download").loadProcedures;
     const coverage = assertParCoverage(proc, "relative");
-    refuseTunnelingEntries(this.requireCfg("full download"));
-    // For either form.
+    refuseKnxIpSettings(this.requireCfg("full download"), ctx.knxIp);
+    // For either form, with the association table in its long form; the unit's form is asked below.
     const images = builtBefore(() => this.systemBImages(this.requireCfg("full download"), { ...ctx, proc }));
     await runDeclaredChecks(dev, coverage);
-    const assocForm = await requireLongAssoc(dev, "full download");
+    // ETS reads the association table's description first and writes entries of the width it gives: the short
+    // form on the MDT IP Interface/Router (its full-download capture), the long one everywhere else captured.
+    const assocForm = await assocEntryBytes(dev);
     // Which form ETS runs: an application declaring PreferPartialDownloadIfApplicationLoaded on a unit
     // holding it takes the partial form. ETS tells by the application object's load state and program
     // id (Jung 400021SE, Theben DALI-Gateway captures). The partial form keeps what the unit holds, so
@@ -1351,10 +1382,14 @@ export class SystemBProfile extends DeviceProfile {
       if (id?.equals(programIdStamp(cfg)) && await allLoaded(dev, [OBJ.APP_PROGRAM, OBJ.COMOBJ_TABLE, OBJ.ASSOC_TABLE, OBJ.ADDR_TABLE])) {
         const size = images().target.size;
         const paramsMcb = await readMcbTable(dev, LSM, size);
-        if (paramsMcb && paramsMcb.reduce((n, r) => n + r.size, 0) === size) return this.downloadPartialForm(dev, mask, ctx, proc, images, paramsMcb, assocForm);
+        if (paramsMcb && paramsMcb.reduce((n, r) => n + r.size, 0) === size) {
+          if (assocForm !== 4) throw new ProductError("ASSOC_TABLE_SHORT_UNSUPPORTED", "the unit holds this application, so the download takes ETS's partial form, and the unit's association table holds one byte per group index and object number; no capture shows ETS's partial form on such a unit, refusing to write it");
+          return this.downloadPartialForm(dev, mask, ctx, proc, images, paramsMcb, assocForm);
+        }
       }
     }
-    const { plan, imageBytes, target, comObj, addr, assoc, security, segments } = this.planSystemBFull(mask, { ...ctx, proc }, images);
+    const formImages = assocForm === 4 ? images : builtBefore(() => this.systemBImages(this.requireCfg("full download"), { ...ctx, proc, assocEntryBytes: assocForm }));
+    const { plan, imageBytes, target, comObj, addr, assoc, security, segments } = this.planSystemBFull(mask, { ...ctx, proc, assocEntryBytes: assocForm }, formImages);
     // A full download UNLOADS every segment before it rewrites them, so whatever the device held is
     // gone the moment it starts. A virgin device holds nothing (its load-state machines point at
     // address 0) and there is genuinely nothing to save. A device that was already programmed, by
@@ -1975,7 +2010,7 @@ export class System7Profile extends DeviceProfile {
     if (par) out.flashParams = par;
     const ga = system7GaScope(cfg, this.mask);
     if ("refusal" in ga) out.flashLinks = ga.refusal;
-    // Checked before the tunnelling entries, so the procedure is the reason given where both apply. Offered
+    // Checked before the KNXnet/IP settings, so the procedure is the reason given where both apply. Offered
     // where one form can run; the unit's state picks the form at download time.
     const declared = this.canAuthor() ? absoluteFullStepRefusal(cfg.loadProcedures, "declared") : null;
     const partial = declared && cfg.loadProcedures.preferPartialIfLoaded ? absoluteFullStepRefusal(cfg.loadProcedures, "partial") : declared;
@@ -1998,7 +2033,7 @@ export class System7Profile extends DeviceProfile {
   }
 
   private fullDownloadOffered(): boolean {
-    return this.canAuthor() && !!this.cfg && !declaresTunnelingEntries(this.cfg);
+    return this.canAuthor() && !!this.cfg && !declaresAdditionalAddresses(this.cfg);
   }
 
   async readDevice(dev: KnxDevice, mask: string, ctx: ReadStateCtx): Promise<() => DeviceReadback> {
@@ -2324,7 +2359,7 @@ export class System7Profile extends DeviceProfile {
         `property-mapped device (mask ${mask}) declares no <ComObjectTable CodeSegment>; cannot author its com-object table, refusing to write a manufacturer-default L3`);
     }
     refuse(absoluteFullStepRefusal(proc, absoluteFullForm(proc, ctx.unitHoldsApplication ?? false)) ?? fullDownloadSegmentRefusal(cfg, proc));
-    refuseTunnelingEntries(cfg);
+    refuseKnxIpSettings(cfg, ctx.knxIp);
     const instances = cfg.hasModules ? (ctx.moduleInstances?.length ? ctx.moduleInstances : resolveModuleInstances(cfg, ctx.params)) : [];
     refuseColorWrites(cfg, ctx.params, instances, false);
     refuseRawDataWrites(cfg, ctx.params, instances);
@@ -2384,7 +2419,7 @@ export class System7Profile extends DeviceProfile {
         `property-mapped device (mask ${mask}) declares no <ComObjectTable CodeSegment>; cannot author its com-object table, refusing to write a manufacturer-default L3`);
     }
     const proc = cfg.loadProcedures;
-    refuseTunnelingEntries(cfg);
+    refuseKnxIpSettings(cfg, ctx.knxIp);
     // The plan of each form the reads below may select.
     const planned = new Map([false, ...(proc.preferPartialIfLoaded ? [true] : [])].map((holds) => [holds, builtBefore(() => this.planSystem7Full(mask, { ...ctx, proc, unitHoldsApplication: holds }))]));
     // App-id pre-flight, virgin-aware. The checks come from the download's OWN "full" steps (not

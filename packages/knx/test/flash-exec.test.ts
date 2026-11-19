@@ -695,6 +695,14 @@ describe("planSystemBFullDownload: the parameter fill byte is threaded end to en
     expect(tail(planSystemBFullDownload(tables()))).toEqual(["awaitReady", "assertLoaded", "assertLoaded", "assertLoaded", "assertLoaded", "verifyMode", "disconnect", "settle", "connect", "restart"]);
     expect(tail(planSystemBFullDownload(tables(), 0, true, [], undefined, true, true))).toEqual(["assertLoaded", "assertLoaded", "assertLoaded", "verifyMode", "restart"]);
   });
+
+  // ETS writes the parameter segment first (every MV-07B0 capture); thelsing/knx, which does not close at once, takes
+  // the three tables first.
+  test("the writes: the parameter segment first with closeAtOnce, as ETS; the three tables first without", () => {
+    const order = (plan: ReturnType<typeof planSystemBFullDownload>) => plan.flatMap((s) => (s.op === "writeSegment" ? [s.lsm] : [])).filter((l, i, xs) => xs[i - 1] !== l);
+    expect(order(planSystemBFullDownload(tables(), 0, true, [], undefined, true, true))).toEqual([4, 3, 2, 1]);
+    expect(order(planSystemBFullDownload(tables()))).toEqual([3, 2, 1, 4]);
+  });
 });
 
 describe("the download must not restart the device before it has saved", () => {

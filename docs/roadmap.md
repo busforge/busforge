@@ -218,24 +218,25 @@ depends on is hardware-proven.
   collections (no collection reads a security object, and the IP Interface Secure's none of its
   KNXnet/IP parameter object); the router's read-back can, and is pinned on one taken after ETS's
   group-address download.
-- **The short association table in the full download and the structural flash.** A System B unit
+- **The short association table in the structural flash and the partial download.** A System B unit
   that describes its association table with one-byte fields (`PDT_GENERIC_02`, the MDT IP
-  Interface/Router) gets that form from the GA flash, as ETS writes it; the full download and the
-  structural flash build the long form only and refuse such a unit (`ASSOC_TABLE_SHORT_UNSUPPORTED`).
-  ETS's full download of the router writes the short form; the router's full download is refused for
-  its tunnelling entries anyway, and no other product is known to use the short form.
+  Interface/Router) gets that form from the GA flash and the full download, as ETS writes it in both;
+  the structural flash and the partial form of the full download build the long form only and refuse
+  such a unit (`ASSOC_TABLE_SHORT_UNSUPPORTED`), and the structural flash is not offered to an
+  application declaring tunnelling entries. Next capture: ETS's download of a parameter change on the
+  router that alters its com-object table. No other product is known to use the short form.
+- **The router's full download on a unit.** Busforge's full download of the MDT IP Interface/Router
+  equals ETS's capture step for step and byte for byte; it has not run on a unit.
 - **Input-to-output behaviours on a device in service.** The mode places one test link, so only a
   behaviour of that one object (`output`, `heartbeat`) can be observed; an input driving an output
   needs two.
 - **Devices that answer an opaque device descriptor** (IP interfaces) need a different read path or
   secure support; which one is not decided.
-- **KNX IP interfaces as targets.** ETS's captured full download of the MDT IP Interface/Router writes
-  no property of the KNXnet/IP parameter object, and its project instance holds no tunnelling addresses
-  (the box's other application holds them, [device-support.md](device-support.md#known-gaps)).
-  `FULL_DOWNLOAD_TUNNELING_ENTRIES` still refuses that application on its attribute alone. Open decision:
-  let the gate look at the instance's own addresses, so that an application declaring entries whose instance
-  has none is offered the full download once its other refusals are lifted; an instance with addresses keeps
-  waiting for an ETS capture of its download.
+- **KNX IP interfaces with KNXnet/IP settings of their own on System B or System 7.** Their full download
+  is refused (`FULL_DOWNLOAD_TUNNELING_ENTRIES`) where the application declares additional addresses or
+  the instance holds an IP configuration or tunnelling addresses, which ETS writes into the KNXnet/IP
+  parameter object ([device-support.md](device-support.md#known-gaps)). Next capture: ETS's download of
+  such an application, to show what it writes there.
 - **Should the group-address flash run the application's checks?** A declared `CompareProp` (the ABB
   US/U 4.2's application-id check, for example) runs in the parameter flash and the full download, not
   in the group-address flash ([load-procedures.md](load-procedures.md#coverage-across-the-catalogue)).

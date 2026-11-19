@@ -188,9 +188,10 @@ export interface AppConfig {
   appVersion: number;
   appNumber: number;
   appPeiType: number; // ApplicationProgram PeiType; declared to the device in the task-segment control on a full download
-  // ApplicationProgram MaxTunnelingUserEntries: how many tunnelling addresses an IP interface serves.
-  // They are device-instance data (the project's AdditionalAddresses), outside the parameter image
-  // and the load procedure. NaN when the attribute is present but not a non-negative integer.
+  // ApplicationProgram MaxTunnelingUserEntries: how many tunnelling connections an IP interface serves.
+  // Their addresses are device-instance data outside the parameter image and the load procedure, and may
+  // belong to another application of the same box (the MDT IP Interface/Router's sit on its System 1
+  // application). NaN when the attribute is present but not a non-negative integer.
   maxTunnelingUserEntries: number;
   // ApplicationProgram AdditionalAddressesCount: how many further individual addresses the device takes
   // (the project's AdditionalAddresses); 0 where absent, NaN where not a non-negative integer.
