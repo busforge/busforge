@@ -322,11 +322,14 @@ which `tools/secure-capture-decode.ts` prints a single capture with) and the key
 
 Every tool-access telegram is tried with every device key, whatever its destination, so a secured
 broadcast (ETS assigns a secure device's address by serial with tool-access telegrams to `0/0/0`) opens
-like a point-to-point one; a Sync answer opens against the challenge of the Sync request it answers. An
+like a point-to-point one; a Sync answer opens against the challenge of the Sync request it answers; a
+tunnelled request, whose source the tool leaves 0.0.0, is opened with the tunnel address the confirmation
+after it names. An
 opened telegram's inner service counts among the file's services like a plain one, its assigned
 address and object/PID pair included, and `INDEX.md` lists every service seen inside a secured telegram
 with the files that show it, tagged with what the frame shows in clear: tool access, broadcast, group.
-A telegram no key opens stays in the count as `(not opened)`. The keys stay in memory: the index names
+A telegram no key opens stays in the count as `(not opened)`; one shorter than its service's layout is
+`(truncated)` and counts as an undecoded line. The keys stay in memory: the index names
 the file a key came from and which keys opened a capture, never a key or a plaintext, and lists each
 project or keyring it could not open with the reason, so an index written without the passwords says so,
 and the keys a project holds that it did not give (Busforge's project reader takes only the first
@@ -345,9 +348,13 @@ BUSFORGE_CORPUS=<corpus> bun run tools/capture-index.ts --properties 0/56 t17.1/
 # | Property | Elements | Error octet | Unit | Descriptor 0 | Tool | Answers | Files |
 ```
 
-Without property arguments it lists every property. Each row is one property, element count, error
-octet, unit, device descriptor 0 (as that capture shows it, `?` where it shows none) and tool, summed
-over the captures that show it.
+Without property arguments it lists every property; a property not written the way the index names it
+is refused, and one no capture answers is named under the table. Each row is one property, element
+count, error octet, unit, device descriptor 0 (as that capture shows it, `?` where it shows none) and
+tool, summed over the captures that show it. A unit is its individual address within a capture: captures
+of different installations reuse addresses, so units that share an address and descriptor 0 share a
+row, which names its files. Below the table the query says what it cannot see: secured telegrams whose
+service is not shown, undecoded lines, and projects or keyrings whose keys were not read.
 
 ## Why the golden snapshot is not a correctness proof
 
