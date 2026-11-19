@@ -48,7 +48,7 @@ It has to be exported. Bun loads the `.env` files of the directory a process sta
 run --filter` does not pass the root's on to the workspaces' `bun test`, so a corpus named in a
 `.env` would reach the status line and not the tests, or some workspaces and not others. A `.env`
 (or `.env.local`, `.env.test`, ...) in the repository root or in a workspace that sets
-`BUSFORGE_CORPUS` is therefore refused.
+`BUSFORGE_CORPUS` is therefore refused, and so is one that sets `KNXPROJ_PASSWORDS` (below).
 
 | `BUSFORGE_CORPUS` | What `bun run check` does |
 |---|---|
@@ -60,7 +60,7 @@ The status line is the last thing `bun run check` prints (`bun run corpus:status
 Without the corpus:
 
 ```
-private corpus: absent (BUSFORGE_CORPUS unset); the corpus tests in these 28 test files were skipped, not run:
+private corpus: absent (BUSFORGE_CORPUS unset); the corpus tests in these <n> test files were skipped, not run:
   apps/server/test/device-support-doc.test.ts
   ...
 ```
@@ -68,8 +68,14 @@ private corpus: absent (BUSFORGE_CORPUS unset); the corpus tests in these 28 tes
 With it:
 
 ```
-private corpus: present at /absolute/path/to/busforge-corpus; the corpus tests in all 28 test files that have them were enabled
+private corpus: present at /absolute/path/to/busforge-corpus; the corpus tests in all <n> test files that have them were enabled; protected archives: KNXPROJ_PASSWORDS set (2 passwords), <k> of <k> opened
 ```
+
+The end of that line says what the password-protected corpus archives got (see
+[below](#the-passwords-of-the-protected-archives)): `protected archives: not opened, KNXPROJ_PASSWORDS absent
+(<k> of <m> corpus archives need a password)` for a run without the passwords, which is not the gate; with them,
+`KNXPROJ_PASSWORDS set (2 passwords), <k> of <k> opened`. An archive that does not open, protected or not, makes
+`bun run corpus:status` fail, naming the file.
 
 A run without the variable also ends green, which is why its last line says what it left out.
 Without the corpus, a green run is the gate for a contribution, as it is in public CI; the
@@ -111,17 +117,30 @@ no longer in the corpus):
 KNXPROJ_PASSWORD=... bun run tools/ets-records.ts <corpus-relative project.knxproj>...
 ```
 
+### The passwords of the protected archives
+
 `tools/corpus-archives.test.ts` opens every `.knxproj`, `.knxprod` and `.busforge` the corpus holds, so a
 stricter rule in the ZIP reader or a broken decryption fails the check naming the archive. The outer
 archive of every project and every archive that needs no password it opens in every corpus run. A
 project's inner archive and an encrypted `.busforge` open only with their password, which the check does
 not hold: pass them, one per line, in `KNXPROJ_PASSWORDS` (every protected archive is tried with each; one
 that none opens fails). Without the variable that one test is registered as skipped,
-`[needs KNXPROJ_PASSWORDS] ...`, and announced as the corpus tests are, so a run without it has not
-decrypted the protected archives. A maintainer's run before a change lands sets it:
+`[needs KNXPROJ_PASSWORDS] ...`, announced as the corpus tests are, and the status line says `not opened`:
+a run without the passwords has not decrypted the protected archives, and is not the run a change lands on.
+
+Two passwords open the protected archives of the corpus; every other corpus archive (the other projects, the
+product databases) needs none, and the status line counts it among those that opened without one:
+
+| Password | Opens |
+|---|---|
+| the password of the house installation's ETS project | the projects under `collections/` |
+| the password of the bench ETS project | the projects `internal/captures/bench-*.knxproj` |
+
+A maintainer's run before a change lands sets both, each fetched inline for that one command and never
+written to a file:
 
 ```bash
-KNXPROJ_PASSWORDS="$(<first password source>)"$'\n'"$(<second password source>)" bun run check
+KNXPROJ_PASSWORDS="$(<house project password source>)"$'\n'"$(<bench project password source>)" bun run check
 ```
 
 The kept evidence records are in the corpus as well (`evidence/runs/`, `evidence/reference/`): they

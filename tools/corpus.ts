@@ -307,19 +307,20 @@ export const CORPUS_FILES: readonly string[] = [
 
 // Bun loads the .env files of the directory a process starts in: `bun run check` those of the
 // repository root, each workspace's `bun test` (started from the workspace root) those of its
-// workspace, and `bun run --filter` does not hand the root's on. A BUSFORGE_CORPUS set in any of them would reach some processes and not
+// workspace, and `bun run --filter` does not hand the root's on. A BUSFORGE_CORPUS (or another variable the
+// status line and the tests must both see, `name`) set in any of them would reach some processes and not
 // others, so the status line could contradict the tests; it is refused, export it instead.
 const ROOT = join(import.meta.dir, "..");
 const DOTENV_FILES = [".env", ".env.local", ...["development", "production", "test"].flatMap((m) => [`.env.${m}`, `.env.${m}.local`])];
 
-function refuseDotenv(): void {
+export function refuseDotenv(name: string = CORPUS_ENV): void {
   const workspaces = [".", "tools", ...["packages", "apps", "plugins"].flatMap((d) =>
     existsSync(join(ROOT, d)) ? readdirSync(join(ROOT, d)).map((w) => `${d}/${w}`) : [])];
   for (const dir of workspaces) {
     for (const f of DOTENV_FILES) {
       const p = join(ROOT, dir, f);
-      if (existsSync(p) && new RegExp(`^\\s*(export\\s+)?${CORPUS_ENV}\\s*=`, "m").test(readFileSync(p, "utf8"))) {
-        throw new Error(`${p} sets ${CORPUS_ENV}, which bun hands to some test processes and not others; remove it there and export ${CORPUS_ENV} in the shell instead`);
+      if (existsSync(p) && new RegExp(`^\\s*(export\\s+)?${name}\\s*=`, "m").test(readFileSync(p, "utf8"))) {
+        throw new Error(`${p} sets ${name}, which bun hands to some test processes and not others; remove it there and export ${name} in the shell instead`);
       }
     }
   }
