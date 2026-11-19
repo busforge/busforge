@@ -2,7 +2,7 @@
 // are the single source of truth the runner asserts against. Every call surfaces the server's
 // coded error verbatim (the {error:{code,message}} contract), so a refusal is a first-class,
 // inspectable outcome rather than a swallowed 4xx.
-import { gaToNum } from "../../packages/knx/src/index.ts";
+import { gaToNum, parseGa } from "../../packages/knx/src/index.ts";
 // The authoritative config-view + capability types, imported from the product so the runner reads
 // exactly the shapes the server sends (a field renamed on either side is a compile error here).
 import type { DeviceConfigView, CfgItem, CfgParamView, CfgComObjView, DeviceCapabilities, DeviceReadbackInfo, DiagnosticPackage } from "../../packages/product/src/index.ts";
@@ -137,9 +137,10 @@ export class Client {
   // addresses, so a UI-driven link needs the GA to exist first; the API-driven link does not (it
   // stores the raw number directly), but a project GA there is harmless and more realistic.
   async ensureGa(pid: string, ga: string): Promise<void> {
-    const [M, m, s] = ga.split("/").map(Number);
-    if (M === undefined || m === undefined || s === undefined) throw new ApiError(0, "GA_BAD", `not a 3-level group address: ${ga}`);
-    const mainBase = M << 11, midBase = (M << 11) | (m << 8), raw = gaToNum(ga);
+    const raw = parseGa(ga);
+    if (raw === null) throw new ApiError(0, "GA_BAD", `not a 3-level group address: ${ga}`);
+    const M = raw >> 11, m = (raw >> 8) & 7, s = raw & 0xff;
+    const mainBase = M << 11, midBase = raw & ~0xff;
     let proj = await this.projectFull(pid);
     const findMain = (p: ProjectView) => p.groupRanges.find((r) => r.rangeStart === mainBase);
     let main = findMain(proj);
