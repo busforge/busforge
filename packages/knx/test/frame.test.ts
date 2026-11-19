@@ -1,5 +1,9 @@
 import { test, expect } from "bun:test";
-import { decodeGroupApdu, formatGa, numToGa, parseGa } from "../src/frame.ts";
+import { decodeGroupApdu, formatGa, gaToNum, numToGa, parseGa } from "../src/frame.ts";
+
+test("gaToNum packs the three levels", () => {
+  expect(gaToNum("1/2/3")).toBe((1 << 11) | (2 << 8) | 3);
+});
 
 test("parseGa reads a whole three-level address and nothing out of range or around it", () => {
   expect(parseGa("0/0/1")).toBe(1);

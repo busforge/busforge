@@ -17,7 +17,8 @@ import { GroupEditor, type Editor, type Levels } from "./GroupEditDialogs.tsx";
 import { cn } from "@/lib/utils";
 
 // The group number shown in front of each range name. Lets you read where you are in the address
-// tree at a glance (main group, then main/middle). Neutral, as amber marks pending work only.
+// tree at a glance (main group, then main/middle). Neutral: amber is kept for the primary action,
+// selection and pending work.
 function NumTag({ value, className }: { value: string; className?: string }) {
   return <span className={cn("shrink-0 rounded-md border border-border bg-secondary px-1.5 py-0.5 font-mono font-semibold text-foreground/80", className)}>{value}</span>;
 }

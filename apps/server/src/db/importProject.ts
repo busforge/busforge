@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
-import { appProgramId, ETS_PARTS } from "@busforge/project";
+import { appProgramId, ETS_PARTS, withoutInstallationSecrets } from "@busforge/project";
 import { parseAppConfig, type AppConfig } from "@busforge/product";
 import { ApiError } from "../errors.ts";
 import { putAppProgram, putCatalogBaggage } from "./catalog.ts";
@@ -289,7 +289,8 @@ export function importProjectExport(db: Database, data: ProjectExport, id: strin
     const insMemoryless = db.prepare("INSERT INTO device_memoryless_assumed (project_id, device_id, param_ref_id, value) VALUES (?, ?, ?, ?)");
     for (const a of data.deviceMemorylessAssumed ?? []) insMemoryless.run(id, a.deviceId, a.paramRefId, a.value);
     const insKnxIp = db.prepare("INSERT INTO device_knxip (project_id, device_id, settings) VALUES (?, ?, ?)");
-    for (const { deviceId, ...settings } of data.deviceKnxIp ?? []) insKnxIp.run(id, deviceId, JSON.stringify(settings));
+    // The installation's keys are emptied here as at a .knxproj import: an artifact need not come from this reader.
+    for (const { deviceId, ...settings } of data.deviceKnxIp ?? []) insKnxIp.run(id, deviceId, JSON.stringify({ ...settings, installation: withoutInstallationSecrets(settings.installation) }));
 
     for (const [cid, xml] of Object.entries(data.catalog)) putAppProgram(db, cid, xml);
     for (const p of data.catalogPictures ?? []) putCatalogBaggage(db, p.appProgramId, new Map([[p.baggageId, { name: p.name, data: Buffer.from(p.dataBase64, "base64") }]]));

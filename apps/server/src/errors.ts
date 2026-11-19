@@ -19,7 +19,11 @@ export function errorCode(e: unknown): string | undefined {
   return typeof c === "string" ? c : undefined;
 }
 
-// The structured facts of a refusal (ApiError.details), or null.
+// The structured facts of a refusal, or null: an ApiError's details, or a coded error from the @busforge/*
+// packages that carries them (KnxError's, e.g. the error code a load-state machine names), read duck-typed
+// like errorCode.
 export function errorDetails(e: unknown): Record<string, unknown> | null {
-  return e instanceof ApiError && e.details ? e.details : null;
+  if (errorCode(e) === undefined) return null;
+  const d = (e as { details?: unknown }).details;
+  return d !== null && typeof d === "object" && !Array.isArray(d) ? d as Record<string, unknown> : null;
 }

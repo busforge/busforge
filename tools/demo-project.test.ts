@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { createState, handleApi } from "../apps/server/src/app.ts";
 import {
-  buildDemoProject, gaRaw, MANUFACTURER_DEMO, OPEN_DEMO, OPENKNX_RELEASES, openKnxProductDb, openKnxProductDbs, parseDemoArgs,
+  buildDemoProject, MANUFACTURER_DEMO, OPEN_DEMO, OPENKNX_RELEASES, openKnxProductDb, openKnxProductDbs, parseDemoArgs,
   type Demo, type DemoApi, type ProductDb,
 } from "./demo-project.ts";
 import { corpusDescribe } from "./corpus-test.ts";
@@ -34,10 +34,6 @@ for (const demo of [OPEN_DEMO, MANUFACTURER_DEMO]) {
     expect(new Set(demo.devices.map((d) => d.ia)).size).toBe(demo.devices.length);
   });
 }
-
-test("a group address packs its three levels", () => {
-  expect(gaRaw("1/2/3")).toBe((1 << 11) | (2 << 8) | 3);
-});
 
 test("the open demo places OpenKNX applications only, each from a pinned OpenKNX release", () => {
   for (const d of OPEN_DEMO.devices) {

@@ -1053,7 +1053,7 @@ describe("device configuration", () => {
     expect(importGaps(proj, new Map()).devicesWithoutProgram.length).toBeGreaterThan(0);
     // All programs present -> no gaps; clean project surfaces empty, not undefined.
     const all = new Map(proj.devices.map((d) => [appProgramId(d.appRef), "<x/>"]));
-    expect(importGaps(proj, all)).toEqual({ devicesWithoutProgram: [], unresolvedLinks: 0, malformedDevices: 0, unresolvedSenders: 0, secureDevicesWithoutSerial: 0, skippedInstallations: 0, unassignedDevices: 0, linksWithoutSender: 0, staleModuleLinks: 0 });
+    expect(importGaps(proj, all)).toEqual({ devicesWithoutProgram: [], unresolvedLinks: 0, malformedDevices: 0, unresolvedSenders: 0, secureDevicesWithoutSerial: 0, secretsNotImported: 0, skippedInstallations: 0, unassignedDevices: 0, linksWithoutSender: 0, staleModuleLinks: 0 });
   });
 
   test("tasks endpoint is empty until a bus operation runs", async () => {
