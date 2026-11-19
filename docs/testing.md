@@ -235,8 +235,8 @@ Two things it does not take on trust:
   tool's frames to units come from: Busforge sets the first cEMI control field to `0xBC` (`0x3C` for an
   extended frame), ETS 6 to `0xB0` (`0x30`). Where label and frames disagree, the row says so and
   `INDEX.md` lists the file at the top. A pcap capture names no tool; its frames do.
-- **A line it cannot read.** A telegram line whose frame does not decode is counted in its file's row
-  with its line number, never skipped. A file in no format above, or in more than one, is listed under
+- **A line it cannot read.** A telegram line whose frame does not decode, or whose data is short of the
+  layout its service fixes, is counted in its file's row with its line number, never skipped. A file in no format above, or in more than one, is listed under
   "Not read" with the reason; the files that cannot hold a telegram log (project exports, JSON
   collections, scripts, product data) are counted by kind, and named one by one in `index.json`.
 

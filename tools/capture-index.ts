@@ -20,6 +20,10 @@ import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { extname, join } from "node:path";
 import { APCI, CEMI, CEMI_CON_ERROR, SVC, decodeGroupApdu, numToGa, numToIa } from "../packages/knx/src/frame.ts";
+import {
+  decodeAuthorizeResponse, decodeFunctionPropertyExtState, decodeMemoryRead, decodeMemoryResponse, decodePropertyDescription,
+  decodePropertyValueResponse,
+} from "../packages/knx/src/rawcodec.ts";
 import { parseTunnelFrame } from "./etsdiff.ts";
 import { pcapToLog } from "./pcap.ts";
 import { corpusRoot, CORPUS_ENV } from "./corpus.ts";
@@ -221,25 +225,63 @@ const PROXY_LINE = /^\S+ ([A-Za-z0-9_]+)->([A-Za-z0-9_]+) \S+.*\| ([0-9a-fA-F]*)
 // the runs of one session by hand.
 const PROXY_MARKER = /^\S+ --- |^=== /;
 
+// Whether a telegram's data (the octets behind the two APCI octets) has the layout its service fixes; a service
+// without an entry is taken as it is. The strict decoders of rawcodec.ts are used where they exist.
+function payloadFits(apci: number, tpdu: Buffer, data: Buffer): boolean {
+  const decodes = (decode: () => unknown) => { try { decode(); return true; } catch { return false; } };
+  const n = data.length, top = apci & 0x3c0;
+  switch (apci) {
+    case APCI.PROPERTY_READ: return n === 4;
+    case APCI.PROPERTY_RESPONSE: case APCI.PROPERTY_WRITE: return decodes(() => decodePropertyValueResponse(data));
+    case APCI.PROPERTY_DESCRIPTION_READ: return n === 3;
+    case APCI.PROPERTY_DESCRIPTION_RESPONSE: return decodes(() => decodePropertyDescription(data));
+    case 0x2c7: case 0x2c8: case 0x2c9: return n >= 2;
+    // object type, instance and PID (5 octets), element count (1) and start index (2)
+    case APCI.PROPERTY_EXT_READ: return n === 8;
+    case APCI.PROPERTY_EXT_RESPONSE: case APCI.PROPERTY_EXT_WRITE_CON: case APCI.PROPERTY_EXT_WRITE_CON_RESP: case 0x1d0: return n >= 8;
+    case 0x1d2: case 0x1d3: case APCI.FUNCTION_PROPERTY_EXT_COMMAND: case APCI.FUNCTION_PROPERTY_EXT_STATE_READ: return n >= 5;
+    case APCI.FUNCTION_PROPERTY_EXT_STATE_RESPONSE: return decodes(() => decodeFunctionPropertyExtState(data));
+    // count (1), 24-bit address (3), then the data of a write or a read's answer
+    case APCI.MEMORY_EXT_WRITE: return n >= 4 && n === 4 + data[0];
+    case APCI.MEMORY_EXT_READ: return n === 4;
+    case APCI.MEMORY_EXT_WRITE_RESP: case APCI.MEMORY_EXT_READ_RESP: return n >= 4;
+    case APCI.DEVICE_DESCRIPTOR_RESPONSE: return n === 2; // type 0: the mask version
+    case APCI.IA_SERIAL_READ: return n === 6;
+    case APCI.IA_SERIAL_RESPONSE: return n >= 6;
+    case APCI.IA_SERIAL_WRITE: return n === 12; // serial (6), address (2), four reserved octets
+    case APCI.RESTART: return n === 0;
+    case 0x381: return n === 2; // erase code, channel
+    case 0x3a1: return n === 3; // error code, process time
+    case APCI.AUTHORIZE_REQUEST: return n === 5; // reserved octet, key
+    case APCI.AUTHORIZE_RESPONSE: return decodes(() => decodeAuthorizeResponse(data));
+    case 0x3f1: return n >= 1; // the security control field at least
+  }
+  switch (top) {
+    case APCI.MEMORY_READ: return decodes(() => decodeMemoryRead(tpdu, data));
+    case APCI.MEMORY_RESPONSE: return decodes(() => decodeMemoryResponse(tpdu, data));
+    case APCI.MEMORY_WRITE: return (apci & 0x3f) > 0 && n === 2 + (apci & 0x3f);
+    case APCI.DEVICE_DESCRIPTOR_READ: return n === 0;
+    case APCI.INDIVIDUAL_ADDRESS_WRITE: return apci === top && n === 2;
+    case APCI.INDIVIDUAL_ADDRESS_READ: case APCI.INDIVIDUAL_ADDRESS_RESPONSE: return apci === top && n === 0;
+    case 0x000: return apci === top && n === 0; // A_GroupValue_Read
+  }
+  return true;
+}
+
 // One application-layer telegram: its service, and what the index takes from its payload.
-function applicationTelegram(st: FileStats, apci: number, data: Buffer, sent: boolean, src: string): boolean {
-  const name = apciName(apci);
-  st.service(name, sent);
+function applicationTelegram(st: FileStats, apci: number, tpdu: Buffer, sent: boolean, src: string): boolean {
+  const data = tpdu.subarray(2);
+  st.service(apciName(apci), sent);
+  if (!payloadFits(apci, tpdu, data)) return false;
   if (PROPERTY_APCIS.has(apci)) {
-    if (data.length < 2) return false;
     st.properties.add(`${data[0]}/${data[1]}`);
   } else if (EXT_PROPERTY_APCIS.has(apci)) {
-    if (data.length < 5) return false;
     st.properties.add(`t${data.readUInt16BE(0)}.${(data[2] << 4) | (data[3] >> 4)}/${((data[3] & 0x0f) << 8) | data[4]}`);
   } else if (apci === APCI.DEVICE_DESCRIPTOR_RESPONSE) {
-    // Descriptor type 0 (the low six APCI bits) is the mask version, two octets.
-    if (data.length !== 2) return false;
     st.device(src, hex(data));
-  } else if ((apci & 0x3c0) === APCI.INDIVIDUAL_ADDRESS_WRITE) {
-    if (data.length < 2) return false;
+  } else if (apci === APCI.INDIVIDUAL_ADDRESS_WRITE) {
     st.assigned.add(numToIa(data.readUInt16BE(0)));
   } else if (apci === APCI.IA_SERIAL_WRITE) {
-    if (data.length < 8) return false;
     st.assigned.add(`${numToIa(data.readUInt16BE(6))} (serial ${hex(data.subarray(0, 6))})`);
   } else if ((apci & 0x3c0) === APCI.INDIVIDUAL_ADDRESS_RESPONSE || apci === APCI.IA_SERIAL_RESPONSE) {
     st.device(src);
@@ -281,7 +323,9 @@ function tunnelTelegram(st: FileStats, f: Buffer, hexFrame: string, sent: boolea
     return true;
   }
   if (t.length < 2) return false;
-  return applicationTelegram(st, ((t[0] & 0x03) << 8) | t[1], t.subarray(2), sent, src);
+  // A group or broadcast telegram is unnumbered data: no sequence number, no numbered flag.
+  if (fr.group && (t[0] & 0xfc) !== 0) return false;
+  return applicationTelegram(st, ((t[0] & 0x03) << 8) | t[1], t, sent, src);
 }
 
 // cEMI local management on the interface: its own interface objects, not a unit's.
@@ -321,7 +365,7 @@ function proxyLine(st: FileStats, m: RegExpMatchArray): boolean {
 //   Send Sec_req -> 1.1.204 (hc=6) SAI=A+C SeqNr=... InnerTelegram=DeviceDescriptor_Read_req -> 1.1.204 (hc=6) Type=0
 const ETS_TELEGRAM = /([A-Za-z]+(?:_[A-Za-z]+)*)_(req|ind) (->|<-) (\S+)(?: -> (\S+))? \(([^)]*)\)(.*)$/;
 // "Send next message from queue ..." names a telegram already logged; a telegram line starts with its service.
-const ETS_SEND_RECEIVE = /Falcon\.KnxStack\.LL - \[[^\]]*\] (Send|Received) (?=[A-Za-z_]+_(?:req|ind) )/;
+const ETS_SEND_RECEIVE = /Falcon\.KnxStack\.LL - \[[^\]]*\] (Send|Received) (?=[A-Za-z_]+_(?:req|ind)\b)/;
 const ETS_LINE = new RegExp(`${ETS_SEND_RECEIVE.source}${ETS_TELEGRAM.source}`);
 const ETS_INNER = new RegExp(`InnerTelegram=${ETS_TELEGRAM.source}`);
 const ETS_ACTION = /DownloadManager - (Start[A-Za-z]+(?:\([A-Za-z]*\))?) (\d+\.\d+\.\d+)|Hawk\.LoadDeviceTask - Begin ([A-Za-z]+) (\d+\.\d+\.\d+)(?: \(([A-Za-z]+)\))?/;
@@ -394,6 +438,8 @@ export function indexPcap(file: string, bytes: Buffer): IndexedFile | NotIndexed
 // does not name its service and is counted as undecoded. Its other lines are notes, and its "RESULT ..." lines
 // sum up the answers already logged as telegrams.
 const GROUP_LINE = /^\S+ (?:GROUP |ANSWER )?(\d+\.\d+\.\d+) -> (\d+\/\d+\/\d+) (?:(READ|WRITE|RESPONSE) ([0-9a-fA-F]+)|([0-9a-fA-F]+))(?:\s.*)?$/;
+// Any line that starts like a telegram from the bus; one GROUP_LINE does not read is counted as undecoded.
+const GROUP_CANDIDATE = /^\S+ (?:GROUP |ANSWER )?\d+\.\d+\.\d+ -> /;
 const GROUP_SEND = /^\S+ (?:(read|pulse) (\d+\/\d+\/\d+) con (\S+)|SEND READ (\d+\/\d+\/\d+))\s*$/;
 const GROUP_WORD = { GroupValueRead: "READ", GroupValueResponse: "RESPONSE", GroupValueWrite: "WRITE" } as const;
 
@@ -403,7 +449,10 @@ function groupLine(st: FileStats, m: RegExpMatchArray): boolean {
   st.telegrams++;
   st.groups.add(ga);
   if (h.length % 2 || h.length < 4) return false;
-  const g = decodeGroupApdu(Buffer.from(h, "hex"));
+  const tpdu = Buffer.from(h, "hex");
+  if ((tpdu[0] & 0xfc) !== 0) return false; // unnumbered group data, no transport control
+  const g = decodeGroupApdu(tpdu);
+  if (g.apci === "GroupValueRead" && (tpdu.length !== 2 || (tpdu[1] & 0x3f) !== 0)) return false;
   if (g.apci === "Unknown") return false;
   if (word && GROUP_WORD[g.apci] !== word) return false;
   st.service(`A_${g.apci.replace(/^GroupValue/, "GroupValue_")}`, false);
@@ -443,6 +492,7 @@ export function indexText(file: string, text: string): IndexedFile | NotIndexed 
       const g = line.match(GROUP_LINE), s = g ? null : line.match(GROUP_SEND);
       if (g) { formats.add("groupmonitor"); ok = groupLine(st, g); }
       else if (s) { formats.add("groupmonitor"); ok = groupSend(st, s); }
+      else if (GROUP_CANDIDATE.test(line) || /^\S+ (?:(?:read|pulse) \d+\/\d+\/\d+|SEND READ )/.test(line)) { formats.add("groupmonitor"); st.telegrams++; ok = false; }
       else if (line.trim() !== "" && !PROXY_MARKER.test(line) && !firstOther) firstOther = i + 1;
     }
     if (ok === false) st.undecoded.push(i + 1);
@@ -465,7 +515,11 @@ export function indexFile(root: string, file: string): IndexedFile | NotIndexed 
   const ext = extname(gz ? file.slice(0, -3) : file).toLowerCase();
   const pcap = ext === ".pcapng" || ext === ".pcap";
   if (!pcap && !TEXT_EXTENSIONS.has(ext)) return { file, reason: `not a telegram log (${ext || "no extension"}${gz ? ", gzipped" : ""})` };
-  const raw = readFileSync(join(root, file)), bytes = gz ? gunzipSync(raw) : raw;
+  let bytes: Buffer;
+  try {
+    const raw = readFileSync(join(root, file));
+    bytes = gz ? gunzipSync(raw) : raw;
+  } catch (e) { return { file, reason: `unreadable: ${e instanceof Error ? e.message : String(e)}` }; }
   // A file named .pcapng may hold the classic format; tools/pcap.ts tells them apart by the magic number.
   return pcap ? indexPcap(file, bytes) : indexText(file, bytes.toString("latin1"));
 }

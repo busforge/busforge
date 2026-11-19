@@ -146,6 +146,19 @@ describe("proxy logs", () => {
     expect(f.notOnBus).toBe(1);
   });
 
+  test("counts a telegram whose data is short of its service's layout as undecoded", () => {
+    const text = [
+      tunnel("ETS->BRIDGE", REQ, "0.0.0", iaToNum("1.1.7"), [0x42, 0x81]),                    // A_Memory_Write of 1 byte, no address
+      tunnel("BRIDGE->ETS", IND, "1.1.7", iaToNum("1.1.100"), [0x43, 0xd6, 0x00, 0x0b]),       // property response: object and PID only
+      tunnel("ETS->BRIDGE", REQ, "0.0.0", 0, [0x03, 0xde, 0, 0x83, 0x7d, 0x40, 0x39, 0xdb, 0x11, 0x1e], 0xb0, true), // serial write, no reserved octets
+      tunnel("ETS->BRIDGE", REQ, "0.0.0", 0, [0x40, 0x81], 0xb0, true),                        // a group telegram with a sequence number
+    ].join("\n");
+    const f = indexed(indexText("x.log", text));
+    expect(f.undecoded).toEqual({ count: 4, lines: [1, 2, 3, 4] });
+    expect(f.properties).toEqual([]);
+    expect(f.assigned).toEqual([]);
+  });
+
   test("counts a KNXnet/IP service that is neither a telegram nor connection management as undecoded", () => {
     const routing = [0x06, 0x10, 0x05, 0x30, 0x00, 0x08, 0x00, 0x00]; // ROUTING_INDICATION
     const connect = [0x06, 0x10, 0x02, 0x05, 0x00, 0x08, 0x00, 0x00];
@@ -246,8 +259,9 @@ describe("ETS 6 logs", () => {
     const text = [
       `${at}Falcon.KnxStack.LL - [#1 0] Send Memory_Write_req to somewhere`,
       `${at}Falcon.KnxStack.LL - [#1 0] Send PropertyValue_Read_req -> 1.1.18 (hc=6, S=1) Object=0 Id=56`,
+      `${at}Falcon.KnxStack.LL - [#1 0] Send Memory_Write_req`, // cut off
     ].join("\n");
-    expect(indexed(indexText("x.txt", text)).undecoded).toEqual({ count: 2, lines: [1, 2] });
+    expect(indexed(indexText("x.txt", text)).undecoded).toEqual({ count: 3, lines: [1, 2, 3] });
   });
 
   test("names an ETS log without a telegram", () => {
@@ -268,6 +282,9 @@ describe("group monitors", () => {
       "2026-01-01T00:00:03.000Z SEND READ 1/3/2",
       "18:07:01.000 read 3/5/2 con NOK",
       "17:46:06.753 pulse 3/5/9 con OK", // names no service
+      "00:00:01 GROUP 1.1.7 -> 0/0/2 WRITE 00ZZ", // not hex
+      "00:00:02 GROUP 1.1.7 -> 0/0/1 WRITE 8081", // transport control, not group data
+      "09:18:13 read before -> /some/path.json", // a note
     ].join("\n");
     const f = indexed(indexText("x.log", text));
     expect(f.format).toBe("groupmonitor");
@@ -276,8 +293,8 @@ describe("group monitors", () => {
       A_GroupValue_Read: { sent: 3, received: 0 }, A_GroupValue_Response: { sent: 0, received: 2 }, A_GroupValue_Write: { sent: 0, received: 1 },
     });
     expect(f.notOnBus).toBe(1);
-    expect(f.groupAddresses).toBe(6);
-    expect(f.undecoded).toEqual({ count: 2, lines: [5, 10] });
+    expect(f.groupAddresses).toBe(7);
+    expect(f.undecoded).toEqual({ count: 4, lines: [5, 10, 11, 12] });
   });
 });
 
@@ -289,6 +306,7 @@ describe("files no reader takes", () => {
     expect(refused(indexText("x.txt", "12:11:02.190 -> T_CONNECT"))).toBe("telegram-like lines in a format no reader here takes");
     expect(refused(indexText("x.out", "memory: 2691 / 2691 bytes, 0 differ"))).toBe("text without telegram lines");
     expect(refused(indexFile("/nonexistent", "a/collect.json"))).toBe("not a telegram log (.json)");
+    expect(refused(indexFile("/nonexistent", "a/gone.log"))).toStartWith("unreadable: ");
   });
 
   test("an APCI the standard table does not name is shown as its number", () => {
