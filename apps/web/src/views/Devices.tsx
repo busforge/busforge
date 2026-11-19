@@ -317,7 +317,7 @@ export function DevicesView() {
             : !!dropped?.length && (
               <HeaderWarning
                 label={t("import.dropped.label")} title={t("import.dropped.title")} count={dropped.length} testId="project-dropped-links"
-                detail={<><p className="text-muted-foreground">{t("import.dropped.hint")}</p><DroppedLinksList links={dropped} projectId={projectId} /></>}
+                detail={<><p className="text-muted-foreground">{t("import.dropped.hint")} {t("import.dropped.open")}</p><DroppedLinksList links={dropped} projectId={projectId} /></>}
               />
             )}
           {anyChanged && (

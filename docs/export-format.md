@@ -97,7 +97,7 @@ node decrypt-busforge.mjs project.busforge "my-password" | jq .project.name
 | per device, whether its product carries no application program (`withoutApplication`) or its hardware a PEI program next to the application (`peiProgram`); an artifact without them imports such a device as one with an application and without a PEI program | |
 | per device with an application program, the program it runs (`appProgramId`, the catalog key; empty where Busforge knows none); a device of an artifact without it runs the program its Hardware2Program id names | |
 | device module instances | |
-| the com-objects whose ETS links the import did not take over in full, with the addresses ETS linked them to and why (`droppedLinks`), those linked again by hand since included | |
+| the com-objects whose ETS links the import did not take over in full, with the addresses ETS linked them to and why (`droppedLinks`), those linked again by hand since included (a product replacement drops a device's entries) | |
 | the referenced catalog application programs | |
 | the images those programs' `TypePicture` parameters show (`catalogPictures`) | |
 | DCA baggage | |

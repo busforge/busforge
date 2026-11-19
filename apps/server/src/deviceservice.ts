@@ -647,11 +647,11 @@ function deviceObjects(dev: DroppedLinkDevice, lang?: string): DeviceObjects {
 
 // Whether an object holds its dropped ETS links again, as made by hand: it is one the configuration shows
 // (only its links reach the device), it holds every ETS address the project has now, and it holds as many
-// addresses in all as ETS linked it to, the others standing in for the addresses the project lacks.
-function linkedAgain(l: DroppedLink, shown: boolean, linked: number[] | undefined, inProject: (raw: number) => boolean): boolean {
-  if (!shown || !linked) return false;
+// addresses in all as ETS linked it to, the others standing in for the addresses the project lacks. The
+// view's `gas` are the link's, index by index.
+function linkedAgain(link: DroppedLink, view: DroppedLinkView, linked: number[]): boolean {
   const have = new Set(linked);
-  return l.gas.every((g) => g.raw === undefined || !inProject(g.raw) || have.has(g.raw)) && have.size >= new Set(l.gas.map((g) => g.etsId)).size;
+  return have.size >= new Set(link.gas.map((g) => g.etsId)).size && link.gas.every((g, i) => !view.gas[i].inProject || have.has(g.raw!));
 }
 
 function droppedLinkViews(links: DroppedLink[], deviceOf: (deviceId: string) => DroppedLinkDevice, gaOf: (raw: number) => { address: string; name: string | null; inProject: boolean }, lang?: string): DroppedLinkView[] {
@@ -664,15 +664,16 @@ function droppedLinkViews(links: DroppedLink[], deviceOf: (deviceId: string) => 
       devices.set(l.deviceId, d);
     }
     const co = "objs" in d.objects ? d.objects.objs.get(l.comObjRefId) : undefined;
-    if (d.dev.links && linkedAgain(l, !!co?.shown, d.dev.links.get(l.comObjRefId), (raw) => gaOf(raw).inProject)) return [];
-    return [{
+    const view: DroppedLinkView = {
       deviceId: l.deviceId, ia: d.dev.ia, deviceName: d.dev.name, comObjRefId: l.comObjRefId,
       comObjNumber: co?.number ?? null, comObjName: co?.name ?? null, functionText: co?.functionText ?? null,
       unresolved: co ? null : "objs" in d.objects ? "notInConfiguration" : d.objects.unresolved,
       refusal: "refusal" in d.objects ? d.objects.refusal : null,
       reason: l.reason,
       gas: l.gas.map(({ etsId, raw }) => (raw === undefined ? { etsId, address: null, name: null, inProject: false } : { etsId, ...gaOf(raw) })),
-    }];
+    };
+    const linked = d.dev.links?.get(l.comObjRefId);
+    return co?.shown && linked && linkedAgain(l, view, linked) ? [] : [view];
   });
 }
 
@@ -705,8 +706,8 @@ export function previewDroppedLinks(state: AppState, project: Project, programs:
 
 // The dropped links an imported project keeps that are still open, resolved against the project as it is
 // now: an address deleted since the import is shown by its value, as not in the project, and an object
-// linked again by hand (linkedAgain) is left out. The record itself (import_dropped_links) keeps every
-// entry, for the export.
+// linked again by hand (linkedAgain) is left out. Its entry stays in the record (import_dropped_links) and
+// so in the export.
 export function projectDroppedLinks(state: AppState, projectId: string, lang?: string): DroppedLinkView[] {
   const { db } = state;
   if (!projectExists(db, projectId)) throw new ApiError("PROJECT_NOT_FOUND", "project not found", 404);

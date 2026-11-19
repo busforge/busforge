@@ -48,7 +48,7 @@ const xml0 = `<?xml version="1.0"?><KNX xmlns="http://knx.org/xml/project/21"><P
 <GroupAddresses><GroupRanges><GroupRange Name="Main" RangeStart="0" RangeEnd="2047"><GroupRange Name="Mid" RangeStart="0" RangeEnd="255">
   <GroupAddress Id="P-0001-0_GA-1" Address="1" Name="Kitchen light"/><GroupAddress Id="P-0001-0_GA-2" Address="2" Name="Kitchen status"/><GroupAddress Id="P-0001-0_GA-3" Address="3" Name="Spare"/>
 </GroupRange></GroupRange></GroupRanges></GroupAddresses></Installation></Installations></Project></KNX>`;
-const knxprojWith = (app: string) => storeZip({ [`${M}/Hardware.xml`]: hardware, [`${M}/${A}.xml`]: app, "P-0001/0.xml": xml0 });
+const knxprojWith = (app: string, project = xml0) => storeZip({ [`${M}/Hardware.xml`]: hardware, [`${M}/${A}.xml`]: app, "P-0001/0.xml": project });
 const knxproj = knxprojWith(appXml());
 
 const expected = [
@@ -150,6 +150,37 @@ describe("links an import does not take over, per com-object", () => {
     // Unlinking an ETS address the project has opens the entry again.
     await relink(state, imp.id, "O-1_R-1", [3, 2]);
     expect(await listed(state, imp.id)).toEqual([expected[0]]);
+  });
+
+  test("an object ETS names no sending address for leaves the list once it holds its ETS addresses", async () => {
+    const state = freshState();
+    const project = xml0.replace(`<ComObjectInstanceRef RefId="O-3_R-3" Links="GA-2"/>`, `<ComObjectInstanceRef RefId="O-3_R-3"><Connectors><Receive GroupAddressRefId="P-0001-0_GA-2"/><Receive GroupAddressRefId="P-0001-0_GA-3"/></Connectors></ComObjectInstanceRef>`);
+    const imp = await post(state, "/api/projects/import", new File([knxprojWith(appXml(), project)], "Dropped.knxproj"));
+    expect((await listed(state, imp.id)).map((l: any) => [l.comObjRefId, l.reason])).toEqual([["O-1_R-1", "addressNotInProject"], ["O-2_R-2", "senderNotInProject"], ["O-3_R-3", "noSingleSender"]]);
+    await relink(state, imp.id, "O-3_R-3", [2]);
+    expect((await listed(state, imp.id)).map((l: any) => l.comObjRefId)).toEqual(["O-1_R-1", "O-2_R-2", "O-3_R-3"]);
+    await relink(state, imp.id, "O-3_R-3", [3, 2]);
+    expect((await listed(state, imp.id)).map((l: any) => l.comObjRefId)).toEqual(["O-1_R-1", "O-2_R-2"]);
+  });
+
+  test("an ETS address deleted since the import needs a stand-in like one the project never had", async () => {
+    const state = freshState();
+    const imp = await post(state, "/api/projects/import", new File([knxproj], "Dropped.knxproj"));
+    const del = (await handleApi(new Request(`http://x/api/projects/${imp.id}/group-addresses/1`, { method: "DELETE" }), state))!;
+    expect(del.status).toBeLessThan(300);
+    await relink(state, imp.id, "O-1_R-1", [3]);
+    expect((await listed(state, imp.id)).map((l: any) => l.comObjRefId)).toEqual(["O-1_R-1", "O-2_R-2"]);
+    await relink(state, imp.id, "O-1_R-1", [3, 2]);
+    expect((await listed(state, imp.id)).map((l: any) => l.comObjRefId)).toEqual(["O-2_R-2"]);
+  });
+
+  test("an object two ETS refs share stays listed after the import, the other ref's address being no stand-in", async () => {
+    const state = freshState();
+    const project = xml0.replace(`<ComObjectInstanceRef RefId="O-1_R-1" Links="GA-1 GA-9"/>`, `<ComObjectInstanceRef RefId="O-1_R-1" Links="GA-1 GA-9"/><ComObjectInstanceRef RefId="O-1_R-1" Links="GA-3"/>`);
+    const imp = await post(state, "/api/projects/import", new File([knxprojWith(appXml(), project)], "Dropped.knxproj"));
+    expect((await listed(state, imp.id)).map((l: any) => l.comObjRefId)).toEqual(["O-1_R-1", "O-2_R-2"]);
+    await relink(state, imp.id, "O-1_R-1", [1, 3, 2]);
+    expect((await listed(state, imp.id)).map((l: any) => l.comObjRefId)).toEqual(["O-2_R-2"]);
   });
 
   test("an object linked again counts only while the configuration shows it", async () => {
