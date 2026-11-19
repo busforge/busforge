@@ -248,13 +248,15 @@ address (the management routing below), and plain device management works on eve
 **Secured device access works only on the tunnel that holds the interface's own address.** A Data
 Secure frame's MAC binds the source address the client sealed it under, so it cannot leave the bridge
 under another one: the device drops it unanswered, Sync request included. The bridge refuses such a
-frame instead of sending it, confirms it negatively and logs why, and Busforge reports the refused Sync
-as `SECURE_SYNC_NOT_SENT`. Shown on the ABB KNX-USB interface with a Jung 400021SE and a GVS AMMA in
-secure mode: a Sync from an extra tunnel address put on the bus as the interface's address stays
-unanswered, the same Sync from the tunnel holding the interface's address is answered at once, and
-the same request sent from the extra address unchanged draws no answer the host sees, plain or
-secured. Another tool on such a tunnel (ETS) gets the same negative confirmation; how it reports it
-has not been observed.
+frame instead of sending it, confirms it negatively and logs why. Over a TCP tunnel, which Busforge
+tries first, Busforge waits for that confirmation and reports the refused Sync at once as
+`SECURE_SYNC_NOT_CONFIRMED`; over UDP it does not wait for confirmations, so the Sync runs into its
+timeout and reads as `SECURE_SYNC_NO_RESPONSE`, and only the bridge's log says why. Shown on the ABB
+KNX-USB interface with a Jung 400021SE and a GVS AMMA in secure mode: a Sync from an extra tunnel
+address put on the bus as the interface's address stays unanswered, the same Sync from the tunnel
+holding the interface's address is answered at once, and a plain request sent from the extra address
+unchanged draws no answer the host sees. Another tool on such a tunnel (ETS) gets the same negative
+confirmation; how it reports it has not been observed.
 
 This is a property of the USB controller, not of the bridge, and a real KNXnet/IP router does not
 have the limit at all. Which interfaces it has been observed on is in [status.md](status.md); it is

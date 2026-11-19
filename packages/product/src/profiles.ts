@@ -718,7 +718,7 @@ async function verifyAfterRestart(dev: KnxDevice, verify: () => Promise<boolean>
     // repetition of an earlier answer), or an interface reporting the device did not acknowledge
     // (still booting, also at a secured session's Sync request) is no verdict on the write either.
     const code = (e as { code?: string }).code;
-    if (code !== "DEVICE_NOT_ANSWERING" && code !== "DEVICE_CLOSED_CONNECTION" && code !== "SECURE_ANSWER_REJECTED" && code !== "ANSWER_SERVICE_MISMATCH" && code !== "BUS_SEND_FAILED" && code !== "SECURE_SYNC_NOT_SENT" && !isLinkError(e)) throw e;
+    if (code !== "DEVICE_NOT_ANSWERING" && code !== "DEVICE_CLOSED_CONNECTION" && code !== "SECURE_ANSWER_REJECTED" && code !== "ANSWER_SERVICE_MISMATCH" && code !== "BUS_SEND_FAILED" && code !== "SECURE_SYNC_NOT_CONFIRMED" && !isLinkError(e)) throw e;
     try { await dev.disconnect(); } catch { /* the link may already be gone */ }
     await reconnectAfterRestart(dev, { initialMs: 5000, linkDown: isLinkError(e) });
     return verify();

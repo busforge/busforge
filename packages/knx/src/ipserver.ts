@@ -7,7 +7,7 @@ import {
 } from "./frame.ts";
 import { SEARCH_MULTICAST } from "./discover.ts";
 import { localIPv4, localMac } from "./localnet.ts";
-import type { KnxTransport } from "./transport.ts";
+import { parseCemiLData, type KnxTransport } from "./transport.ts";
 import { KnxError } from "./errors.ts";
 import { isSecureApdu } from "./secure.ts";
 
@@ -723,24 +723,22 @@ export class KnxIpServer {
     const nat = p2p && iface !== 0 && cemiSource(clientFrame) !== iface;
     // A secured frame (A_SecureService) cannot take the NAT: its MAC binds the source address the
     // client sealed it under, so under the interface's address the device drops it unanswered, the
-    // Sync request included. It is refused here, confirmed negatively and said in the log, so the
-    // client fails at once instead of waiting out a Sync nobody will answer.
-    if (nat && isSecureApdu(clientFrame.subarray(2 + clientFrame[1] + 7))) {
-      this.log(`channel ${id}: refused a secured frame to ${numToIa(cemiDest(clientFrame))}: this tunnel holds ${numToIa(cemiSource(clientFrame))}, point-to-point frames leave the bridge as the interface's own address ${numToIa(iface)}, and a secured frame's MAC binds the address it was sealed under; secured device access through this bridge works only on the tunnel that holds ${numToIa(iface)}`);
-      const refused = withMessageCode(clientFrame, CEMI.LDATA_CON);
-      refused[2 + refused[1]] |= CEMI_CON_ERROR;
-      void this.toClient(ch, refused);
-      return;
-    }
+    // Sync request included. It is refused: never put on the bus, confirmed negatively (a TCP client
+    // waits for that confirmation, a UDP client does not) and said in the log.
+    const refused = nat && isSecureApdu(parseCemiLData(clientFrame).tpdu);
     const busFrame = nat ? withSource(clientFrame, iface) : clientFrame;
-    if (nat) this.mgmtOwner.set(cemiDest(clientFrame), ch);
+    if (nat && !refused) this.mgmtOwner.set(cemiDest(clientFrame), ch);
 
-    let failed = false;
-    try {
-      await this.transport.sendCemi(busFrame);
-    } catch (e) {
-      failed = true;
-      this.log(`channel ${id}: the bus did not take the frame: ${e instanceof Error ? e.message : String(e)}`);
+    let failed = refused;
+    if (refused) {
+      this.log(`channel ${id}: refused a secured frame from ${numToIa(cemiSource(clientFrame))} to ${numToIa(cemiDest(clientFrame))}: point-to-point frames leave the bridge as the interface's own address ${numToIa(iface)}, and a secured frame's MAC binds the address it was sealed under; secured device access through this bridge works only from ${numToIa(iface)}, on the tunnel that holds it`);
+    } else {
+      try {
+        await this.transport.sendCemi(busFrame);
+      } catch (e) {
+        failed = true;
+        this.log(`channel ${id}: the bus did not take the frame: ${e instanceof Error ? e.message : String(e)}`);
+      }
     }
 
     // The L_Data.con is the ONLY way a tunnelling client learns whether its telegram reached the

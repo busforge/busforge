@@ -642,9 +642,9 @@ describe("KnxIpServer: management NAT (the USB single-address limit)", () => {
     const con = rig.sock.ofService(SVC.TUNNEL_REQ)[0]!.subarray(10);
     expect(con[0]).toBe(CEMI.LDATA_CON);
     expect(con[2] & 0x01).toBe(1);
-    expect(logs.at(-1)).toBe(`channel ${op}: refused a secured frame to 1.2.3: this tunnel holds 1.1.251, point-to-point frames leave the bridge as the interface's own address 1.1.250, and a secured frame's MAC binds the address it was sealed under; secured device access through this bridge works only on the tunnel that holds 1.1.250`);
+    expect(logs.at(-1)).toBe(`channel ${op}: refused a secured frame from 1.1.251 to 1.2.3: point-to-point frames leave the bridge as the interface's own address 1.1.250, and a secured frame's MAC binds the address it was sealed under; secured device access through this bridge works only from 1.1.250, on the tunnel that holds it`);
 
-    // The NAT took no ownership: a reply from the device still fans out.
+    // The refused frame records no owner (here no earlier plain frame did either): a reply fans out.
     rig.sock.deliver(tunnelAck(op, 0), CLIENT);
     await tick();
     rig.sock.clear();
