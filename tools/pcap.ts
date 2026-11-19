@@ -4,9 +4,10 @@
 //
 //   bun run tools/pcap.ts <capture.pcap> [<out.log>] [--tool=ETS]
 //
-// One UDP datagram is one KNXnet/IP frame. The server side is the endpoint that sends the server's answers
-// (SEARCH_RES, DESCRIPTION_RES, CONNECT_RES, CONNSTATE_RES); a datagram it neither sends nor receives is
-// refused, since its direction in the log would be a guess. So is every record the log could not show as it
+// One UDP datagram is one KNXnet/IP frame. The server side is every endpoint that sends one of the server's
+// answers (SEARCH_RES, SEARCH_RES_EXT, DESCRIPTION_RES, CONNECT_RES, CONNSTATE_RES), and the data endpoint a
+// CONNECT_RES names; a datagram that neither comes from nor goes to the server side is refused, since its
+// direction in the log would be a guess (ETS's multicast search, other traffic: filter the capture first). So is every record the log could not show as it
 // was: a truncated record, an IP fragment, a non-UDP packet, a datagram that is not exactly one KNXnet/IP
 // frame. Read: the classic pcap format (either byte order, micro- or nanosecond stamps) with raw IPv4
 // packets (link type 101 or 228) or Ethernet. The pcapng block format is refused.
@@ -16,7 +17,8 @@ import { logLine } from "./knxproxy.ts";
 export interface UdpDatagram { at: Date; src: string; dst: string; payload: Buffer }
 
 const LINKTYPE_ETHERNET = 1, LINKTYPE_RAW = 101, LINKTYPE_IPV4 = 228;
-const SERVER_ANSWERS = new Set([0x0202, 0x0204, 0x0206, 0x0208, 0x020c]);
+const CONNECT_RES = 0x0206;
+const SERVER_ANSWERS = new Set([0x0202, 0x0204, CONNECT_RES, 0x0208, 0x020c]);
 
 // The UDP datagrams of a classic pcap file, in file order.
 export function readPcap(bytes: Buffer): UdpDatagram[] {
@@ -39,6 +41,8 @@ export function readPcap(bytes: Buffer): UdpDatagram[] {
     if (o + 16 > bytes.length) throw new Error(`record ${n}: the file ends inside its header`);
     const sec = u32(o), frac = u32(o + 4), incl = u32(o + 8), orig = u32(o + 12);
     if (incl < orig) throw new Error(`record ${n} is truncated (${incl} of ${orig} bytes captured)`);
+    // More bytes captured than the packet had: the record would swallow what follows it.
+    if (incl > orig) throw new Error(`record ${n} claims ${incl} bytes captured of a ${orig}-byte packet`);
     if (o + 16 + incl > bytes.length) throw new Error(`record ${n}: the file ends inside its ${incl} bytes`);
     const pkt = bytes.subarray(o + 16, o + 16 + incl);
     o += 16 + incl;
@@ -76,9 +80,21 @@ export function pcapToLog(bytes: Buffer, tool = "ETS"): string {
       throw new Error(`datagram ${i + 1} (${d.src} -> ${d.dst}) is not one KNXnet/IP frame: ${p.subarray(0, 8).toString("hex")}`);
     }
   });
-  const server = new Set(datagrams.filter((d) => SERVER_ANSWERS.has(d.payload.readUInt16BE(2))).map((d) => d.src));
-  if (server.size === 0) throw new Error("no datagram carries a server's answer (SEARCH_RES, DESCRIPTION_RES, CONNECT_RES, CONNSTATE_RES), so no side is known to be the server");
-  const lines = [`${(datagrams[0]?.at ?? new Date(0)).toISOString()} --- converted from a pcap capture: ${datagrams.length} datagrams, the server at ${[...server].join(", ")} ---`];
+  const server = new Set<string>();
+  for (const d of datagrams) {
+    const svc = d.payload.readUInt16BE(2);
+    if (!SERVER_ANSWERS.has(svc)) continue;
+    server.add(d.src);
+    // CONNECT_RES: header, channel, status, then the data endpoint's HPAI (length 8, protocol, IPv4, port).
+    const p = d.payload;
+    if (svc === CONNECT_RES && p.length >= 16 && p[8] === 0x08) {
+      const ip = `${p[10]}.${p[11]}.${p[12]}.${p[13]}`, port = p.readUInt16BE(14);
+      // 0.0.0.0:0 is the NAT form: the data travels on the endpoint the answer came from.
+      if (ip !== "0.0.0.0" || port !== 0) server.add(`${ip}:${port}`);
+    }
+  }
+  if (server.size === 0) throw new Error("no datagram carries a server's answer (SEARCH_RES, SEARCH_RES_EXT, DESCRIPTION_RES, CONNECT_RES, CONNSTATE_RES), so no side is known to be the server");
+  const lines = [`${datagrams[0].at.toISOString()} --- converted from a pcap capture: ${datagrams.length} datagrams, the server at ${[...server].join(", ")} ---`];
   datagrams.forEach((d, i) => {
     const fromServer = server.has(d.src), toServer = server.has(d.dst);
     if (fromServer === toServer) throw new Error(`datagram ${i + 1} (${d.src} -> ${d.dst}) goes ${fromServer ? "between two server endpoints" : "past the server"}; its direction is not known`);

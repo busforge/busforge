@@ -180,13 +180,20 @@ A capture taken with a packet sniffer instead of the proxy, KNXnet/IP over UDP i
 format, is turned into the proxy's log by `tools/pcap.ts`:
 
 ```bash
-bun run tools/pcap.ts <capture.pcap> <capture.log>
+bun run tools/pcap.ts <capture.pcap> [<capture.log>]    # without an output file, to stdout
 ```
 
-One datagram becomes one log line. The side that sends the server's answers (search, description,
-connect and connection-state responses) is the server; a datagram that neither comes from nor goes
-to it, an IP fragment, a truncated record or a datagram that is not one whole KNXnet/IP frame is
-refused, as is the pcapng block format.
+One datagram becomes one log line. The server is every endpoint that sends one of the server's
+answers (search, description, connect and connection-state responses) and the data endpoint its
+connect response names; a datagram that neither comes from nor goes to the server, an IP fragment, a
+truncated record or a datagram that is not one whole KNXnet/IP frame is refused, as is the pcapng
+block format and a link type other than raw IPv4 or Ethernet. So a sniffer capture is cut to the
+tool's unicast exchange with the server first (ETS's multicast search to `224.0.23.12` left out), on
+the server's UDP port:
+
+```bash
+tshark -r <sniffed> -F pcap -Y "udp.port == 3671 && !(ip.dst == 224.0.23.12)" -w <capture.pcap>
+```
 
 ### Third-party test data
 

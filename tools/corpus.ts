@@ -31,9 +31,40 @@ export const DEMO_PRODUCT_FILES = ["demo/bench-products.knxprod", "demo/house-pr
 export const OPENKNX_DEMO_DIR = "demo/openknx";
 
 // bussard's ETS captures of its synthetic products, MIT-licensed third-party data (its README in the corpus).
-// `captures/manifest.json` lists every variant; the products the tests hold against ETS, each with its
-// application program, are named here, so a corpus without one of their files is reported incomplete.
+// Every variant of its `captures/manifest.json` as `<product without "syn-">/<variant>`, with `+` where the variant
+// also holds `base.pcapng`, the download that set the simulator up; each holds `ets.pcapng` and `requests.txt`
+// (`base-requests.txt` beside a base). The captures are classic pcap despite the `.pcapng` name.
 export const BUSSARD_SYNTHETIC_DIR = "captures/external/bussard-synthetic";
+export const BUSSARD_SYNTHETIC_VARIANTS: readonly { product: string; variant: string; base: boolean }[] = [
+  "assign/defaults", "assign-rewrite/defaults", "assign-rewrite/params", "bcu2-0021/defaults", "bcu2-0021/reload+",
+  "bcu2-0021/unload+", "bcu2-0021/unload-reload+", "choose-never-shown/defaults", "choose-partial-segment/defaults",
+  "choose-partial-segment/params", "choose-per-ref/defaults", "choose-per-ref/params", "color-param/defaults",
+  "color-param-hsv/defaults", "color-param-hsv2/defaults", "com-objects/defaults", "com-objects/params",
+  "dynamic-tests/defaults", "hidden-default/defaults", "ip-address-param/defaults", "ip-enabled-tp/defaults",
+  "le-order/defaults", "legacy-patch-always/defaults", "map-error/defaults", "master-reset/defaults",
+  "master-reset-code4/defaults", "minimal/apply+", "minimal/apply-params+", "minimal/assign+", "minimal/defaults",
+  "minimal/links", "minimal/no-ga", "minimal/other-app+", "minimal/partial+", "minimal/partial-twice+",
+  "minimal/reload+", "minimal/unload+", "module-choose/defaults", "module-choose/params", "module-repeat/defaults",
+  "module-repeat/params", "object-size-ref/defaults", "param-calculation/calc-input", "param-calculation/defaults",
+  "product-07b0/defaults", "property-nopar/defaults", "property-nopar/partial+", "property-param/defaults",
+  "property-param/partial+", "property-param/partial-twice+", "relseg-dataless/defaults",
+  "relseg-dataless-hidden/defaults", "relseg-fill/apply+", "relseg-fill/defaults", "s7-0701/defaults",
+  "s7-0701/other-app+", "s7-0701/reload+", "s7-0705/apply+", "s7-0705/defaults", "s7-0705/other-app+",
+  "s7-0705/params", "s7-0705/partial+", "s7-0705/reload+", "s7-0705/unload+", "s7-choose-split/defaults",
+  "s7-delay/defaults", "s7-hidden-default/defaults", "s7-hidden-default-ets4/defaults",
+  "s7-hidden-default-p11/defaults", "s7-lsm5/defaults", "s7-lsm5-0705/defaults", "s7-master-reset/defaults",
+  "s7-no-comobjects/defaults", "s7-pei80/defaults", "s7-pid204/defaults", "s7-static-split/defaults",
+  "s7-taskptr/defaults", "secure/apply+", "secure/apply-params+", "secure/defaults", "secure/links",
+  "secure/partial+", "secure/reload+", "secure-fill/defaults", "secure-fill/reload+", "secure-fill/unload-reload+",
+  "secure-property/defaults", "text-initialvalue/defaults", "text-undeclared/defaults",
+  "trailing-writeprop/defaults", "trailing-writeprop/partial+", "union-bitfields/defaults", "union-bitfields/params",
+  "union-default-range/defaults", "user-memory/defaults", "user-memory-extmem/defaults", "writerelmem-size/defaults",
+  "writerelmem-tail/defaults",
+].map((s) => {
+  const [product, variant] = s.replace(/\+$/, "").split("/");
+  return { product: `syn-${product}`, variant, base: s.endsWith("+") };
+});
+// The products whose application programs the tests read, with the program's id.
 export const BUSSARD_SYNTHETIC_TESTED: readonly (readonly [product: string, application: string])[] = [
   ["syn-minimal", "2700-10"], ["syn-assign", "271F-10"], ["syn-assign-rewrite", "27B3-10"], ["syn-choose-never-shown", "270E-10"],
   ["syn-choose-per-ref", "2719-10"], ["syn-color-param", "2728-10"], ["syn-com-objects", "271B-10"], ["syn-dynamic-tests", "271C-10"],
@@ -232,7 +263,10 @@ export const CORPUS_FILES: readonly string[] = [
   ...OPENKNX_RELEASES.map((r) => `${OPENKNX_DEMO_DIR}/${r.asset}`),
   `${BUSSARD_SYNTHETIC_DIR}/LICENSE`,
   `${BUSSARD_SYNTHETIC_DIR}/captures/manifest.json`,
-  ...BUSSARD_SYNTHETIC_TESTED.flatMap(([p, a]) => [bussardCapture(p, "defaults"), bussardApplication(p, a)]),
+  ...BUSSARD_SYNTHETIC_VARIANTS.flatMap(({ product: p, variant: v, base }) => [
+    bussardCapture(p, v), bussardCapture(p, v, "requests.txt"), ...(base ? [bussardCapture(p, v, "base.pcapng"), bussardCapture(p, v, "base-requests.txt")] : []),
+  ]),
+  ...BUSSARD_SYNTHETIC_TESTED.map(([p, a]) => bussardApplication(p, a)),
 ];
 
 // Bun loads the .env files of the directory a process starts in: `bun run check` those of the

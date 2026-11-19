@@ -1,8 +1,8 @@
 import { test, expect } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { fillAllocatedRuns, iaToNum } from "../packages/knx/src/index.ts";
 import { parseAppConfig, classify, parseLoadProcedures, buildRelativeSegmentTarget, fullDownloadImageCoverage, relParamFillByte, resolveModuleInstances } from "../packages/product/src/index.ts";
-import { BUSSARD_SYNTHETIC_DIR, BUSSARD_SYNTHETIC_TESTED, bussardApplication, bussardCapture, corpusPath } from "./corpus.ts";
+import { BUSSARD_SYNTHETIC_DIR, BUSSARD_SYNTHETIC_TESTED, BUSSARD_SYNTHETIC_VARIANTS, bussardApplication, bussardCapture, corpusPath } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { compareSegments, etsAllocations, memoryImage, parseCapture, parseTunnelFrame, reportedTableReferences } from "./etsdiff.ts";
 import { pcapToLog } from "./pcap.ts";
@@ -25,13 +25,11 @@ corpusDescribe("bussard's synthetic captures: the pcap conversion", () => {
   // conversion has to show exactly those, in order, for every capture of the set.
   test("every capture converts, and ETS's requests in it are the ones bussard listed", () => {
     const manifest = JSON.parse(readFileSync(corpusPath(`${BUSSARD_SYNTHETIC_DIR}/captures/manifest.json`), "utf8")) as { captures: { product: string; variant: string }[] };
-    expect(manifest.captures.length).toBe(98);
+    expect(BUSSARD_SYNTHETIC_VARIANTS.map((v) => `${v.product}/${v.variant}`)).toEqual(manifest.captures.map((c) => `${c.product}/${c.variant}`));
     let checked = 0;
-    for (const { product, variant } of manifest.captures) {
-      for (const [pcap, listed] of [["ets.pcapng", "requests.txt"], ["base.pcapng", "base-requests.txt"]]) {
-        const at = corpusPath(bussardCapture(product, variant, pcap));
-        if (pcap === "base.pcapng" && !existsSync(at)) continue;
-        const ours = pcapToLog(readFileSync(at)).split("\n").flatMap((line) => {
+    for (const { product, variant, base } of BUSSARD_SYNTHETIC_VARIANTS) {
+      for (const [pcap, listed] of base ? [["ets.pcapng", "requests.txt"], ["base.pcapng", "base-requests.txt"]] : [["ets.pcapng", "requests.txt"]]) {
+        const ours = pcapToLog(readFileSync(corpusPath(bussardCapture(product, variant, pcap)))).split("\n").flatMap((line) => {
           if (!line.includes(" ETS->BRIDGE TUNNELLING_REQ ")) return [];
           const fr = parseTunnelFrame(line.slice(line.lastIndexOf("| ") + 2));
           const hex4 = (n: number) => n.toString(16).padStart(4, "0");
@@ -46,9 +44,12 @@ corpusDescribe("bussard's synthetic captures: the pcap conversion", () => {
   });
 });
 
-// The MV-0701 full download, memory-mapped load-state machines, Busforge's planner against ETS's writes: every
-// byte ETS wrote is in Busforge's image with its value, the unlinked objects' communication flag cleared
-// included (com-object table at 0x4400), and ETS wrote nothing outside it but the load-control register 0x0104.
+// The MV-0701 full download, memory-mapped load-state machines, Busforge's planner against ETS's writes, in the
+// segments ETS wrote into: every byte ETS wrote is in Busforge's plan with its value (the unlinked objects'
+// communication flag cleared included, com-object table at 0x4400), Busforge plans no other byte there, and
+// ETS wrote nothing outside them but the load-control register 0x0104. ETS reads each block before writing it
+// and leaves out what the simulator already holds (zeros); the plan's bytes are compared where they differ
+// from that. A segment ETS wrote nothing into is not held here.
 corpusDescribe("bussard's synthetic captures: System 7 MV-0701 full download against ETS", () => {
   for (const product of ["syn-s7-0701", "syn-s7-no-comobjects", "syn-s7-pei80"]) {
     test(`${product}: every byte ETS wrote matches`, () => {
@@ -59,18 +60,23 @@ corpusDescribe("bussard's synthetic captures: System 7 MV-0701 full download aga
       const cap = capture(product);
       const r = compareSegments(build.segments.map((seg) => ({ seg, address: seg.address, baseSource: "declared" })), memoryImage(cap.writes), etsAllocations(cap),
         [{ rule: "the 0x0104 load-control register", covers: (a) => a >= 0x0104 && a < 0x010f }]);
-      expect(r.segments.reduce((n, s) => n + s.compared, 0)).toBe(129);
-      expect(r.segments.flatMap((s) => [...s.divergences, ...s.etsOnly])).toEqual([]);
       expect(r.unattributed).toEqual([]);
+      const written = r.segments.filter((s) => s.etsWrote > 0);
+      expect(written.map((s) => s.id.split("_").pop())).toEqual(["AS-4000", "AS-4400", "AS-4440"]);
+      expect(written.reduce((n, s) => n + s.compared, 0)).toBe(129);
+      expect(written.flatMap((s) => [...s.divergences, ...s.etsOnly])).toEqual([]);
+      const image = new Map(build.segments.map((s) => [s.id, s.image]));
+      expect(written.flatMap((s) => s.busforgeOnly.filter((o) => image.get(s.id)![o] !== 0x00).map((o) => `${s.id} +${o}`))).toEqual([]);
     });
   }
 });
 
-// System B (MV-07B0) parameter segments at application defaults, one construct each: the segment image
-// Busforge's full download builds (the planner's own steps: module instances resolved as it resolves them,
-// the bytes it owns, the rest at the allocation's fill), held against the bytes ETS wrote into the segment it
-// allocated, at the base the simulator reported (PID 7). Busforge's full download itself refuses these
-// programs, whose allocation is LdCtrlRelSegment Mode 0; the image is held against ETS here on its own.
+// System B (MV-07B0) parameter segments at application defaults, one construct each: the segment bytes
+// Busforge's full download builds (the steps of planSystemBFull: module instances resolved as it resolves them,
+// the bytes it owns, the rest at the fill byte relParamFillByte gives), held against the bytes ETS wrote into
+// the segment it allocated, at the base the simulator reported (PID 7). Busforge's full download refuses every
+// one of these programs before it builds anything (a Mode 0 allocation, a load-control step it does not model,
+// or two sizes for one segment), so the image is held against ETS here on its own.
 corpusDescribe("bussard's synthetic captures: System B parameter segments at defaults against ETS", () => {
   const cases: [product: string, construct: string][] = [
     ["syn-minimal", "two parameters, the rest of the segment from its <Data>"],
