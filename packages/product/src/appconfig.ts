@@ -225,7 +225,11 @@ export interface AppConfig {
   // The ParameterRefs a <ParameterCalculation> reads or sets (its LParameters and RParameters), in the
   // application and its module definitions. Busforge does not run these scripts.
   calculationRefs: Set<string>;
+  // Each <ParameterCalculation> with the ParameterRefs of its two sides: ETS's LRTransformation computes the
+  // RParameters from the LParameters, its RLTransformation the LParameters from the RParameters.
+  calculations: CfgCalculation[];
 }
+export interface CfgCalculation { id: string; name?: string; lRefs: string[]; rRefs: string[] }
 
 // The order-preserving parser splits attributes (under ":@") from child elements,
 // unlike the merged parser. ETS authors most fields as attributes but large payloads
@@ -278,6 +282,21 @@ export function resolveParamRef(app: AppConfig, refId: string): { ref: CfgParamR
   if (!ref) return undefined;
   const param = app.params.get(ref.paramId);
   return { ref, param, type: param ? app.types.get(param.typeId) : undefined };
+}
+
+// Two stored values of a parameter are one value where they decode the same: no value is the parameter's
+// default, a float compares by number (ETS stores it in scientific notation, the UI as a decimal), and a
+// colour by its hex digits whatever their case (the read-back gives #RRGGBB, an edit may store #rrggbb).
+export type SameParamValue = (refId: string, a: string | null, b: string | null) => boolean;
+export function sameParamValue(app: AppConfig): SameParamValue {
+  return (refId, a, b) => {
+    const { ref, param, type } = resolveParamRef(app, refId) ?? {};
+    const def = ref?.value ?? param?.value ?? "";
+    const x = a ?? def, y = b ?? def;
+    // An empty value (a parameter without a default) is no number: Number("") would read it as 0.
+    const base = type?.base;
+    return x === y || (x !== "" && y !== "" && ((base === "Float" && Number(x) === Number(y)) || (base === "Color" && x.toUpperCase() === y.toUpperCase())));
+  };
 }
 
 // Whether a parameter type takes `value`: one of its enumeration's values, or a whole number within
@@ -356,6 +375,7 @@ export function parseAppConfig(xml: string): AppConfig {
   const parameterByteOrder = byteOrder ?? "BigEndian";
   const desc = appAttrs.VisibleDescription ?? "";
   const dca = /\bDCA\b/i.test(appAttrs.Name ?? "") || /\bDCA\b/i.test(desc) ? { hint: desc.trim() } : undefined;
+  const calculations = calculationsOf(appKids);
 
   return {
     id: appAttrs.Id,
@@ -375,14 +395,21 @@ export function parseAppConfig(xml: string): AppConfig {
     loadProcedures: loadProceduresOf(root),
     types, params, refs, comObjects, comObjectRefs, segments, absoluteSegments, groupTables, translations, dynamic, moduleDefs, allocators, hasModules, dca,
     paramFauxIndent: parseParamFauxIndent(xml),
-    calculationRefs: calculationRefsOf(appKids),
+    calculationRefs: new Set(calculations.flatMap((c) => [...c.lRefs, ...c.rRefs])),
+    calculations,
   };
 }
 
-function calculationRefsOf(nodes: ONode[]): Set<string> {
-  const out = new Set<string>();
-  const refsIn = (ns: ONode[]) => { for (const n of ns) { if (tagOf(n) === "ParameterRefRef" && attrsOf(n).RefId) out.add(attrsOf(n).RefId); refsIn(kidsOf(n)); } };
-  const find = (ns: ONode[]) => { for (const n of ns) { if (tagOf(n) === "ParameterCalculation") refsIn(kidsOf(n)); else find(kidsOf(n)); } };
+function calculationsOf(nodes: ONode[]): CfgCalculation[] {
+  const out: CfgCalculation[] = [];
+  const refsIn = (ns: ONode[], into: string[]) => { for (const n of ns) { if (tagOf(n) === "ParameterRefRef" && attrsOf(n).RefId) into.push(attrsOf(n).RefId); refsIn(kidsOf(n), into); } };
+  const find = (ns: ONode[]) => {
+    for (const n of ns) {
+      if (tagOf(n) !== "ParameterCalculation") { find(kidsOf(n)); continue; }
+      const side = (tag: string) => { const into: string[] = []; for (const s of childrenByTag(kidsOf(n), tag)) refsIn(kidsOf(s), into); return into; };
+      out.push({ id: attrsOf(n).Id, name: attrsOf(n).Name, lRefs: side("LParameters"), rRefs: side("RParameters") });
+    }
+  };
   find(nodes);
   return out;
 }

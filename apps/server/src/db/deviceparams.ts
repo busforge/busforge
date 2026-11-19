@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import type { ModuleInstance, ImageStamp } from "@busforge/product";
+import type { ModuleInstance, ImageStamp, SameParamValue } from "@busforge/product";
 import type { CatalogProduct, DeviceKnxIp, EtsPart } from "@busforge/project";
 import { ApiError } from "../errors.ts";
 
@@ -414,11 +414,10 @@ export function revertDevice(db: Database, projectId: string, deviceId: string, 
 // live rows), so the existing live-vs-base diff then flags exactly the drift.
 
 // Whether two stored values of a parameter are one value (null: no row, the parameter's default).
-export type SameParamValue = (refId: string, a: string | null, b: string | null) => boolean;
 const sameText: SameParamValue = (_ref, a, b) => a === b;
 
 // Assumed-value marks follow the new values by `marks`: "drop" (a read-back) keeps a mark only where the
-// value stays (`same`, deviceservice.ts sameParamValue); "move" (a verified write) keeps every mark on the
+// value stays (`same`, sameParamValue of @busforge/product); "move" (a verified write) keeps every mark on the
 // value now recorded: only a read that proves the value ends a mark, never a write.
 export function replaceParamBase(db: Database, projectId: string, deviceId: string, values: Map<string, string>, same: SameParamValue = sameText, marks: "drop" | "move" = "drop"): void {
   db.transaction(() => {

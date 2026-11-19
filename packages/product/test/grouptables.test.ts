@@ -166,6 +166,11 @@ describe("buildGroupTablesMv0705 (System-7 layout)", () => {
     expect(() => buildGroupTablesMv0705(many, ownIa)).toThrow(/1-byte count/);
   });
 
+  test("refuses an object number that does not fit the entry's byte, and links object 255", () => {
+    expect(() => buildGroupTablesMv0705([{ comObjNum: 256, gaRaws: [0x0a01] }], ownIa)).toThrow(expect.objectContaining({ code: "ASSOC_SHORT_FORM_OVERFLOW" }));
+    expect([...buildGroupTablesMv0705([{ comObjNum: 255, gaRaws: [0x0a01] }], ownIa).assoc]).toEqual([1, 1, 255]);
+  });
+
   // The layout of the tables a GA flash on an M-0081 device wrote and byte-matched on the bus, with
   // synthetic addresses: own IA first, then the group addresses ascending, the association ordered by
   // object. A re-point of co#1 to an address above all others moves it to the end of the address

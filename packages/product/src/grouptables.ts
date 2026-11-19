@@ -61,11 +61,14 @@ export function buildGroupTables(links: ComObjectLink[], assocEntryBytes: 2 | 4 
 // `ownIa` is the device's individual address (the first address-table entry). Counts are a
 // single byte, so a device with > 254 group addresses or > 255 associations cannot be
 // represented; that is far beyond any real TP device but guarded rather than silently wrapped.
+// An entry holds the object number in one byte too, so an object above 255 cannot be linked.
 export function buildGroupTablesMv0705(links: ComObjectLink[], ownIa: number): GroupTables {
   const gas = [...new Set(links.flatMap((l) => l.gaRaws))].sort((a, b) => a - b);
   const idx = new Map(gas.map((g, i) => [g, i + 1])); // 1-based group index
   const entries = associations(links, idx);
   if (gas.length + 1 > 255 || entries.length > 255) throw new ProductError("GA_TABLE_TOO_LARGE", "MV-0705 group tables exceed the 1-byte count (too many group addresses/associations)");
+  const wide = entries.find((e) => e.co > 0xff);
+  if (wide) throw new ProductError("ASSOC_SHORT_FORM_OVERFLOW", `the unit's association table holds one byte per object number, and object ${wide.co} does not fit`);
 
   const addr = Buffer.alloc(1 + 2 + gas.length * 2);
   addr[0] = 1 + gas.length;

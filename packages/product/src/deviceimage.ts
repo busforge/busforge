@@ -1,4 +1,4 @@
-import type { AppConfig, CfgParamRef, DynNode, ModuleInstance } from "./appconfig.ts";
+import { resolveParamRef, sameParamValue, type AppConfig, type CfgParamRef, type DynNode, type ModuleInstance } from "./appconfig.ts";
 import { toAppModel } from "./application.ts";
 import { buildDeviceConfig, decodeTextEntities } from "./config.ts";
 import { resolveModuleInstances } from "./modules.ts";
@@ -7,7 +7,8 @@ import { ProductError } from "./errors.ts";
 import { maskInfo } from "./masks.ts";
 
 // `textRefusals: "skip"`: a text parameter the codec refuses (and, on the relative segment, a colour) is
-// left unowned instead of failing the build. Only for the read-back, which compares what it can and does not write; every path that
+// left unowned instead of failing the build, and so are the bits two active members of one union contest
+// (noteUnionWrite). Only for the read-back, which compares what it can and does not write; every path that
 // writes keeps the refusal.
 type TextRefusals = "refuse" | "skip";
 const isTextRefusal = (e: unknown): boolean => e instanceof ProductError && e.code.startsWith("PARAM_TEXT_");
@@ -119,6 +120,63 @@ function constantsAlone(app: AppConfig, params: { typeId: string; offset?: numbe
   return out;
 }
 
+// Two active members of one <Union> placed on the same bits: ETS writes the member that comes later, where
+// the order of the ParameterRefs and the document order of the configuration's tree agree. The OpenKNX
+// RaumController's 1-Wire device id (a text) and family code share their first byte, both active; ETS logs
+// the overlap and its full download holds the family code's 00 there, the member later in both orders
+// (private corpus captures/openknx-ets6log-fulldownload.txt, RelMemory(4) $0145). Where the two orders
+// disagree, no capture shows which member ETS writes: a member that changes bits another active member of
+// its union wrote is refused there, or, for a read-back (`contested` given), those bits are recorded in
+// `contested` and the caller leaves them unowned. Members that agree on their shared bits build either way.
+// The image builds encode refs in ParameterRef order, so the member encoded later wins by that order where
+// it comes later in the tree than every other member that wrote those bits. A ref the tree places more than
+// once has no single place in it, so where it takes part in such a contest the orders count as disagreeing.
+// Two refs of one member are one member.
+// `writes`: per bit of the segment (byte * 8 + KNX bit offset), every union member that wrote it (its union,
+// parameter and ref). `tree`: each active ref's place in the configuration's tree (the image values'
+// order), and the refs the tree places more than once. `before`: the image bytes of the member's field
+// before it was encoded.
+type UnionWrites = Map<number, { union: string; param: string; ref: string }[]>;
+interface TreeOrder { place: Map<string, number>; repeated: Set<string> }
+function noteUnionWrite(writes: UnionWrites, tree: TreeOrder, contested: number[] | null, app: AppConfig, refId: string, paramId: string, before: Buffer, img: Buffer, offset: number, bitOffset: number, sizeInBit: number, segId: string): void {
+  const instance = paramId.match(/_M-\d+_MI-\d+/)?.[0] ?? "";
+  const unionId = app.params.get(paramId.replace(instance, ""))?.unionId;
+  if (unionId === undefined) return;
+  const union = unionId + instance;
+  const once = (ref: string) => !tree.repeated.has(ref.replace(/_M-\d+_MI-\d+/, ""));
+  const later = (ref: string) => once(ref) && once(refId) && (tree.place.get(refId) ?? -1) > (tree.place.get(ref) ?? Infinity);
+  for (let g = bitOffset; g < bitOffset + sizeInBit; g++) {
+    const at = offset + (g >> 3);
+    if (at >= img.length) break;
+    const bit = at * 8 + (g & 7), m = 0x80 >> (g & 7);
+    const prior = writes.get(bit) ?? [];
+    const other = prior.find((w) => w.union === union && w.param !== paramId && !later(w.ref));
+    if (other && ((before[at - offset] ^ img[at]) & m)) {
+      if (!contested) {
+        throw new ProductError("PARAM_UNION_OVERLAP",
+          `${other.ref} and ${refId} are active members of one <Union> placed on the same bits at offset ${at} of ${segId}, with different values, and ${refId} comes later among the ParameterRefs but not in the configuration's tree; no ETS capture shows which member ETS writes there, so refusing rather than writing either`);
+      }
+      contested[at] |= m;
+    }
+    writes.set(bit, [...prior, { union, param: paramId, ref: refId }]);
+  }
+}
+// The place of each active ref in the configuration's tree (the image values' order), and the refs the
+// application's trees place more than once.
+function treeOrderOf(app: AppConfig, active: Map<string, string>): TreeOrder {
+  const seen = new Set<string>(), repeated = new Set<string>();
+  const walk = (nodes: DynNode[]) => {
+    for (const n of nodes) {
+      if (n.kind === "paramRef") { if (seen.has(n.refId)) repeated.add(n.refId); seen.add(n.refId); }
+      else if (n.kind === "block" || n.kind === "container") walk(n.children);
+      else if (n.kind === "choose") for (const w of n.whens) walk(w.children);
+    }
+  };
+  walk(app.dynamic);
+  for (const d of app.moduleDefs.values()) walk(d.dynamic);
+  return { place: new Map([...active.keys()].map((k, i) => [k, i])), repeated };
+}
+
 // A byte built from `want` where `mask` owns bits and from `have` everywhere else.
 export function mergeOwnedBits(have: number, want: number, mask: number): number {
   return (have & ~mask) | (want & mask);
@@ -208,6 +266,7 @@ export function buildAbsoluteSegmentTargets(
   // visible blocks alone would miss them).
   const view = buildDeviceConfig(app, values, opts.lang, instances);
   const active = view.imageValues;
+  const treeOrder = treeOrderOf(app, active);
 
   // Which absolute segments do <Memory> parameters target?
   const bySeg = new Map(app.absoluteSegments.map((s) => [s.id, s]));
@@ -243,6 +302,8 @@ export function buildAbsoluteSegmentTargets(
     const constants = constantsAlone(app, [...model.params.values()].filter((p) => p.codeSegment === segId), model.types, seg.size);
     const hidden = new Array<number>(seg.size).fill(0), placed = new Array<number>(seg.size).fill(0);
     const activeBits = new Array<number>(seg.size).fill(0);
+    const unionWrites: UnionWrites = new Map();
+    const contested = opts.textRefusals === "skip" ? new Array<number>(seg.size).fill(0) : null;
     for (const ref of model.refs.values()) {
       const param = model.params.get(ref.paramId);
       if (!param || param.codeSegment !== segId || param.offset === undefined) continue;
@@ -286,6 +347,7 @@ export function buildAbsoluteSegmentTargets(
       // over device memory the parameter never derived. Gating on the real write keeps
       // ownership exactly symmetric with the image, with no duplicated type gate.
       let wrote: boolean;
+      const before = Buffer.from(img.subarray(param.offset, param.offset + byteWidth(type.sizeInBit, param.bitOffset)));
       try {
         if (textRefusal) throw textRefusal;
         wrote = encode(img, param.offset, param.bitOffset, type, v);
@@ -294,6 +356,7 @@ export function buildAbsoluteSegmentTargets(
         throw e;
       }
       if (!wrote) continue;
+      noteUnionWrite(unionWrites, treeOrder, contested, app, ref.id, ref.paramId, before, img, param.offset, param.bitOffset ?? 0, type.sizeInBit, segId);
       // This parameter's value is authoritative: mark its byte(s) owned so the flash
       // path may write them. A sub-byte parameter owns the single byte it shares.
       // Access="None" params are device-internal (download markers/counters the device
@@ -309,6 +372,7 @@ export function buildAbsoluteSegmentTargets(
     // parameter's, and those no parameter uses. Without <Data> (or past it) none: no capture shows what
     // ETS's partial download writes there, so a write keeps the unit's bits.
     const dataBits = activeBits.map((a, i) => (i < seg.data.length ? ~a & 0xff : 0));
+    if (contested) for (const [i, c] of contested.entries()) { owned[i] &= ~c; verify[i] &= ~c; constant[i] &= ~c; }
     out.push({ id: segId, address: seg.address, size: seg.size, bytes: img, owned, verify, constant, constants: placements, hidden: hidden.map((h, i) => h & ~placed[i] & 0xff), dataBits });
   }
   return out.sort((a, b) => a.address - b.address);
@@ -419,6 +483,8 @@ export function buildRelativeSegmentTarget(
   const placements: ConstantPlacement[] = [];
   const constants = constantsAlone(app, [...model.params.values()].filter((p) => !p.codeSegment || model.segments.find((s) => s.id === p.codeSegment)?.lsm === lsm), model.types, seg.size);
   const defaulted = new Set<string>();
+  const unionWrites: UnionWrites = new Map(), treeOrder = treeOrderOf(app, active);
+  const contested = opts.textRefusals === "skip" ? new Array<number>(seg.size).fill(0) : null;
 
   for (const ref of model.refs.values()) {
     const param = model.params.get(ref.paramId);
@@ -458,6 +524,7 @@ export function buildRelativeSegmentTarget(
     const type = model.types.get(param.typeId);
     if (!type || !Number.isFinite(type.sizeInBit) || type.sizeInBit === 0) continue;
     let wrote: boolean;
+    const before = Buffer.from(img.subarray(param.offset, param.offset + byteWidth(type.sizeInBit, param.bitOffset)));
     try {
       wrote = encode(img, param.offset, param.bitOffset, type, v);
     } catch (e) {
@@ -465,6 +532,7 @@ export function buildRelativeSegmentTarget(
       throw e;
     }
     if (!wrote) continue;
+    noteUnionWrite(unionWrites, treeOrder, contested, app, ref.id, ref.paramId, before, img, param.offset, param.bitOffset ?? 0, type.sizeInBit, `the parameter segment (LSM ${lsm})`);
     if (!gated && !active.has(ref.id) && values.has(ref.id) && values.get(ref.id) !== v) defaulted.add(ref.id);
     const verifiable = cfgParam?.access !== "None"; // device-internal markers stay owned but unverified
     markOwned(owned, verify, param.offset, param.bitOffset, type.sizeInBit, seg.size, verifiable);
@@ -474,6 +542,7 @@ export function buildRelativeSegmentTarget(
       placements.push({ paramRefId: ref.id, paramId: param.id, offset: param.offset, bitOffset: param.bitOffset ?? 0, sizeInBit: type.sizeInBit });
     }
   }
+  if (contested) for (const [i, c] of contested.entries()) { owned[i] &= ~c; verify[i] &= ~c; markers[i] &= ~c; constant[i] &= ~c; }
   return { lsm, size: seg.size, bytes: img, owned, verify, markers, constant, constants: placements, defaulted };
 }
 
@@ -668,4 +737,67 @@ export function refuseColorWrites(app: AppConfig, values: Map<string, string>, i
     : `the configuration has ${written.length} colour parameter(s) in use (e.g. ${written[0]}), which a full download writes`;
   throw new ProductError("PARAM_COLOR_UNSUPPORTED",
     `${what}; no ETS download shows how a colour of this kind is encoded in this device's memory (only an RGB colour on a relative segment is shown), so Busforge cannot write it. Refusing rather than leaving the device's colour unchanged; apply the colour with ETS`);
+}
+
+// ETS computes the parameters of a <ParameterCalculation> once one it reads holds another value than its
+// default: its LRTransformation sets the RParameters from the LParameters, its RLTransformation the
+// LParameters from the RParameters; at the defaults every one keeps its default. Busforge runs no
+// calculation, so after a change on one side an image would be built from the other side at a value
+// nothing computed. An operation that writes a device's parameters therefore refuses where a parameter on
+// one side of a calculation takes another value than in the configuration the device holds, and the other
+// side reaches the image: a parameter with memory or in a property, or one a <choose> tests or an
+// <Assign> reads or sets, which decides what else is written.
+//  - a parameter or structural flash: another value than in the configuration the device was last
+//    programmed with (`base`);
+//  - a full download, and the System 1 download (`base` absent): another value than at the defaults.
+// A parameter's value is that of its ref the configuration places, else one stored on any of its refs, in
+// each module instance.
+export function refuseCalculationWrites(app: AppConfig, values: Map<string, string>, instances: ModuleInstance[], base?: { values: Map<string, string>; instances: ModuleInstance[] }): void {
+  if (!app.calculations.length) return;
+  const steering = new Set<string>(); // Parameter ids a choose tests or an assign reads or sets
+  const paramOf = (refId: string | undefined) => (refId ? resolveParamRef(app, refId)?.param?.id : undefined);
+  const walk = (nodes: DynNode[]) => {
+    for (const n of nodes) {
+      const ids = n.kind === "choose" ? [n.paramRefId] : n.kind === "assign" ? [n.target, n.source] : [];
+      for (const id of ids.map(paramOf)) if (id) steering.add(id);
+      if (n.kind === "block" || n.kind === "container") walk(n.children);
+      else if (n.kind === "choose") for (const w of n.whens) walk(w.children);
+    }
+  };
+  walk(app.dynamic);
+  for (const d of app.moduleDefs.values()) walk(d.dynamic);
+  const reaches = (refs: string[]) => refs.some((r) => { const p = resolveParamRef(app, r)?.param; return !!p && (p.hasMemory || !!p.onProperty || steering.has(p.id)); });
+  const feeding = new Map<string, string>(); // Parameter id -> name of a calculation that computes the image from it
+  for (const c of app.calculations) {
+    for (const [side, other] of [[c.lRefs, c.rRefs], [c.rRefs, c.lRefs]]) {
+      if (!reaches(other)) continue;
+      for (const id of side.map(paramOf)) if (id && !feeding.has(id)) feeding.set(id, c.name || c.id);
+    }
+  }
+  if (!feeding.size) return;
+  // Per module instance and Parameter id: the ref whose value counts and that value.
+  const paramValues = (v: Map<string, string>, inst: ModuleInstance[]) => {
+    const out = new Map<string, { ref: string; value: string }>();
+    const take = (entries: Iterable<[string, string]>) => {
+      for (const [ref, value] of entries) {
+        const id = paramOf(ref);
+        const key = id && feeding.has(id) ? (ref.match(/_M-\d+_MI-\d+/)?.[0] ?? "") + id : undefined;
+        if (key && !out.has(key)) out.set(key, { ref, value });
+      }
+    };
+    take(buildDeviceConfig(app, v, undefined, inst).imageValues);
+    take(v);
+    return out;
+  };
+  const now = paramValues(values, instances);
+  const before = paramValues(base?.values ?? new Map(), base?.instances ?? instances);
+  const same = sameParamValue(app);
+  for (const key of new Set([...now.keys(), ...before.keys()])) {
+    const is = now.get(key), was = before.get(key);
+    const ref = (is ?? was)!.ref;
+    if (same(ref, was?.value ?? null, is?.value ?? null)) continue;
+    const calc = feeding.get(paramOf(ref)!);
+    throw new ProductError("PARAM_CALCULATION_UNSUPPORTED",
+      `parameter ${ref} is ${is?.value ?? "at its default"} where ${base ? "the device was last programmed with" : "the defaults hold"} ${was?.value ?? "its default"}, and the application's <ParameterCalculation> "${calc}" computes from it parameters that reach the device's image, which ETS runs and Busforge does not; refusing rather than writing an image built from values nothing computed. Apply this change with ETS`);
+  }
 }

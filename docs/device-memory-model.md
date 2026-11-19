@@ -216,6 +216,28 @@ looks for a `<Memory>` child on the parameter gives union members no location at
 silently drops them from the image, which makes a union-heavy device look unsupported when its
 parameters are merely unplaced. A union member's location is `union base + relative offset`.
 
+An application can activate two members of one union at once, on the same bits. ETS logs the overlap as an
+error and writes one member: in its full download of the OpenKNX RaumController, whose 1-Wire device id
+(a text) and family code share their first byte, it holds the family code's value, the member that comes
+later both among the `ParameterRef`s and in the configuration's parameter tree. Busforge writes that
+member where the two orders agree. Where they disagree, no capture shows which member ETS writes: a
+write whose members would leave different bits there is refused (`PARAM_UNION_OVERLAP`), and a
+read-back leaves those bits out. Members that agree on their shared bits build either way.
+
+### Calculated parameters
+
+A `<ParameterCalculation>` computes parameters from others with a script: its `LRTransformation` sets
+the `RParameters` from the `LParameters`, its `RLTransformation` the reverse. ETS runs one once a
+parameter it reads holds another value than its default; at the defaults every one keeps its default.
+Busforge runs no calculation script. A write that changes a parameter on one side of a calculation
+whose other side reaches the image is therefore refused (`PARAM_CALCULATION_UNSUPPORTED`). A side
+reaches the image where one of its parameters has memory or lies in a property, or is one a `<choose>`
+tests or an `<Assign>` reads or sets, since it decides what else is written. A parameter or structural
+flash compares with the configuration the device was last programmed with; a full download, and the
+System 1 download, with the defaults. A calculation whose other side reaches nothing refuses nothing.
+Where the configuration hides a computed parameter on System 7, its bits keep the unit's value rather
+than the segment's `<Data>`.
+
 ## Ownership rules, in detail
 
 The rules below are hardware-derived. They are the difference between a re-configuration

@@ -3,9 +3,9 @@ import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { iaToNum, numToGa, SENDER_ENTRY } from "@busforge/knx";
 import { appProgramId, readAppProgram, type Project } from "@busforge/project";
-import { parseAppConfig, buildDeviceConfig, buildSecurityObject, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, effectiveComObjFlags, ProductError, imageWritableType, resolveParamRef, takesValue, type EffectiveComObjFlags, type ComObjInstanceOverride, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
+import { parseAppConfig, buildDeviceConfig, buildSecurityObject, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, effectiveComObjFlags, ProductError, imageWritableType, resolveParamRef, sameParamValue, type SameParamValue, takesValue, type EffectiveComObjFlags, type ComObjInstanceOverride, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
 import { getAppProgram, putAppProgram, catalogBaggageNames, pictureType } from "./db/catalog.ts";
-import { getDeviceParams, getDeviceParamBase, getDeviceParamAssumed, type SameParamValue, getDeviceModules, getDeviceAppRef, getDeviceProductRef, getDeviceForFlash, deviceHasApplication, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps, getDeviceComObjOverrides, getDeviceComObjOverrideBase } from "./db/deviceparams.ts";
+import { getDeviceParams, getDeviceParamBase, getDeviceParamAssumed, getDeviceModules, getDeviceAppRef, getDeviceProductRef, getDeviceForFlash, deviceHasApplication, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps, getDeviceComObjOverrides, getDeviceComObjOverrideBase } from "./db/deviceparams.ts";
 import { deviceCompatibility } from "./compatibility.ts";
 import { isUntestedAcknowledged } from "./db/untestedAcks.ts";
 import { projectExists, getGaMeta } from "./db/projects.ts";
@@ -281,21 +281,6 @@ export function loadCatalogApp(state: AppState, programId: string): AppConfig | 
   return app;
 }
 
-// The default value of a parameter (ref/param default, ignoring user overrides),
-// resolved from the built config view so module-instance params work too.
-// Two stored values of a parameter are one value where they decode the same: no row is the parameter's
-// default, a float compares by number (ETS stores it in scientific notation, the UI as a decimal), and a
-// colour by its hex digits whatever their case (the read-back gives #RRGGBB, an edit may store #rrggbb).
-export function sameParamValue(app: AppConfig): SameParamValue {
-  return (refId, a, b) => {
-    const { ref, param, type } = resolveParamRef(app, refId) ?? {};
-    const def = ref?.value ?? param?.value ?? "";
-    const x = a ?? def, y = b ?? def;
-    // An empty value (a parameter without a default) is no number: Number("") would read it as 0.
-    const base = type?.base;
-    return x === y || (x !== "" && y !== "" && ((base === "Float" && Number(x) === Number(y)) || (base === "Color" && x.toUpperCase() === y.toUpperCase())));
-  };
-}
 // The baseline entries that are no value of their parameter's type (takesValue), by ref: what the device
 // holds there is no setting of the application.
 export function baseOutsideType(app: AppConfig, baseline: Map<string, string>): Map<string, string> {

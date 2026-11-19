@@ -1,12 +1,13 @@
 import { createHash } from "node:crypto";
 import { test, expect, describe, setDefaultTimeout } from "bun:test";
-import { parseAppConfig, parseApplication, buildDeviceConfig, decodeAbsoluteImage } from "../src/index.ts";
+import { parseAppConfig, parseApplication, buildDeviceConfig, decodeAbsoluteImage, classify, parseLoadProcedures } from "../src/index.ts";
 import { encode } from "../src/image.ts";
-import { buildAbsoluteSegmentImages, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, mergeRelativeTarget, differingFF, leaveUnreadUnchanged, verifyRelativeOwned, wholeBytes, differingConstants } from "../src/deviceimage.ts";
+import { buildAbsoluteSegmentImages, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, mergeRelativeTarget, differingFF, leaveUnreadUnchanged, verifyRelativeOwned, wholeBytes, differingConstants, refuseCalculationWrites } from "../src/deviceimage.ts";
 import type { RelativeSegmentTarget } from "../src/deviceimage.ts";
 import { toAppModel, resolveModuleInstances } from "../src/index.ts";
 import { readRealFixture } from "./real-catalogue.snapshot.ts";
 import { corpusDescribe, corpusTest } from "../../../tools/corpus-test.ts";
+import { catalogueXml } from "../../../tools/corpus.ts";
 
 // Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 1.1 s with the
 // file alone (load 5-27) and up to 1.0 s with every workspace's tests in parallel (load 5-8). A full check on a busy
@@ -718,4 +719,120 @@ corpusTest("a sub-byte parameter owns only its own bits of the byte it shares", 
   expect(buildRelativeSegmentTarget(app, values, 4, { ownIdleUnionDefaults: true })!.owned[64]).toBe(0xff);
   const merged = mergeRelativeTarget(Buffer.alloc(buildRelativeSegmentTarget(app, values, 4)!.size), buildRelativeSegmentTarget(app, values, 4)!).image;
   expect(merged[64]).toBe(0x00); // the device's zeros beside P-9 survive, not the template's 0x3f
+});
+
+// Two active members of one union on the same byte: relXml's union at offset 3, A (ref value 5) placed, and B
+// (ref value `bValue`) placed after it or before it; on its relative segment, or on an absolute one (System 7).
+const membersXml = (bFirst: boolean, bValue: string) => relXml
+  .replace('RefId="M-0005_A-0001-01-0001_P-B" Value="6"', `RefId="M-0005_A-0001-01-0001_P-B" Value="${bValue}"`)
+  .replace('<ParameterRefRef RefId="M-0005_A-0001-01-0001_P-A_R"/>', bFirst
+    ? '<ParameterRefRef RefId="M-0005_A-0001-01-0001_P-B_R"/><ParameterRefRef RefId="M-0005_A-0001-01-0001_P-A_R"/>'
+    : '<ParameterRefRef RefId="M-0005_A-0001-01-0001_P-A_R"/><ParameterRefRef RefId="M-0005_A-0001-01-0001_P-B_R"/>');
+const bothMembers = (bFirst: boolean, bValue = "6") => parseAppConfig(membersXml(bFirst, bValue));
+const bothMembersAbsolute = (bFirst: boolean, bValue = "6") => parseAppConfig(membersXml(bFirst, bValue)
+  .replace('MaskVersion="MV-07B0"', 'MaskVersion="MV-0705"').replaceAll("_RS-1", "_AS-1")
+  .replace(/<RelativeSegment (Id="[^"]+") LoadStateMachine="4" (Size="5")>(.*?)<\/RelativeSegment>/, '<AbsoluteSegment $1 Address="100" $2>$3</AbsoluteSegment>'));
+
+test("two active members of one union: the later one in both orders is written, a disagreement of the orders is refused", () => {
+  // B is declared after A and placed after it: B's value, as ETS's OpenKNX RaumController download holds it.
+  expect(buildRelativeSegmentTarget(bothMembers(false), new Map(), 4)!.bytes[3]).toBe(6);
+  expect(buildAbsoluteSegmentTargets(bothMembersAbsolute(false), new Map())[0].bytes[3]).toBe(6);
+  // B placed before A: the orders disagree, and no capture shows which member ETS writes.
+  expect(() => buildRelativeSegmentTarget(bothMembers(true), new Map(), 4)).toThrow(expect.objectContaining({ code: "PARAM_UNION_OVERLAP" }));
+  expect(() => buildAbsoluteSegmentTargets(bothMembersAbsolute(true), new Map())).toThrow(expect.objectContaining({ code: "PARAM_UNION_OVERLAP" }));
+  // Members that agree on their bits build in either order.
+  expect(buildRelativeSegmentTarget(bothMembers(true, "5"), new Map(), 4)!.bytes[3]).toBe(5);
+  expect(buildAbsoluteSegmentTargets(bothMembersAbsolute(true, "5"), new Map())[0].bytes[3]).toBe(5);
+  // A read-back leaves the contested bits out instead of failing: those where 5 and 6 differ.
+  const rel = buildRelativeSegmentTarget(bothMembers(true), new Map(), 4, { textRefusals: "skip" })!;
+  expect([rel.owned[3], rel.owned[0]]).toEqual([0xfc, 0xff]);
+  const abs = buildAbsoluteSegmentTargets(bothMembersAbsolute(true), new Map(), { textRefusals: "skip" })[0];
+  expect(abs.owned[3]).toBe(0xfc);
+});
+
+test("a union contest is judged against every member that wrote the bits, and a ref placed twice has no order", () => {
+  // A third member C (6), declared last; the tree places B, C, A. B agrees with A (5), C changes their bits,
+  // and A comes after C in the tree.
+  const three = parseAppConfig(relXml
+    .replace('RefId="M-0005_A-0001-01-0001_P-B" Value="6"', 'RefId="M-0005_A-0001-01-0001_P-B" Value="5"')
+    .replace("</Union>", '<Parameter Id="M-0005_A-0001-01-0001_P-C" ParameterType="M-0005_A-0001-01-0001_PT-8" Access="None" Text="Union C" Value="0" Offset="0" BitOffset="0"/></Union>')
+    .replace("</ParameterRefs>", '<ParameterRef Id="M-0005_A-0001-01-0001_P-C_R" RefId="M-0005_A-0001-01-0001_P-C" Value="6"/></ParameterRefs>')
+    .replace('<ParameterRefRef RefId="M-0005_A-0001-01-0001_P-A_R"/>', '<ParameterRefRef RefId="M-0005_A-0001-01-0001_P-B_R"/><ParameterRefRef RefId="M-0005_A-0001-01-0001_P-C_R"/><ParameterRefRef RefId="M-0005_A-0001-01-0001_P-A_R"/>'));
+  expect(() => buildRelativeSegmentTarget(three, new Map(), 4)).toThrow(expect.objectContaining({ code: "PARAM_UNION_OVERLAP" }));
+  // A, B, A: B is declared later, but A is placed both before and after it.
+  const twice = parseAppConfig(membersXml(false, "6").replace('<ParameterRefRef RefId="M-0005_A-0001-01-0001_P-B_R"/>', '<ParameterRefRef RefId="M-0005_A-0001-01-0001_P-B_R"/><ParameterRefRef RefId="M-0005_A-0001-01-0001_P-A_R"/>'));
+  expect(() => buildRelativeSegmentTarget(twice, new Map(), 4)).toThrow(expect.objectContaining({ code: "PARAM_UNION_OVERLAP" }));
+});
+
+test("two placed refs of one union member are one member, not an overlap", () => {
+  const app = parseAppConfig(relXml
+    .replace("</ParameterRefs>", '<ParameterRef Id="M-0005_A-0001-01-0001_P-A_R2" RefId="M-0005_A-0001-01-0001_P-A" Value="9"/></ParameterRefs>')
+    .replace('<ParameterRefRef RefId="M-0005_A-0001-01-0001_P-A_R"/>', '<ParameterRefRef RefId="M-0005_A-0001-01-0001_P-A_R2"/><ParameterRefRef RefId="M-0005_A-0001-01-0001_P-A_R"/>'));
+  expect(() => buildRelativeSegmentTarget(app, new Map(), 4)).not.toThrow();
+});
+
+// relXml with a calculation: P-1 (memory, placed) on its left side, P-3 (memory) or P-6 (no memory) on its right.
+const calculatedXml = (right: "P-3" | "P-6") => relXml
+  .replace("</Parameters>", '<Parameter Id="M-0005_A-0001-01-0001_P-6" ParameterType="M-0005_A-0001-01-0001_PT-8" Text="No memory" Value="0"/></Parameters>')
+  .replace("</ParameterRefs>", '<ParameterRef Id="M-0005_A-0001-01-0001_P-6_R" RefId="M-0005_A-0001-01-0001_P-6"/></ParameterRefs>')
+  .replace("</Static>", `<ParameterCalculations><ParameterCalculation Id="M-0005_A-0001-01-0001_PC-1" Language="JavaScript" Name="calc"><LParameters><ParameterRefRef RefId="M-0005_A-0001-01-0001_P-1_R" AliasName="a"/></LParameters><RParameters><ParameterRefRef RefId="M-0005_A-0001-01-0001_${right}_R" AliasName="b"/></RParameters></ParameterCalculation></ParameterCalculations></Static>`);
+const calculated = (right: "P-3" | "P-6") => parseAppConfig(calculatedXml(right));
+
+test("a calculation's side changed away from what the device holds is refused where its other side is held", () => {
+  const P1 = "M-0005_A-0001-01-0001_P-1_R", P3 = "M-0005_A-0001-01-0001_P-3_R";
+  const app = calculated("P-3");
+  expect(app.calculations).toEqual([{ id: "M-0005_A-0001-01-0001_PC-1", name: "calc", lRefs: [P1], rRefs: [P3] }]);
+  const refused = expect.objectContaining({ code: "PARAM_CALCULATION_UNSUPPORTED" });
+  // A full download: against the defaults (P-1's ref value 7), stored or resolved.
+  expect(() => refuseCalculationWrites(app, new Map(), [])).not.toThrow();
+  expect(() => refuseCalculationWrites(app, new Map([[P1, "7"]]), [])).not.toThrow();
+  expect(() => refuseCalculationWrites(app, new Map([[P1, "8"]]), [])).toThrow(refused);
+  // The right side changed: the RLTransformation would compute the left one, which the device holds too.
+  expect(() => refuseCalculationWrites(app, new Map([[P3, "4"]]), [])).toThrow(refused);
+  // A parameter or structural flash: against the configuration the device was last programmed with.
+  const base = (v: Map<string, string>) => ({ values: v, instances: [] });
+  expect(() => refuseCalculationWrites(app, new Map([[P1, "8"]]), [], base(new Map([[P1, "8"]])))).not.toThrow();
+  expect(() => refuseCalculationWrites(app, new Map(), [], base(new Map([[P1, "8"]])))).toThrow(refused);
+  // A calculation whose other side the device does not hold changes nothing written.
+  expect(() => refuseCalculationWrites(calculated("P-6"), new Map([[P1, "8"]]), [])).not.toThrow();
+  // Unless a choose tests that side: it decides what else is written.
+  const steered = parseAppConfig(calculatedXml("P-6").replace("</ParameterBlock>", '<choose ParamRefId="M-0005_A-0001-01-0001_P-6_R"><when test="1"><ParameterRefRef RefId="M-0005_A-0001-01-0001_P-3_R"/></when></choose></ParameterBlock>'));
+  expect(() => refuseCalculationWrites(steered, new Map([[P1, "8"]]), [])).toThrow(refused);
+});
+
+test("a calculation's parameter counts by its value, whichever of its refs the configuration places", () => {
+  // P-1 placed through P-1_R while P-3 holds 3 (its default), through P-1_R2 (Value 10) while it holds 4.
+  const app = parseAppConfig(calculatedXml("P-3")
+    .replace("</ParameterRefs>", '<ParameterRef Id="M-0005_A-0001-01-0001_P-1_R2" RefId="M-0005_A-0001-01-0001_P-1" Value="10"/></ParameterRefs>')
+    .replace('<ParameterRefRef RefId="M-0005_A-0001-01-0001_P-1_R"/>', '<ParameterRefRef RefId="M-0005_A-0001-01-0001_P-3_R"/><choose ParamRefId="M-0005_A-0001-01-0001_P-3_R"><when test="3"><ParameterRefRef RefId="M-0005_A-0001-01-0001_P-1_R"/></when><when test="4"><ParameterRefRef RefId="M-0005_A-0001-01-0001_P-1_R2"/></when></choose>'));
+  const P1 = "M-0005_A-0001-01-0001_P-1_R", P3 = "M-0005_A-0001-01-0001_P-3_R";
+  const base = { values: new Map([[P1, "8"]]), instances: [] };
+  expect(() => refuseCalculationWrites(app, new Map([[P1, "8"], [P3, "4"]]), [], base)).toThrow(expect.objectContaining({ code: "PARAM_CALCULATION_UNSUPPORTED" }));
+});
+
+corpusDescribe("a full download refuses a changed input of a ParameterCalculation", () => {
+  const plan = (file: string, params: Map<string, string>) => {
+    const xml = catalogueXml(file);
+    const cfg = parseAppConfig(xml);
+    return () => classify(cfg).planFullDownload(cfg.mask, { ia: "1.1.250", params, links: [], proc: parseLoadProcedures(xml) });
+  };
+  const refused = expect.objectContaining({ code: "PARAM_CALCULATION_UNSUPPORTED" });
+
+  test("Jung 400021SE (System B): a channel's dimming time, which its calculation turns into a parameter it writes", () => {
+    const app = parseAppConfig(catalogueXml("M-0004_A-7072-21-99A7-O000A.xml.gz"));
+    const instance = resolveModuleInstances(app, new Map()).find((i) => i.id.startsWith("MD-1_"))!;
+    const input = `${app.id}_${instance.id}_P-9_R-11`;
+    expect(app.calculations.some((c) => c.lRefs.includes(`${app.id}_MD-1_P-9_R-11`))).toBe(true);
+    expect(plan("M-0004_A-7072-21-99A7-O000A.xml.gz", new Map())).not.toThrow();
+    expect(plan("M-0004_A-7072-21-99A7-O000A.xml.gz", new Map([[input, "500"]]))).toThrow(refused);
+  });
+
+  test("MDT BE-06001.02 (System 7): a counter input in a module instance", () => {
+    const app = parseAppConfig(catalogueXml("M-0083_A-00B4-32-3919.xml.gz"));
+    const instance = resolveModuleInstances(app, new Map()).find((i) => i.id.startsWith("MD-2_"))!;
+    const input = `${app.id}_${instance.id}_UP-107_R-527`;
+    expect(app.calculations.some((c) => c.lRefs.includes(`${app.id}_MD-2_UP-107_R-527`))).toBe(true);
+    expect(plan("M-0083_A-00B4-32-3919.xml.gz", new Map())).not.toThrow();
+    expect(plan("M-0083_A-00B4-32-3919.xml.gz", new Map([[input, "12345"]]))).toThrow(refused);
+  });
 });

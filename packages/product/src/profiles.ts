@@ -1,6 +1,6 @@
 import { KnxDevice, KnxError, OBJECT_TYPE_KNXNETIP, type LoadPlan, type SecurityObjectTables, SENDER_ENTRY, planSystemBGaFlash, planSystemBFullDownload, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, assocFormOf, ASSOC_TABLE_DESCRIPTION, type AssocForm, loadedTableAddr, readMcbTable, mcbProves, mcbProvenRegions, MCB_ELEMENT_BYTES, type McbEntry, GroupTableUnreadable, OBJ, PID, lsmState, STATE } from "@busforge/knx";
 import { toAppModel, unmappedParamRefs } from "./application.ts";
-import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, differingFF, leaveUnreadUnchanged, verifyMaskedBytes, confirmedMatch, type ConfirmedOnlyRange, buildAbsoluteSegmentTargets, wholeBytes, refuseColorWrites, differingConstants, type ConstantDifference } from "./deviceimage.ts";
+import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, differingFF, leaveUnreadUnchanged, verifyMaskedBytes, confirmedMatch, type ConfirmedOnlyRange, buildAbsoluteSegmentTargets, wholeBytes, refuseColorWrites, refuseCalculationWrites, differingConstants, type ConstantDifference } from "./deviceimage.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { assertComObjectTableStable } from "./comobjtable.ts";
 import { buildComObjectTable, programIdStamp, withLinkedCommFlags, linkedBitObjects, refuseAppCommOffLinks, withInstanceOverrides, refuseUnwritableOverrides, decodeComObjectTable, decodeComObjectTableMv0705, comObjFlagsDiffering, refuseUnknownDeviceFlags, changedEntryBits, type ComObjInstanceOverride, type ObservedComObjFlags, type OverridableBit } from "./comobjbuild.ts";
@@ -1034,11 +1034,14 @@ function refuseSystem7UnknownFlags(baseline: () => BaselineObjects, ctx: FlagBas
   refuseUnknownDeviceFlags(comObjFlagsDiffering(observed, baseline(), ctx.comObjectOverrideBase, changed), observed);
 }
 
-// A parameter or structural flash writing a colour parameter (refuseColorWrites), each configuration's
-// module instances resolved as moduleAwareModel does.
-function refuseColorChange(cfg: AppConfig, ctx: { params: Map<string, string>; baseParams: Map<string, string>; moduleInstances?: ModuleInstance[] }, rgbWritten: boolean): void {
+// A parameter or structural flash whose change Busforge cannot encode: a colour parameter (refuseColorWrites),
+// or a changed parameter of a <ParameterCalculation> (refuseCalculationWrites); each configuration's module
+// instances resolved as moduleAwareModel does.
+function refuseUnencodableChange(cfg: AppConfig, ctx: { params: Map<string, string>; baseParams: Map<string, string>; moduleInstances?: ModuleInstance[] }, rgbWritten: boolean): void {
   const at = (values: Map<string, string>) => moduleAwareModel(cfg, values, ctx.moduleInstances ?? []).instances;
-  refuseColorWrites(cfg, ctx.params, at(ctx.params), rgbWritten, { values: ctx.baseParams, instances: at(ctx.baseParams) });
+  const instances = at(ctx.params), base = { values: ctx.baseParams, instances: at(ctx.baseParams) };
+  refuseColorWrites(cfg, ctx.params, instances, rgbWritten, base);
+  refuseCalculationWrites(cfg, ctx.params, instances, base);
 }
 
 // Group-table readers (readGroupTables / readGroupTablesMv0705) live in @busforge/knx
@@ -1263,6 +1266,7 @@ export class SystemBProfile extends DeviceProfile {
     }
 
     refuseColorWrites(cfg, ctx.params, instances, true);
+    refuseCalculationWrites(cfg, ctx.params, instances);
     // In the full form the download owns the whole segment: every byte we do not derive is the
     // allocation's fill. The partial form merges the owned bytes into the unit's segment.
     const target = buildRelativeSegmentTarget(cfg, ctx.params, LSM, { moduleInstances: instances, ownIdleUnionDefaults: true });
@@ -1552,7 +1556,7 @@ export class SystemBProfile extends DeviceProfile {
     // The device keeps the com-object table it was last programmed with. If these parameters
     // imply a different one, flashing would leave that table stale while reporting success.
     assertComObjectTableStable(cfg, ctx.baseParams, ctx.params, ctx.moduleInstances ?? []);
-    refuseColorChange(cfg, ctx, true);
+    refuseUnencodableChange(cfg, ctx, true);
     // Surgical owned-byte target: only these bytes may be written; everything ETS computes that
     // we cannot reproduce is preserved by sourcing unowned bytes from the live read. The unions with
     // no active member are owned at their DefaultUnionParameter, as ETS's parameter download writes
@@ -1767,7 +1771,7 @@ export class SystemBProfile extends DeviceProfile {
     if (!this.capabilities().structuralFlash) throw new UnsupportedOperation("structural flash", this.family, this.mask);
     const proc = cfg.loadProcedures;
     const coverage = assertParCoverage(proc, "relative");
-    refuseColorChange(cfg, ctx, true);
+    refuseUnencodableChange(cfg, ctx, true);
     const { model, instances } = moduleAwareModel(cfg, ctx.params, ctx.moduleInstances ?? []);
     const unmapped = unmappedParamRefs(model, ctx.params);
     if (unmapped.length) {
@@ -2018,7 +2022,7 @@ export class System7Profile extends DeviceProfile {
     // com-object table too, so a parameter that changes the active object set or its flags
     // would silently invalidate it. See comobjtable.ts.
     assertComObjectTableStable(cfg, ctx.baseParams, ctx.params, ctx.moduleInstances ?? []);
-    refuseColorChange(cfg, ctx, false);
+    refuseUnencodableChange(cfg, ctx, false);
     const moduleInstances = ctx.moduleInstances;
     const built = buildAbsoluteParFlash(cfg, ctx.params, { moduleInstances });
     const targets = built.targets.filter((t) => t.size > 0);
@@ -2211,7 +2215,7 @@ export class System7Profile extends DeviceProfile {
     if (!this.capabilities().structuralFlash) throw new UnsupportedOperation("structural flash", this.family, this.mask);
     const proc = cfg.loadProcedures;
     const coverage = assertParCoverage(proc, "absolute");
-    refuseColorChange(cfg, ctx, false);
+    refuseUnencodableChange(cfg, ctx, false);
     const instances = cfg.hasModules ? (ctx.moduleInstances?.length ? ctx.moduleInstances : resolveModuleInstances(cfg, ctx.params)) : [];
     const view = buildDeviceConfig(cfg, ctx.params, undefined, instances);
     const active = new Set(view.imageComObjects.keys());
@@ -2291,6 +2295,7 @@ export class System7Profile extends DeviceProfile {
     refuseTunnelingEntries(cfg);
     const instances = cfg.hasModules ? (ctx.moduleInstances?.length ? ctx.moduleInstances : resolveModuleInstances(cfg, ctx.params)) : [];
     refuseColorWrites(cfg, ctx.params, instances, false);
+    refuseCalculationWrites(cfg, ctx.params, instances);
     const view = buildDeviceConfig(cfg, ctx.params, undefined, instances);
     // A link whose com-object this configuration does not activate would build an association to an
     // object the device ignores: a group address the UI calls programmed and the device never answers.
@@ -2517,6 +2522,7 @@ export class System1Profile extends DeviceProfile {
     if (!knxIp) {
       throw new ProductError("SYSTEM1_KNXIP_MISSING", "the project holds no KNXnet/IP settings for this device (IP configuration, additional addresses), which this download writes; re-import the .knxproj");
     }
+    refuseCalculationWrites(cfg, params, []);
     return planSystem1Download(cfg, params, knxIp, heldName);
   }
 

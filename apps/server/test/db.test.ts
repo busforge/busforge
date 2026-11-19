@@ -20,8 +20,7 @@ import { putGroupKeys, getGroupKeys } from "../src/db/groupKeys.ts";
 import { putGroupSenders, listGroupSenders, addGroupSender, removeGroupSender, sendersByGroup, nextSendSequence } from "../src/db/groupSenders.ts";
 import { deleteGroupAddress } from "../src/db/groupedit.ts";
 import { appProgramId } from "@busforge/project";
-import { parseAppConfig } from "@busforge/product";
-import { sameParamValue } from "../src/deviceservice.ts";
+import { parseAppConfig, sameParamValue } from "@busforge/product";
 import { decodeGroupTpdu, undecodedSecureTelegram } from "../src/telegram.ts";
 
 const sampleXml = readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures", "sample-0.xml"), "utf8");
