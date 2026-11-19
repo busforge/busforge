@@ -33,15 +33,19 @@ So the write never runs blind:
 4. verify         ask AGAIN who is in programming mode: it must be exactly one device, it must
                   now answer FROM the new address, and be reachable there for management
                   -> anything else => refuse (IA_WRITE_UNVERIFIED), naming where the device still is
-5. prog-mode off  so the device does not also answer the NEXT assignment, on the route its mask
-                  (from the descriptor read at the new address; where the device shows none, as a
-                  Data Secure unit answers a plain read with FFFF, the mask of the project's
-                  application) takes:
-                  -> System 1 (BCU1, no device object): A_Restart, as ETS sends it there
-                  -> every other family: write PID_PROGMODE = 0, which is not what ETS
-                     sends in its one capture outside System 1 (status.md, Known unproven)
+5. prog-mode off  so the device does not also answer the NEXT assignment: A_Restart on the
+                  connection of the descriptor read, as ETS ends it on every family
                   -> then ask who is in programming mode: nobody, or progModeCleared is false
 ```
+
+How ETS ends programming mode after an address assignment, and what Busforge copies of it:
+
+| Unit | What ETS sends after the descriptor read at the new address | Busforge |
+|---|---|---|
+| A unit without Data Secure (System 1, System 7 on MV-0701 and MV-0705, System B) | `A_Restart` on that connection, then `T_Disconnect`; where the unit has a device object, a read of `PID_MAX_APDU_LENGTH` and of the serial number comes first | the same frames, without the two reads |
+| A Data Secure unit (the Jung 400021SE and the GVS AMMA, with Data Secure on or off in the project) | no `A_IndividualAddress_Write` at all: ETS finds the unit in programming mode by its serial number, writes the address with `A_IndividualAddress_SerialNumber_Write` secured under the tool key, then, on a secured connection, switches the security mode on, writes the tool key and the sending sequence (PID 59 of the security object) when the project has Data Secure on (reads the security mode when it is off), reads the serial number and ends with a secured confirmed restart | the plain route above; a unit in Data Secure mode ignores the plain `A_Restart` ([findings.md](findings.md) §18) and stays in programming mode, which `progModeCleared` reports |
+
+No ETS capture shows `PID_PROGMODE` written to end programming mode.
 
 An address counts as free when nothing answers there: silence, or, from an interface that
 confirms each frame (an ABB KNX-USB stick behind the bridge, for example, and any interface over

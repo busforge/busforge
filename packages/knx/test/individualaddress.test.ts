@@ -142,7 +142,7 @@ describe("reading who is in programming mode", () => {
 });
 
 describe("assigning an individual address", () => {
-  test("assigns to the one device in programming mode, verifies it, and switches the mode off", async () => {
+  test("assigns to the one device in programming mode, verifies it, and ends the mode with A_Restart as ETS does", async () => {
     const virgin = new SimDevice("15.15.255", true);
     const bus = new SimBus([virgin, new SimDevice("1.1.5", false)]);
 
@@ -152,87 +152,71 @@ describe("assigning an individual address", () => {
     expect(virgin.ia).toBe(NEW_IA);       // the device really moved
     expect(virgin.progMode).toBe(false);  // and will not answer the next assignment
     expect(bus.broadcastWrites).toEqual([NEW_IA]);
-    expect(bus.progModeWrites).toBe(1);
-    // From the write on, Busforge's own frames as it sent them to a System B unit (the Jung 400021SE,
-    // private corpus internal/captures/busforge-secure-download.log): the read that finds the device there,
-    // the descriptor read on its own connection, closed, then PID_PROGMODE 0 on a new one, the read that
-    // finds nobody in programming mode, and the close. A regression pin of Busforge's route, not ETS's:
-    // ETS's one capture outside System 1 ends programming mode with A_Restart (docs/status.md, Known unproven).
+    expect(bus.restarts).toBe(1);
+    expect(bus.progModeWrites).toBe(0);
+    // From the write on, ETS's frames on the MDT BE-02001.02 (MV-0705; private corpus
+    // internal/captures/progmode-end-2026-11-19/d1-mdt-ia-56to57.log, lines 33-71) and the ABB US/U 4.2
+    // (MV-0701; d3-abb-ia-201to211.log, lines 33-71): the address write, the read that finds the device
+    // there, one connection with the descriptor read, its acknowledgement, A_Restart, the close. ETS reads
+    // PID_MAX_APDU_LENGTH and the serial number between the descriptor and the restart (lines 51-64), which
+    // Busforge leaves out; the closing IA_Read is Busforge's proof that the mode ended.
     expect(bus.wire.slice(bus.wire.indexOf("IA_Write"))).toEqual([
-      "IA_Write", "IA_Read", `${NEW_IA} T_Connect`, `${NEW_IA} DescRead`, `${NEW_IA} T_ACK`, `${NEW_IA} T_Disconnect`,
-      `${NEW_IA} T_Connect`, `${NEW_IA} PropWrite`, `${NEW_IA} T_ACK`, "IA_Read", `${NEW_IA} T_Disconnect`,
+      "IA_Write", "IA_Read", `${NEW_IA} T_Connect`, `${NEW_IA} DescRead`, `${NEW_IA} T_ACK`, `${NEW_IA} Restart`, `${NEW_IA} T_Disconnect`, "IA_Read",
     ]);
   }, 100_000); // the "is the target free?" probe waits out a silent address (3 tries x 1.5 s)
 
-  test("ends programming mode with A_Restart where the caller names the restart for the device's mask", async () => {
-    // A BCU1 (mask 0012) has no device object, so PID_PROGMODE goes unanswered; ETS ends its
-    // programming mode with A_Restart after the descriptor read at the new address (private corpus
-    // internal/captures/hager-th001/ets-ia-assign-proxy.log).
+  test("a device without a device object (a BCU1) gets the same frames, as ETS sends them there", async () => {
+    // ETS ends programming mode of the Hager TH001 (MV-0012) with A_Restart right behind the descriptor
+    // read at the new address (private corpus internal/captures/hager-th001/ets-ia-assign-proxy.log).
     const bcu1 = new SimDevice("1.1.255", true);
     bcu1.mask = "0012";
     bcu1.noProperties = true;
     const bus = new SimBus([bcu1]);
-    const asked: string[] = [];
 
-    const res = await assignIndividualAddress(bus, NEW_IA, { ...fast, progModeEnd: (mask) => { asked.push(mask); return mask === "MV-0012" ? "restart" : "property"; } });
+    const res = await assignIndividualAddress(bus, NEW_IA, fast);
 
     expect(res).toEqual({ previous: "1.1.255", assigned: NEW_IA, verified: true, progModeCleared: true, progModeError: null });
-    expect(asked).toEqual(["MV-0012"]);
     expect(bus.restarts).toBe(1);
     expect(bus.progModeWrites).toBe(0);
     expect(bcu1.progMode).toBe(false);
-    // From the write on, ETS's frames: the address write, the read that finds the device there, one
-    // connection with the descriptor read, its acknowledgement and the restart right behind it, closed
-    // once. The closing IA_Read is Busforge's proof that the mode ended.
     expect(bus.wire.slice(bus.wire.indexOf("IA_Write"))).toEqual([
       "IA_Write", "IA_Read", `${NEW_IA} T_Connect`, `${NEW_IA} DescRead`, `${NEW_IA} T_ACK`, `${NEW_IA} Restart`, `${NEW_IA} T_Disconnect`, "IA_Read",
     ]);
   }, 100_000);
 
   test("a device still in programming mode after the restart is reported, the address stays verified", async () => {
-    const bcu1 = new SimDevice("1.1.255", true);
-    bcu1.mask = "0012";
-    bcu1.noProperties = true;
-    const bus = new SimBus([bcu1]);
+    // A unit in Data Secure mode ignores a plain A_Restart (docs/findings.md §18).
+    const dev = new SimDevice("1.1.255", true);
+    const bus = new SimBus([dev]);
     bus.stuckInProgMode = true;
 
-    const res = await assignIndividualAddress(bus, NEW_IA, { ...fast, progModeEnd: () => "restart" });
+    const res = await assignIndividualAddress(bus, NEW_IA, fast);
 
     expect(res).toEqual({ previous: "1.1.255", assigned: NEW_IA, verified: true, progModeCleared: false, progModeError: "the device still answers in programming mode after the restart" });
   }, 100_000);
 
-  test("a device that closes the connection instead of handing out its descriptor takes PID_PROGMODE", async () => {
-    // Its mask is unknown (""), so no route a mask names applies.
+  test("a device that closes the connection instead of handing out its descriptor gets the restart on a new one", async () => {
     const dev = new SimDevice("1.1.255", true);
     const bus = new SimBus([dev]);
-    const asked: string[] = [];
     const orig = bus.sendCemi.bind(bus);
     let written = false;
+    let closedOnce = false;
     bus.sendCemi = async (cemi: Buffer) => {
       const { dst, tpdu, isGroup } = parseCemiLData(cemi);
       if (isGroup && parseApdu(tpdu).apci === APCI.INDIVIDUAL_ADDRESS_WRITE) written = true;
-      // After the write, the device answers its first point-to-point request with T_Disconnect.
-      if (written && !isGroup && dst === iaToNum(NEW_IA) && (tpdu[0] & 0x40) && !dev.closes && asked.length === 0) { dev.closes = true; }
+      // After the write, the device answers its first numbered request with T_Disconnect, and only that one.
+      const numbered = !isGroup && dst === iaToNum(NEW_IA) && (tpdu[0] & 0x40) !== 0;
+      dev.closes = written && numbered && !closedOnce;
+      if (dev.closes) closedOnce = true;
       return orig(cemi);
     };
 
-    const res = await assignIndividualAddress(bus, NEW_IA, { ...fast, progModeEnd: (mask) => { asked.push(mask); dev.closes = false; return mask === "MV-0012" ? "restart" : "property"; } });
+    const res = await assignIndividualAddress(bus, NEW_IA, fast);
 
-    expect(asked).toEqual([""]);
-    expect(bus.restarts).toBe(0);
-    expect(bus.progModeWrites).toBe(1);
+    expect(closedOnce).toBe(true);
+    expect(bus.restarts).toBe(1);
+    expect(bus.progModeWrites).toBe(0);
     expect(res.progModeCleared).toBe(true);
-  }, 100_000);
-
-  test("a mask the caller names the property route for still gets PID_PROGMODE", async () => {
-    const dev = new SimDevice("15.15.255", true);
-    const bus = new SimBus([dev]);
-
-    const res = await assignIndividualAddress(bus, NEW_IA, { ...fast, progModeEnd: () => "property" });
-
-    expect(res.progModeCleared).toBe(true);
-    expect(bus.progModeWrites).toBe(1);
-    expect(bus.restarts).toBe(0);
   }, 100_000);
 
   test("REFUSES when no device is in programming mode, and writes nothing", async () => {
