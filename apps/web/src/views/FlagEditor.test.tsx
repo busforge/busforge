@@ -31,7 +31,7 @@ describe("a com-object's flags on the device page", () => {
     expect(input("read")).not.toContain(' disabled=""');
     expect(input("update")).toContain(' disabled=""');
     expect(input("comm")).toContain(' disabled=""');
-    expect(html.match(/<select[^>]*>/)![0]).not.toContain("disabled");
+    expect(html.match(/<select[^>]*>/)![0]).not.toContain(' disabled=""');
   });
 
   test("a flag the project sets otherwise than the application offers its reset; a pending edit offers the revert", () => {

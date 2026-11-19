@@ -7,6 +7,7 @@ import { type GroupRangeNode, type Telegram } from "../api.ts";
 import { useProject, useBusStatus, useTelegrams, useSendGroup } from "../queries.ts";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { NativeSelect } from "@/components/ui/native-select";
 import { DeviceLabel } from "@/components/DeviceLabel.tsx";
 import { GaLabel } from "@/components/GaLabel.tsx";
 import { GaPill } from "@/components/GaPill.tsx";
@@ -212,9 +213,9 @@ function SendPanel({ projectId, gas }: { projectId: string; gas: Map<number, GaI
   return (
     <Card className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm" data-testid="monitor-send">
       <Send className="size-3.5 text-muted-foreground" />
-      <select value={target} onChange={(e) => setGa(Number(e.target.value))} className="h-8 min-w-0 max-w-72 rounded-md border border-input bg-input/30 px-2 outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 text-xs" aria-label={t("monitor.sendGa")} data-testid="monitor-send-ga">
+      <NativeSelect size="sm" value={target} onChange={(e) => setGa(Number(e.target.value))} className="max-w-72" aria-label={t("monitor.sendGa")} data-testid="monitor-send-ga">
         {options.map(([raw, g]) => <option key={raw} value={raw}>{g.address} {g.name}</option>)}
-      </select>
+      </NativeSelect>
       <input value={value} onChange={(e) => setValue(e.target.value)} className="h-8 w-24 rounded-md border border-input bg-input/30 px-2 outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 font-mono text-xs" aria-label={t("monitor.sendValue")} placeholder="01" data-testid="monitor-send-value" />
       <Button size="sm" variant="outline" onClick={() => go("write")} disabled={send.isPending} data-testid="monitor-send-write">{t("monitor.sendWrite")}</Button>
       <Button size="sm" variant="outline" onClick={() => go("read")} disabled={send.isPending} data-testid="monitor-send-read">{t("monitor.sendRead")}</Button>

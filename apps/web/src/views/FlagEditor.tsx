@@ -2,6 +2,7 @@ import { RotateCcw, Undo2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { NativeSelect } from "@/components/ui/native-select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { FLAGS, flagLetters } from "@/lib/comObjFlags.ts";
@@ -50,15 +51,15 @@ export function FlagEditorPanel({ co, editable, onEdit, onRevert, disabled, test
           )}
         </div>
       ))}
-      <div className="flex items-center gap-2">
-        <label className={cn("flex flex-1 items-center gap-2", !can.has("priority") && "text-muted-foreground")} title={can.has("priority") ? undefined : t("device.flagNotWritable")}>
+      <div className="flex flex-wrap items-center gap-2">
+        <label className={cn("flex items-center gap-2", !can.has("priority") && "text-muted-foreground")} title={can.has("priority") ? undefined : t("device.flagNotWritable")}>
           <span>{t("device.priority")}{co.overriddenPriority ? "*" : ""}</span>
-          <select
-            className="h-7 rounded-md border border-input bg-input/30 px-1 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50" value={co.priority} disabled={disabled || !can.has("priority")} data-testid={`${testId}-priority`}
+          <NativeSelect
+            size="sm" value={co.priority} disabled={disabled || !can.has("priority")} data-testid={`${testId}-priority`}
             onChange={(e) => onEdit({ priority: e.target.value as (typeof PRIORITIES)[number] })}
           >
             {PRIORITIES.map((p) => <option key={p} value={p}>{t(`device.priority${p}`)}</option>)}
-          </select>
+          </NativeSelect>
         </label>
         {co.overriddenPriority && can.has("priority") && (
           <Button type="button" variant="ghost" size="sm" className="h-6 px-1.5 text-xs text-muted-foreground" disabled={disabled} data-testid={`${testId}-priority-reset`} onClick={() => onEdit({ priority: null })}>
