@@ -2,6 +2,7 @@ import { XMLParser } from "fast-xml-parser";
 import { ProductError } from "./errors.ts";
 import { type ONode, tagOf, attrsOf, kidsOf, childrenByTag, firstByTag } from "./onode.ts";
 import { loadProceduresOf, type LoadProcedures } from "./loadproc.ts";
+import { decodeTextEntities } from "./config.ts";
 
 // Parse a KNX ApplicationProgram for the configuration UI: parameter types with
 // their enumerations and ranges, parameters and refs, communication objects, the
@@ -229,7 +230,10 @@ export interface AppConfig {
   // RParameters from the LParameters, its RLTransformation the LParameters from the RParameters.
   calculations: CfgCalculation[];
 }
-export interface CfgCalculation { id: string; name?: string; lRefs: string[]; rRefs: string[] }
+// `aliases`: the AliasName a side's ParameterRefRef gives its ref, the script's variable for it (else the
+// Parameter's Name). `lrScript`: the inline <LRTransformation>; `lrFunc`: the LRTransformationFunc, a function of
+// the application's <Script> it names instead.
+export interface CfgCalculation { id: string; name?: string; lRefs: string[]; rRefs: string[]; language?: string; lrScript?: string; lrFunc?: string; aliases: Record<string, string> }
 
 // The order-preserving parser splits attributes (under ":@") from child elements,
 // unlike the merged parser. ETS authors most fields as attributes but large payloads
@@ -402,12 +406,26 @@ export function parseAppConfig(xml: string): AppConfig {
 
 function calculationsOf(nodes: ONode[]): CfgCalculation[] {
   const out: CfgCalculation[] = [];
-  const refsIn = (ns: ONode[], into: string[]) => { for (const n of ns) { if (tagOf(n) === "ParameterRefRef" && attrsOf(n).RefId) into.push(attrsOf(n).RefId); refsIn(kidsOf(n), into); } };
   const find = (ns: ONode[]) => {
     for (const n of ns) {
       if (tagOf(n) !== "ParameterCalculation") { find(kidsOf(n)); continue; }
+      const aliases: Record<string, string> = {};
+      const refsIn = (ns: ONode[], into: string[]) => {
+        for (const k of ns) {
+          const a = attrsOf(k);
+          if (tagOf(k) === "ParameterRefRef" && a.RefId) { into.push(a.RefId); if (a.AliasName) aliases[a.RefId] = a.AliasName; }
+          refsIn(kidsOf(k), into);
+        }
+      };
       const side = (tag: string) => { const into: string[] = []; for (const s of childrenByTag(kidsOf(n), tag)) refsIn(kidsOf(s), into); return into; };
-      out.push({ id: attrsOf(n).Id, name: attrsOf(n).Name, lRefs: side("LParameters"), rRefs: side("RParameters") });
+      const a = attrsOf(n);
+      const lr = firstByTag(kidsOf(n), "LRTransformation");
+      out.push({
+        id: a.Id, name: a.Name, lRefs: side("LParameters"), rRefs: side("RParameters"), aliases,
+        ...(a.Language !== undefined ? { language: a.Language } : {}),
+        ...(lr ? { lrScript: decodeTextEntities(concatText(lr)) } : {}),
+        ...(a.LRTransformationFunc !== undefined ? { lrFunc: a.LRTransformationFunc } : {}),
+      });
     }
   };
   find(nodes);

@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fillAllocatedRuns, iaToNum } from "../packages/knx/src/index.ts";
-import { parseAppConfig, classify, parseLoadProcedures, buildRelativeSegmentTarget, fullDownloadImageCoverage, relParamFillByte, resolveModuleInstances } from "../packages/product/src/index.ts";
+import { parseAppConfig, classify, parseLoadProcedures, buildRelativeSegmentTarget, fullDownloadImageCoverage, relParamFillByte, resolveModuleInstances, refuseCalculationWrites } from "../packages/product/src/index.ts";
 import { BUSSARD_SYNTHETIC_DIR, BUSSARD_SYNTHETIC_TESTED, BUSSARD_SYNTHETIC_VARIANTS, bussardApplication, bussardCapture, corpusPath } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { compareSegments, etsAllocations, memoryImage, parseCapture, parseTunnelFrame, reportedTableReferences } from "./etsdiff.ts";
@@ -71,20 +71,23 @@ corpusDescribe("bussard's synthetic captures: System 7 MV-0701 full download aga
   }
 });
 
-// System B (MV-07B0) parameter segments at application defaults, one construct each: the segment bytes
+// System B (MV-07B0) parameter segments at application defaults, one construct each (and a variant whose capture
+// changed a parameter in ETS's editor, with that value): the segment bytes
 // Busforge's full download builds (the steps of planSystemBFull: module instances resolved as it resolves them,
 // the bytes it owns, the rest at the fill byte relParamFillByte gives), held against the bytes ETS wrote into
 // the segment it allocated, at the base the simulator reported (PID 7). Busforge's full download refuses every
 // one of these programs before it builds anything (a Mode 0 allocation, a load-control step it does not model,
 // or two sizes for one segment), so the image is held against ETS here on its own.
 corpusDescribe("bussard's synthetic captures: System B parameter segments at defaults against ETS", () => {
-  const cases: [product: string, construct: string][] = [
+  const cases: [product: string, construct: string, variant?: string, params?: Record<string, string>][] = [
     ["syn-minimal", "two parameters, the rest of the segment from its <Data>"],
     ["syn-union-bitfields", "a 16-bit union's default member, and sub-octet parameters packed from the most significant bit"],
     ["syn-union-default-range", "a hidden union member written at its declared default, outside its type"],
     ["syn-hidden-default", "a hidden parameter written at its default (MinEtsVersion 6.0, no DownloadInvisibleParameters)"],
     ["syn-legacy-patch-always", "a hidden LegacyPatchAlways parameter written at its default under DownloadInvisibleParameters=Background"],
     ["syn-param-calculation", "the outputs of a ParameterCalculation at their defaults while every input is at its default"],
+    ["syn-param-calculation", "the outputs of a ParameterCalculation computed by its script from an input off its default, the shown read-only one and the hidden LegacyPatchAlways one",
+      "calc-input", { "P-2_R-2": "500" }],
     ["syn-dynamic-tests", "choose on single, list, comparison and default tests"],
     ["syn-choose-never-shown", "choose on a never-shown memoryless parameter"],
     ["syn-choose-per-ref", "choose on the unreached second ParameterRef of a reached parameter"],
@@ -104,14 +107,17 @@ corpusDescribe("bussard's synthetic captures: System B parameter segments at def
     ["syn-writerelmem-tail", "a Mode 1 allocation with fill 00: the trailing fill bytes not written"],
     ["syn-user-memory-extmem", "an 8448-byte segment above 0xFFFF, written with A_MemoryExtended"],
   ];
-  for (const [product, construct] of cases) {
+  for (const [product, construct, variant = "defaults", set = {}] of cases) {
     test(`${product}: ${construct}`, () => {
       const xml = app(product);
       const cfg = parseAppConfig(xml);
       expect(cfg.mask).toBe("MV-07B0");
-      const params = new Map<string, string>();
-      const target = buildRelativeSegmentTarget(cfg, params, 4, { moduleInstances: cfg.hasModules ? resolveModuleInstances(cfg, params) : [], ownIdleUnionDefaults: true })!;
-      const cap = capture(product);
+      const params = new Map(Object.entries(set).map(([ref, v]) => [`${cfg.id}_${ref}`, v]));
+      const instances = cfg.hasModules ? resolveModuleInstances(cfg, params) : [];
+      // The parameter writes do not refuse the calculation Busforge runs.
+      expect(() => refuseCalculationWrites(cfg, params, instances)).not.toThrow();
+      const target = buildRelativeSegmentTarget(cfg, params, 4, { moduleInstances: instances, ownIdleUnionDefaults: true })!;
+      const cap = capture(product, variant);
       const base = reportedTableReferences(cap).get(4);
       const alloc = etsAllocations(cap).get(4);
       if (base === undefined || alloc === undefined) throw new Error(`${product}: the capture holds no allocation or PID 7 answer for LSM 4`);

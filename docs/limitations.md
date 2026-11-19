@@ -35,8 +35,10 @@ number) is never counted for yours.
 Where Busforge cannot evaluate something the product definition requires, the write is refused
 and the app offers a read-only diagnostic package instead
 ([raw-acquisition.md](raw-acquisition.md#diagnostic-package)). Among these: a change of a parameter
-a `<ParameterCalculation>` computes others from, since Busforge runs no calculation script
-([device-memory-model.md](device-memory-model.md#calculated-parameters)); two active members of one
+a `<ParameterCalculation>` computes others from, where Busforge cannot run that calculation as ETS
+does (a script outside the JavaScript and VBScript subset it runs, a script function of the
+application, a result that steers the configuration;
+[device-memory-model.md](device-memory-model.md#calculated-parameters)); two active members of one
 `<Union>` on the same bits where the order ETS writes them in is not shown
 ([device-memory-model.md](device-memory-model.md#unions)); and on System 7 a link of a com-object
 numbered above 255, which an association entry holds in one byte.

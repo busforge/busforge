@@ -781,7 +781,7 @@ const calculated = (right: "P-3" | "P-6") => parseAppConfig(calculatedXml(right)
 test("a calculation's side changed away from what the device holds is refused where its other side is held", () => {
   const P1 = "M-0005_A-0001-01-0001_P-1_R", P3 = "M-0005_A-0001-01-0001_P-3_R";
   const app = calculated("P-3");
-  expect(app.calculations).toEqual([{ id: "M-0005_A-0001-01-0001_PC-1", name: "calc", lRefs: [P1], rRefs: [P3] }]);
+  expect(app.calculations).toEqual([{ id: "M-0005_A-0001-01-0001_PC-1", name: "calc", language: "JavaScript", lRefs: [P1], rRefs: [P3], aliases: { [P1]: "a", [P3]: "b" } }]);
   const refused = expect.objectContaining({ code: "PARAM_CALCULATION_UNSUPPORTED" });
   // A full download: against the defaults (P-1's ref value 7), stored or resolved.
   expect(() => refuseCalculationWrites(app, new Map(), [])).not.toThrow();

@@ -227,14 +227,45 @@ read-back leaves those bits out. Members that agree on their shared bits build e
 ### Calculated parameters
 
 A `<ParameterCalculation>` computes parameters from others with a script: its `LRTransformation` sets
-the `RParameters` from the `LParameters`, its `RLTransformation` the reverse. ETS runs one once a
-parameter it reads holds another value than its default; at the defaults every one keeps its default.
-Busforge runs no calculation script. A write that changes a parameter on one side of a calculation
-whose other side reaches the image is therefore refused (`PARAM_CALCULATION_UNSUPPORTED`). A side
-reaches the image where one of its parameters has memory or lies in a property, or is one a `<choose>`
-tests or an `<Assign>` reads or sets, since it decides what else is written. A parameter or structural
+the `RParameters` from the `LParameters`, its `RLTransformation` the reverse. ETS runs it once a
+parameter it reads holds another value than its default, and stores the results as the parameters'
+values; with every input at its default the results keep their values. bussard's synthetic captures
+of `syn-param-calculation` show both: at the defaults both outputs hold their declared default, with
+the input changed both hold the script's result, the shown read-only one and the hidden
+`LegacyPatchAlways` one.
+
+Busforge computes them the same way, from the configuration alone: where an input is off its
+default, the image is built with the script's results stored on their parameters; otherwise with
+what the configuration stores. It runs the inline JavaScript and VBScript of product data in its own
+interpreter (`packages/product/src/script/`): a whitelisted subset, tokenised, parsed and walked,
+with no I/O and a step budget. A calculation in a `<ModuleDef>` runs in each module instance the
+configuration places. Calculations that feed each other are recomputed until their results settle.
+
+What Busforge cannot compute as ETS does, it does not compute, and a write keeps the refusal
+`PARAM_CALCULATION_UNSUPPORTED` for it:
+
+- a script outside the subset (a function, an object, `new`, a JavaScript statement that does not
+  end, a VBScript division by zero, the step budget), or one named by `LRTransformationFunc` from the
+  application's `<Script>` (the OpenKNX applications use these);
+- a script that reads one of its results before setting it, or leaves a result with memory unset:
+  that result is what ETS computed when it last ran, which the configuration does not show;
+- a result its parameter's type does not take (a fraction for an integer, a value out of range), or
+  a parameter type scripts are not run with;
+- a result that a `<choose>` tests or an `<Assign>` reads or sets, or that lies in a property: the
+  com-object and property writes do not recompute it (the MDT BE-06001.02 and BE-02001.02 counters);
+- results that do not settle, and two calculations computing different values for one parameter.
+
+For these, a write refuses where a parameter on one side of the calculation takes another value
+than the device holds and the other side reaches the image: one of its parameters has memory or lies
+in a property, or is one a `<choose>` tests or an `<Assign>` reads or sets. A parameter or structural
 flash compares with the configuration the device was last programmed with; a full download, and the
 System 1 download, with the defaults. A calculation whose other side reaches nothing refuses nothing.
+
+Two cases of a computed calculation are refused too, since no capture shows them: a result the user
+can edit, set to another value than the script computes (ETS would run the `RLTransformation` and
+change the inputs), and a result with memory that no active branch places, unless it is
+`LegacyPatchAlways` on a relative segment or the result is its default.
+
 Where the configuration hides a computed parameter on System 7, its bits keep the unit's value rather
 than the segment's `<Data>`.
 

@@ -5,6 +5,7 @@ import { resolveModuleInstances } from "./modules.ts";
 import { byteWidth, MAX_INT_BYTES, encode } from "./image.ts";
 import { ProductError } from "./errors.ts";
 import { maskInfo } from "./masks.ts";
+import { applyCalculations, instanceMarker, paramKey, steeringParamIds, type CalculationRun } from "./calculations.ts";
 
 // `textRefusals: "skip"`: a text parameter the codec refuses (and, on the relative segment, a colour) is
 // left unowned instead of failing the build, and so are the bits two active members of one union contest
@@ -260,11 +261,13 @@ export function buildAbsoluteSegmentTargets(
   // params) and the config view (to resolve which of them are active).
   const instances = absoluteBuildInstances(app, values, opts.moduleInstances);
   const model = toAppModel(app, { includeUnions: true, instances });
+  // The results of the <ParameterCalculation>s Busforge runs, stored on their parameters as ETS stores them.
+  const calculated = applyCalculations(app, values, instances).values;
   // Effective value of every parameter reached in the active dynamic tree, keyed by
   // ParameterRef id. This includes Access="None" internal parameters that ETS writes
   // to memory but hides from the UI, so it is the right source for the image (the
   // visible blocks alone would miss them).
-  const view = buildDeviceConfig(app, values, opts.lang, instances);
+  const view = buildDeviceConfig(app, calculated, opts.lang, instances);
   const active = view.imageValues;
   const treeOrder = treeOrderOf(app, active);
 
@@ -440,7 +443,10 @@ export function buildRelativeSegmentTarget(
   const model = toAppModel(app, { includeUnions: true, instances });
   const seg = model.segments.find((s) => s.lsm === lsm);
   if (!seg) return null;
-  const built = buildDeviceConfig(app, values, opts.lang, instances);
+  // The results of the <ParameterCalculation>s Busforge runs, stored on their parameters as ETS stores them.
+  const calc = applyCalculations(app, values, instances);
+  const calculated = calc.values;
+  const built = buildDeviceConfig(app, calculated, opts.lang, instances);
   const active = built.imageValues;
   const rejected = leavesOutInvisible(app) ? built.rejectedRefs : new Set<string>();
   // The unions with at least one active member (only those write an active member, not the default).
@@ -510,7 +516,9 @@ export function buildRelativeSegmentTarget(
     const gated = ref.id.includes("_MI-") || cfgParam?.union === true;
     let v: string | undefined;
     if (gated || active.has(ref.id)) v = active.get(ref.id);
-    else if (cfgParam?.access !== "None" && !inModuleRegion(param.offset) && !rejected.has(ref.id)) v = param.value;
+    //    A LegacyPatchAlways one a calculation computed: the computed value, as ETS's download of bussard's synthetic
+    //    `syn-param-calculation` writes it into its hidden output.
+    else if (cfgParam?.access !== "None" && !inModuleRegion(param.offset) && !rejected.has(ref.id)) v = cfgParam?.patchAlways && calc.computed.has(ref.id) ? calculated.get(ref.id) : param.value;
     //  - a union with NO active member: ETS writes its DefaultUnionParameter member (GVS AMMA
     //    capture: every disabled channel's unions, byte for byte), under the same
     //    Access="None" rule as an inactive plain parameter. Module-instance unions are not
@@ -518,7 +526,7 @@ export function buildRelativeSegmentTarget(
     if (v === undefined && opts.ownIdleUnionDefaults && cfgParam?.unionDefault && cfgParam.unionId !== undefined && !ref.id.includes("_MI-")
       && !activeUnions.has(cfgParam.unionId) && cfgParam.access !== "None" && app.refs.get(ref.id)?.access !== "None"
       && !inModuleRegion(param.offset)) {
-      v = values.get(ref.id) ?? app.refs.get(ref.id)?.value ?? param.value;
+      v = calculated.get(ref.id) ?? app.refs.get(ref.id)?.value ?? param.value;
     }
     if (v === undefined) continue;
     const type = model.types.get(param.typeId);
@@ -533,7 +541,7 @@ export function buildRelativeSegmentTarget(
     }
     if (!wrote) continue;
     noteUnionWrite(unionWrites, treeOrder, contested, app, ref.id, ref.paramId, before, img, param.offset, param.bitOffset ?? 0, type.sizeInBit, `the parameter segment (LSM ${lsm})`);
-    if (!gated && !active.has(ref.id) && values.has(ref.id) && values.get(ref.id) !== v) defaulted.add(ref.id);
+    if (!gated && !active.has(ref.id) && calculated.has(ref.id) && calculated.get(ref.id) !== v) defaulted.add(ref.id);
     const verifiable = cfgParam?.access !== "None"; // device-internal markers stay owned but unverified
     markOwned(owned, verify, param.offset, param.bitOffset, type.sizeInBit, seg.size, verifiable);
     if (!verifiable && cfgParam?.patchAlways) markOwned(markers, [], param.offset, param.bitOffset, type.sizeInBit, seg.size, false);
@@ -741,31 +749,55 @@ export function refuseColorWrites(app: AppConfig, values: Map<string, string>, i
 
 // ETS computes the parameters of a <ParameterCalculation> once one it reads holds another value than its
 // default: its LRTransformation sets the RParameters from the LParameters, its RLTransformation the
-// LParameters from the RParameters; at the defaults every one keeps its default. Busforge runs no
-// calculation, so after a change on one side an image would be built from the other side at a value
-// nothing computed. An operation that writes a device's parameters therefore refuses where a parameter on
-// one side of a calculation takes another value than in the configuration the device holds, and the other
-// side reaches the image: a parameter with memory or in a property, or one a <choose> tests or an
-// <Assign> reads or sets, which decides what else is written.
-//  - a parameter or structural flash: another value than in the configuration the device was last
-//    programmed with (`base`);
-//  - a full download, and the System 1 download (`base` absent): another value than at the defaults.
+// LParameters from the RParameters; at the defaults every one keeps its value. The image builders above store
+// the results of every calculation Busforge runs (applyCalculations, calculations.ts). An operation that writes a
+// device's parameters refuses what that leaves open:
+//  - a calculation it ran, where the configuration sets a result the user can edit to another value than the
+//    script computes (ETS's RLTransformation would recompute the inputs from it), or where a result with memory that
+//    no active branch places takes another value than its default (no ETS download shows whether ETS writes it;
+//    the LegacyPatchAlways one on a relative segment is shown);
+//  - every other calculation, where a parameter on one side takes another value than in the configuration the
+//    device holds, and the other side reaches the image: a parameter with memory or in a property, or one a
+//    <choose> tests or an <Assign> reads or sets, which decides what else is written. For a parameter or
+//    structural flash that is the configuration the device was last programmed with (`base`); for a full
+//    download, and the System 1 download (`base` absent), the defaults.
 // A parameter's value is that of its ref the configuration places, else one stored on any of its refs, in
 // each module instance.
 export function refuseCalculationWrites(app: AppConfig, values: Map<string, string>, instances: ModuleInstance[], base?: { values: Map<string, string>; instances: ModuleInstance[] }): void {
   if (!app.calculations.length) return;
-  const steering = new Set<string>(); // Parameter ids a choose tests or an assign reads or sets
-  const paramOf = (refId: string | undefined) => (refId ? resolveParamRef(app, refId)?.param?.id : undefined);
-  const walk = (nodes: DynNode[]) => {
-    for (const n of nodes) {
-      const ids = n.kind === "choose" ? [n.paramRefId] : n.kind === "assign" ? [n.target, n.source] : [];
-      for (const id of ids.map(paramOf)) if (id) steering.add(id);
-      if (n.kind === "block" || n.kind === "container") walk(n.children);
-      else if (n.kind === "choose") for (const w of n.whens) walk(w.children);
+  const refuse = (message: string): never => { throw new ProductError("PARAM_CALCULATION_UNSUPPORTED", `${message}; refusing rather than writing an image built from values nothing computed. Apply this change with ETS`); };
+  const same = sameParamValue(app);
+  const applied = applyCalculations(app, values, instances);
+  const computedRuns = applied.runs.filter((r) => r.state === "computed");
+  if (computedRuns.length) {
+    const view = buildDeviceConfig(app, applied.values, undefined, instances);
+    const placed = new Set([...view.imageValues.keys()].flatMap((r) => paramKey(app, r) ?? []));
+    const stored = (v: Map<string, string>) => { const out = new Map<string, string>(); for (const [r, x] of v) { const k = paramKey(app, r); if (k !== undefined && !out.has(k)) out.set(k, x); } return out; };
+    const storedNow = stored(values), storedBefore = base ? stored(base.values) : undefined;
+    for (const run of computedRuns) {
+      for (const [ref, value] of run.outputs) {
+        const { ref: cref, param } = resolveParamRef(app, ref)!;
+        const key = paramKey(app, ref)!;
+        const access = cref.access ?? param!.access;
+        const set = storedNow.get(key);
+        const edited = set !== undefined && !same(ref, set, value) && (!storedBefore || !same(ref, set, storedBefore.get(key) ?? null));
+        if (edited && placed.has(key) && access !== "Read" && access !== "None") {
+          refuse(`parameter ${ref} is set to ${set} where the application's <ParameterCalculation> "${run.label}" computes ${value}, and ETS's RLTransformation would compute the calculation's inputs from it, which Busforge does not run`);
+        }
+        const patched = param!.patchAlways && !param!.union && !instanceMarker(ref) && param!.access !== "None" && cref.access !== "None" && !!app.segments.find((g) => g.id === param!.codeSegment);
+        if (param!.hasMemory && !placed.has(key) && !patched && !same(ref, null, value)) {
+          refuse(`the application's <ParameterCalculation> "${run.label}" computes ${value} for parameter ${ref}, which no active branch places, and no ETS download shows whether ETS writes such a result`);
+        }
+      }
     }
-  };
-  walk(app.dynamic);
-  for (const d of app.moduleDefs.values()) walk(d.dynamic);
+  }
+  // The parameters of the calculations Busforge ran in this configuration, unless another one it did not run reads
+  // or sets them too.
+  const notRun = new Map<string, CalculationRun>();
+  for (const r of applied.runs) if (r.state !== "computed") for (const k of r.keys) if (!notRun.has(k)) notRun.set(k, r);
+  const covered = new Set(computedRuns.flatMap((r) => r.keys).filter((k) => !notRun.has(k)));
+  const paramOf = (refId: string | undefined) => (refId ? resolveParamRef(app, refId)?.param?.id : undefined);
+  const steering = steeringParamIds(app);
   const reaches = (refs: string[]) => refs.some((r) => { const p = resolveParamRef(app, r)?.param; return !!p && (p.hasMemory || !!p.onProperty || steering.has(p.id)); });
   const feeding = new Map<string, string>(); // Parameter id -> name of a calculation that computes the image from it
   for (const c of app.calculations) {
@@ -781,8 +813,8 @@ export function refuseCalculationWrites(app: AppConfig, values: Map<string, stri
     const take = (entries: Iterable<[string, string]>) => {
       for (const [ref, value] of entries) {
         const id = paramOf(ref);
-        const key = id && feeding.has(id) ? (ref.match(/_M-\d+_MI-\d+/)?.[0] ?? "") + id : undefined;
-        if (key && !out.has(key)) out.set(key, { ref, value });
+        const key = id && feeding.has(id) ? instanceMarker(ref) + id : undefined;
+        if (key && !covered.has(key) && !out.has(key)) out.set(key, { ref, value });
       }
     };
     take(buildDeviceConfig(app, v, undefined, inst).imageValues);
@@ -791,13 +823,15 @@ export function refuseCalculationWrites(app: AppConfig, values: Map<string, stri
   };
   const now = paramValues(values, instances);
   const before = paramValues(base?.values ?? new Map(), base?.instances ?? instances);
-  const same = sameParamValue(app);
   for (const key of new Set([...now.keys(), ...before.keys()])) {
     const is = now.get(key), was = before.get(key);
     const ref = (is ?? was)!.ref;
     if (same(ref, was?.value ?? null, is?.value ?? null)) continue;
-    const calc = feeding.get(paramOf(ref)!);
-    throw new ProductError("PARAM_CALCULATION_UNSUPPORTED",
-      `parameter ${ref} is ${is?.value ?? "at its default"} where ${base ? "the device was last programmed with" : "the defaults hold"} ${was?.value ?? "its default"}, and the application's <ParameterCalculation> "${calc}" computes from it parameters that reach the device's image, which ETS runs and Busforge does not; refusing rather than writing an image built from values nothing computed. Apply this change with ETS`);
+    // A calculation refused whatever the configuration is keyed by its Parameter ids alone.
+    const run = notRun.get(key) ?? notRun.get(paramOf(ref)!);
+    const why = run?.state === "refused" ? `which Busforge cannot run as ETS does: ${run.reason}`
+      : run ? "which ETS runs on a change of either side and Busforge only from inputs off their defaults"
+      : "which Busforge does not run in a module instance the configuration does not place";
+    refuse(`parameter ${ref} is ${is?.value ?? "at its default"} where ${base ? "the device was last programmed with" : "the defaults hold"} ${was?.value ?? "its default"}, and the application's <ParameterCalculation> "${run?.label ?? feeding.get(paramOf(ref)!)}" computes from it parameters that reach the device's image, ${why}`);
   }
 }
