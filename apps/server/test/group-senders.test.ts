@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, afterAll } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,8 +9,11 @@ import { putGroupKeys } from "../src/db/groupKeys.ts";
 
 // The senders a project assigns to a group address, as the group-address overlay shows and edits them.
 describe("group address senders API", () => {
+  const tmps: string[] = [];
+  afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
   async function setup() {
     const dir = mkdtempSync(join(tmpdir(), "senders-"));
+    tmps.push(dir);
     const state = createState({ dbPath: ":memory:", dataDir: dir });
     createProject(state.db, "p", "Test", 0);
     const main = createGroupRange(state.db, "p", null, "Secure", 0);

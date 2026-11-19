@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, afterAll } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,8 +15,11 @@ import { getGaSecurity, applyLinkSecurity, setGaSecurityMode } from "../src/db/g
 // "Automatisch" address plain for everyone (after a warning) and cannot be linked to an "Erzwungen
 // an" one. A secure device here is one the project holds a tool key for.
 describe("group address security", () => {
+  const tmps: string[] = [];
+  afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
   function setup() {
     const dir = mkdtempSync(join(tmpdir(), "ga-security-"));
+    tmps.push(dir);
     const state = createState({ dbPath: ":memory:", dataDir: dir });
     const db = state.db;
     createProject(db, "p", "Test", 0);

@@ -317,8 +317,11 @@ describe("Bus: secured group telegrams", () => {
 
 describe("sending group telegrams through the monitor connection", () => {
   const key = Buffer.alloc(16, 0x5a);
+  const tmps: string[] = [];
+  afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
   async function setup(opts: { secured?: boolean; sender?: string } = {}) {
     const dir = mkdtempSync(join(tmpdir(), "bus-send-"));
+    tmps.push(dir);
     const state = createState({ dbPath: ":memory:", dataDir: dir });
     createProject(state.db, "p", "Test", 0);
     createConnection(state.db, "c", conn, 0);

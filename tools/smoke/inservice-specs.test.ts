@@ -1,4 +1,4 @@
-import { expect, mock, afterAll, describe, test, setDefaultTimeout } from "bun:test";
+import { expect, mock, afterAll, afterEach, describe, test, setDefaultTimeout } from "bun:test";
 import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -56,8 +56,9 @@ const { handleApi, createState } = await import("../../apps/server/src/app.ts");
 type AppState = ReturnType<typeof createState>;
 afterAll(() => { unit = null; });
 
-const tmps: string[] = [];
-afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
+// Removed after each test, not at the end of the file: a run takes minutes and a killed run leaves only the running test's.
+let tmps: string[] = [];
+afterEach(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); tmps = []; });
 
 // The application of a spec, as the catalogue holds it: the appRef names its hardware-program pair.
 const appOf = (spec: DeviceSpec) => spec.device.appRef.replace(/_H-.*_HP-/, "_A-");

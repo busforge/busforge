@@ -1,6 +1,6 @@
-import { test, expect, describe, setDefaultTimeout } from "bun:test";
+import { test, expect, describe, afterEach, setDefaultTimeout } from "bun:test";
 import { Database } from "bun:sqlite";
-import { copyFileSync, existsSync, mkdtempSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createState } from "../src/app.ts";
@@ -17,8 +17,17 @@ setDefaultTimeout(140_000);
 const FIXTURE = join(import.meta.dir, "fixtures", "shutdown-server.ts");
 const JOB_MS = 1500;
 
+// Each test removes its directories when it ends, so a run that is killed mid-file leaves at most the running test's.
+let tmps: string[] = [];
+afterEach(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); tmps = []; });
+function tempDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  tmps.push(dir);
+  return dir;
+}
+
 async function start(jobMs: number, env: Record<string, string> = {}) {
-  const dataDir = mkdtempSync(join(tmpdir(), "busforge-shutdown-"));
+  const dataDir = tempDir("busforge-shutdown-");
   const proc = Bun.spawn(["bun", FIXTURE], { env: { ...process.env, ...env, DATA_DIR: dataDir, JOB_MS: String(jobMs) }, stdout: "pipe", stderr: "pipe" });
   const reader = proc.stdout.getReader();
   let out = "";
@@ -39,7 +48,7 @@ const alive = (proc: Bun.Subprocess) => proc.exitCode === null && proc.signalCod
 function expectCheckpointed(dataDir: string, states: Record<string, string>) {
   const wal = join(dataDir, "busforge.db-wal");
   if (existsSync(wal)) expect(statSync(wal).size).toBe(0);
-  const lone = join(mkdtempSync(join(tmpdir(), "busforge-lone-db-")), "busforge.db");
+  const lone = join(tempDir("busforge-lone-db-"), "busforge.db");
   copyFileSync(join(dataDir, "busforge.db"), lone);
   const db = new Database(lone);
   const rows = db.query("SELECT id, state FROM tasks").all() as { id: string; state: string }[];

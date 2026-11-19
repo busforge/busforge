@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, afterAll } from "bun:test";
 import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -27,6 +27,10 @@ const sampleXml = readFileSync(join(import.meta.dir, "..", "..", "..", "packages
 const demo = () => parseProject(sampleXml, undefined, "Demo");
 const fresh = () => openDb(":memory:");
 
+const tmps: string[] = [];
+afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
+const tempDir = (prefix: string) => { const dir = mkdtempSync(join(tmpdir(), prefix)); tmps.push(dir); return dir; };
+
 describe("schema/migrations", () => {
   test("openDb is idempotent and sets user_version", () => {
     const db = fresh();
@@ -36,7 +40,7 @@ describe("schema/migrations", () => {
   });
 
   test("migrates an iteration-2 database in place (adds instance_id + device_parameters)", () => {
-    const dir = mkdtempSync(join(tmpdir(), "busforge-mig-"));
+    const dir = tempDir("busforge-mig-");
     const path = join(dir, "old.db");
     // Simulate an iteration-2 DB: devices without instance_id, at user_version 1.
     const old = new Database(path, { create: true });
@@ -54,11 +58,10 @@ describe("schema/migrations", () => {
     expect(() => db.query("SELECT instance_id FROM devices").all()).not.toThrow();
     expect(() => db.query("SELECT * FROM device_parameters").all()).not.toThrow();
     db.close();
-    rmSync(dir, { recursive: true, force: true });
   });
 
   test("the instance-id unique migration collapses pre-existing duplicate rows instead of bricking", () => {
-    const dir = mkdtempSync(join(tmpdir(), "busforge-dup-"));
+    const dir = tempDir("busforge-dup-");
     const path = join(dir, "dup.db");
     // A DB one version BEFORE the unique-index migration, already holding two device rows
     // that share a real instance id (a malformed import from before the guard existed). A
@@ -91,7 +94,6 @@ describe("schema/migrations", () => {
     ins.run("1.1.5");
     expect(() => ins.run("1.1.6")).toThrow();
     db.close();
-    rmSync(dir, { recursive: true, force: true });
   });
 });
 
@@ -1256,7 +1258,7 @@ describe("connections", () => {
   });
 
   test("migration backfills ip_transport to 'auto' for an existing connection row", () => {
-    const dir = mkdtempSync(join(tmpdir(), "busforge-conn-mig-"));
+    const dir = tempDir("busforge-conn-mig-");
     const path = join(dir, "old.db");
     // A connections table one version BEFORE the ip_transport column, holding a saved IP
     // connection. Opening it must add the column and backfill the legacy row to 'auto'.
@@ -1278,7 +1280,6 @@ describe("connections", () => {
     // A device holding a link baseline has not had its links counted: unknown (-1) until read back.
     expect(db.query("SELECT instance_id AS d, link_base_gaps AS g FROM devices ORDER BY d").all()).toEqual([{ d: "never", g: 0 }, { d: "read", g: -1 }]);
     db.close();
-    rmSync(dir, { recursive: true, force: true });
   });
 });
 
