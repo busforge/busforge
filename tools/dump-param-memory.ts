@@ -12,26 +12,30 @@
 //   - AbsoluteSegment: fixed Address from the app XML (the MV-0705 model).
 // Output: one <ia>__<seg>.device.bin per segment + manifest.json. The directory
 // holds real device memory (incl. nothing personal here, but treat as private)
-// and lives under the server data directory, which is gitignored.
+// and by default lives under apps/server/data/, which is gitignored; an out-dir elsewhere is
+// the caller's to keep out of git.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { resolveDataDir } from "../apps/server/src/app.ts";
 import { parseAppConfig, toAppModel } from "../packages/product/src/index.ts";
 import { appProgramId } from "../packages/project/src/index.ts";
 import { KnxIpTunnel, KnxDevice } from "../packages/knx/src/index.ts";
-import { firstProjectId, openServerDb, serverDataDir } from "./serverdb.ts";
+import { firstProject, openServerDb, refusing } from "./serverdb.ts";
 
 const ip = process.argv[2];
-const outDir = process.argv[3] ?? join(serverDataDir(), "readback", "parammem");
 if (!ip) { console.error("usage: bun run tools/dump-param-memory.ts <interface-ip> [out-dir]"); process.exit(2); }
+const dataDir = refusing(() => resolveDataDir(process.env));
+const { db, path: dbPath } = refusing(() => openServerDb(dataDir));
+const project = refusing(() => firstProject(db, dbPath));
+console.log(`database ${dbPath}, project ${project.name} (${project.id})`);
+const projectId = project.id;
+const outDir = process.argv[3] ?? join(dataDir, "readback", "parammem");
 mkdirSync(outDir, { recursive: true });
 
 const PER_DEVICE_TIMEOUT_MS = 120_000;
 const withTimeout = <T>(p: Promise<T>): Promise<T> =>
   Promise.race([p, new Promise<T>((_, r) => setTimeout(() => r(new Error(`timeout ${PER_DEVICE_TIMEOUT_MS / 1000}s`)), PER_DEVICE_TIMEOUT_MS))]);
 
-const { db, path: dbPath } = openServerDb();
-console.log(`database ${dbPath}`);
-const projectId = firstProjectId(db, dbPath);
 const devices = db.query("SELECT ia, app_ref FROM devices WHERE project_id=? ORDER BY ia").all(projectId) as any[];
 
 const tun = new KnxIpTunnel(ip);

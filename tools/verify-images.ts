@@ -21,16 +21,19 @@ import { join } from "node:path";
 import { parseAppConfig, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget } from "../packages/product/src/index.ts";
 import type { ModuleInstance } from "../packages/product/src/index.ts";
 import { appProgramId } from "../packages/project/src/index.ts";
-import { firstProjectId, openServerDb, serverDataDir } from "./serverdb.ts";
+import { resolveDataDir } from "../apps/server/src/app.ts";
+import { firstProject, openServerDb, refusing } from "./serverdb.ts";
 
-const corpus = process.argv[2] ?? join(serverDataDir(), "readback", "parammem");
+const dataDir = refusing(() => resolveDataDir(process.env));
+const { db, path: dbPath } = refusing(() => openServerDb(dataDir));
+const project = refusing(() => firstProject(db, dbPath));
+console.log(`database ${dbPath}, project ${project.name} (${project.id})`);
+const projectId = project.id;
+
+const corpus = process.argv[2] ?? join(dataDir, "readback", "parammem");
 const manifestPath = join(corpus, "manifest.json");
 if (!existsSync(manifestPath)) { console.error(`no manifest at ${manifestPath} (run dump-param-memory.ts first)`); process.exit(2); }
 const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-
-const { db, path: dbPath } = openServerDb();
-console.log(`database ${dbPath}`);
-const projectId = firstProjectId(db, dbPath);
 
 let okDevices = 0, totalDevices = 0, okSegments = 0, totalSegments = 0;
 const fails: any[] = [];

@@ -35,7 +35,7 @@ Four environment variables move the pair; unset, each keeps the default above.
 
 | Variable | Read by | Meaning | Default |
 |---|---|---|---|
-| `BUSFORGE_DATA_DIR` | server, `dump-param-memory.ts`, `verify-images.ts` | The data directory (database, master key, backups); created if missing. Give an absolute path: a relative one resolves against `apps/server` when the server starts through `dev:server`. Set but empty is refused | `apps/server/data` |
+| `BUSFORGE_DATA_DIR` | server, `dump-param-memory.ts`, `verify-images.ts` | The data directory (database, master key, backups); the server creates it if missing, the tools refuse one without a database. Give an absolute path: a relative one resolves against `apps/server` when the server starts through `dev:server`, against their working directory for the tools. Set but empty is refused | `apps/server/data` |
 | `PORT` | server | The port the server listens on, `0` for any free one; anything but a port number is refused | `3000` |
 | `BUSFORGE_API` | Vite | The server's origin (no path), the target of the `/api` proxy and the bus-monitor WebSocket | `http://localhost:3000` |
 | `BUSFORGE_WEB` | Vite | The dev server's http origin (no path); only its port (not 0) is used, Vite listens on `localhost`. A busy port is an error instead of a move to the next one | Vite's own `5173` |
@@ -142,10 +142,10 @@ bun run tools/dump-param-memory.ts <interface-ip> [out-dir]
 ```
 
 Writes one `<ia>__<seg>.device.bin` per segment plus `manifest.json`. The database is the one in the
-server's data directory, `BUSFORGE_DATA_DIR` or else `apps/server/data` (a relative value resolves
-against the directory the tool runs in), and the tool prints the path it opened; a directory without
-a database, or one with no project, is refused. The default output directory is
-`readback/parammem` inside that data directory (git-ignored).
+server's data directory, `BUSFORGE_DATA_DIR` or else `apps/server/data`. The tool prints the database
+and the project it works on (the first one); a directory without a database, or a database with no
+project, is refused. The default output directory is `readback/parammem` inside that data directory,
+git-ignored for the default `apps/server/data` only: keep a dump of an instance elsewhere out of git.
 
 ### verify-images.ts
 

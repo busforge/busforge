@@ -756,6 +756,7 @@ for modern devices, described by the product XML, exactly the model ETS uses.
 
 To develop against ground truth, the devices of an installation can be read back from the bus
 (read-only, `tools/readback.ts` and `tools/dump-param-memory.ts`). The raw dumps land under
-`apps/server/data/readback/` and are **gitignored on purpose**: they are a real installation's
+`readback/` of the server's data directory (`apps/server/data/` by default, where they are
+**gitignored on purpose**): they are a real installation's
 memory, including its group addresses, the same class of personal data as a project's instance
 file. They are not committed, and no test in this repository requires them.
