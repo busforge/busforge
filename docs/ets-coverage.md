@@ -30,7 +30,7 @@ limit, because it records drift only for the refs the view exposes.
 | Element | Status | Notes |
 |---|---|---|
 | `ParameterBlock` (heading from `Text` / `ParamRefId` / `Name`) | full | including item-less collector blocks, which render as an empty navigable section |
-| `ParameterBlock` with `Layout="Grid"` / `"Table"` | full | `<Rows>`/`<Columns>` geometry with per-item `Cell="row,col"`; an unreadable geometry is surfaced rather than swallowed |
+| `ParameterBlock` with `Layout="Grid"` / `"Table"` | full | `<Rows>`/`<Columns>` geometry with per-item `Cell="row,col"`; an unreadable geometry is surfaced rather than swallowed. A column `Width` percentage is the column's share of the free width (authored widths may add up to more than 100 %), a column no item occupies is left out, and no column is narrower than its content: a label breaks only between words, a control keeps the width its value needs, and a grid wider than its card scrolls in its own box. Identical separators in one cell (two active `choose` branches) show once, as ETS draws a cell's items on top of each other |
 | `ParameterRefRef` / `ComObjectRefRef` | full | |
 | `choose` / `when` / `default` (and the `test` grammar) | full | every test string in the real catalogue fixtures parses; a token outside the known grammar refuses (`PARAM_TEST_UNSUPPORTED`) instead of falling through to `default` |
 | `ParameterSeparator` | full | rendered as heading, ruler or error by `UIHint` |

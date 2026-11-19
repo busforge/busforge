@@ -193,7 +193,7 @@ A list filter always shows that it is on, and how to undo it:
 - Filter state lives in the URL, so reload, back and a shared link keep it.
 - Typing in a search field never sends the page back to the top: the scroll position stays, and the browser moves it only where its scroll anchoring holds a row in view in place as rows around it drop out. A com-object the URL names that the filter brings back is scrolled to.
 
-A page filter sits in the toolbar row of the page it narrows: on the device page the parameter filter leads the header's second row, in front of the actions, with its match count.
+A page filter sits in the toolbar row of the page it narrows: on the device page the parameter filter leads the header's second row, in front of the actions, with its match count. It matches a parameter by its text or value, a com-object by its function or name, and a label (a separator, a button) by its text. A match keeps its context: in a grid the whole row, so a value stands next to its label; under a matching heading the rows up to the next heading; a matching page or section name everything in it.
 
 ### Dialogs are never a trap
 
