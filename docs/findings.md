@@ -98,8 +98,7 @@ Read the LSM state with `PropertyValueRead(obj, PID = 5)`.
   reads the same description before it reads the table back or writes it, and reads exactly the entries
   of that form. Only a unit that describes no table property there (it answers with PID 0) has its form
   told by validating that group indices are within the address-table count, and only for a read; a write
-  to it is refused. Entries in ETS's order: each object's first association (the address it sends
-  on, [§36](#36-ets-lists-the-sending-address-first-and-the-device-sends-on-it)) by com-object number,
+  to it is refused. Entries in ETS's order: each object's first association by com-object number,
   then every further association by com-object number and group index. As soon as an object below
   the highest linked one has a second address, this is not the order by object: in ETS's download
   of a Theben MIX 2 JMG 4 T the table lists objects `1, 2, 3, 14, … 243, 248`, then `2, 22`, the

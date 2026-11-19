@@ -22,9 +22,10 @@ export interface ComObjectLink { comObjNum: number; gaRaws: number[]; }
 export interface GroupTables { addr: Buffer; assoc: Buffer; }
 
 // The associations in the order ETS writes them: first each object's first link (first in the project's
-// Links) by object number, then every other link by object number and group index. Shown on System 7
-// (Gira M-0008, TheLuxa P300, Meteodata 140 S) and System B (Theben MIX 2, Theben DALI-Gateway), contradicted
-// by no capture; where every object has one link it is the order by object.
+// Links) by object number, then every other link by object number and group index. Shown on MV-0705
+// (Gira M-0008, TheLuxa P300) and System B (Theben MIX 2, Theben DALI-Gateway), contradicted by no capture;
+// not shown on MV-0701, where no capture has an object with two links. Where only the highest linked object
+// has more than one link it is the order by object.
 function associations(links: ComObjectLink[], idx: Map<number, number>): { gi: number; co: number }[] {
   const byObject = (a: { gi: number; co: number }, b: { gi: number; co: number }) => a.co - b.co || a.gi - b.gi;
   const all = (from: number) => links.flatMap((l) => l.gaRaws.slice(from).map((g) => ({ gi: idx.get(g)!, co: l.comObjNum })));

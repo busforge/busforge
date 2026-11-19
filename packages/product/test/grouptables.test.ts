@@ -2,8 +2,8 @@ import { test, expect, describe } from "bun:test";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "../src/grouptables.ts";
 
 describe("buildGroupTables", () => {
-  test("address table is sorted GAs, association is ordered by com-object number", () => {
-    // com-objects out of order, with one multi-GA link
+  test("address table is sorted GAs, association by com-object number where only the highest object has two links", () => {
+    // com-objects out of order, the highest one with two addresses
     const { addr, assoc } = buildGroupTables([
       { comObjNum: 5, gaRaws: [0x0a02] },
       { comObjNum: 3, gaRaws: [0x0a01] },
@@ -11,7 +11,7 @@ describe("buildGroupTables", () => {
     ]);
     // GAs sorted: 0a01,0a02,0a03 -> indices 1,2,3
     expect(addr.toString("hex")).toBe("00030a010a020a03");
-    // entries sorted by comObjNum then groupIdx: (1,3)(2,5)(1,8)(3,8)
+    // each object's first link by object, then object 8's second: (1,3)(2,5)(1,8)(3,8)
     expect(assoc.toString("hex")).toBe("0004" + "00010003" + "00020005" + "00010008" + "00030008");
   });
 
