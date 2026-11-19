@@ -1,10 +1,8 @@
-import { test, expect, describe, afterAll } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { test, expect, describe } from "bun:test";
 import { createState, handleApi, type AppState } from "../src/app.ts";
 import { unpackBusforge } from "../src/db/busforgeArtifact.ts";
 import { storeZip } from "../../../packages/project/test/ziputil.ts";
+import { tempDir } from "../../../tools/test-temp.ts";
 
 // A project file whose import leaves links out lists them per com-object: in the preview, on the
 // imported project, and in its .busforge export. One device with an application of three objects:
@@ -71,11 +69,8 @@ async function exportArtifact(state: AppState, id: string): Promise<{ bytes: Buf
   return { bytes: Buffer.from(await res.arrayBuffer()) };
 }
 
-const tmps: string[] = [];
-afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
 function freshState(): AppState {
-  const dir = mkdtempSync(join(tmpdir(), "busforge-dropped-"));
-  tmps.push(dir);
+  const dir = tempDir("busforge-dropped-");
   return createState({ dbPath: ":memory:", dataDir: dir, now: () => 1000 });
 }
 const post = async (state: AppState, path: string, file: File) => {

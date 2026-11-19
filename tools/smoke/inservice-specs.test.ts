@@ -1,6 +1,5 @@
-import { expect, mock, afterAll, afterEach, describe, test, setDefaultTimeout } from "bun:test";
-import { readFileSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { expect, mock, afterAll, describe, test, setDefaultTimeout } from "bun:test";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { KnxDevice } from "../../packages/knx/src/index.ts";
 import { buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, classify, classifyByMask, parseAppConfig, type AppConfig, type DeviceReadbackInfo, type DiagnosticPackage } from "../../packages/product/src/index.ts";
@@ -14,6 +13,7 @@ import { runInService, planInService, memorySnapshot, type InServiceIo, type InS
 import { Client, type FlashResult, type ConfigView } from "./client.ts";
 import type { DeviceSpec } from "./spec.ts";
 import { SPECS } from "./specs/index.ts";
+import { tempDir } from "../test-temp.ts";
 
 // Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 58.8 s with the
 // file alone (load 5-27) and up to 58.9 s with every workspace's tests in parallel (load 5-8). A full check on a busy
@@ -56,10 +56,6 @@ const { handleApi, createState } = await import("../../apps/server/src/app.ts");
 type AppState = ReturnType<typeof createState>;
 afterAll(() => { unit = null; });
 
-// Removed after each test, not at the end of the file: a run takes minutes and a killed run leaves only the running test's.
-let tmps: string[] = [];
-afterEach(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); tmps = []; });
-
 const IN_SERVICE = SPECS.filter((s) => s.provision === "in-service");
 
 test("every registered device-in-service spec has its unit emulated here, or is named as not emulable", () => {
@@ -92,8 +88,7 @@ corpusDescribe("the device-in-service specs, against the server and their emulat
   // A spec whose hidden parameters take the installation project's values gets them as the import of
   // that project file holds them, live and baseline alike, on a unit ETS downloaded.
   async function placed(spec: DeviceSpec, xml: string, projectValues?: Map<string, string>): Promise<{ state: AppState; pid: string; did: string }> {
-    const dir = mkdtempSync(join(tmpdir(), "busforge-inservice-server-"));
-    tmps.push(dir);
+    const dir = tempDir("busforge-inservice-server-");
     const state = createState({ dbPath: ":memory:", dataDir: dir, now: () => 1000 });
     const form = new FormData();
     form.set("file", new File([readFileSync(join(fixtures, "sample-config.knxproj"))], "ConfigDemo.knxproj"));

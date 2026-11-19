@@ -1,10 +1,8 @@
 import { test, expect, describe, mock, beforeAll, afterAll } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { KnxTransport } from "@busforge/knx";
 import type { Connection } from "../src/db/connections.ts";
 import type { Telegram } from "../src/telegram.ts";
+import { removeTempDir, tempDir } from "../../../tools/test-temp.ts";
 
 // The server half of the "keep the status honest" guarantee: when a live tunnel goes down on its
 // own (a heartbeat the gateway stopped answering, an inbound DISCONNECT_REQUEST, a USB error), the
@@ -95,13 +93,9 @@ const { createGroupAddress, createGroupRange } = await import("../src/db/grouped
 const { openSecureGroupTpdu } = await import("@busforge/knx");
 const { createConnection } = await import("../src/db/connections.ts");
 
-const tmps: string[] = [];
-afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
-
 for (const type of ["usb", "ip"] as const) {
   test(`${type}: API monitor connect refuses while a management job owns the interface`, async () => {
-    const dir = mkdtempSync(join(tmpdir(), "bus-owner-"));
-    tmps.push(dir);
+    const dir = tempDir("bus-owner-");
     const state = createState({ dbPath: ":memory:", dataDir: dir });
     const release = Promise.withResolvers<void>();
     const entered = Promise.withResolvers<void>();
@@ -128,7 +122,7 @@ for (const type of ["usb", "ip"] as const) {
       release.resolve();
       await state.bus.disconnect();
       state.db.close();
-      rmSync(dir, { recursive: true, force: true });
+      removeTempDir(dir);
     }
   });
 }
@@ -322,8 +316,7 @@ describe("Bus: secured group telegrams", () => {
 describe("sending group telegrams through the monitor connection", () => {
   const key = Buffer.alloc(16, 0x5a);
   async function setup(opts: { secured?: boolean; sender?: string } = {}) {
-    const dir = mkdtempSync(join(tmpdir(), "bus-send-"));
-    tmps.push(dir);
+    const dir = tempDir("bus-send-");
     const state = createState({ dbPath: ":memory:", dataDir: dir });
     createProject(state.db, "p", "Test", 0);
     createConnection(state.db, "c", conn, 0);
@@ -345,7 +338,7 @@ describe("sending group telegrams through the monitor connection", () => {
       await handleApi(new Request("http://x/api/projects/p/bus/connect", { method: "POST" }), state);
       const t = created.at(-1)!; t.assignedIa = 0x12fa; return t;
     };
-    const close = async () => { await state.bus.disconnect(); state.db.close(); rmSync(dir, { recursive: true, force: true }); };
+    const close = async () => { await state.bus.disconnect(); state.db.close(); removeTempDir(dir); };
     return { state, seen, send, connect, close };
   }
   const tpduOf = (cemi: Buffer) => cemi.subarray(9);

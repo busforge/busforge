@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { gaToNum, iaToNum } from "../packages/knx/src/index.ts";
@@ -14,6 +13,7 @@ import {
 } from "./capture-index.ts";
 import { BUSSARD_SYNTHETIC_DIR, captureText, corpusPath, corpusRoot } from "./corpus.ts";
 import { corpusDescribe, corpusTest } from "./corpus-test.ts";
+import { removeTempDir, tempDir } from "./test-temp.ts";
 
 const u16 = (n: number) => [(n >> 8) & 0xff, n & 0xff];
 
@@ -183,7 +183,7 @@ describe("pcap captures", () => {
       { fromServer: true, payload: connectRes },
       { fromServer: false, payload: tunnelFrame(REQ, "0.0.0", iaToNum("1.1.7"), [0x80]) },
     ]);
-    const dir = mkdtempSync(join(tmpdir(), "capture-index-"));
+    const dir = tempDir("capture-index-");
     try {
       writeFileSync(join(dir, "ets.pcapng"), bytes);
       const f = indexed(indexFile(dir, "ets.pcapng"));
@@ -192,15 +192,15 @@ describe("pcap captures", () => {
       expect(f.framesBuiltAs).toBe("ETS");
       expect(labelDisagrees(f)).toBe(false);
       expect(f.services).toEqual({ T_Connect: { sent: 1, received: 0 } });
-    } finally { rmSync(dir, { recursive: true }); }
+    } finally { removeTempDir(dir); }
   });
 
   test("its refusal is the reason a capture is not read", () => {
-    const dir = mkdtempSync(join(tmpdir(), "capture-index-"));
+    const dir = tempDir("capture-index-");
     try {
       writeFileSync(join(dir, "x.pcap"), pcap([{ fromServer: false, payload: tunnelFrame(REQ, "0.0.0", iaToNum("1.1.7"), [0x80]) }]));
       expect(refused(indexFile(dir, "x.pcap"))).toStartWith("pcap capture tools/pcap.ts refuses: no datagram carries a server's answer");
-    } finally { rmSync(dir, { recursive: true }); }
+    } finally { removeTempDir(dir); }
   });
 });
 
@@ -339,7 +339,7 @@ describe("secured telegrams of a proxy log", () => {
 
 describe("the keys of the corpus", () => {
   test("come from its keyrings and projects with the passwords given, plus the environment's; one none opens is named", () => {
-    const root = mkdtempSync(join(tmpdir(), "capture-index-"));
+    const root = tempDir("capture-index-");
     try {
       for (const d of ["captures", "internal/captures", "collections"]) mkdirSync(join(root, d), { recursive: true });
       const keyring = (toolKey: Buffer, password: string) =>
@@ -372,11 +372,11 @@ describe("the keys of the corpus", () => {
       }
       expect(written.toLowerCase()).not.toContain("03d500381001"); // the opened A_PropertyValue_Read
       expect(written.toLowerCase()).not.toContain("070707070707"); // the Sync challenge
-    } finally { rmSync(root, { recursive: true }); }
+    } finally { removeTempDir(root); }
   });
 
   test("a project names the keys it holds but did not give: a device without a serial, a key that is not 16 bytes", () => {
-    const root = mkdtempSync(join(tmpdir(), "capture-index-"));
+    const root = tempDir("capture-index-");
     try {
       for (const d of ["captures", "internal/captures", "collections"]) mkdirSync(join(root, d), { recursive: true });
       // Synthetic keys: DI-1 has no serial, so the project reader gives no tool key for it; GA 1 carries 15 bytes.
@@ -391,7 +391,7 @@ describe("the keys of the corpus", () => {
         omitted: ["1 unread installation(s) after the first", "the tool keys of 1 device(s) without a serial", "group key 0/0/1: 15 bytes, not 16"],
       }]);
       expect(renderMarkdown(index)).toContain("- `captures/p.knxproj`: 0 device, 0 group; not given: 1 unread installation(s) after the first, the tool keys of 1 device(s) without a serial, group key 0/0/1: 15 bytes, not 16");
-    } finally { rmSync(root, { recursive: true }); }
+    } finally { removeTempDir(root); }
   });
 
   test("a key the environment gives is 16 bytes of hex", () => {
@@ -405,7 +405,7 @@ describe("the keys of the corpus", () => {
 
 describe("the corpus walk", () => {
   test("reads a gzipped log, leaves out the index's own files and lists the rest in path order", () => {
-    const root = mkdtempSync(join(tmpdir(), "capture-index-"));
+    const root = tempDir("capture-index-");
     try {
       for (const d of ["captures", "internal/captures", "collections/b"]) mkdirSync(join(root, d), { recursive: true });
       const log = tunnel("Busforge->BRIDGE", REQ, "1.1.254", iaToNum("1.1.7"), [0x80], 0xbc);
@@ -419,7 +419,7 @@ describe("the corpus walk", () => {
         ["captures/a.log", ["Busforge"], "Busforge"], ["internal/captures/run.log.gz", ["Busforge"], "Busforge"],
       ]);
       expect(index.notIndexed).toEqual([{ file: "collections/b/collect.json", reason: "not a telegram log (.json)" }]);
-    } finally { rmSync(root, { recursive: true }); }
+    } finally { removeTempDir(root); }
   });
 });
 

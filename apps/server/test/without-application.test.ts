@@ -1,9 +1,7 @@
-import { test, expect, describe, afterAll } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { test, expect, describe } from "bun:test";
 import { createState, handleApi, type AppState } from "../src/app.ts";
 import { storeZip } from "../../../packages/project/test/ziputil.ts";
+import { tempDir } from "../../../tools/test-temp.ts";
 
 // A product whose Hardware2Program names no application program takes its individual address and
 // nothing else, as ETS shows it (Adr/Prg/Par/Grp/Cfg "–", programming offers the address only). The
@@ -30,11 +28,8 @@ const knxproj = (loaded = `IndividualAddressLoaded="true" MediumConfigLoaded="tr
   storeZip({ [`${M}/Hardware.xml`]: hardware, "P-0001/0.xml": project(loaded) });
 const DEVICE = "P-0001-0_DI-1";
 
-const tmps: string[] = [];
-afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
 function fresh(): AppState {
-  const dir = mkdtempSync(join(tmpdir(), "busforge-noapp-"));
-  tmps.push(dir);
+  const dir = tempDir("busforge-noapp-");
   return createState({ dbPath: ":memory:", dataDir: dir, now: () => 1000 });
 }
 type Res = { status: number; body: any };

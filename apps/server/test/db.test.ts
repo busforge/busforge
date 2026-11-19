@@ -1,6 +1,5 @@
-import { test, expect, describe, afterAll } from "bun:test";
-import { readFileSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { test, expect, describe } from "bun:test";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { parseProject } from "@busforge/project";
@@ -22,14 +21,11 @@ import { deleteGroupAddress } from "../src/db/groupedit.ts";
 import { appProgramId } from "@busforge/project";
 import { parseAppConfig, sameParamValue } from "@busforge/product";
 import { decodeGroupTpdu, undecodedSecureTelegram } from "../src/telegram.ts";
+import { tempDir } from "../../../tools/test-temp.ts";
 
 const sampleXml = readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures", "sample-0.xml"), "utf8");
 const demo = () => parseProject(sampleXml, undefined, "Demo");
 const fresh = () => openDb(":memory:");
-
-const tmps: string[] = [];
-afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
-const tempDir = (prefix: string) => { const dir = mkdtempSync(join(tmpdir(), prefix)); tmps.push(dir); return dir; };
 
 describe("schema/migrations", () => {
   test("a device row stored before its program id was kept takes the program its Hardware2Program id names", () => {

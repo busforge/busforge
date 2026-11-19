@@ -1,11 +1,11 @@
-import { test as plainTest, expect, afterAll, setDefaultTimeout } from "bun:test";
-import { readFileSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { test as plainTest, expect, setDefaultTimeout } from "bun:test";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusTest as test } from "../../../tools/corpus-test.ts";
 import { createState, handleApi, type AppState } from "../src/app.ts";
 import { getDeviceComObjOverrides } from "../src/db/deviceparams.ts";
+import { tempDir } from "../../../tools/test-temp.ts";
 
 // Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 0.5 s with the
 // file alone (load 5-27) and up to 0.5 s with every workspace's tests in parallel (load 5-8). A full check on a busy
@@ -17,8 +17,6 @@ setDefaultTimeout(60_000);
 // family's full download writes; an edit is stored as ETS stores it and counts as a change until a
 // write that authors the com-object table carries it.
 
-const dirs: string[] = [];
-afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
 const req = (path: string, init?: RequestInit) => new Request(`http://x${path}`, init);
 const jreq = (path: string, method: string, body: unknown) =>
   req(path, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -26,8 +24,7 @@ const j = async (res: Response | null) => (await res!.json()) as any;
 const objects = (v: any) => v.blocks.flatMap((b: any) => b.items).filter((i: any) => i.kind === "comObject").map((i: any) => i.comObject);
 
 async function setup(appFile?: string) {
-  const dir = mkdtempSync(join(tmpdir(), "busforge-flagedit-"));
-  dirs.push(dir);
+  const dir = tempDir("busforge-flagedit-");
   const state: AppState = createState({ dbPath: ":memory:", dataDir: dir, now: () => 1000 });
   const form = new FormData();
   form.set("file", new File([readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures", "sample-config.knxproj"))], "ConfigDemo.knxproj"));

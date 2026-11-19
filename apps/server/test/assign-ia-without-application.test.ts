@@ -1,8 +1,8 @@
 import { test, expect, describe, mock, afterAll } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { storeZip } from "../../../packages/project/test/ziputil.ts";
+import { tempDir } from "../../../tools/test-temp.ts";
 
 // A verified address assignment is everything a product without an application program takes, so it
 // marks such a device programmed; on a device with an application only the full download does. The
@@ -32,11 +32,8 @@ const project = `<?xml version="1.0" encoding="utf-8"?>
   </Segment></Line></Area></Topology>
 </Installation></Installations></Project></KNX>`;
 
-const tmps: string[] = [];
-afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
 async function setup(): Promise<{ state: AppState; projectId: string }> {
-  const dir = mkdtempSync(join(tmpdir(), "busforge-assign-noapp-"));
-  tmps.push(dir);
+  const dir = tempDir("busforge-assign-noapp-");
   const state = createState({ dbPath: ":memory:", dataDir: dir, now: () => 1000 });
   const call = async (path: string, init?: RequestInit) => (await handleApi(new Request(`http://x${path}`, init), state))!.json() as Promise<any>;
   const form = new FormData();
