@@ -5,6 +5,7 @@ import { Ban, Check, Circle, Download, FileJson, Loader2, ShieldAlert, Stethosco
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Notice as WarningNotice } from "@/components/ui/notice";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api, ApiError, taskActive, type DiagnosticPackage, type Task } from "../api.ts";
 import { qk } from "../queries.ts";
@@ -248,10 +249,10 @@ function Preview({ pkg, onClose }: { pkg: DiagnosticPackage; onClose: () => void
               <li>{t("diagnostic.preview.removed.serial")}</li>
             </ul>
           </Section>
-          <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
+          <WarningNotice className="flex items-start gap-2">
             <ShieldAlert className="mt-0.5 size-4 shrink-0" />
             <div><p className="font-medium">{t("diagnostic.preview.rawTitle")}</p><p>{t("diagnostic.preview.raw")}</p></div>
-          </div>
+          </WarningNotice>
           <Section title={t("diagnostic.preview.keepTitle")}>
             <p>{t("diagnostic.preview.keep")}</p>
             <p className="mt-1">{t("diagnostic.preview.lifetime")}</p>

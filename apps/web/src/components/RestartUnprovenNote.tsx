@@ -7,5 +7,5 @@ import type { FlashResult } from "../api.ts";
 export function RestartUnprovenNote({ result }: { result: FlashResult }) {
   const { t } = useTranslation();
   if (result.kind !== "flashed" || !result.verified || !result.restartUnproven) return null;
-  return <span className="text-amber-600 dark:text-amber-400" data-testid="flash-restart-unproven">{t("flash.restartUnproven")}</span>;
+  return <span className="text-warning" data-testid="flash-restart-unproven">{t("flash.restartUnproven")}</span>;
 }

@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/icon-button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Notice } from "@/components/ui/notice";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
@@ -85,12 +86,12 @@ export function ExportDialog({ projectId, open: openProp, onOpenChange }: { proj
         </div>
 
         {exposesKeys && (
-          <p className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400" data-testid="export-keys-warning">
+          <Notice className="flex items-start gap-2" data-testid="export-keys-warning">
             <ShieldAlert className="mt-0.5 size-4 shrink-0" />
             {secureDevices > 0
               ? t("export.secretsWarning", { count: secureDevices })
               : t("export.groupKeysWarning", { count: project?.groupKeyCount ?? 0 })}
-          </p>
+          </Notice>
         )}
 
         {hasKeys && (

@@ -19,6 +19,7 @@ import { scrollToSection, useStickyVar } from "@/lib/stickyChrome.ts";
 import { useScrollSpy } from "@/lib/scrollSpy.ts";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
+import { Notice } from "@/components/ui/notice";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -499,17 +500,17 @@ export function DeviceConfig() {
   };
 
   const secondary = [
-    { key: "device.revert", icon: <RotateCcw className="size-4" />, onClick: () => setRevertOpen(true), opts: { ghost: true, disabled: !hasChanges || saving, testId: "revert-device" } },
+    { key: "device.revert", icon: <RotateCcw className="size-4" />, onClick: () => setRevertOpen(true), opts: { disabled: !hasChanges || saving, testId: "revert-device" } },
     { key: "device.readFromDevice", icon: readBack.isPending ? <Loader2 className="size-4 animate-spin" /> : <HardDriveDownload className="size-4" />, onClick: doReadBack, opts: { disabled: addressOnly || readBack.isPending || saving || (!!view?.readbackSupport && !view.readbackSupport.params && !view.readbackSupport.links), testId: "read-back" } },
     // Read-only, so offered for every device, also one Busforge cannot program or has no application for.
     { key: "diagnostic.open", icon: <Stethoscope className="size-4" />, onClick: () => setDiagnosticOpen(true), opts: { disabled: !device, testId: "diagnostic-open" } },
   ];
   // The header's secondary actions: icon buttons with a mouse (their tooltip names them); on a touch
   // screen, which shows no tooltip, the same actions are labelled items of the device menu.
-  const actionBtn = (key: string, icon: ReactNode, onClick: () => void, opts?: { ghost?: boolean; disabled?: boolean; testId?: string }) => (
+  const actionBtn = (key: string, icon: ReactNode, onClick: () => void, opts?: { disabled?: boolean; testId?: string }) => (
     <IconButton
-      variant={opts?.ghost ? "ghost" : "outline"} label={t(key)}
-      className={cn(opts?.ghost && "text-muted-foreground", "pointer-coarse:hidden xl:w-auto xl:px-3")} tooltipClassName="xl:hidden"
+      variant="outline" label={t(key)}
+      className="pointer-coarse:hidden xl:w-auto xl:px-3" tooltipClassName="xl:hidden"
       disabled={opts?.disabled} onClick={onClick} data-testid={opts?.testId}
     >
       {icon}<span className="hidden xl:inline">{t(key)}</span>
@@ -548,7 +549,7 @@ export function DeviceConfig() {
           <TooltipTrigger asChild>
             <span className={cn("inline-flex", compact ? "min-w-0 max-w-full" : "my-1")} data-testid={`button-${item.button.handler}`}>
               <Button type="button" variant="outline" size="sm" disabled aria-disabled className="min-w-0 justify-start">
-                <AlertTriangle className="size-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+                <AlertTriangle className="size-3.5 shrink-0 text-warning" />
                 <span className="truncate">{item.button.text}</span>
               </Button>
             </span>
@@ -615,10 +616,10 @@ export function DeviceConfig() {
     }
     if (item.kind === "unsupported") {
       return (
-        <div key={key} className="my-1 flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-sm text-amber-600 dark:text-amber-400">
+        <Notice key={key} className="my-1 flex items-center gap-2 py-1.5">
           <AlertTriangle className="size-4 shrink-0" />
           <span>{t("device.unsupportedElement", { tag: item.label })}</span>
-        </div>
+        </Notice>
       );
     }
     return (

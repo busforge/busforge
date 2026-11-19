@@ -12,6 +12,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Notice } from "@/components/ui/notice";
 import { GaLabel } from "@/components/GaLabel.tsx";
 import type { GaOption } from "./GaCombobox.tsx";
 import { cn } from "@/lib/utils";
@@ -190,9 +191,9 @@ export function ReplaceDeviceDialog({ open, onOpenChange, projectId, device, vie
             )}
 
             {hasCollision && (
-              <p className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+              <Notice className="flex items-start gap-2">
                 <AlertTriangle className="mt-0.5 size-4 shrink-0" /> {t("replace.collision")}
-              </p>
+              </Notice>
             )}
             {!!replaceProduct.error && (
               <div className="space-y-1 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive" data-testid="replace-error">

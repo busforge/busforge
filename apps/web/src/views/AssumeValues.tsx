@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { ApiError, type AssumedValue, type DeviceConfigView } from "../api.ts";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Notice } from "@/components/ui/notice";
 import { localizeError } from "../lib/apiError.ts";
 
 type KeptReasons = NonNullable<NonNullable<DeviceConfigView["readback"]>["neverProgrammedKept"]>;
@@ -75,9 +76,9 @@ export function AssumeValuesPanel({ candidates, unresolved, choices, onChoose, o
   const list = assumeList(candidates, choices);
   const chosen = list.assume.length + list.invalid.length;
   return (
-    <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300" data-testid="assume-values">
+    <Notice className="space-y-2" data-testid="assume-values">
       <p className="flex items-center gap-2 font-medium"><AlertTriangle className="size-4 shrink-0" /> {t("device.assumeTitle")}</p>
-      <p className="text-xs text-amber-700/90 dark:text-amber-300/90">{t("device.assumeIntro", { objects: unresolved.join(", ") })}</p>
+      <p className="text-xs text-warning/90">{t("device.assumeIntro", { objects: unresolved.join(", ") })}</p>
       <ul className="max-h-72 space-y-1 overflow-y-auto pr-1">
         {candidates.map((c) => (
           <li key={c.refId} className="flex flex-col gap-1 text-foreground sm:flex-row sm:items-center sm:justify-between">
@@ -113,7 +114,7 @@ export function AssumeValuesPanel({ candidates, unresolved, choices, onChoose, o
           {pending && <Loader2 className="size-4 animate-spin" />} {t("device.assumeSubmit")}
         </Button>
       </div>
-    </div>
+    </Notice>
   );
 }
 
@@ -136,14 +137,14 @@ export function UnprovenAssumptionsNote({ params, hidden = 0 }: { params: { refI
   const names = params.map((p) => p.name).join(", ");
   const unshown = hidden ? t("device.unprovenHiddenCount", { count: hidden }) : "";
   return (
-    <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-sm text-amber-700 dark:text-amber-300" data-testid="unproven-assumptions">
+    <Notice className="py-1.5" data-testid="unproven-assumptions">
       <p className="flex items-center gap-2 font-medium"><AlertTriangle className="size-4 shrink-0" /> {t("device.unprovenTitle")}</p>
-      <p className="mt-0.5 text-xs text-amber-700/90 dark:text-amber-300/90">{t("device.unprovenBody", { params: names && unshown ? t("device.unprovenAndHidden", { names, unshown }) : names || unshown })}</p>
-    </div>
+      <p className="mt-0.5 text-xs text-warning/90">{t("device.unprovenBody", { params: names && unshown ? t("device.unprovenAndHidden", { names, unshown }) : names || unshown })}</p>
+    </Notice>
   );
 }
 
-const noteCls = "flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-sm text-amber-700 dark:text-amber-300";
+const noteCls = "flex items-start gap-2 py-1.5";
 
 // Objects of device links the last read left unresolved that no assumption places: those the project's
 // own values hide (Revert takes the device's values), those the read could not tell without the device's
@@ -156,7 +157,7 @@ export function UnresolvedNotes({ hidden, unknown, unplacedUnoffered }: { hidden
   return (
     <>
       {notes.map(([id, key, objects]) => (
-        <div key={id} className={noteCls} data-testid={id}><AlertTriangle className="mt-0.5 size-4 shrink-0" /><span>{t(key, { objects: objects.join(", ") })}</span></div>
+        <Notice key={id} className={noteCls} data-testid={id}><AlertTriangle className="mt-0.5 size-4 shrink-0" /><span>{t(key, { objects: objects.join(", ") })}</span></Notice>
       ))}
     </>
   );
@@ -170,16 +171,16 @@ export function NeverProgrammedKeptNote({ reasons, ets = false }: { reasons: Kep
   const { t, i18n } = useTranslation();
   if (!reasons.length) return null;
   return (
-    <div className={noteCls} data-testid="never-programmed-kept">
+    <Notice className={noteCls} data-testid="never-programmed-kept">
       <AlertTriangle className="mt-0.5 size-4 shrink-0" />
       <div className="space-y-0.5">
         <p className="font-medium">{t(ets ? "device.etsNotDownloadedKeptTitle" : "device.neverProgrammedKeptTitle")}</p>
-        <p className="text-xs text-amber-700/90 dark:text-amber-300/90">{t("device.neverProgrammedKeptBody")}</p>
-        <ul className="list-disc pl-4 text-xs text-amber-700/90 dark:text-amber-300/90">
+        <p className="text-xs text-warning/90">{t("device.neverProgrammedKeptBody")}</p>
+        <ul className="list-disc pl-4 text-xs text-warning/90">
           {reasons.map((r) => <li key={r.reason}>{t(`device.neverProgrammedReason.${r.reason}`)}{r.code ? ` (${i18n.exists(`errors.${r.code}`) ? t(`errors.${r.code}`) : t("device.errorCode", { code: r.code })})` : ""}</li>)}
         </ul>
       </div>
-    </div>
+    </Notice>
   );
 }
 
