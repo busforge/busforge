@@ -89,9 +89,14 @@ where the serial cannot tell the device apart:
   into it, are refused before anything reaches the bus.
 - Before the write, the serial-number read must be answered from exactly one address; two
   addresses answering for one serial refuse the assignment, naming both.
+- After the write, the verifying read must again be answered from exactly one address, the new
+  one; a second unit answering for the serial from elsewhere leaves the write unverified
+  (`IA_WRITE_UNVERIFIED`), naming both addresses.
 
 Devices that share a serial and sit on the same address (two virgin units on `15.15.255`)
 answer from one address, so the read cannot tell them apart and Busforge does not see the case.
+The same holds after the write: a second unit that missed the read before it but took the write
+sits on the new address too, answers from it, and the verification passes; this is not covered.
 Where units may share a serial, assign their addresses by programming mode.
 
 ### Using it

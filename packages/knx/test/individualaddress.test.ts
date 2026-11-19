@@ -380,14 +380,15 @@ describe("assigning an individual address by serial number", () => {
   });
 
   test("a second unit with the serial that shows itself only after the write leaves the write unverified", async () => {
-    // It misses the probe and the write, then answers the verify read from where it is.
-    const late = Object.assign(withSerial("1.1.7", "00fa01020304"), { serialDeafFor: 1, takesWrite: false });
+    // It misses the probe and the write, then answers the verify read from where it is: behind the new
+    // address, so only the check for a second responder, not the check of the first one, refuses.
+    const late = Object.assign(withSerial("1.5.0", "00fa01020304"), { serialDeafFor: 1, takesWrite: false });
     const bus = new SimBus([withSerial("15.15.255", "00fa01020304"), late]);
 
     const err = await assignAddressBySerial(bus, "00fa01020304", NEW_IA, fast).then(() => null, (e) => e);
 
     expect((err as KnxError).code).toBe("IA_WRITE_UNVERIFIED");
-    expect((err as KnxError).message).toContain(NEW_IA);
+    expect((err as KnxError).message).toContain(`devices on ${NEW_IA}, 1.5.0 now all answer for the serial`);
   }, 100_000); // one silent-address probe: the free-address check
 
   for (const serial of ["00FA0102030", "00FA010203045", "0x00FA01020304", "00FA0102030G"]) {

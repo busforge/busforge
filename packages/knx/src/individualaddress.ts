@@ -308,9 +308,9 @@ export async function writeAddressBySerial(tun: KnxTransport, serial: string, ia
 //   1. The device must actually be on this line (it answers a serial-number read), and it alone: a
 //      serial that is not set, or that answers from two addresses, is refused before the write.
 //   2. The target address must not already answer from a DIFFERENT device.
-//   3. Afterwards the device must report the new address FOR THAT SERIAL. Identity, not presence:
-//      "something answers at the target" would also be true if the write never landed and an
-//      unrelated device happened to sit there.
+//   3. Afterwards the device must report the new address FOR THAT SERIAL, and nothing else may answer for
+//      it from another address. Identity, not presence: "something answers at the target" would also be
+//      true if the write never landed and an unrelated device happened to sit there.
 export async function assignAddressBySerial(tun: KnxTransport, serial: string, ia: string, opts: AssignIaOptions = {}): Promise<AssignIaResult> {
   const { probeMs = 3000, settleMs = 1000, onProgress } = opts;
 
