@@ -11,7 +11,7 @@
 //
 // All device access goes through InServiceIo, so the sequence runs against a scripted device in
 // inservice.test.ts exactly as against hardware.
-import { gaToNum, numToGa } from "../../packages/knx/src/index.ts";
+import { gaToNum, numToGa, parseGa } from "../../packages/knx/src/index.ts";
 import { BCU1_APPLICATION_ID_RANGE, maskInfo, planForMask, unreadableReason, type DeviceReadbackInfo, type DiagnosticPackage, type SystemFamily } from "../../packages/product/src/index.ts";
 import { allComObjects, allParams, findComObject, findParam, type ConfigView, type DeviceCapabilities, type FlashResult } from "./client.ts";
 import { judgeLoadStates, judgeRestoredConfig, judgeRunError, type RebootObservation } from "./persistence.ts";
@@ -353,8 +353,7 @@ export function optionProblems(spec: DeviceSpec, opts: InServiceOptions): string
   if (!opts.testGa) return [...out, "the link step needs the test group address (--test-ga=<main/middle/sub>)"];
   // Three levels: the link step creates it as a project group address, which takes main/middle/sub.
   const bad = `--test-ga=${opts.testGa} is not a group address of the form main/middle/sub`;
-  if (!/^\d+\/\d+\/\d+$/.test(opts.testGa)) return [...out, bad];
-  try { gaToNum(opts.testGa); return out; } catch { return [...out, bad]; }
+  return parseGa(opts.testGa) === null ? [...out, bad] : out;
 }
 
 // The tool key the installation's project file holds for an in-service unit (`sec`, base64 as the import

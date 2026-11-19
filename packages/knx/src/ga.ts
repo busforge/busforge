@@ -1,7 +1,8 @@
-// Group-address formatting, kept dependency-free (no Buffer, no node built-ins) so it can
-// be imported from the browser bundle via the "@busforge/knx/ga" subpath as well as from
-// the node side. This is THE single level-aware GA formatter, so the 5/3/8-bit math lives
-// in exactly one place shared by the parser, the server edit endpoints, and the web.
+// Group-address formatting and three-level parsing, kept dependency-free (no Buffer, no node
+// built-ins) so it can be imported from the browser bundle via the "@busforge/knx/ga" subpath
+// as well as from the node side. This is THE single level-aware GA formatter and the single
+// three-level range check, so the 5/3/8-bit math lives in exactly one place shared by the
+// parser, the server edit endpoints, the web and the tools.
 
 // A project's group-address style: three-level main(5)/middle(3)/sub(8) "m/n/s", or
 // two-level main(5)/sub(11) "m/s". ETS's "Free" style is treated as three-level (its
