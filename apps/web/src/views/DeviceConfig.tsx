@@ -47,6 +47,7 @@ import { DroppedLinksList } from "@/components/DroppedLinksList.tsx";
 import { DcaModuleDialog } from "../dca/DcaModuleDialog.tsx";
 import { cn } from "@/lib/utils";
 import { errMsg } from "../lib/apiError.ts";
+import { calcRefusalReason } from "../lib/calcRefusal.ts";
 import { ApiError } from "../api.ts";
 
 function flattenGas(ranges: GroupRangeNode[], out: GaOption[]) {
@@ -91,7 +92,7 @@ function CalculationBadges({ param }: { param: CfgParamView }) {
         const testId = `calc-${param.refId}${k ? `-${k}` : ""}`;
         if (m.state === "refused") {
           return (
-            <Badge key={k} tone={m.otherSideReaches ? "warning" : "neutral"} title={t(m.otherSideReaches ? "device.calcRefusedTitle" : "device.calcRefusedQuietTitle", { name: m.name, reason: m.reason ?? "" })} data-testid={testId}>
+            <Badge key={k} tone={m.otherSideReaches ? "warning" : "neutral"} title={t(m.otherSideReaches ? "device.calcRefusedTitle" : "device.calcRefusedQuietTitle", { name: m.name, reason: calcRefusalReason(t, m.refusal) })} data-testid={testId}>
               <Calculator />{t("device.calcRefusedBadge")}
             </Badge>
           );
