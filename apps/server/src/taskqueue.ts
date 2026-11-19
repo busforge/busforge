@@ -53,8 +53,9 @@ export interface Task {
   queuedAt: number;
   startedAt: number | null;
   finishedAt: number | null;
-  // Whether a cancel is accepted now: queued, a running task that writes nothing, or a running write
-  // still in the read-only part before its first write (see TaskMeta.cancelBeforeWrite).
+  // Whether a cancel is accepted now: queued, a running task that writes nothing, a running write
+  // still in the read-only part before its first write (see TaskMeta.cancelBeforeWrite), or a running
+  // write that undoes itself on a cancel (TaskMeta.undoesOnCancel).
   cancellable: boolean;
 }
 
@@ -96,11 +97,13 @@ export interface TaskMeta {
   writes: boolean;
   snapshotId?: string | null;
   // A write whose job calls enterWrites right before its first write to the device: until then it
-  // only reads, and a cancel stops it there. Without it a running write is never cancellable.
+  // only reads, and a cancel stops it there. Without it (or undoesOnCancel) a running write is never
+  // cancellable.
   cancelBeforeWrite?: boolean;
   // A write whose job answers a cancel by undoing what it wrote before it ends (finding a device:
   // programming mode back off, read back). A cancel is accepted while it runs, and a shutdown cancels it
-  // and waits for it. Its task ends as the job's own result says, not as cancelled.
+  // and waits for it. A cancel accepted before its enterWrites ends the task as cancelled; one after it
+  // ends the task as the job's own result says.
   undoesOnCancel?: boolean;
 }
 

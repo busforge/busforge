@@ -228,10 +228,15 @@ for 30 seconds (or until **Switch off**), and switches it off again:
 6. write 00      always, also after an error or a stop; then read PID 54 back: it must read 0
 ```
 
+A device already in programming mode (its button pressed) is held and switched off the same way: off is
+the state every run ends in.
+
 Step 6 is the one that matters: a device left in programming mode takes part in the next address
-assignment on its line. If the write or the read-back fails, it is tried once more on a new connection;
-if that fails too, the task fails with `LOCATE_PROG_MODE_LEFT_ON`, and the message asks for the
-programming button to be pressed until the LED is off. While the LED is on the bus queue runs nothing
+assignment on its line. If the write or the read-back fails, it is tried once more with the interface's
+transport opened again and a new connection to the device; if that fails too, the task fails with
+`LOCATE_PROG_MODE_LEFT_ON`, and the message asks for the programming button to be pressed until the LED
+is off. A run that broke off before (a read during the hold unanswered) and then switched the mode off
+fails with `LOCATE_INTERRUPTED`, which says the mode is off and read back. While the LED is on the bus queue runs nothing
 else, so no address assignment of this server meets the device in programming mode. A Data Secure
 device is switched under its tool key, like every other access to it.
 

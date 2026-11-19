@@ -30,8 +30,10 @@ export interface BlinkOptions {
 
 // How the hold ended: its time ran out, it was cancelled, or the device left programming mode itself.
 export type BlinkEnd = "time" | "cancel" | "device";
+// heldMs: how long the hold ran, from programming mode taken to the hold's end.
 export interface BlinkResult { kind: "located"; endedBy: BlinkEnd; heldMs: number; progModeOff: true }
 
+const messageOf = (e: unknown): string => e instanceof Error ? e.message : typeof e === "string" ? e : JSON.stringify(e);
 const isOn = (v: Buffer | null) => v !== null && v.length > 0 && (v[0] & ON) !== 0;
 
 // Wait `ms`, or less when the signal aborts. Resolves either way.
@@ -63,8 +65,9 @@ async function writeOffAndRead(dev: KnxDevice): Promise<void> {
   if (isOn(back)) throw new Error(`the device still reports programming mode (PID 54 reads ${back.toString("hex")})`);
 }
 
-// Programming mode off, read back. A failure on the session's connection gets one more try on a new one:
-// the link may have broken during the hold, and this is the step that must not be left undone.
+// Programming mode off, read back. A failure gets one more try on a new link: the interface's transport is
+// opened again (a KNXnet/IP tunnel may have closed during the hold), then a new connection to the device
+// (synced again under Data Secure). This is the step that must not be left undone.
 async function switchOff(dev: KnxDevice): Promise<void> {
   try {
     await writeOffAndRead(dev);
@@ -72,17 +75,18 @@ async function switchOff(dev: KnxDevice): Promise<void> {
   } catch (first) {
     try {
       await dev.disconnect();
+      await dev.reopenTransport();
       await dev.connect();
       await writeOffAndRead(dev);
     } catch (second) {
-      const why = (e: unknown) => e instanceof Error ? e.message : String(e);
       throw new KnxError("LOCATE_PROG_MODE_LEFT_ON",
-        `programming mode could not be shown off (${why(first)}; again on a new connection: ${why(second)}); the device may still be in programming mode and would take part in the next address assignment: press its programming button until the LED is off`);
+        `programming mode could not be shown off (${messageOf(first)}; again on a new link: ${messageOf(second)}); the device may still be in programming mode and would take part in the next address assignment: press its programming button until the LED is off`);
     }
   }
 }
 
-// Switch programming mode on, hold it, and switch it off, read back.
+// Switch programming mode on, hold it, and switch it off, read back. A device already in programming
+// mode (its button pressed) is held and switched off the same way: off is the state every run ends in.
 export async function blinkProgrammingMode(dev: KnxDevice, opts: BlinkOptions): Promise<BlinkResult> {
   const { holdMs, pollMs = 2000, signal, onProgress, enterWrites } = opts;
   onProgress?.("prog-mode-read");
@@ -92,7 +96,7 @@ export async function blinkProgrammingMode(dev: KnxDevice, opts: BlinkOptions): 
       "the device answers its programming-mode property (device object, PID 54) with no element, so its programming mode is not switched over the bus; find it by its address label");
   }
   enterWrites?.();
-  const started = Date.now();
+  let heldMs = 0;
   let endedBy: BlinkEnd = "cancel";
   let failure: unknown = null;
   try {
@@ -103,7 +107,9 @@ export async function blinkProgrammingMode(dev: KnxDevice, opts: BlinkOptions): 
         `the device did not take programming mode (it answered the write with ${echo.length ? echo.toString("hex") : "no element"})`);
     }
     onProgress?.("prog-mode-hold");
+    const started = Date.now();
     endedBy = await hold(dev, holdMs, pollMs, signal);
+    heldMs = Date.now() - started;
   } catch (e) {
     failure = e;
   }
@@ -112,9 +118,14 @@ export async function blinkProgrammingMode(dev: KnxDevice, opts: BlinkOptions): 
     await switchOff(dev);
   } catch (off) {
     // The mode left on is what matters now; what failed before is kept in the message.
-    if (failure && off instanceof KnxError) throw new KnxError(off.code, `${off.message}; before that: ${failure instanceof Error ? failure.message : String(failure)}`);
+    if (failure && off instanceof KnxError) throw new KnxError(off.code, `${off.message}; before that: ${messageOf(failure)}`);
     throw off;
   }
-  if (failure) throw failure;
-  return { kind: "located", endedBy, heldMs: Date.now() - started, progModeOff: true };
+  if (failure instanceof KnxError && failure.code === "LOCATE_PROG_MODE_NOT_TAKEN") throw failure;
+  if (failure) {
+    // The run broke off, and the mode is off, read back: both are said, so nobody goes looking for a lit LED.
+    const code = (failure as { code?: unknown }).code;
+    throw new KnxError("LOCATE_INTERRUPTED", `finding the device broke off (${messageOf(failure)}); programming mode was switched off and read back`, typeof code === "string" ? { cause: code } : undefined);
+  }
+  return { kind: "located", endedBy, heldMs, progModeOff: true };
 }

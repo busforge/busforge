@@ -18,8 +18,9 @@ class SimDevice implements KnxTransport {
   refusesOn = false;       // a write of 1 is answered with 0
   writesOffFail = 0;       // this many writes of 0 are acknowledged and never answered
   buttonAfterReads = -1;   // after this many reads in the hold, the device leaves programming mode itself
+  readsFailWhileOn = false; // reads while in programming mode are acknowledged and never answered
   private reads = 0;
-  async connect() {}
+  async connect() { this.log.push("tunnel-connect"); }
   async disconnect() {}
   async sendCemi(cemi: Buffer): Promise<void> {
     const tpdu = cemi.subarray(9);
@@ -36,6 +37,7 @@ class SimDevice implements KnxTransport {
       this.reads++;
       if (this.buttonAfterReads >= 0 && this.reads > this.buttonAfterReads + 1) this.progMode = 0;
       this.log.push(`read=${this.progMode.toString(16).padStart(2, "0")}`);
+      if (this.readsFailWhileOn && this.progMode) { this.onCemi?.(0x1138, this.assignedIa, tpAck(p.seq), false); return; }
       if (this.noProperty) return reply(Buffer.from([head[0], head[1], 0x00, 0x01]));
       return reply(Buffer.concat([head, Buffer.from([this.progMode])]));
     }
@@ -110,13 +112,25 @@ describe("blinking the programming LED", () => {
     expect(writes(sim)).toEqual(["write:01", "write:00"]);
   });
 
+  test("a read failing during the hold breaks it off, says so, and still ends with the mode off, read back", async () => {
+    const sim = new SimDevice();
+    sim.readsFailWhileOn = true;
+    const e = await blinkProgrammingMode(device(sim), { holdMs: 60_000, pollMs: 10 }).catch((x: unknown) => x);
+    expect((e as { code?: string }).code).toBe("LOCATE_INTERRUPTED");
+    expect((e as { details?: unknown }).details).toEqual({ cause: "DEVICE_NOT_ANSWERING" });
+    expect(String((e as Error).message)).toMatch(/switched off and read back/);
+    expect(writes(sim)).toEqual(["write:01", "write:00"]);
+    expect(sim.progMode).toBe(0);
+  });
+
   test("a switch-off that fails once is tried again on a new connection", async () => {
     const sim = new SimDevice();
     sim.writesOffFail = 3; // the three tries of one request
     const r = await blinkProgrammingMode(device(sim), { holdMs: 30, pollMs: 10 });
     expect(r.progModeOff).toBe(true);
     expect(writes(sim)).toEqual(["write:01", "write:00", "write:00", "write:00", "write:00"]);
-    expect(sim.log).toContain("connect");
+    // the interface's transport and the device connection are both opened again before the last try
+    expect(sim.log.slice(sim.log.indexOf("tunnel-connect") - 1, sim.log.indexOf("tunnel-connect") + 3)).toEqual(["disconnect", "tunnel-connect", "connect", "write:00"]);
     expect(sim.progMode).toBe(0);
   });
 

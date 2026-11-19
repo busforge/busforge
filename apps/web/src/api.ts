@@ -115,7 +115,8 @@ export interface Task {
   // errorDetails: the structured facts behind a coded refusal (e.g. `objects`), null when it has none.
   error: string | null; errorCode: string | null; errorDetails: Record<string, unknown> | null; result: unknown; baselineCommitted: boolean;
   queuedAt: number; startedAt: number | null; finishedAt: number | null;
-  // Whether the server accepts a cancel now: queued, writing nothing, or a write still only reading.
+  // Whether the server accepts a cancel now: queued, writing nothing, a write still only reading, or a
+  // write that undoes itself on a cancel (finding a device).
   cancellable: boolean;
 }
 // How finding a device ended: its time ran out, it was stopped, or the device left programming mode itself

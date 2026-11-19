@@ -504,9 +504,9 @@ export async function locateDevice(
     const refused = maskGate(mask, mask, secure !== undefined);
     if (refused) throw refused;
     if (!progModeByProperty(mask)) {
-      throw new ApiError("LOCATE_UNSUPPORTED_FAMILY", `the device reports mask ${mask}, which holds its programming mode in memory or in no device object; Busforge switches programming mode over the bus only on System B and System 7 devices with property-mapped load control. Find it by its address label`, 400);
+      throw new ApiError("LOCATE_UNSUPPORTED_FAMILY", `the device reports mask ${mask}; Busforge switches programming mode over the bus only on System B and on System 7 with property-mapped load control (a BCU1 and MV-0700/0701 hold it in memory). Find it by its address label`, 400, { mask });
     }
-    return blinkProgrammingMode(dev, { holdMs: opts.holdMs, signal: opts.signal, onProgress: (p) => opts.onProgress?.(p), enterWrites: opts.enterWrites });
+    return blinkProgrammingMode(dev, { holdMs: opts.holdMs, signal: opts.signal, onProgress: opts.onProgress, enterWrites: opts.enterWrites });
   }, secure);
 }
 

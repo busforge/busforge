@@ -357,7 +357,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     }
     const secure = secureCredsFor(state, id, deviceId);
     const task = state.queue.submit(
-      { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "locate", writes: true, cancelBeforeWrite: true, undoesOnCancel: true },
+      { projectId: id, deviceId, deviceName: dev.name, ia: dev.ia, kind: "locate", writes: true, undoesOnCancel: true },
       (progress, signal, _commit, enterWrites) => locateDevice(conn, dev.ia, secure, { holdMs: seconds * 1000, signal, onProgress: progress, enterWrites }),
     );
     return json(task, 202);

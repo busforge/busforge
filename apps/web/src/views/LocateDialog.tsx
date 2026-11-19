@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, Loader2, LocateFixed } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { api, type Device, type LocateResult } from "../api.ts";
+import { useTasks } from "../queries.ts";
 import {
   AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -28,18 +29,24 @@ export function LocateDialog({ open, onOpenChange, projectId, device }: {
   const [stopping, setStopping] = useState(false);
   const [result, setResult] = useState<LocateResult | null>(null);
   const [error, setError] = useState<unknown>(null);
-  const taskId = useRef<string | null>(null);
+  const [taskId, setTaskId] = useState<string | null>(null);
   const busyRef = useRef(false);
+  // The task's live phase: the LED is on only from prog-mode-hold; before it the task waits or opens.
+  const { data: tasks } = useTasks(projectId);
+  const own = running ? tasks?.find((x) => x.id === taskId) : undefined;
+  const status = stopping || own?.phase === "prog-mode-off" ? "locate.stopping"
+    : own?.phase === "prog-mode-hold" ? "locate.running"
+    : own?.state === "queued" ? "locate.queued" : "locate.starting";
 
   const reset = () => { setResult(null); setError(null); setStopping(false); };
 
   const start = async () => {
     if (busyRef.current) return;
     busyRef.current = true;
-    taskId.current = null;
+    setTaskId(null);
     setRunning(true); setStopping(false); setError(null); setResult(null);
     try {
-      setResult(await api.locateDevice(projectId, device.id, SECONDS, (task) => { taskId.current = task.id; }));
+      setResult(await api.locateDevice(projectId, device.id, SECONDS, (task) => setTaskId(task.id)));
     } catch (e) {
       setError(e);
     } finally {
@@ -50,9 +57,9 @@ export function LocateDialog({ open, onOpenChange, projectId, device }: {
 
   // The task ends the hold and switches the mode off; the result arrives through start().
   const stop = async () => {
-    if (!taskId.current) return;
+    if (!taskId) return;
     setStopping(true);
-    try { await api.cancelTask(projectId, taskId.current); }
+    try { await api.cancelTask(projectId, taskId); }
     catch (e) { setStopping(false); setError(e); }
   };
 
@@ -70,7 +77,7 @@ export function LocateDialog({ open, onOpenChange, projectId, device }: {
         <div className="rounded-md border border-border bg-secondary/30 px-3 py-2 text-sm" data-testid="locate-state">
           {running && (
             <span className="flex items-start gap-2 text-primary">
-              <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin" />{t(stopping ? "locate.stopping" : "locate.running")}
+              <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin" />{t(status)}
             </span>
           )}
           {!running && result && (
@@ -89,7 +96,7 @@ export function LocateDialog({ open, onOpenChange, projectId, device }: {
         <AlertDialogFooter>
           <AlertDialogCancel disabled={running}>{t("common.close")}</AlertDialogCancel>
           {running ? (
-            <Button variant="outline" onClick={() => void stop()} disabled={stopping} data-testid="locate-stop">
+            <Button variant="outline" onClick={() => void stop()} disabled={stopping || !taskId} data-testid="locate-stop">
               {t("locate.stop")}
             </Button>
           ) : (

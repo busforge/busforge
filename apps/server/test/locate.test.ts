@@ -1,10 +1,8 @@
 import { test, expect, describe, mock, afterAll, setDefaultTimeout } from "bun:test";
 import { parseApdu, tpAck, type KnxTransport } from "@busforge/knx";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { Connection } from "../src/db/connections.ts";
 import { storeZip } from "../../../packages/project/test/ziputil.ts";
+import { tempDir } from "../../../tools/test-temp.ts";
 
 setDefaultTimeout(60_000);
 
@@ -101,11 +99,8 @@ const project = `<?xml version="1.0" encoding="utf-8"?>
     <DeviceInstance Id="P-0001-0_DI-1" Address="56" Name="" ProductRefId="${PRODUCT}" Hardware2ProgramRefId="${HP}"/>
   </Segment></Line></Area></Topology>
 </Installation></Installations></Project></KNX>`;
-const tmps: string[] = [];
-afterAll(() => { for (const d of tmps) rmSync(d, { recursive: true, force: true }); });
 async function setup() {
-  const dir = mkdtempSync(join(tmpdir(), "busforge-locate-"));
-  tmps.push(dir);
+  const dir = tempDir("busforge-locate-");
   const state = createState({ dbPath: ":memory:", dataDir: dir, now: () => 1000 });
   const call = async (path: string, init?: RequestInit) => (await handleApi(new Request(`http://x${path}`, init), state))!.json() as Promise<any>;
   const form = new FormData();

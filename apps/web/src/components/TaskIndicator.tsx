@@ -21,7 +21,7 @@ import { errMsg, localizeError } from "../lib/apiError.ts";
 const KIND_ICON: Record<TaskKind, typeof Cpu> = { read: Download, "flash-params": Cpu, "flash-ga": Network, "flash-structure": Boxes, "assign-ia": Tag, download: Rocket, "secure-activate": KeyRound, collect: Stethoscope, locate: LocateFixed };
 const pct = (t: Task) => (t.total > 0 ? Math.round((t.done / t.total) * 100) : null);
 const dotColor = (s: BusStatus) => (s === "connected" ? "bg-ok" : s === "connecting" ? "bg-primary" : "bg-muted-foreground");
-// A flash mid-write would corrupt the device, so only queued tasks and running reads can be cancelled.
+// A flash mid-write would corrupt the device: the server says per task whether a cancel is accepted now.
 const cancellable = (t: Task) => t.cancellable;
 
 // Combined header widget for the bus: shows the connection status when idle, the
@@ -255,7 +255,7 @@ function TaskRow({ task, t, onCancel, canceling, onView }: { task: Task; t: (k: 
             <span>{phaseLabel}</span>
             {p !== null && <span className="tabular-nums">{task.done}/{task.total}</span>}
           </div>
-          {task.writes && task.kind !== "locate" && <div className="mt-0.5 text-[10px] text-muted-foreground">{t("task.writeNotCancellable")}</div>}
+          {task.writes && !task.cancellable && <div className="mt-0.5 text-[10px] text-muted-foreground">{t("task.writeNotCancellable")}</div>}
         </div>
       )}
       {task.state === "queued" && <div className="mt-0.5 text-[10px] text-muted-foreground">{t("task.queued")}</div>}
