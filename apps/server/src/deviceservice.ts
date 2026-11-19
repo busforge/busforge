@@ -88,8 +88,9 @@ export function secureTablesFor(state: AppState, projectId: string, deviceId: st
         const app = loadApp(state, projectId, id);
         const view = app ? buildDeviceConfig(app, getDeviceParams(state.db, projectId, id), undefined, getDeviceModules(state.db, projectId, id)) : null;
         if (app && view) {
-          info.objs = comObjsByKey(app, view);
-          for (const bl of view.blocks) for (const it of bl.items) if (it.kind === "comObject") info.active.add(stripRef(app.id, it.comObject.refId));
+          const objs = comObjsByKey(app, view);
+          info.objs = objs;
+          for (const [key, o] of objs) if (o.shown) info.active.add(key);
         }
       } catch (e) {
         info.failure = `its configuration could not be built (${e instanceof Error ? e.message : String(e)})`;
@@ -509,12 +510,13 @@ export function unwrittenParamRefs(state: AppState, projectId: string, deviceId:
   return keep;
 }
 
-// One device's communication object on a group address, for the GA details
-// overlay. `flags` carries the KNX read/write/transmit semantics so the UI can
-// split senders (transmit) from receivers (write).
+// One device's communication object on a group address, for the group-address overlay and a
+// com-object's linked objects. `flags` carries the KNX read/write/transmit semantics so the UI can
+// split senders (transmit) from receivers (write). `comObjRefId` is the stored (stripped) ref id: a
+// hidden ref can share its number with the ref the configuration shows.
 interface GaComObj {
   deviceId: string; deviceName: string; ia: string;
-  comObjName: string; functionText: string; comObjNumber: number;
+  comObjRefId: string; comObjName: string; functionText: string; comObjNumber: number;
   flags: ComObjFlags;
   // The device's own com-object flags cannot be placed (deviceComObjFlags): `flags` are the
   // application's, and the split by them is not the device's.
@@ -592,7 +594,7 @@ export function buildGaDevicesView(state: AppState, projectId: string, raw: numb
     for (const { refId, slot } of links) {
       const co = comObjs.get(refId);
       if (!co) continue; // link to a com-object absent from the app model: skip
-      const entry: GaComObj = { deviceId, deviceName: dev.name, ia: dev.ia, comObjName: co.name, functionText: co.functionText, comObjNumber: co.number, flags: co.flags, ...(flags.refused ? { flagsRefused: flags.refused } : {}), ...(co.shown ? {} : { hidden: true as const }) };
+      const entry: GaComObj = { deviceId, deviceName: dev.name, ia: dev.ia, comObjRefId: refId, comObjName: co.name, functionText: co.functionText, comObjNumber: co.number, flags: co.flags, ...(flags.refused ? { flagsRefused: flags.refused } : {}), ...(co.shown ? {} : { hidden: true as const }) };
       const sends = co.flags.comm && co.flags.transmit && slot === 0;
       if (sends) senders.push(entry);
       if (co.flags.write || !sends) receivers.push(entry);

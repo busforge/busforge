@@ -1,10 +1,10 @@
 import { test, expect, describe } from "bun:test";
 import type { GaComObj } from "../api.ts";
-import { linkedObjects } from "./linkedObjects.ts";
+import { flagsKnown, linkedObjects, objectSearch } from "./linkedObjects.ts";
 
 const noFlags = { read: false, write: false, comm: true, transmit: false, update: false, readOnInit: false };
 const obj = (deviceId: string, ia: string, comObjNumber: number, flags: Partial<GaComObj["flags"]> = {}): GaComObj => ({
-  deviceId, deviceName: deviceId, ia, comObjName: `obj ${comObjNumber}`, functionText: "", comObjNumber, flags: { ...noFlags, ...flags },
+  deviceId, deviceName: deviceId, ia, comObjRefId: `O-${comObjNumber}_R-1`, comObjName: `obj ${comObjNumber}`, functionText: "", comObjNumber, flags: { ...noFlags, ...flags },
 });
 
 // The objects one com-object shares an address with, as the device page's link view lists them.
@@ -44,7 +44,27 @@ describe("the objects linked to a com-object on one group address", () => {
     expect(linkedObjects({ senders: [], receivers: [hidden] }, self)[0]).toMatchObject({ hidden: true, flagsRefused: "COM_OBJECT_FLAGS_UNPLACEABLE" });
   });
 
+  test("a hidden ref of the same device and number is another object, listed apart from a visible one", () => {
+    const hiddenSelf: GaComObj = { ...obj("a", "1.1.1", 3, { write: true }), comObjRefId: "O-3_R-2", hidden: true };
+    const other = obj("b", "1.1.2", 3, { write: true });
+    const otherHidden: GaComObj = { ...other, comObjRefId: "O-3_R-2", hidden: true };
+    const rows = linkedObjects({ senders: [], receivers: [obj("a", "1.1.1", 3, { write: true }), hiddenSelf, other, otherHidden] }, self);
+    expect(rows.map((r) => [r.deviceId, r.comObjRefId, !!r.hidden])).toEqual([["a", "O-3_R-2", true], ["b", "O-3_R-1", false], ["b", "O-3_R-2", true]]);
+  });
+
   test("an address no other object uses gives an empty list", () => {
     expect(linkedObjects({ senders: [obj("a", "1.1.1", 3, { transmit: true })], receivers: [] }, self)).toEqual([]);
+  });
+});
+
+describe("a linked object's row", () => {
+  test("leads to the object's row, unless its configuration hides it", () => {
+    expect(objectSearch({ comObjNumber: 5 })).toEqual({ co: 5 });
+    expect(objectSearch({ comObjNumber: 5, hidden: true })).toEqual({});
+  });
+  test("shows flags only where they are the device's", () => {
+    expect(flagsKnown({})).toBe(true);
+    expect(flagsKnown({ flagsRefused: "COM_OBJECT_FLAGS_UNPLACEABLE" })).toBe(false);
+    expect(flagsKnown({ hidden: true })).toBe(false);
   });
 });

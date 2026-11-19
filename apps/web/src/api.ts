@@ -90,7 +90,8 @@ export interface AssignIaResult { previous: string; assigned: string; verified: 
 // One device's communication object on a group address, for the GA details overlay.
 export interface GaComObj {
   deviceId: string; deviceName: string; ia: string;
-  comObjName: string; functionText: string; comObjNumber: number;
+  // The stored ref id: an object its configuration hides can share its number with the one it shows.
+  comObjRefId: string; comObjName: string; functionText: string; comObjNumber: number;
   flags: { read: boolean; write: boolean; comm: boolean; transmit: boolean; update: boolean; readOnInit: boolean };
   // The device's own com-object flags cannot be placed: `flags` are the application's (error code).
   flagsRefused?: string;

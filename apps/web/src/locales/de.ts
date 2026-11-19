@@ -984,6 +984,7 @@ const de: Messages = {
     open: "Verknüpfte Objekte",
     title: "Verknüpfte Objekte",
     none: "Kein anderes Objekt an dieser Adresse.",
+    sendingAddress: "seine Sendeadresse",
     targetFiltered: "Objekt {{number}} ist durch den Filter ausgeblendet.",
     targetNotShown: "Objekt {{number}} wird von der aktuellen Konfiguration dieses Geräts nicht gezeigt.",
   },

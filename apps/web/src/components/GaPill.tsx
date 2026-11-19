@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { flagLetters } from "@/lib/comObjFlags.ts";
+import { flagsKnown, objectSearch } from "@/lib/linkedObjects.ts";
 import { IconButton } from "@/components/ui/icon-button";
 import { Input } from "@/components/ui/input";
 
@@ -116,7 +117,7 @@ function Section({ icon, title, entries, projectId, emptyHint, onNavigate }: {
       ) : (
         <ul className="space-y-0.5">
           {entries.map((e, i) => (
-            <li key={`${e.deviceId}-${e.comObjNumber}-${i}`}>
+            <li key={`${e.deviceId}-${e.comObjRefId}-${i}`}>
               <ComObjRow projectId={projectId} entry={e} onNavigate={onNavigate} />
             </li>
           ))}
@@ -126,8 +127,9 @@ function Section({ icon, title, entries, projectId, emptyHint, onNavigate }: {
   );
 }
 
-// One linked com-object of a group address: its device, number, texts and flags, linking to its row on
-// the device's page (`co` in the page's URL). `direction` adds whether it sends or receives on the
+// One linked com-object of a group address: its device, number, texts and flags (where they are the
+// device's), linking to its row on the device's page (`co` in the page's URL), or to the page where
+// its configuration hides it. `direction` adds whether it sends or receives on the
 // address, where the list does not say it by its section; `sameDevice` marks an object of the device
 // the list is shown from.
 export function ComObjRow({ projectId, entry: e, onNavigate, direction, sameDevice }: {
@@ -138,12 +140,12 @@ export function ComObjRow({ projectId, entry: e, onNavigate, direction, sameDevi
   sameDevice?: boolean;
 }) {
   const { t } = useTranslation();
-  const letters = flagLetters(e.flags, t);
+  const letters = flagsKnown(e) ? flagLetters(e.flags, t) : "";
   return (
     <Link
       to="/projects/$projectId/devices/$deviceId"
       params={{ projectId, deviceId: e.deviceId }}
-      search={{ co: e.comObjNumber }}
+      search={objectSearch(e)}
       onClick={onNavigate}
       className="flex flex-col gap-0.5 rounded-md px-1.5 py-1 outline-none hover:bg-secondary/60 focus-visible:ring-[3px] focus-visible:ring-ring/50"
       data-testid={`co-row-${e.ia}-${e.comObjNumber}`}

@@ -985,6 +985,7 @@ const en = {
     open: "Linked objects",
     title: "Linked objects",
     none: "No other object on this address.",
+    sendingAddress: "its sending address",
     targetFiltered: "Object {{number}} is hidden by the filter.",
     targetNotShown: "Object {{number}} is not shown by this device's current configuration.",
   },

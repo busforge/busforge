@@ -186,17 +186,17 @@ export const useDroppedLinks = (id: string) => {
 // Devices linked to a group address, fetched only when the details overlay opens
 // (enabled). Language-keyed so com-object names match the UI; cached briefly so
 // reopening the same GA is instant.
+const gaDevicesQuery = (id: string, raw: number, lang: string, enabled: boolean) =>
+  ({ queryKey: qk.gaDevices(id, raw, lang), queryFn: () => api.gaDevices(id, raw, lang), enabled, staleTime: 30_000 });
 export const useGaDevices = (id: string, raw: number, enabled: boolean) => {
   const { i18n } = useTranslation();
-  const lang = i18n.language;
-  return useQuery({ queryKey: qk.gaDevices(id, raw, lang), queryFn: () => api.gaDevices(id, raw, lang), enabled, staleTime: 30_000 });
+  return useQuery(gaDevicesQuery(id, raw, i18n.language, enabled));
 };
 
-// The device views of several addresses at once (a com-object's links), cached as useGaDevices caches each.
-export const useGaDevicesOf = (id: string, raws: number[], enabled: boolean) => {
+// The device views of several addresses at once (a com-object's links), sharing useGaDevices' cache.
+export const useGaDevicesOf = (id: string, raws: number[]) => {
   const { i18n } = useTranslation();
-  const lang = i18n.language;
-  return useQueries({ queries: raws.map((raw) => ({ queryKey: qk.gaDevices(id, raw, lang), queryFn: () => api.gaDevices(id, raw, lang), enabled, staleTime: 30_000 })) });
+  return useQueries({ queries: raws.map((raw) => gaDevicesQuery(id, raw, i18n.language, true)) });
 };
 
 // Add or remove an assigned sender of a group address; refreshes that address's overlay.

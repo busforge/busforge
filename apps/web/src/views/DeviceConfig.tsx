@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import { AlertTriangle, ChevronDown, ChevronLeft, ChevronsUpDown, Cpu, HardDriveDownload, Info, KeyRound, Loader2, MapPin, MessageSquareWarning, MoreVertical, Puzzle, RadioTower, Repeat2, RotateCcw, Search, ShieldCheck, Stethoscope, X } from "lucide-react";
 import { Link, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
@@ -401,23 +401,33 @@ export function DeviceConfig() {
   // on devices with hundreds of rows.
   const { active: activeSec, registerRef, jump: scrollToSec } = useScrollSpy(filteredGroups[0] ? `sec-${filteredGroups[0].head.id}` : null, filteredGroups);
 
-  // The com-object the URL names, a link led to (co) or whose linked objects are open (links): scrolled
-  // to once the configuration is shown, and else said why it is not on the page.
+  // A com-object's row scrolled into view, or said why the page has none for it.
   const coRows = useRef(new Map<number, HTMLElement>());
-  const coTarget = search.co ?? search.links;
-  const coTargetDone = useRef<string | null>(null);
-  useEffect(() => {
-    if (coTarget == null || !view) return;
-    const key = `${assumeKey}/${coTarget}`;
-    if (coTargetDone.current === key) return;
-    coTargetDone.current = key;
-    const el = coRows.current.get(coTarget);
+  const showObject = useCallback((number: number) => {
+    const el = coRows.current.get(number);
     if (el) { scrollToSection(el); return; }
-    const inView = view.blocks.some((b) => b.items.some((i) => i.kind === "comObject" && i.comObject.number === coTarget));
-    toast.warning(t(inView ? "linkedObjects.targetFiltered" : "linkedObjects.targetNotShown", { number: coTarget }));
-  }, [coTarget, view, assumeKey, t]);
+    const inView = !!view?.blocks.some((b) => b.items.some((i) => i.kind === "comObject" && i.comObject.number === number));
+    toast.warning(t(inView ? "linkedObjects.targetFiltered" : "linkedObjects.targetNotShown", { number }));
+  }, [view, t]);
+  // The object the URL names, shown once the configuration is: the one a link led to (co), or on
+  // arriving at the page with a list of linked objects open (links: back, reload) its row. Opening a
+  // list on the page scrolls nothing.
+  const arrivedAt = useRef<string | null>(null);
+  const shownTarget = useRef<string | null>(null);
+  useEffect(() => {
+    if (!view) return;
+    const arriving = arrivedAt.current !== assumeKey;
+    arrivedAt.current = assumeKey;
+    const target = search.co ?? (arriving ? search.links : undefined);
+    if (target == null) return;
+    const key = `${assumeKey}/${target}`;
+    if (shownTarget.current === key) return;
+    shownTarget.current = key;
+    // A frame later: the router resets the scroll of a navigation in its root's effect, after this one.
+    requestAnimationFrame(() => showObject(target));
+  }, [search.co, search.links, view, assumeKey, showObject]);
   const setLinksOpen = (number: number, open: boolean) =>
-    void navigate({ search: (p) => ({ ...p, links: open ? number : undefined }), replace: true });
+    void navigate({ search: (p) => ({ ...p, links: open ? number : undefined }), replace: true, resetScroll: false });
 
   const secondary = [
     { key: "device.revert", icon: <RotateCcw className="size-4" />, onClick: () => setRevertOpen(true), opts: { ghost: true, disabled: !hasChanges || saving, testId: "revert-device" } },
@@ -527,9 +537,9 @@ export function DeviceConfig() {
               <ComObjLinks
                 projectId={projectId} deviceId={deviceId} number={co.number} label={comObjLabel(co)} gaRaws={co.gaRaws}
                 options={gaOptions} levels={project?.groupAddressLevels ?? 3}
-                open={search.links === co.number} onOpenChange={(open) => setLinksOpen(co.number, open)}
+                open={search.links === co.number} onOpenChange={(open) => setLinksOpen(co.number, open)} onSameDevice={showObject}
               />
-            ) : <span className="size-7 shrink-0" aria-hidden />}
+            ) : <span className="size-7 shrink-0 pointer-coarse:size-10" aria-hidden />}
           </div>
         </div>
       );
