@@ -12,7 +12,7 @@ import { ApiError, errorCode, errorDetails } from "./errors.ts";
 // is never replayed: the store reports it as interrupted, and for a write that means the device
 // state is unknown.
 
-export type TaskKind = "read" | "flash-params" | "flash-ga" | "flash-structure" | "assign-ia" | "download" | "secure-activate" | "collect";
+export type TaskKind = "read" | "flash-params" | "flash-ga" | "flash-structure" | "assign-ia" | "download" | "secure-activate" | "collect" | "locate";
 export type TaskState = "queued" | "running" | "done" | "error" | "cancelled" | "interrupted";
 
 export interface Task {
@@ -53,8 +53,9 @@ export interface Task {
   queuedAt: number;
   startedAt: number | null;
   finishedAt: number | null;
-  // Whether a cancel is accepted now: queued, a running task that writes nothing, or a running write
-  // still in the read-only part before its first write (see TaskMeta.cancelBeforeWrite).
+  // Whether a cancel is accepted now: queued, a running task that writes nothing, a running write
+  // still in the read-only part before its first write (see TaskMeta.cancelBeforeWrite), or a running
+  // write that undoes itself on a cancel (TaskMeta.undoesOnCancel).
   cancellable: boolean;
 }
 
@@ -96,12 +97,18 @@ export interface TaskMeta {
   writes: boolean;
   snapshotId?: string | null;
   // A write whose job calls enterWrites right before its first write to the device: until then it
-  // only reads, and a cancel stops it there. Without it a running write is never cancellable.
+  // only reads, and a cancel stops it there. Without it (or undoesOnCancel) a running write is never
+  // cancellable.
   cancelBeforeWrite?: boolean;
+  // A write whose job answers a cancel by undoing what it wrote before it ends (finding a device:
+  // programming mode back off, read back). A cancel is accepted while it runs, and a shutdown cancels it
+  // and waits for it. A cancel accepted before its enterWrites ends the task as cancelled; one after it
+  // ends the task as the job's own result says.
+  undoesOnCancel?: boolean;
 }
 
 // Called by a job right before its first write. Throws when the task was cancelled in time; after it
-// returns, the task is no longer cancellable.
+// returns, the task is no longer cancellable, unless it undoes itself on a cancel (TaskMeta.undoesOnCancel).
 export type EnterWritesFn = () => void;
 type JobFn<T> = (progress: ProgressFn, signal: AbortSignal, commit: CommitFn, enterWrites: EnterWritesFn) => Promise<T>;
 
@@ -189,7 +196,7 @@ export class TaskQueue {
     };
     let writing = false;
     const refreshCancellable = () => {
-      task.cancellable = task.state === "queued" || (task.state === "running" && (!task.writes || (!!meta.cancelBeforeWrite && !writing)));
+      task.cancellable = task.state === "queued" || (task.state === "running" && (!task.writes || !!meta.undoesOnCancel || (!!meta.cancelBeforeWrite && !writing)));
     };
     this.canCancel.set(task.id, () => { refreshCancellable(); return task.cancellable; });
     const controller = new AbortController();
@@ -288,9 +295,10 @@ export class TaskQueue {
     return { task, result };
   }
 
-  // Cancel a task. Queued tasks are always cancellable (they never run). Of the running tasks only
-  // a read is: it honors the abort signal and writes nothing. A running write is refused, because
-  // stopping mid-bracket can leave the device reset.
+  // Cancel a task. Queued tasks are always cancellable (they never run). Of the running tasks a read
+  // is: it honors the abort signal and writes nothing; a write still before its first write
+  // (TaskMeta.cancelBeforeWrite); and a write that undoes itself on a cancel (TaskMeta.undoesOnCancel).
+  // Any other running write is refused, because stopping mid-bracket can leave the device reset.
   cancel(taskId: string): "queued" | "running" | null {
     const task = this.live.get(taskId);
     if (!task) return null;
@@ -328,7 +336,8 @@ export class TaskQueue {
         if (task.writes) {
           const settled = this.settled.get(task.id);
           if (!settled) throw new Error(`running write ${task.id} has no completion to wait for`);
-          // A write still reading the device is stopped before its first write; it still settles.
+          // A write still reading the device is stopped before its first write, one that undoes itself on
+          // a cancel is stopped and undoes; either still settles.
           if (this.canCancel.get(task.id)?.()) this.controllers.get(task.id)?.abort();
           writes.push(settled);
         }
