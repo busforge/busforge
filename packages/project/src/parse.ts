@@ -348,9 +348,9 @@ function parseDeviceLinks(scope: XmlNode, d: Device, gaIdToRaw: Map<string, numb
   // module-instance ids, or a malformed export). Stored per (refId, slot), two separate
   // rows would collide on the slot index and abort the whole import. Merging their GAs
   // keeps the assignments and never crashes; for the normal (unique-RefId) case it is a
-  // no-op that preserves document order. An address linked twice, within a ref or by both refs, is
-  // kept once at its first position, so the sending address stays first and the list passes
-  // setLink's duplicate check.
+  // no-op that preserves document order, except that an address linked twice (within a ref or by
+  // both refs) is kept once at its first position, so the sending address stays first and the
+  // list passes setLink's duplicate check.
   const byRef = new Map<string, number[]>();
   const instances = moduleInstanceIds(dev?.ModuleInstances);
   const dropped: DroppedLink[] = [];
