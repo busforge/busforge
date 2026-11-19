@@ -18,6 +18,8 @@ import { BreakableText } from "@/components/BreakableText.tsx";
 import { scrollToSection, useStickyVar } from "@/lib/stickyChrome.ts";
 import { useScrollSpy } from "@/lib/scrollSpy.ts";
 import { flowOf, inlineChildren, keptAt } from "@/lib/blockFlow.ts";
+import { matchingItems, norm, underMatchingHeading } from "@/lib/blockFilter.ts";
+import { gridLayout } from "@/lib/blockGrid.ts";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Notice } from "@/components/ui/notice";
@@ -167,15 +169,6 @@ const flagWords = (co: CfgComObjView, t: TFn) => {
 
 const comObjLabel = (c: CfgComObjView) => c.functionText || c.name;
 const isItemChanged = (it: CfgItem) => (it.kind === "param" && !!it.param.changed) || (it.kind === "comObject" && (!!it.comObject.changed || !!it.comObject.flagsChanged));
-const norm = (s?: string) => (s ?? "").toLowerCase();
-// Whether an item matches the carried search term (mirrors the device-list deep
-// search: param name/value and com-object function/name).
-function itemMatches(item: CfgItem, q: string): boolean {
-  if (!q) return false;
-  if (item.kind === "param") return norm(item.param.name).includes(q) || norm(item.param.value).includes(q);
-  if (item.kind === "comObject") return norm(comObjLabel(item.comObject)).includes(q) || norm(item.comObject.name).includes(q);
-  return false;
-}
 
 export function DeviceConfig() {
   const { t } = useTranslation();
@@ -376,6 +369,8 @@ export function DeviceConfig() {
     }
     return gs;
   }, [view]);
+  // Every block as configured, unfiltered: a grid keeps the columns it shows without a filter.
+  const blockById = useMemo(() => new Map((view?.blocks ?? []).map((b) => [b.id, b])), [view]);
 
   const groupChanged = (g: { head: CfgBlock; children: CfgBlock[] }) =>
     g.head.items.some(isItemChanged) || g.children.some((c) => c.items.some(isItemChanged));
@@ -385,17 +380,19 @@ export function DeviceConfig() {
 
   // Filter the config by the search term: a matching section header (group or
   // sub-block name) reveals everything under it; otherwise only the matching
-  // rows (param name/value, com-object label) are kept. The group header always
-  // renders as context when any of its children survive. An inline block is part
-  // of its parent's page: a matching page reveals it, and its place moves to the
+  // rows (param name/value, com-object label, separator or button label, with
+  // the rest of their grid row or the rows below a matching heading) are kept.
+  // The group header always renders as context when any of its children
+  // survive. An inline block is part of its parent's page: a matching page or
+  // a matching heading above it reveals it, and its place moves to the
   // parent's rows that are still shown.
   const filteredGroups = useMemo(() => {
     if (!q) return groups;
-    const keep = (items: CfgItem[]) => items.filter((it) => itemMatches(it, q));
+    const keep = (b: CfgBlock) => matchingItems(b, q);
     const out: { head: CfgBlock; children: CfgBlock[] }[] = [];
     for (const g of groups) {
       const headMatch = norm(g.head.name).includes(q);
-      const headItems = headMatch ? g.head.items : keep(g.head.items);
+      const headItems = headMatch ? g.head.items : keep(g.head);
       const children: CfgBlock[] = [];
       // Each shown block's own and shown items, to move its inline blocks' places; the pages that matched.
       const shown = new Map<string, [CfgItem[], CfgItem[]]>([[g.head.id, [g.head.items, headItems]]]);
@@ -410,9 +407,10 @@ export function DeviceConfig() {
         shown.set(b.id, [b.items, items]);
       };
       for (const c of g.children) {
-        const cMatch = headMatch || norm(c.name).includes(q) || (!!c.inline && !!c.parentId && matched.has(c.parentId));
+        const parent = c.inline && c.parentId ? blockById.get(c.parentId) : undefined;
+        const cMatch = headMatch || norm(c.name).includes(q) || (!!parent && (matched.has(parent.id) || (c.at !== undefined && underMatchingHeading(parent, c.at, q))));
         if (cMatch) matched.add(c.id);
-        const items = cMatch ? c.items : keep(c.items);
+        const items = cMatch ? c.items : keep(c);
         if (cMatch || items.length > 0) show(c, items);
         else dropped.set(c.id, c);
       }
@@ -424,7 +422,7 @@ export function DeviceConfig() {
         out.push({ head: { ...g.head, items: headItems }, children: placed });
     }
     return out;
-  }, [groups, q]);
+  }, [groups, blockById, q]);
   // Per group, the inline blocks each of its blocks carries on its page.
   const groupInline = useMemo(() => filteredGroups.map((g) => inlineChildren([g.head, ...g.children])), [filteredGroups]);
   const matchCount = useMemo(
@@ -666,50 +664,30 @@ export function DeviceConfig() {
     block.layout ? renderGrid(block, keyPrefix) : block.items.map((item, i) => renderItem(item, `${keyPrefix}-${i}`));
 
   // ETS grid: <Rows>/<Columns> declare the geometry (column widths, and for a Table the
-  // header captions), every item names its cell. Cells are rendered in place; several
-  // items can legitimately land in one cell (two active choose branches), so a cell
-  // holds a list and never drops one. Items WITHOUT a cell (com-objects, or an item
-  // whose Cell we could not read) follow below the grid instead of disappearing.
+  // header captions), every item names its cell. Cells are rendered in place (gridLayout);
+  // items WITHOUT a cell (com-objects, or an item whose Cell we could not read) follow
+  // below the grid instead of disappearing.
   const renderGrid = (block: CfgBlock, keyPrefix: string) => {
-    const cells = new Map<string, CfgItem[]>();
-    const loose: CfgItem[] = [];
-    let maxCol = block.cols?.length ?? 0;
-    for (const item of block.items) {
-      const cell = item.kind === "comObject" || item.kind === "unsupported" ? undefined : item.cell;
-      if (!cell) { loose.push(item); continue; }
-      maxCol = Math.max(maxCol, cell.col);
-      const key = `${cell.row},${cell.col}`;
-      const at = cells.get(key);
-      if (at) at.push(item); else cells.set(key, [item]);
-    }
+    const { cells, loose, row: rowAt, col, template } = gridLayout(block, blockById.get(block.id) ?? block);
     // A Table shows the authored headers, so it needs a leading column for the row
     // captions and a leading row for the column captions; a Grid has neither.
     const table = block.layout === "Table";
     const off = table ? 1 : 0;
-    // ETS authors a column width as a percentage. Anything else is a width we cannot
-    // read, and interpolating it raw would invalidate the whole grid-template-columns
-    // declaration and collapse the block: fall back to an auto track for that column.
-    const width = (w?: string) => (w && /^\d+(\.\d+)?(%|px|rem|em)$/.test(w) ? w : "auto");
-    // Below the sm breakpoint a Grid or Table column never gets narrower than 8rem (--col-min): a block
-    // with many columns scrolls sideways inside its own wrapper instead of crushing its cells or widening
-    // the page. A Table's leading caption column stays auto.
-    const widths = Array.from({ length: maxCol }, (_, i) => `minmax(var(--col-min), ${width(block.cols?.[i]?.width)})`);
-    const template = (table ? "auto " : "") + widths.join(" ");
     return (
       <div key={keyPrefix} className="my-1">
         {/* The padding keeps the focus rings of the cells inside the scroll box. */}
         <div className="-m-1 overflow-x-auto p-1">
-          <div className="grid items-center gap-x-3 gap-y-1 [--col-min:0px] max-sm:[--col-min:8rem]" style={{ gridTemplateColumns: template }}>
+          <div className="grid items-center gap-x-2 gap-y-1" style={{ gridTemplateColumns: template }}>
             {table && block.cols?.map((c, i) => c.text ? (
-              <span key={`${keyPrefix}-ch-${i}`} style={{ gridRow: 1, gridColumn: i + 2 }} className="border-b border-border/40 pb-1 text-xs font-semibold text-muted-foreground">{c.text}</span>
+              <span key={`${keyPrefix}-ch-${i}`} style={{ gridRow: 1, gridColumn: col.get(i + 1)! + 1 }} className="border-b border-border/40 pb-1 text-xs font-semibold text-muted-foreground">{c.text}</span>
             ) : null)}
-            {table && block.rows?.map((r, i) => r.text ? (
-              <span key={`${keyPrefix}-rh-${i}`} style={{ gridRow: i + 2, gridColumn: 1 }} className="pr-2 text-sm text-muted-foreground">{r.text}</span>
+            {table && block.rows?.map((r, i) => r.text && rowAt.has(i + 1) ? (
+              <span key={`${keyPrefix}-rh-${i}`} style={{ gridRow: rowAt.get(i + 1)! + 1, gridColumn: 1 }} className="pr-2 text-sm text-muted-foreground">{r.text}</span>
             ) : null)}
             {[...cells].map(([key, items]) => {
-              const [row, col] = key.split(",").map(Number);
+              const [row, c] = key.split(",").map(Number);
               return (
-                <div key={`${keyPrefix}-${key}`} style={{ gridRow: row + off, gridColumn: col + off }} className="min-w-0">
+                <div key={`${keyPrefix}-${key}`} style={{ gridRow: rowAt.get(row)! + off, gridColumn: col.get(c)! + off }} className="min-w-0">
                   {items.map((item, i) => renderItem(item, `${keyPrefix}-${key}-${i}`, true))}
                 </div>
               );
@@ -1143,6 +1121,13 @@ function ParamRow({ param, compact, changedTitle, revertTitle, reverting, onChan
   // the table's column header names it), so carry the parameter's own text as the control's
   // accessible name instead of leaving it nameless.
   const label = compact ? param.name.trim() || undefined : undefined;
+  // A grid column is only as wide as its content insists, so in a cell a control states the width its
+  // value needs: the widest value it can hold, in `ch` of its own font, plus its padding.
+  const fit = (chars: number, pad: string) => (compact ? { minWidth: `calc(${Math.min(Math.max(chars, 1), 24)}ch + ${pad})` } : undefined);
+  const digits = (n?: number) => (n !== undefined && Number.isInteger(n) && Math.abs(n) < 1e10 ? String(n).length : 0);
+  // From the committed value, so the column does not move while a value is typed.
+  const shown = compact ? display(param.value) : "";
+  const numberFit = fit(Math.max(shown.length, digits(param.min), digits(param.max)), "2.75rem"); // padding, border, spinner
 
   // ETS TypePicture: the product's image alone across the row, aligned as its type says. Without the
   // file in the catalogue the row says so instead of showing an empty box.
@@ -1221,6 +1206,8 @@ function ParamRow({ param, compact, changedTitle, revertTitle, reverting, onChan
           <span className="relative flex w-full">
             <select
               value={param.value} onChange={(e) => onChange(e.target.value)} aria-label={label}
+              // Only in a cell: a device has 500+ enums, and the option scan is wasted on a full row.
+              style={compact ? fit(Math.max(0, ...(param.options ?? []).map((o) => o.text.length)), "3rem") : undefined}
               className="h-9 w-full appearance-none rounded-md border border-input bg-background pr-8 pl-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 pointer-coarse:h-11 pointer-coarse:text-base"
               data-testid={`param-${param.refId}`}
             >
@@ -1239,6 +1226,7 @@ function ParamRow({ param, compact, changedTitle, revertTitle, reverting, onChan
               onPointerUp={() => local !== param.value && onChange(local)}
               onKeyUp={() => local !== param.value && onChange(local)}
               onBlur={() => local !== param.value && onChange(local)}
+              style={compact ? { minWidth: "6rem" } : undefined}
               className="h-9 w-full accent-primary"
             />
             <span className="w-12 shrink-0 text-right font-mono text-sm tabular-nums">{local}</span>
@@ -1249,10 +1237,10 @@ function ParamRow({ param, compact, changedTitle, revertTitle, reverting, onChan
             onChange={(e) => setLocal(e.target.value)}
             onBlur={commitNumber}
             onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
-            className="w-full font-mono" data-testid={`param-${param.refId}`}
+            style={numberFit} className="w-full font-mono" data-testid={`param-${param.refId}`}
           />
         ) : param.control === "text" ? (
-          <Input className="w-full" value={local} onChange={(e) => setLocal(e.target.value)} onBlur={() => local !== param.value && onChange(local)} aria-label={label} data-testid={`param-${param.refId}`} />
+          <Input className="w-full" style={fit(shown.length, "1.75rem")} value={local} onChange={(e) => setLocal(e.target.value)} onBlur={() => local !== param.value && onChange(local)} aria-label={label} data-testid={`param-${param.refId}`} />
         ) : param.control === "color" ? (
           // TypeColor (RGB): native colour picker. Values are stored as #RRGGBB;
           // ETS uses upper-case, so normalise typed/picked input to upper-case to
@@ -1276,7 +1264,7 @@ function ParamRow({ param, compact, changedTitle, revertTitle, reverting, onChan
                 onChange={(e) => setLocal(e.target.value)}
                 onBlur={commitDuration}
                 onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
-                className="w-full font-mono"
+                style={fit(Math.max(shown.length, 8), "1.75rem")} className="w-full font-mono"
               />
               <span className="shrink-0 text-xs text-muted-foreground tabular-nums">= {param.value} s</span>
             </span>
@@ -1286,7 +1274,7 @@ function ParamRow({ param, compact, changedTitle, revertTitle, reverting, onChan
               onChange={(e) => setLocal(e.target.value)}
               onBlur={commitNumber}
               onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
-              className="w-full font-mono" data-testid={`param-${param.refId}`}
+              style={numberFit} className="w-full font-mono" data-testid={`param-${param.refId}`}
             />
           )
         ) : param.control === "ip" ? (
@@ -1297,7 +1285,7 @@ function ParamRow({ param, compact, changedTitle, revertTitle, reverting, onChan
             onBlur={commitIp}
             onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
             aria-invalid={local.trim() !== "" && !isValidIPv4(local)} aria-label={label}
-            className="w-full font-mono" data-testid={`param-${param.refId}`}
+            style={fit(15, "1.75rem")} className="w-full font-mono" data-testid={`param-${param.refId}`}
           />
         ) : (
           // Defensive fallback only: every control the engine emits is handled above (an

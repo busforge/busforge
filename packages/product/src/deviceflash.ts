@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { AppConfig, CfgAbsSegment, ModuleInstance } from "./appconfig.ts";
 import { buildAbsoluteSegmentTargets, absoluteBuildInstances, mergeOwnedBits, wholeBytes, parameterMemoryBytes, differingConstants, type ConstantDifference, type DeviceSegmentTarget } from "./deviceimage.ts";
-import { flattenSteps, lsmIdx, stepAddress, stepSize, memType, segType, segAccess, segFlags, closingSteps, taskCtrl1Of, PEI_LSM, relativeFullStepRefusal, relParamFullMode, stepObject, type LoadProcedures, type McbWrite, type ClosingStep, type ClosingOp } from "./loadproc.ts";
+import { flattenSteps, lsmIdx, stepAddress, stepSize, memType, segType, segAccess, segFlags, closingSteps, taskCtrl1Of, taskPtrOf, taskCtrl2Of, masterResetOf, capturedMasterResetRefusal, delayOf, bracketWritePropOf, PEI_LSM, relativeFullStepRefusal, relParamFullMode, stepObject, type LoadProcedures, type McbWrite, type ClosingStep, type ClosingOp } from "./loadproc.ts";
 import { buildGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
 import { buildComObjectTableMv0705 } from "./comobjbuild.ts";
 import type { CfgComObjImage } from "./config.ts";
@@ -660,8 +660,19 @@ const isLsm5TaskSegment = (s: ReturnType<typeof flattenSteps>[number]): boolean 
 
 // Why the absolute full download cannot run this declared procedure in `form`, or null when it can. The
 // planner refuses with exactly this, and capabilities() offers the full download only where one form
-// can run, so the UI never offers a download the planner then refuses.
-export function absoluteFullStepRefusal(procedure: LoadProcedures, form: AbsFullForm = "declared"): StepRefusal | null {
+// can run, so the UI never offers a download the planner then refuses. `memoryMapped`: the mask drives
+// its load-state machines over the 0x0104 control (MV-0700/0701), else over PID 5 (MV-0705).
+//
+// The declared form runs, besides the load-state brackets and their declarations, the steps the
+// third-party synthetic captures (docs/testing.md) show ETS running, each where they show it:
+//  - LdCtrlDelay: a pause, nothing on the wire, between the last LoadCompleted and the restart (MV-0701);
+//  - LdCtrlTaskPtr, LdCtrlTaskCtrl2: on a property-mapped mask (MV-0705), in their load bracket;
+//  - LdCtrlMasterReset: on a memory-mapped mask (MV-0701), before the first load-state event, with an
+//    erase code the captures show (CAPTURED_MASTER_RESETS);
+//  - LdCtrlWriteProp with inline data to object 3 inside LSM 3's load bracket, on a memory-mapped mask
+//    (MV-0701).
+// Each elsewhere is refused: no capture shows ETS's bytes or its place there.
+export function absoluteFullStepRefusal(procedure: LoadProcedures, form: AbsFullForm, memoryMapped: boolean): StepRefusal | null {
   const steps = flattenSteps(procedure, "full");
   if (steps.length === 0 || procedure.style !== "ProductProcedure") {
     return { code: "LOAD_PROCEDURE_UNSUPPORTED", message: `the application declares no full-download procedure of its own (load procedure style ${procedure.style}); refusing to commission it from a recipe Busforge would have to invent` };
@@ -671,7 +682,14 @@ export function absoluteFullStepRefusal(procedure: LoadProcedures, form: AbsFull
   if (lsm5) return { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: `the load procedure declares ${lsm5.verb} LsmIdx ${LSM_5}; no ETS capture shows what ETS sends for a step on load-state machine 5 other than its task segment, refusing to send it or to leave it out` };
   if (form === "partial") return partialStepRefusal(steps);
   const restartAt = steps.findIndex((s) => s.verb === "LdCtrlRestart");
+  const firstEvent = steps.findIndex((s) => s.verb === "LdCtrlUnload" || s.verb === "LdCtrlLoad");
+  const lastCompleted = steps.findLastIndex((s) => s.verb === "LdCtrlLoadCompleted");
+  const unsupported = (s: (typeof steps)[number], why: string): StepRefusal => ({ code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: `the load procedure declares ${s.verb} ${JSON.stringify(s.attrs)}: ${why}; refusing to run a partial recipe` });
+  // The load-state machine whose bracket (LdCtrlLoad .. LdCtrlLoadCompleted) is open at each step.
+  let open: number | undefined;
   for (const [i, s] of steps.entries()) {
+    if (s.verb === "LdCtrlLoad") open = lsmIdx(s);
+    if (s.verb === "LdCtrlLoadCompleted" && lsmIdx(s) === open) open = undefined;
     if (isLsm5TaskSegment(s)) continue;
     if (restartAt >= 0 && i > restartAt && s.verb !== "LdCtrlDisconnect") {
       return { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: `the load procedure declares ${s.verb}${lsmIdx(s) !== undefined ? ` LsmIdx ${lsmIdx(s)}` : ""} after the restart, which no capture shows ETS sending; refusing to run a partial recipe` };
@@ -681,9 +699,36 @@ export function absoluteFullStepRefusal(procedure: LoadProcedures, form: AbsFull
       if (typeof t === "string") return { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: `the load procedure declares LdCtrlTaskCtrl1 ${JSON.stringify(s.attrs)}: ${t}; refusing to guess what it sends` };
       continue;
     }
+    if (s.verb === "LdCtrlDelay") {
+      const d = delayOf(s);
+      if (typeof d === "string") return unsupported(s, d);
+      // Where the capture shows it: right behind the last LoadCompleted, right before the restart.
+      if (i !== lastCompleted + 1 || steps[i + 1]?.verb !== "LdCtrlRestart") return unsupported(s, "it lies elsewhere than between the last LoadCompleted and the restart, a place no capture shows");
+      continue;
+    }
+    if (s.verb === "LdCtrlTaskPtr" || s.verb === "LdCtrlTaskCtrl2") {
+      if (memoryMapped) return unsupported(s, "no capture shows it on a mask whose load-state machines are memory-mapped");
+      const t = s.verb === "LdCtrlTaskPtr" ? taskPtrOf(s) : taskCtrl2Of(s);
+      if (typeof t === "string") return unsupported(s, t);
+      if (t.lsm !== open) return unsupported(s, "it lies outside its load-state machine's load bracket, a place no capture shows");
+      continue;
+    }
+    if (s.verb === "LdCtrlMasterReset") {
+      if (!memoryMapped) return unsupported(s, "no capture shows it on a mask whose load-state machines are property-mapped");
+      const r = masterResetOf(s);
+      const why = typeof r === "string" ? r : capturedMasterResetRefusal(r, "system7");
+      if (why) return unsupported(s, why);
+      if (firstEvent >= 0 && i > firstEvent) return unsupported(s, "it follows a load-state event; the captures show it only before the first");
+      continue;
+    }
     if (s.verb === "LdCtrlLoadImageProp" || s.verb === "LdCtrlWriteProp") {
       if (closingSteps(procedure, "full").length && isAfterLastLoadCompleted(steps, i)) continue;
-      return { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: `the load procedure declares ${s.verb} inside a load bracket, which no capture shows; refusing to run a partial recipe` };
+      if (s.verb === "LdCtrlWriteProp" && memoryMapped && open === APP_LSM) {
+        const w = bracketWritePropOf(s, APP_LSM);
+        if (typeof w === "string") return unsupported(s, w);
+        continue;
+      }
+      return { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: `the load procedure declares ${s.verb} ${s.verb === "LdCtrlWriteProp" ? `inside a load bracket other than the application's (LSM ${APP_LSM}) on a memory-mapped mask, where a capture shows it` : "inside a load bracket, which no capture shows"}; refusing to run a partial recipe` };
     }
     const needs = ABS_FULL_STEP_ATTRS[s.verb];
     if (!needs) return { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: `the load procedure declares a step this full download cannot execute yet (${s.verb}); refusing to run a partial recipe` };
@@ -697,17 +742,49 @@ export function absoluteFullStepRefusal(procedure: LoadProcedures, form: AbsFull
 //  - a parameter segment without <Data>, which has no default image: ETS computes the bytes no active
 //    parameter derives from defaults it does not ship (the Steinel M-008E's read-back keeps 4 such bytes
 //    Busforge cannot build), so writing the segment would write guessed bytes;
-//  - a segment declared in the procedure whose <Mask> is of a form no capture shows (segmentMask);
+//  - a segment declared in the procedure whose <Mask> is of a form no capture shows (segmentMask), or one only
+//    the procedure declares that is not RAM, or RAM in an application asking for ETS's partial form;
+//  - a property write inside a load bracket in an application with a parameter placed in a property;
 //  - sizes the application declares for one segment that disagree (procedureSizeRefusal), and a task
 //    segment manufacturer no capture shows (taskSegmentManufacturerRefusal).
 export function fullDownloadSegmentRefusal(app: AppConfig, procedure: LoadProcedures): StepRefusal | null {
   const dataLess = app.absoluteSegments.find((sg) => sg.data.length === 0 && [...app.params.values()].some((p) => p.codeSegment === sg.id && p.offset !== undefined));
   if (dataLess) return { code: "FULL_DOWNLOAD_SEGMENT_UNKNOWN", message: `parameter segment ${dataLess.id} declares no <Data>, so the bytes no active parameter derives cannot be built; refusing to write a guessed image` };
-  const declared = new Set(flattenSteps(procedure, "full").filter((st) => st.verb === "LdCtrlAbsSegment").map(stepAddress));
+  const declaredSteps = flattenSteps(procedure, "full").filter((st) => st.verb === "LdCtrlAbsSegment");
+  const declared = new Set(declaredSteps.map(stepAddress));
   for (const sg of app.absoluteSegments.filter((x) => declared.has(x.address))) {
     try { segmentMask(sg); } catch (e) { return { code: "FULL_DOWNLOAD_SEGMENT_UNKNOWN", message: (e as Error).message }; }
   }
+  for (const st of declaredSteps) {
+    const why = procedureOnlySegmentRefusal(app, st);
+    if (why) return { code: "FULL_DOWNLOAD_SEGMENT_UNKNOWN", message: why };
+    // ETS's partial form loads the application without declaring its segments; no capture shows it on an
+    // application with a segment only the procedure declares.
+    if (procedure.preferPartialIfLoaded && isProcedureOnlyRam(app, st)) return { code: "FULL_DOWNLOAD_SEGMENT_UNKNOWN", message: `the load procedure declares a RAM segment at ${stepAddress(st)} the application does not define, and the application asks for ETS's partial form on a unit that holds it; no capture shows that form on such an application, refusing to plan it` };
+  }
+  // A property write inside a load bracket writes its inline data; a parameter placed in a property would be
+  // written by such a step (the synthetic System B captures), which the download does not model.
+  const placed = [...app.params.values()].find((p) => p.onProperty);
+  if (placed && flattenSteps(procedure, "full").some((st, i, all) => st.verb === "LdCtrlWriteProp" && !isAfterLastLoadCompleted(all, i))) {
+    return { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: `the load procedure writes a property inside a load bracket and parameter ${placed.id} is placed in a property; no capture shows which bytes such a write carries then, refusing to write the inline data alone` };
+  }
   return procedureSizeRefusal(app, procedure) ?? taskSegmentManufacturerRefusal(app, procedure);
+}
+
+// A segment only the load procedure declares (no segment of the application at its address): ETS declares
+// one in RAM (MemType 2) and neither writes nor reads it (the third-party synthetic MV-0705 captures: a
+// stack segment of 48 octets at 0x0710), which the declared form does too. Any other such segment, and one
+// that overlaps a segment of the application, no capture shows: refused, with the reason.
+function isProcedureOnlyRam(app: AppConfig, st: ReturnType<typeof flattenSteps>[number]): boolean {
+  return memType(st) === 2 && !app.absoluteSegments.some((x) => x.address === stepAddress(st));
+}
+function procedureOnlySegmentRefusal(app: AppConfig, st: ReturnType<typeof flattenSteps>[number]): string | null {
+  const at = stepAddress(st), size = stepSize(st);
+  if (at === undefined || size === undefined || app.absoluteSegments.some((x) => x.address === at)) return null;
+  if (memType(st) !== 2) return `the load procedure declares a segment at ${at} (MemType ${st.attrs.MemType ?? "absent"}) the application does not define; refusing to write an image we cannot build`;
+  const overlap = app.absoluteSegments.find((x) => at < x.address + x.size && x.address < at + size);
+  if (overlap) return `the load procedure declares a RAM segment at ${at} (${size} bytes) over the application's segment ${overlap.id}; no capture shows such a declaration, refusing to guess what it leaves there`;
+  return null;
 }
 
 // The sizes an application declares for one segment, which must agree before anything is planned: the
@@ -959,7 +1036,7 @@ export function planAbsoluteFullDownload(
 ): AbsFullDownloadPlan {
   // A declared step we cannot execute, or whose attributes we cannot read, is a recipe we cannot
   // run; refuse before building anything rather than emit a plan that silently omits it.
-  const refusal = absoluteFullStepRefusal(procedure, opts.form) ?? fullDownloadSegmentRefusal(app, procedure);
+  const refusal = absoluteFullStepRefusal(procedure, opts.form, !opts.propertyMapped) ?? fullDownloadSegmentRefusal(app, procedure);
   if (refusal) throw new ProductError(refusal.code, refusal.message);
   const propertyMapped = opts.propertyMapped;
   const tableAddr = (segId: string | undefined, which: string): number | undefined => {
@@ -1059,7 +1136,8 @@ export function planAbsoluteFullDownload(
     const at = tables.steps.findIndex((st) => st.op === "load" && st.lsm === lsm);
     return tables.steps.slice(at + 1, tables.steps.findIndex((st, i) => i > at && st.op === "loadCompleted"));
   };
-  for (const s of flattenSteps(procedure, "full")) {
+  const declaredSteps = flattenSteps(procedure, "full");
+  for (const [i, s] of declaredSteps.entries()) {
     const l = lsmIdx(s);
     const isTable = l === OBJ.ADDR_TABLE || l === OBJ.ASSOC_TABLE;
     switch (s.verb) {
@@ -1071,7 +1149,8 @@ export function planAbsoluteFullDownload(
         plan.push({ op: "absSegment", lsm, segType: segType(s), address: a, size: sz, access: segAccess(s), memType: memType(s) ?? 0, segFlags: segFlags(s), ...via });
         // A RAM segment (MemType 2) without <Data> ETS declares and neither reads nor writes, on MV-0701 too
         // (the third-party synthetic 0701 captures, docs/testing.md; on MV-0705 the Auro's).
-        const built = memType(s) === 2 && segByAddr.get(a)?.data.length === 0 ? null : imageFor(a, sz);
+        // A RAM segment only the procedure declares (isProcedureOnlyRam): declared, nothing written.
+        const built = isProcedureOnlyRam(app, s) || (memType(s) === 2 && segByAddr.get(a)?.data.length === 0) ? null : imageFor(a, sz);
         if (!built) break;
         const seg = segByAddr.get(a);
         if (!seg) throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `the load procedure declares a segment at ${a} the application does not define; refusing to write an image we cannot build`);
@@ -1095,9 +1174,41 @@ export function planAbsoluteFullDownload(
         plan.push({ op: "taskCtrl1", lsm: t.lsm, address: t.address, count: t.count });
         break;
       }
+      case "LdCtrlTaskPtr": {
+        const t = taskPtrOf(s);
+        if (typeof t === "string") throw new ProductError("FULL_DOWNLOAD_STEP_UNSUPPORTED", `the load procedure declares ${s.verb} ${JSON.stringify(s.attrs)}: ${t}; refusing to guess what it sends`);
+        plan.push({ op: "taskPtr", ...t });
+        break;
+      }
+      case "LdCtrlTaskCtrl2": {
+        const t = taskCtrl2Of(s);
+        if (typeof t === "string") throw new ProductError("FULL_DOWNLOAD_STEP_UNSUPPORTED", `the load procedure declares ${s.verb} ${JSON.stringify(s.attrs)}: ${t}; refusing to guess what it sends`);
+        plan.push({ op: "taskCtrl2", ...t });
+        break;
+      }
+      case "LdCtrlMasterReset": {
+        const r = masterResetOf(s);
+        if (typeof r === "string") throw new ProductError("FULL_DOWNLOAD_STEP_UNSUPPORTED", `the load procedure declares ${s.verb} ${JSON.stringify(s.attrs)}: ${r}; refusing to guess what it sends`);
+        plan.push({ op: "masterReset", ...r, mask: app.mask });
+        break;
+      }
+      case "LdCtrlDelay": {
+        const ms = delayOf(s);
+        if (typeof ms === "string") throw new ProductError("FULL_DOWNLOAD_STEP_UNSUPPORTED", `the load procedure declares ${s.verb} ${JSON.stringify(s.attrs)}: ${ms}; refusing to guess the pause`);
+        plan.push({ op: "settle", ms });
+        break;
+      }
       case "LdCtrlLoadCompleted": plan.push({ op: "loadCompleted", lsm: need(l, s.verb, "LsmIdx") }); break;
-      // The steps that close the download and the restart are placed by close().
-      case "LdCtrlRestart": case "LdCtrlLoadImageProp": case "LdCtrlWriteProp": break;
+      // A property write inside the application's load bracket goes out at its place; the steps that close
+      // the download and the restart are placed by close().
+      case "LdCtrlWriteProp": {
+        if (isAfterLastLoadCompleted(declaredSteps, i)) break;
+        const w = bracketWritePropOf(s, APP_LSM);
+        if (typeof w === "string") throw new ProductError("FULL_DOWNLOAD_STEP_UNSUPPORTED", `the load procedure declares ${s.verb} ${JSON.stringify(s.attrs)}: ${w}; refusing to run a partial recipe`);
+        plan.push({ op: "declaredWriteProp", ...w });
+        break;
+      }
+      case "LdCtrlRestart": case "LdCtrlLoadImageProp": break;
       // Session lifecycle + the app-id check are the caller's (see System7Profile.downloadFull).
       case "LdCtrlConnect": case "LdCtrlDisconnect": case "LdCtrlCompareProp": break;
       default:
