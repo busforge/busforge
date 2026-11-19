@@ -91,11 +91,13 @@ describe("a System B application that names an ETS download plugin", () => {
 });
 
 corpusDescribe("the applications of the private corpus", () => {
+  // Parsing all sixteen catalogue applications takes 4.7 s alone on a loaded machine, past the 5 s default
+  // under the parallel check.
   test("name no ETS download plugin, so none of their writes is refused for one", () => {
     const files = listCatalogue();
     expect(files.length).toBeGreaterThan(0);
     for (const f of files) expect(parseAppConfig(catalogueXml(f)).etsDownloadPlugin, f).toBeUndefined();
-  });
+  }, 30_000);
 
   // The MDT BE-02001.02 (MV-0705) carries an empty <Extension />; given a plugin, its System 7 profile
   // withholds the group-address flash and the full download as the System B one does.

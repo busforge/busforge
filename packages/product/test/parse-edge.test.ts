@@ -75,3 +75,39 @@ describe("segment Data as an attribute (older-catalogue form)", () => {
     expect(model.segments[0].data.toString("hex")).toBe("01020304");
   });
 });
+
+// XML keeps the blanks at either end of an attribute's value. The parser keeps them where the value is a
+// parameter's value (a text parameter writes it into the device, image.ts refuses it there) and trims every
+// other attribute and text node.
+describe("blanks at the edge of a value", () => {
+  const xml = `<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-1"><ApplicationPrograms>
+    <ApplicationProgram Id="M-1_A-1" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-1" DefaultLanguage="en-US"><Static>
+    <ParameterTypes><ParameterType Id=" T ">
+      <TypeText SizeInBit="64"/>
+    </ParameterType></ParameterTypes>
+    <Parameters><Parameter Id="P" ParameterType=" T " Text=" Label " Value=" dali" InitialValue="dali&#xA;"><Memory CodeSegment="S" Offset=" 0 " BitOffset="0"/></Parameter></Parameters>
+    <ParameterRefs><ParameterRef Id="P_R" RefId="P" Value="x " InitialValue=" y" Text=" Ref text "/></ParameterRefs>
+    <Code><RelativeSegment Id="S" LoadStateMachine="4" Size="8"><Data>
+      AAAAAAAAAAA=
+    </Data></RelativeSegment></Code>
+    </Static><Dynamic><Assign TargetParamRefRef="P_R" Value=" z "/></Dynamic></ApplicationProgram></ApplicationPrograms>
+    <Languages><Language Identifier="de-DE"><TranslationUnit RefId="M-1_A-1">
+      <TranslationElement RefId="P"><Translation AttributeName="InitialValue" Text=" K&#xFC;che&#x9;" /><Translation AttributeName="Text" Text=" Beschriftung " /></TranslationElement>
+    </TranslationUnit></Language></Languages></Manufacturer></ManufacturerData></KNX>`;
+  const app = parseAppConfig(xml);
+
+  test("a Parameter's, a ParameterRef's and an Assign's Value and InitialValue keep them, as does a translated InitialValue, character references decoded", () => {
+    expect(app.params.get("P")).toMatchObject({ value: " dali", initialValue: "dali\n" });
+    expect(app.refs.get("P_R")).toMatchObject({ value: "x ", initialValue: " y" });
+    expect(app.dynamic).toContainEqual(expect.objectContaining({ kind: "assign", value: " z " }));
+    expect(app.translations.get("de-DE")?.get("P")?.get("InitialValue")).toBe(" Küche\t");
+  });
+
+  test("every other attribute and text node is trimmed, and a blank-only text node is no child", () => {
+    expect(app.params.get("P")).toMatchObject({ typeId: "T", text: "Label", offset: 0 });
+    expect(app.types.get("T")?.base).toBe("Text");
+    expect(app.refs.get("P_R")?.text).toBe("Ref text");
+    expect(app.translations.get("de-DE")?.get("P")?.get("Text")).toBe("Beschriftung");
+    expect(app.segments[0].data.toString("hex")).toBe("0000000000000000");
+  });
+});

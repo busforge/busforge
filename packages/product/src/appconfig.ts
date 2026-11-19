@@ -323,8 +323,26 @@ export function takesValue(type: CfgType, value: string): boolean | undefined {
   return /^(0|-?[1-9]\d*)$/.test(value) && (type.min === undefined || Number(value) >= type.min) && (type.max === undefined || Number(value) <= type.max);
 }
 
+// The attributes whose characters are a parameter's value, kept as the file writes them, blanks at either
+// end included: XML keeps them, and a text parameter writes them into the device (image.ts refuses such a
+// value, as no ETS capture shows its bytes). A <Translation>'s Text is one where it translates a Value or
+// an InitialValue (parseTranslations). Every other attribute and text node is trimmed. Character references
+// (ETS writes a tab, CR or LF in an attribute as &#x9;, &#xD;, &#xA;) are decoded.
+const TRANSLATED_VALUES: ReadonlySet<string> = new Set(["Value", "InitialValue"]);
+const VALUE_ATTRS: Record<string, ReadonlySet<string>> = {
+  Parameter: TRANSLATED_VALUES,
+  ParameterRef: TRANSLATED_VALUES,
+  Assign: new Set(["Value"]),
+  Translation: new Set(["Text"]),
+};
+const keepsBlanks = (attr: string, jPath: string): boolean => VALUE_ATTRS[jPath.slice(jPath.lastIndexOf(".") + 1)]?.has(attr) === true;
+
 export function parseAppConfig(xml: string): AppConfig {
-  const p = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", attributesGroupName: ":@", preserveOrder: true });
+  const p = new XMLParser({
+    ignoreAttributes: false, attributeNamePrefix: "", attributesGroupName: ":@", preserveOrder: true, trimValues: false, htmlEntities: true,
+    attributeValueProcessor: (name, v, jPath) => (keepsBlanks(name, String(jPath)) ? v : v.trim()),
+    tagValueProcessor: (_tag, v) => v.trim(),
+  });
   const root = p.parse(xml) as ONode[];
   const app = deepFirst(root, "ApplicationProgram");
   if (!app) throw new ProductError("APP_PROGRAM_MISSING", "no ApplicationProgram in the parsed file");
@@ -681,7 +699,8 @@ function parseTranslations(langNodes: ONode[]): Translations {
         const attrMap = new Map<string, string>();
         for (const tr of childrenByTag(kidsOf(el), "Translation")) {
           const ta = attrsOf(tr);
-          attrMap.set(ta.AttributeName, ta.Text ?? "");
+          const t = ta.Text ?? "";
+          attrMap.set(ta.AttributeName, TRANSLATED_VALUES.has(ta.AttributeName) ? t : t.trim());
         }
         elemMap.set(refId, attrMap);
       }
