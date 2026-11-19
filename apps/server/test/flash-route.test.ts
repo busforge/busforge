@@ -632,11 +632,13 @@ corpusDescribe("an IP interface with tunnelling entries", () => {
     expect(reached).toEqual(["params", "links"]);
   });
 
-  // Its parameters live in the device, so a verified group-address flash, which writes none of them, leaves it never
-  // programmed, and the parameter flash after it is still told so; that flash's verified result ends the state.
-  test("a never-programmed one stays so after a verified group-address flash, and its parameter flash ends it", async () => {
+  // With KNXnet/IP settings its surgical flashes are the way it is programmed. Its parameters live in the device, so a
+  // verified group-address flash, which writes none of them, leaves it never programmed, and the parameter flash after
+  // it is still told so; that flash's verified result ends the state.
+  test("a never-programmed one with KNXnet/IP settings stays so after a verified group-address flash, and its parameter flash ends it", async () => {
     const state = freshState();
     const { projectId, deviceId } = await projectWithApp(state, a0137);
+    withIpSettings(state, projectId, deviceId);
     state.db.run("UPDATE devices SET never_programmed = 1 WHERE project_id = ? AND instance_id = ?", [projectId, deviceId]);
     const np = () => (state.db.query("SELECT never_programmed AS n FROM devices WHERE instance_id = ?").get(deviceId) as { n: number }).n;
     const told: boolean[] = [];
