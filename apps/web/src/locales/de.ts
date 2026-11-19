@@ -980,6 +980,7 @@ const de: Messages = {
     sameDevice: "dieses Gerät",
     flags: "Flags",
     hidden: "Von der aktuellen Konfiguration seines Geräts nicht gezeigt: Die Verknüpfung bleibt erhalten, die Geräteseite hat keine Zeile dafür.",
+    hiddenSorted: "Von der aktuellen Konfiguration seines Geräts nicht gezeigt: Die Verknüpfung bleibt erhalten, die Geräteseite hat keine Zeile dafür. Nach den Flags der Applikation einsortiert.",
   },
   linkedObjects: {
     open: "Verknüpfte Objekte",

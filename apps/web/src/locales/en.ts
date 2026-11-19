@@ -981,6 +981,7 @@ const en = {
     sameDevice: "this device",
     flags: "Flags",
     hidden: "Not shown by its device's current configuration: the link is kept, the device page has no row for it.",
+    hiddenSorted: "Not shown by its device's current configuration: the link is kept, the device page has no row for it. Sorted by the application's flags.",
   },
   linkedObjects: {
     open: "Linked objects",
