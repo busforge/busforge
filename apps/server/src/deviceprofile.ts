@@ -351,7 +351,10 @@ async function readStateIn(inSession: InSession, cfg: AppConfig, opts: ReadState
     // On the configuration of the parameter baseline this read sets, where the rows are stored and placed.
     // A baseline the flags cannot be taken over (two rows of one object that disagree) leaves them open.
     try {
-      flagBase = deviceComObjOverrideRows(cfg, buildDeviceConfig(cfg, read.paramBase, undefined, instancesFor(read.paramBase)).imageComObjects, read.comObjFlags, opts.comObjectOverrideBaseRows ?? []);
+      // An object the family's table holds no entry for shows no flags to take.
+      const active = new Map(buildDeviceConfig(cfg, read.paramBase, undefined, instancesFor(read.paramBase)).imageComObjects);
+      for (const n of classify(cfg).comObjNumbersWithoutEntry()) active.delete(n);
+      flagBase = deviceComObjOverrideRows(cfg, active, read.comObjFlags, opts.comObjectOverrideBaseRows ?? []);
     } catch (e) {
       if (opts.signal?.aborted) throw e;
       flagsUnreadable = `${(e as { code?: string }).code ?? "ERROR"}: ${e instanceof Error ? e.message : String(e)}`;

@@ -22,6 +22,7 @@
 //          bits1..0 priority (00 System, 01 Normal, 10 Urgent, 11 Low)
 //   An all-zero entry is an object that does not communicate: that is how gaps in the numbering,
 //   and objects the active configuration does not reach, are represented.
+//   An object numbered 0 has no entry: its place is the count (see buildComObjectTable).
 //
 // TWO THINGS THE FIRMWARE WILL NOT PROTECT YOU FROM, both deliberate choices here:
 //
@@ -124,31 +125,51 @@ export function comObjectEntry(obj: CfgComObjImage): Buffer {
 // (its size and every other flag), it just does not advertise communication. All other flags come
 // straight from the resolved declaration.
 export function buildComObjectTable(active: Map<number, CfgComObjImage>, declaredCount: number, linked: ReadonlySet<number>): Buffer {
-  // Object numbers are 1-based because entry 0 of the table IS the count. An object that resolved
-  // to 0 therefore cannot be represented at all: dropping it would leave the association table
-  // pointing a group address at the count field, and the download would still verify green,
-  // because it compares the device against this very table. Refuse.
-  const zero = [...active.values()].find((o) => o.number < 1);
-  if (zero) {
+  const negative = [...active.values()].find((o) => o.number < 0);
+  if (negative) {
     throw new ProductError("COM_OBJECT_NUMBER_INVALID",
-      `communication object ${zero.refId} resolves to number ${zero.number}; com-object numbers are 1-based (entry 0 of the table is its count), so this cannot be programmed`);
+      `communication object ${negative.refId} resolves to number ${negative.number}, which no com-object table holds; refusing to program it`);
   }
   // A configuration may activate no object at all (every channel disabled): ETS then writes the
-  // declared count with every entry 0x0000 (GVS AMMA capture), and so does this. Only an
-  // application that declares no object has no table to write.
-  if (active.size === 0 && declaredCount < 1) {
-    throw new ProductError("COM_OBJECT_TABLE_EMPTY",
-      "this application declares no communication objects, so there is no com-object table to write; refusing to write an empty one");
-  }
+  // declared count with every entry 0x0000 (GVS AMMA capture), and so does this. An application
+  // whose highest object is numbered 0 (or that declares none) has a table of no entries, which no
+  // capture shows ETS write. comObjectTableRefusal refuses an application that declares no object
+  // above 0 before the write is offered; this throw covers a configuration whose module instances
+  // resolve to none, which the application alone does not show.
   const count = Math.max(declaredCount, ...active.keys()); // never shorter than the highest active entry
+  if (count < 1) throw new ProductError("COM_OBJECT_TABLE_EMPTY", comObjectTableEmptyMessage);
   const buf = Buffer.alloc(2 + count * 2); // gaps stay 0x0000: an object that does not communicate
   buf.writeUInt16BE(count, 0);
   for (const [number, obj] of active) {
+    // Entry 0 of the table is its count, so an object numbered 0 has no entry: ETS writes the count
+    // there and still links the object's group addresses to it as object 0 in the association table
+    // (ETS 6.4.1 into a device simulator, MV-07B0 products declaring objects 0 and 1: 00 01 4B 00
+    // without links, 00 01 4F 00 with both objects linked). Its flags reach no table, so a project
+    // override of them is refused (refuseObjectZeroOverride).
+    if (number === 0) continue;
     // Clear Communication on an object with no group-address link, exactly as ETS does.
     const entry = linked.has(number) ? obj : { ...obj, flags: { ...obj.flags, comm: false } };
     comObjectEntry(entry).copy(buf, 2 + (number - 1) * 2);
   }
   return buf;
+}
+
+const comObjectTableEmptyMessage = "this application declares no communication object numbered 1 or higher, so its com-object table would hold no entry (an object numbered 0 has none: its place is the count), and no ETS capture shows such a table written; refusing to write it";
+
+// Why a write that authors the System B com-object table is refused for the application itself: it
+// declares no object outside a module numbered 1 or higher, and no module object, so the table would
+// hold no entry (buildComObjectTable). Undefined otherwise.
+export function comObjectTableRefusal(app: Pick<AppConfig, "comObjects">): { code: string; message: string } | undefined {
+  const entries = [...app.comObjects.values()].some((o) => !!o.baseNumber || o.number >= 1);
+  return entries ? undefined : { code: "COM_OBJECT_TABLE_EMPTY", message: comObjectTableEmptyMessage };
+}
+
+// Refuse a System B write that authors the com-object table while the project sets flags or a priority
+// on object 0 differently from the application: the table has no entry for it (buildComObjectTable).
+export function refuseObjectZeroOverride(active: ReadonlyMap<number, CfgComObjImage>, overrides: ReadonlyMap<number, ComObjInstanceOverride> | undefined): void {
+  const zero = active.get(0);
+  if (!zero) return;
+  refuseUnwritableOverrides(new Map([[0, zero]]), overrides, [], "the System B com-object table, which has no entry for object 0 (its place is the count),");
 }
 
 // Author the com-object table (L3) for a property-mapped System 7 device (mask MV-0705).

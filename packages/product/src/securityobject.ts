@@ -48,6 +48,9 @@ export function buildSecurityObject(links: ComObjectLink[], comObjCount: number,
     if (secured.length !== l.gaRaws.length) {
       throw new ProductError("SECURE_LINK_MIXED", `communication object #${l.comObjNum} is linked to both secured and plain group addresses; refusing to pick one security flag for both`);
     }
+    if (l.comObjNum === 0) {
+      throw new ProductError("COM_OBJECT_NUMBER_INVALID", "communication object #0 is linked to a secured group address; the security object's flags are 1-based like the com-object table's entries, which hold none for object 0, and no ETS capture shows what ETS loads for it, so refusing to secure it");
+    }
     if (l.comObjNum < 1 || l.comObjNum > comObjCount) {
       throw new ProductError("COM_OBJECT_NUMBER_INVALID", `communication object #${l.comObjNum} is outside the ${comObjCount} objects of this application`);
     }

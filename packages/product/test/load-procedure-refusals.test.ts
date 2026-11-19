@@ -73,6 +73,45 @@ describe("a System B application whose declared sizes for one segment disagree i
   });
 });
 
+// A System B com-object table holds no entry for an object numbered 0: its place is the count (comobjbuild.ts
+// buildComObjectTable, held against ETS in tools/bussard-com-object-zero.test.ts).
+describe("a System B application with a com-object numbered 0", () => {
+  const second = `<ComObject Id="${A}_O-2" Number="2" Name="Status" Text="Status" FunctionText="On/Off" ObjectSize="1 Bit" DatapointType="DPST-1-1" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" />`;
+  const zero = once(base, `<ComObject Id="${A}_O-1" Number="1"`, `<ComObject Id="${A}_O-1" Number="0"`);
+  const withSecond = once(once(once(zero, "</ComObjectTable>", `${second}</ComObjectTable>`),
+    "</ComObjectRefs>", `<ComObjectRef Id="${A}_O-2_R-2" RefId="${A}_O-2" /></ComObjectRefs>`),
+    `<ComObjectRefRef RefId="${A}_O-1_R-1" />`, `<ComObjectRefRef RefId="${A}_O-1_R-1" /><ComObjectRefRef RefId="${A}_O-2_R-2" />`);
+
+  test("offers every write and plans its full download where another object is numbered 1 or higher", () => {
+    expect(classify(parseAppConfig(withSecond)).operationRefusals()).toEqual({});
+    const table = fullDownload(withSecond)().segments.find((sg) => sg.source === "comObjTable")!.image;
+    // Object 2 (C R T, no link): its communication flag cleared. Object 0 (C W T): no entry.
+    expect(table.toString("hex")).toBe("000200004b00");
+  });
+
+  test("whose only object it is refuses the full download and the group-address flash before they are offered", () => {
+    const profile = classify(parseAppConfig(zero));
+    const refusals = profile.operationRefusals();
+    expect(refusals.fullDownload?.code).toBe("COM_OBJECT_TABLE_EMPTY");
+    expect(refusals.flashLinks?.code).toBe("COM_OBJECT_TABLE_EMPTY");
+    expect(refusals.flashParams).toBeUndefined();
+    expect(profile.capabilities()).toMatchObject({ flashParams: true, flashLinks: false, fullDownload: false, structuralFlash: false });
+    expect(fullDownload(zero)).toThrow(refusedWith("COM_OBJECT_TABLE_EMPTY"));
+  });
+
+  test("an application without any com-object is refused alike", () => {
+    const none = once(base, /<ComObjectTable>.*<\/ComObjectTable>/s.exec(base)![0], "<ComObjectTable></ComObjectTable>");
+    expect(classify(parseAppConfig(none)).operationRefusals().fullDownload?.code).toBe("COM_OBJECT_TABLE_EMPTY");
+  });
+
+  test("a project override of object 0's flags refuses the full download: no entry carries it", () => {
+    const xml = withSecond;
+    const run = (overrides: Map<number, { flags: { read: boolean } }>) => () => classify(parseAppConfig(xml)).planFullDownload("MV-07B0", { ia: "1.1.250", params: new Map(), links: [], proc: parseLoadProcedures(xml), comObjectOverrides: overrides });
+    expect(run(new Map([[0, { flags: { read: true } }]]))).toThrow(refusedWith("COM_OBJECT_OVERRIDE_UNWRITABLE"));
+    expect(run(new Map([[2, { flags: { read: false } }]]))).not.toThrow();
+  });
+});
+
 describe("a System B full download refuses the PEI program (LSM 5), which it does not load", () => {
   test("a full-download step on LSM 5", () => {
     const xml = once(base, '<LoadProcedure MergeId="4">', '<LoadProcedure MergeId="4">\n                <LdCtrlWriteRelMem AppliesTo="full" ObjIdx="5" Offset="0" Size="4" Verify="true" />');
@@ -194,15 +233,19 @@ corpusDescribe("System 7: LSM 5, the task segment's manufacturer and the declare
   });
 
   // The synthetic captures of sizes that disagree within one segment show ETS taking the procedure's sizes.
-  // Busforge refuses each of them by its size check, and by another rule besides, so the size check takes
-  // nothing from a download that would run otherwise: a com-object numbered 0 (which the com-object table
-  // refuses, COM_OBJECT_NUMBER_INVALID), a Mode 1 allocation declared for the parameter download too, a segment
-  // only the procedure declares.
+  // Busforge refuses each of them by its size check. syn-writerelmem-size (a Mode 0 allocation of 128 octets of
+  // a 256-octet segment) is refused by it alone: its com-objects 0 and 1 make the table 00 01 4B 00, as ETS
+  // writes it. The others are refused by another rule besides, so the size check takes nothing from a download
+  // that would run otherwise: a Mode 1 allocation declared for the parameter download too, a segment only the
+  // procedure declares.
+  test("syn-writerelmem-size: refused for its sizes alone", () => {
+    const xml = readFileSync(corpusPath(bussardApplication("syn-writerelmem-size", "M-00FA_A-2717-10-0000")), "utf8");
+    const cfg = parseAppConfig(xml);
+    expect(classify(cfg).operationRefusals().fullDownload?.code).toBe("LOAD_PROCEDURE_SIZE_MISMATCH");
+    const view = buildDeviceConfig(cfg, new Map());
+    expect(buildComObjectTable(view.imageComObjects, view.maxComObjectNumber, new Set()).toString("hex")).toBe("00014b00");
+  });
   test.each([
-    ["syn-writerelmem-size", "M-00FA_A-2717-10-0000", (xml: string) => {
-      const view = buildDeviceConfig(parseAppConfig(xml), new Map());
-      expect(() => buildComObjectTable(view.imageComObjects, view.maxComObjectNumber, new Set())).toThrow(refusedWith("COM_OBJECT_NUMBER_INVALID"));
-    }],
     ["syn-writerelmem-tail", "M-00FA_A-272A-10-0000", (xml: string) => expect(assessParCoverage(parseLoadProcedures(xml), "relative").blocked.map((b) => b.verb)).toEqual(["LdCtrlRelSegment"])],
     ["syn-s7-static-split", "M-00FA_A-2889-10-0000", (xml: string) => expect(parseAppConfig(xml).absoluteSegments.some((sg) => sg.address === 0x4443)).toBe(false)],
   ] as const)("%s: refused for its sizes, and by another rule besides", (product, app, otherRule) => {

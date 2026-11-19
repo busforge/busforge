@@ -8,7 +8,7 @@ import { parseAppConfig, classify, parseLoadProcedures, relParamFillByte, flatte
 import { catalogueDir, catalogueXml, captureText, capturePath, listCatalogue } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { CollectedUnit, asDevice, type Collection } from "../packages/product/test/collected-unit.ts";
-import { parseCapture, parseTunnelFrame, memoryImage, etsAllocations, reportedTableReferences, compareSegments, parseGa, inferBase, captureDevice } from "./etsdiff.ts";
+import { parseCapture, parseTunnelFrame, memoryImage, etsAllocations, reportedTableReferences, compareSegments, parseGaAnyForm, inferBase, captureDevice } from "./etsdiff.ts";
 
 // Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 3.6 s with the
 // file alone (load 5-27) and up to 3.6 s with every workspace's tests in parallel (load 5-8). A full check on a busy
@@ -149,8 +149,8 @@ describe("segment comparison", () => {
   });
 
   test("group addresses in both notations", () => {
-    expect([parseGa("2/1/7"), parseGa("2/263"), parseGa("4359")]).toEqual([0x1107, 0x1107, 0x1107]);
-    expect(() => parseGa("3/8/1")).toThrow();
+    expect([parseGaAnyForm("2/1/7"), parseGaAnyForm("2/263"), parseGaAnyForm("4359")]).toEqual([0x1107, 0x1107, 0x1107]);
+    expect(() => parseGaAnyForm("3/8/1")).toThrow();
   });
 });
 
@@ -412,9 +412,9 @@ corpusDescribe("the bench captures go to the bench devices, on the bench project
       ["gvs-amma", "M-0085_A-0072-30-69AA.xml.gz", ["3/3/6"]],
     ];
     for (const [file, app, gas] of linked) {
-      expect([file, partialLinkGas(`${file}-ets-partial-links.log`, parseAppConfig(catalogueXml(app)), gas.length)]).toEqual([file, gas.map(parseGa)]);
+      expect([file, partialLinkGas(`${file}-ets-partial-links.log`, parseAppConfig(catalogueXml(app)), gas.length)]).toEqual([file, gas.map(parseGaAnyForm)]);
     }
-    expect(partialLinkGas("jung-400021se-ets-partial-structure.log", parseAppConfig(catalogueXml("M-0004_A-7072-21-99A7-O000A.xml.gz")), 1)).toEqual([parseGa("0/0/1")]);
+    expect(partialLinkGas("jung-400021se-ets-partial-structure.log", parseAppConfig(catalogueXml("M-0004_A-7072-21-99A7-O000A.xml.gz")), 1)).toEqual([parseGaAnyForm("0/0/1")]);
   }, 60_000); // the 26.9 MB Jung application: under 1.2 s alone at load 24, 5-10 s in a full check at load 14-36; it builds the bench applications too
 });
 
@@ -454,7 +454,7 @@ corpusDescribe("partial downloads with links against ETS", () => {
 // the sending address's association first, whatever its group index and whenever it was linked.
 corpusDescribe("the sending address's association first, against ETS", () => {
   const app = "M-0083_A-00B6-32-9642.xml.gz";
-  const [low, high] = [parseGa("0/0/20"), parseGa("0/0/21")];
+  const [low, high] = [parseGaAnyForm("0/0/20"), parseGaAnyForm("0/0/21")];
   const cases = [
     { name: "a sending address above the other", capture: "mdt-be02001-ets-partial-sender-high.log", sending: high, other: low, assoc: [2, 2, 0, 1, 0] },
     { name: "a sending address below the other, linked last", capture: "mdt-be02001-ets-partial-sender-low.log", sending: low, other: high, assoc: [2, 1, 0, 2, 0] },

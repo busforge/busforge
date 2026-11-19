@@ -2,7 +2,7 @@ import { test as plainTest, expect, afterAll, setDefaultTimeout } from "bun:test
 import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { catalogueXml } from "../../../tools/corpus.ts";
+import { BUSSARD_SYNTHETIC_TESTED, bussardApplication, catalogueXml, corpusPath } from "../../../tools/corpus.ts";
 import { corpusTest as test } from "../../../tools/corpus-test.ts";
 import { createState, handleApi, type AppState } from "../src/app.ts";
 import { getDeviceComObjOverrides } from "../src/db/deviceparams.ts";
@@ -25,7 +25,7 @@ const jreq = (path: string, method: string, body: unknown) =>
 const j = async (res: Response | null) => (await res!.json()) as any;
 const objects = (v: any) => v.blocks.flatMap((b: any) => b.items).filter((i: any) => i.kind === "comObject").map((i: any) => i.comObject);
 
-async function setup(appFile?: string) {
+async function setup(appFile?: string, appXml?: string) {
   const dir = mkdtempSync(join(tmpdir(), "busforge-flagedit-"));
   dirs.push(dir);
   const state: AppState = createState({ dbPath: ":memory:", dataDir: dir, now: () => 1000 });
@@ -34,7 +34,7 @@ async function setup(appFile?: string) {
   form.set("password", "tester12");
   const { id } = await j(await handleApi(req("/api/projects/import", { method: "POST", body: form }), state));
   const deviceId = (await j(await handleApi(req(`/api/projects/${id}`), state))).devices[0].id as string;
-  if (appFile) state.db.run("UPDATE app_programs SET xml = ? WHERE id = ?", [catalogueXml(appFile), "M-TEST_A-1"]);
+  if (appFile || appXml) state.db.run("UPDATE app_programs SET xml = ? WHERE id = ?", [appXml ?? catalogueXml(appFile!), "M-TEST_A-1"]);
   const conn = await j(await handleApi(jreq("/api/connections", "POST", { type: "ip", name: "GW", host: "198.51.100.10", port: 3671 }), state));
   await handleApi(jreq(`/api/projects/${id}/connection`, "PUT", { connectionId: conn.id }), state);
   // the device holds this project's configuration
@@ -101,3 +101,19 @@ test("System B (Jung 400021SE): every flag and the priority are offered", async 
   const s = await setup("M-0004_A-7072-21-99A7-O000A.xml.gz");
   expect((await s.view()).comObjFlagsEditable).toEqual(["read", "write", "comm", "transmit", "update", "readOnInit", "priority"]);
 }, 60_000);
+
+// A System B table holds no entry for object 0 (its place is the count), so no write carries its flags:
+// bussard's synthetic syn-minimal, objects 0 and 1.
+test("System B object 0: offered no flag to edit, and an edit of it is refused", async () => {
+  const entry = BUSSARD_SYNTHETIC_TESTED.find(([p]) => p === "syn-minimal")!;
+  const s = await setup(undefined, readFileSync(corpusPath(bussardApplication(...entry)), "utf8"));
+  const v = await s.view();
+  expect(v.comObjFlagsUneditable).toEqual([0]);
+  const zero = objects(v).find((o: any) => o.number === 0);
+  const one = objects(v).find((o: any) => o.number === 1);
+  const r = await s.edit({ comObjRefId: zero.refId, flags: { read: true } });
+  expect(r!.status).toBe(400);
+  expect((await j(r)).error.code).toBe("COM_OBJECT_FLAG_NOT_EDITABLE");
+  expect(getDeviceComObjOverrides(s.state.db, s.id, s.deviceId)).toEqual([]);
+  expect((await s.edit({ comObjRefId: one.refId, flags: { write: true } }))!.status).toBe(200);
+});

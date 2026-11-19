@@ -4,8 +4,8 @@ import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTa
 import { refuseRawDataWrites } from "./rawdata.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { assertComObjectTableStable } from "./comobjtable.ts";
-import { buildComObjectTable, programIdStamp, withLinkedCommFlags, linkedBitObjects, refuseAppCommOffLinks, downloadPluginRefusal, withInstanceOverrides, refuseUnwritableOverrides, decodeComObjectTable, decodeComObjectTableMv0705, comObjFlagsDiffering, refuseUnknownDeviceFlags, changedEntryBits, type ComObjInstanceOverride, type ObservedComObjFlags, type OverridableBit } from "./comobjbuild.ts";
-import { buildDeviceConfig, type DeviceCapabilities, type CfgComObjImage } from "./config.ts";
+import { buildComObjectTable, comObjectTableRefusal, refuseObjectZeroOverride, programIdStamp, withLinkedCommFlags, linkedBitObjects, refuseAppCommOffLinks, downloadPluginRefusal, withInstanceOverrides, refuseUnwritableOverrides, decodeComObjectTable, decodeComObjectTableMv0705, comObjFlagsDiffering, refuseUnknownDeviceFlags, changedEntryBits, type ComObjInstanceOverride, type ObservedComObjFlags, type OverridableBit } from "./comobjbuild.ts";
+import { buildDeviceConfig, type DeviceCapabilities, type CfgComObjImage, type DeviceConfigBuild } from "./config.ts";
 import { decodeParameterImage, decodeAbsoluteImage, imageValueForm } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
 import { assessParCoverage, declaredPropChecks, relParamFillByte, relParamFullMode, declaredMcbWrites, unrunGrpSteps, lsmIdx, stepAddress, type ParCoverage, type LoadProcedures, type McbWrite } from "./loadproc.ts";
@@ -1051,6 +1051,12 @@ function moduleAwareModel(cfg: AppConfig, params: Map<string, string>, provided:
 // it (`comObjectOverrideBase`), only the bits the entry the write puts there changes in the device's.
 type FlagBaseline = { baseParams: Map<string, string>; moduleInstances?: ModuleInstance[]; comObjectOverrideBase?: ReadonlyMap<number, ComObjInstanceOverride> };
 type BaselineObjects = ReturnType<typeof baselineComObjects>;
+// The com-object table a System B write authors for a configuration (`view`), with the project's flags laid over
+// the application's and the Communication flag cleared on every object not in `linked`.
+function systemBComObjectTable(view: Pick<DeviceConfigBuild, "imageComObjects" | "maxComObjectNumber">, overrides: ReadonlyMap<number, ComObjInstanceOverride> | undefined, linked: ReadonlySet<number>): Buffer {
+  refuseObjectZeroOverride(view.imageComObjects, overrides);
+  return buildComObjectTable(withInstanceOverrides(view.imageComObjects, overrides), view.maxComObjectNumber, linked);
+}
 // A build from the application run before an operation's first request to the device (DeviceProfile.readDevice
 // says why), handed out where the operation uses it: its refusal is thrown there, after the device checks that
 // come first, and only where the operation gets that far.
@@ -1138,6 +1144,9 @@ export abstract class DeviceProfile {
   // Whether readState reads the device's com-object table, so a read-back takes each object's flags and
   // priority into the baseline (DeviceReadback.comObjFlags).
   readsComObjFlags(): boolean { return false; }
+  // The com-object numbers this family's com-object table holds no entry for, so no read shows their flags
+  // and no write carries them.
+  comObjNumbersWithoutEntry(): readonly number[] { return []; }
   // A read-back in two steps: readDevice reads everything the read takes off the device and returns its
   // decoding, which needs the device no more. A device closes a transport connection that carries no
   // request for the transport layer's connection timeout (6 s), and decoding a large application's image
@@ -1200,6 +1209,8 @@ export class SystemBProfile extends DeviceProfile {
   }
 
   override readsComObjFlags(): boolean { return true; }
+  // Entry 0 of the table is its count (comobjbuild.ts buildComObjectTable).
+  override comObjNumbersWithoutEntry(): readonly number[] { return [0]; }
 
   // The System B entry's flags byte has a bit for every flag, and the priority bits
   // (comobjbuild.ts comObjectEntry).
@@ -1217,9 +1228,9 @@ export class SystemBProfile extends DeviceProfile {
     if (sizes) return { flashParams: sizes, flashLinks: sizes, fullDownload: sizes };
     const par = parRefusal(assessParCoverage(this.cfg.loadProcedures, "relative"), "parameter download");
     const grp = parRefusal({ blocked: unrunGrpSteps(this.cfg.loadProcedures), skipped: [], checks: [] }, "group-address flash");
-    const plugin = downloadPluginRefusal(this.cfg);
-    const full = par ?? relativeFullDownloadRefusal(this.cfg, this.cfg.loadProcedures) ?? plugin;
-    const links = grp ?? plugin;
+    const table = downloadPluginRefusal(this.cfg) ?? comObjectTableRefusal(this.cfg);
+    const full = par ?? relativeFullDownloadRefusal(this.cfg, this.cfg.loadProcedures) ?? table;
+    const links = grp ?? table;
     return {
       ...(par ? { flashParams: par } : {}),
       ...(full && this.hasParamSegment() ? { fullDownload: full } : {}),
@@ -1360,7 +1371,7 @@ export class SystemBProfile extends DeviceProfile {
     // The linked objects are exactly those the association table connects; ETS clears the
     // Communication flag on every other object, so the com-object table build needs to know them.
     const linked = new Set(ctx.links.map((l) => l.comObjNum));
-    const comObj = buildComObjectTable(withInstanceOverrides(view.imageComObjects, ctx.comObjectOverrides), view.maxComObjectNumber, linked);
+    const comObj = systemBComObjectTable(view, ctx.comObjectOverrides, linked);
     // The entry counts do not depend on the association table's form, so the capacity is checked on the long one.
     const counted = buildGroupTables(ctx.links);
     refuseTablesOverCapacity(cfg, counted.addr, counted.assoc);
@@ -1757,7 +1768,7 @@ export class SystemBProfile extends DeviceProfile {
         `${orphans.length} group-address link(s) target communication objects this configuration does not activate (e.g. #${orphans[0].comObjNum}); the device would ignore them, so refusing to report them as programmed`);
     }
     const linked = new Set(ctx.links.map((l) => l.comObjNum));
-    const comObj = buildComObjectTable(withInstanceOverrides(view.imageComObjects, ctx.comObjectOverrides), view.maxComObjectNumber, linked);
+    const comObj = systemBComObjectTable(view, ctx.comObjectOverrides, linked);
     const security = ctx.security ? buildSecurityObject(ctx.links, comObj.readUInt16BE(0), ctx.security.groupKeys, secureSenders(ctx.security, ctx.ia)) : undefined;
     const flagBaseline = builtBefore(() => baselineComObjects(cfg, ctx));
     // Read the current L3 as well (not just addr/assoc): it is the backup, and its diff against the
@@ -1890,7 +1901,7 @@ export class SystemBProfile extends DeviceProfile {
       throw new ProductError("LINK_COM_OBJECT_INACTIVE",
         `${orphans.length} group-address link(s) target communication objects this configuration does not activate (e.g. #${orphans[0].comObjNum}); the device would ignore them, so refusing to report them as programmed`);
     }
-    const comObj = buildComObjectTable(withInstanceOverrides(view.imageComObjects, ctx.comObjectOverrides), view.maxComObjectNumber, new Set(ctx.links.map((l) => l.comObjNum)));
+    const comObj = systemBComObjectTable(view, ctx.comObjectOverrides, new Set(ctx.links.map((l) => l.comObjNum)));
     const { addr, assoc } = buildGroupTables(ctx.links);
     refuseTablesOverCapacity(cfg, addr, assoc);
     const security = ctx.security ? buildSecurityObject(ctx.links, comObj.readUInt16BE(0), ctx.security.groupKeys, secureSenders(ctx.security, ctx.ia)) : undefined;
