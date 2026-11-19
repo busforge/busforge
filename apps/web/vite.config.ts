@@ -17,7 +17,7 @@ export default defineConfig({
   server: {
     ...(dev.port === undefined ? {} : { port: dev.port, strictPort: true }),
     proxy: {
-      "/api/bus/monitor": { target: dev.apiWsTarget, ws: true },
+      "^/api/projects/[^/]+/bus/monitor$": { target: dev.apiWsTarget, ws: true },
       "/api": { target: dev.apiTarget },
     },
   },
