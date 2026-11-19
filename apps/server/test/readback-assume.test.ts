@@ -134,6 +134,9 @@ function memorylessDemo(state: AppState): void {
   let xml = demoXml(state);
   const swap = (from: string, to: string) => { expect(xml.split(from).length).toBe(2); xml = xml.replace(from, to); };
   swap('<Memory CodeSegment="M-TEST_A-1_RS-4" Offset="0" BitOffset="0" />', "");
+  // MinEtsVersion 5: ETS writes the hidden "Step" at its default, so a value that hides it changes the image
+  // (docs/load-procedures.md, R14).
+  swap('MaskVersion="MV-07B0"', 'MaskVersion="MV-07B0" MinEtsVersion="5.0"');
   // A parameter segment, so the image holds the parameters' bytes.
   swap("<ParameterTypes>", '<Code><RelativeSegment Id="M-TEST_A-1_RS-4" LoadStateMachine="4" Size="16" Data="AAAAAAAAAAAAAAAAAAAAAA==" /></Code><ParameterTypes>');
   swap("</Parameters>", '<Parameter Id="M-TEST_A-1_P-4" Name="Note" ParameterType="M-TEST_A-1_PT-Mode" Text="Note" Value="0" />'
