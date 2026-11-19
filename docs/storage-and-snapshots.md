@@ -154,7 +154,9 @@ programmed**; state, gate and remedy are the same, and whatever clears the one c
 device whose product carries no application program (`devices.has_application = 0`, its Hardware2Program
 names none) takes its address and nothing else: it is seeded from `IndividualAddressLoaded` alone, and a
 verified address assignment clears it; a new project address sets it again. A device whose
-`DeviceInstance` names no Hardware2Program at all is not seeded and stays as imported. Every other
+`DeviceInstance` names no Hardware2Program at all is not seeded and stays as imported. A device whose
+hardware carries a PEI program next to its application (`devices.pei_program = 1`, its Hardware2Program
+names two programs) takes no full download, so a never-programmed one is pointed at ETS. Every other
 never-programmed device
 counts as "to program" until a verified full download clears it, or a read-back that
 shows the device holds this project's application, parameters and links: one that read parameters and

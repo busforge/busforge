@@ -2,13 +2,13 @@ import { test, expect, describe, afterAll } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readZip } from "@busforge/project";
+import { readZip, appProgramId } from "@busforge/project";
 import { createState, handleApi, type AppState } from "../src/app.ts";
 import { exportProject } from "../src/db/exportProject.ts";
 import { importProjectExport, validateExport } from "../src/db/importProject.ts";
 import { putCatalogProduct, getCatalogProduct, backfillCatalogFromDevices } from "../src/db/catalog.ts";
 import { addDevice, createProject } from "../src/db/projects.ts";
-import { getDeviceForFlash, replaceDeviceProduct } from "../src/db/deviceparams.ts";
+import { getDeviceForFlash, replaceDeviceProduct, setDeviceParam } from "../src/db/deviceparams.ts";
 import { storeZip } from "../../../packages/project/test/ziputil.ts";
 import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusTest } from "../../../tools/corpus-test.ts";
@@ -64,8 +64,7 @@ const peiColumn = (state: AppState, deviceId: string) =>
 async function pei(state: AppState, programs = 2) {
   const probe = await imported(fresh(), sample);
   const { appRef, productRef } = probe.device;
-  const app = `${appRef.split("_")[0]}_A-${appRef.split("_HP-")[1]}`;
-  const refs = [app, `${appRef.split("_")[0]}_A-PEI-1-0000`].slice(0, programs);
+  const refs = [appProgramId(appRef), `${appRef.split("_")[0]}_A-PEI-1-0000`].slice(0, programs);
   return { ...(await imported(state, withHardware(appRef, productRef, refs))), appRef, productRef };
 }
 
@@ -115,6 +114,21 @@ describe("hardware that carries a PEI program", () => {
     expect(() => validateExport(malformed)).toThrow(expect.objectContaining({ code: "BUSFORGE_INVALID" }));
   });
 
+  test("a catalogue row takes a PEI program from any later ingest that names one, and never loses it", () => {
+    const state = fresh();
+    const product = { appRef: "M-00FA_H-1_HP-0001-01-0000", productRef: "M-00FA_H-1_P-1", appProgramId: "M-00FA_A-0001-01-0000", manufacturer: 0xfa, name: "Two", orderNumber: "T-1", hwVersion: "1", hasApplication: true, peiProgram: false };
+    putCatalogProduct(state.db, product);
+    putCatalogProduct(state.db, { ...product, peiProgram: true });
+    expect(getCatalogProduct(state.db, product.appRef, product.productRef)?.peiProgram).toBe(true);
+    putCatalogProduct(state.db, product);
+    putCatalogProduct(state.db, product, true);
+    expect(getCatalogProduct(state.db, product.appRef, product.productRef)?.peiProgram).toBe(true);
+    const pinned = { ...product, productRef: "M-00FA_H-1_P-2" };
+    putCatalogProduct(state.db, pinned);
+    putCatalogProduct(state.db, { ...pinned, peiProgram: true }, true);
+    expect(getCatalogProduct(state.db, pinned.appRef, pinned.productRef)?.peiProgram).toBe(true);
+  });
+
   test("a device placed from the catalogue, or replaced by such a product, carries it", () => {
     const state = fresh();
     const product = { appRef: "M-00FA_H-1_HP-0001-01-0000", productRef: "M-00FA_H-1_P-1", appProgramId: "M-00FA_A-0001-01-0000", manufacturer: 0xfa, name: "Two", orderNumber: "T-1", hwVersion: "1", hasApplication: true, peiProgram: true };
@@ -135,11 +149,15 @@ describe("hardware that carries a PEI program", () => {
 // the full download with the hardware's code, and every write that would point at it points at ETS instead.
 describe("hardware that carries a PEI program, with a System B application that takes a full download", () => {
   const mix2 = () => catalogueXml("M-0085_A-0072-30-69AA.xml.gz");
-  async function withApp(state: AppState, programs: number) {
+  async function withApp(state: AppState, programs: number, xml = mix2()) {
     const r = await pei(state, programs);
-    state.db.run("UPDATE app_programs SET xml = ? WHERE id = ?", [mix2(), `${r.appRef.split("_")[0]}_A-${r.appRef.split("_HP-")[1]}`]);
+    state.db.run("UPDATE app_programs SET xml = ? WHERE id = ?", [xml, appProgramId(r.appRef)]);
     return r;
   }
+  const connect = async (state: AppState, projectId: string) => {
+    const conn = await call(state, "/api/connections", json("POST", { type: "ip", name: "GW", host: "198.51.100.10", port: 3671 }));
+    await call(state, `/api/projects/${projectId}/connection`, json("PUT", { connectionId: conn.body.id }));
+  };
   const view = async (state: AppState, projectId: string, deviceId: string) =>
     (await call(state, `/api/projects/${projectId}/devices/${encodeURIComponent(deviceId)}/config`)).body;
 
@@ -161,12 +179,38 @@ describe("hardware that carries a PEI program, with a System B application that 
   corpusTest("a never-programmed device is pointed at ETS, not at the full download", async () => {
     const state = fresh();
     const { projectId, device } = await withApp(state, 2);
-    const conn = await call(state, "/api/connections", json("POST", { type: "ip", name: "GW", host: "198.51.100.10", port: 3671 }));
-    await call(state, `/api/projects/${projectId}/connection`, json("PUT", { connectionId: conn.body.id }));
+    await connect(state, projectId);
     state.db.run("UPDATE devices SET never_programmed = 1 WHERE project_id = ? AND instance_id = ?", [projectId, device.id]);
     for (const route of ["flash", "flash-ga"]) {
       const r = await call(state, `/api/projects/${projectId}/devices/${encodeURIComponent(device.id)}/${route}`, { method: "POST" });
       expect(r.body.error.code).toBe("NEVER_PROGRAMMED_USE_ETS");
     }
+  });
+
+  // P-9 at 2 activates com-objects; the MIX 2 offers no structural flash, so the change needs the full download.
+  corpusTest("a change of the com-object table is pointed at ETS, where the same application points it at the full download", async () => {
+    const outcome = async (programs: number) => {
+      const state = fresh();
+      const { projectId, device } = await withApp(state, programs);
+      await connect(state, projectId);
+      state.db.run("UPDATE devices SET never_programmed = 0 WHERE project_id = ? AND instance_id = ?", [projectId, device.id]);
+      setDeviceParam(state.db, projectId, device.id, "M-0085_A-0072-30-69AA_P-9_R-9", "2");
+      return (await call(state, `/api/projects/${projectId}/devices/${encodeURIComponent(device.id)}/flash`, { method: "POST" })).body.error.code;
+    };
+    expect(await outcome(1)).toBe("COM_OBJECT_TABLE_STALE_USE_DOWNLOAD");
+    expect(await outcome(2)).toBe("COM_OBJECT_TABLE_STALE_USE_ETS");
+  });
+
+  // A System 1 parameter download is its full download: on PEI hardware it is refused as well (MDT IP
+  // Interface Secure, MV-0012).
+  corpusTest("on System 1 the parameter download is refused and withheld as well", async () => {
+    const state = fresh();
+    const { projectId, device } = await withApp(state, 2, catalogueXml("M-0083_A-0138-21-F18E-O0072.xml.gz"));
+    const page = await view(state, projectId, device.id);
+    expect(page.capabilities.flashParams).toBe(false);
+    expect(page.refusals.flashParams).toBe("HARDWARE_PEI_PROGRAM_UNSUPPORTED");
+    await connect(state, projectId);
+    const r = await call(state, `/api/projects/${projectId}/devices/${encodeURIComponent(device.id)}/flash`, { method: "POST" });
+    expect(r.body.error.code).toBe("HARDWARE_PEI_PROGRAM_UNSUPPORTED");
   });
 });

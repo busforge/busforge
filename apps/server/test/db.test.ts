@@ -98,7 +98,7 @@ describe("schema/migrations", () => {
 describe("projects", () => {
   test("insert then get rebuilds the parsed shape", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1.knxproj", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1.knxproj", 1000, new Set(), new Set());
     const p = getProject(db, "p1")!;
     expect(p.name).toBe("Demo");
     expect(p.devices.map((d) => d.ia)).toEqual(["1.1.10", "1.1.11"]);
@@ -110,7 +110,7 @@ describe("projects", () => {
 
   test("list summarizes counts; get returns null for unknown", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     expect(listProjects(db)).toMatchObject([{ id: "p1", name: "Demo", deviceCount: 2, gaCount: 2 }]);
     expect(getProject(db, "ghost")).toBeNull();
     expect(getProject(db, "p1")!.groupAddressLevels).toBe(3); // sample has no style -> default
@@ -121,7 +121,7 @@ describe("projects", () => {
     const proj = parseProject(sampleXml, projectXml, "Two");
     expect(proj.groupAddressLevels).toBe(2);
     const db = fresh();
-    insertProject(db, "p1", proj, "/tmp/p1", 1000);
+    insertProject(db, "p1", proj, "/tmp/p1", 1000, new Set(), new Set());
     expect(getProject(db, "p1")!.groupAddressLevels).toBe(2); // survives the knxproj import
     // And the .busforge export carries it (ProjectProperties), so a re-import keeps two-level.
     const MK = Buffer.alloc(32, 7);
@@ -136,7 +136,7 @@ describe("projects", () => {
     const [dev] = proj.deviceComObjOverrides;
     expect(dev.overrides).toHaveLength(1);
     const db = fresh();
-    insertProject(db, "p1", proj, "/tmp/p1", 1000);
+    insertProject(db, "p1", proj, "/tmp/p1", 1000, new Set(), new Set());
     const want = [{ comObjRefId: dev.overrides[0].comObjRefId, attrs: { ReadFlag: "Enabled", Priority: "High" } }];
     expect(getDeviceComObjOverrides(db, "p1", dev.deviceId)).toEqual(want);
     const MK = Buffer.alloc(32, 7);
@@ -156,7 +156,7 @@ describe("projects", () => {
   // what the flash takes as the project knowing the values that decide what a configuration hides.
   test("a device from an ETS import holds its configuration from ETS, a placed one not; both marks survive a .busforge round-trip, a product replacement ends them", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     const dev = getProject(db, "p1")!.devices[0];
     expect(getDeviceForFlash(db, "p1", dev.id)!.configFromEts).toBe(true);
     db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer) VALUES ('p1','placed','1.1.99','Placed','M-9_P-1','M-9_H-1_HP-1',9)").run();
@@ -184,7 +184,7 @@ describe("projects", () => {
     const [dev] = proj.deviceComObjOverrides;
     const ref = dev.overrides[0].comObjRefId;
     const db = fresh();
-    insertProject(db, "p1", proj, "/tmp/p1", 1000);
+    insertProject(db, "p1", proj, "/tmp/p1", 1000, new Set(), new Set());
     // the import is what the device holds
     expect(getDeviceComObjOverrideBase(db, "p1", dev.deviceId)).toEqual(getDeviceComObjOverrides(db, "p1", dev.deviceId));
     expect(getDeviceChangedKeys(db, "p1", dev.deviceId).flags.size).toBe(0);
@@ -228,7 +228,7 @@ describe("projects", () => {
     const proj = parseProject(xml, undefined, "Demo");
     const [dev] = proj.deviceComObjOverrides;
     const db = fresh();
-    insertProject(db, "p1", proj, "/tmp/p1", 1000);
+    insertProject(db, "p1", proj, "/tmp/p1", 1000, new Set(), new Set());
     const want = getDeviceComObjOverrides(db, "p1", dev.deviceId);
     expect(serializeConfig(db, "p1").deviceComObjOverrides).toEqual([{ deviceId: dev.deviceId, ...want[0] }]);
     createSnapshot(db, "p1", { kind: "manual", reason: "manual" }, 2000);
@@ -246,7 +246,7 @@ describe("projects", () => {
 
   test("a device's link-baseline gaps survive a .busforge round-trip", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     setLinkBaseGaps(db, "p1", "P-TEST-0_DI-1", 3);
     const MK = Buffer.alloc(32, 7);
     const data = exportProject(db, "p1", 5, MK)!;
@@ -267,7 +267,7 @@ describe("projects", () => {
       </Topology></Installation></Installations></Project></KNX>`;
     const proj = parseProject(xml0, undefined, "x");
     const db = fresh();
-    insertProject(db, "p1", proj, "/tmp/p1", 1000);
+    insertProject(db, "p1", proj, "/tmp/p1", 1000, new Set(), new Set());
     expect(getDeviceModules(db, "p1", "DI-9")).toEqual([
       { id: "MD-1_M-1_MI-1", refId: "MD-1_M-1", args: [{ refId: "MD-1_A-1", value: "A" }, { refId: "MD-1_A-2", value: "10" }] },
     ]);
@@ -288,7 +288,7 @@ describe("projects", () => {
     const proj = parseProject(xml0, undefined, "x");
     expect(proj.devices.length).toBe(2); // parser keeps both; the store is where the clash surfaces
     const db = fresh();
-    const code = (() => { try { insertProject(db, "p1", proj, "/tmp/p1", 1000); return null; } catch (e) { return (e as { code?: string }).code; } })();
+    const code = (() => { try { insertProject(db, "p1", proj, "/tmp/p1", 1000, new Set(), new Set()); return null; } catch (e) { return (e as { code?: string }).code; } })();
     expect(code).toBe("DUPLICATE_DEVICE_INSTANCE");
     // Nothing was persisted (the pre-check runs before the insert transaction opens).
     expect(db.query("SELECT COUNT(*) AS n FROM devices WHERE project_id = 'p1'").get()).toEqual({ n: 0 });
@@ -327,13 +327,13 @@ describe("projects", () => {
       '<ComObjectInstanceRef RefId="O-1_R-1" Links="GA-1 GA-2" /><ComObjectInstanceRef RefId="O-1_R-1" Links="GA-2" />',
     );
     const db = fresh();
-    expect(() => insertProject(db, "pdup", parseProject(dup, undefined, "x"), "/tmp/pdup", 1000)).not.toThrow();
+    expect(() => insertProject(db, "pdup", parseProject(dup, undefined, "x"), "/tmp/pdup", 1000, new Set(), new Set())).not.toThrow();
     expect(getDeviceLinks(db, "pdup", "P-TEST-0_DI-1").get("O-1_R-1")).toEqual([1, 2, 2]);
   });
 
   test("device links round-trip and re-point replaces", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     // seeded from the fixture: DI-1 O-1_R-1 -> [1, 2]
     expect(getDeviceLinks(db, "p1", "P-TEST-0_DI-1").get("O-1_R-1")).toEqual([1, 2]);
     // re-point replaces the link (slot order preserved)
@@ -343,7 +343,7 @@ describe("projects", () => {
 
   test("fresh import reports no per-device changes", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     for (const d of getProject(db, "p1")!.devices) expect(d.changes).toEqual({ params: 0, links: 0, flags: 0, neverProgrammed: false });
   });
 
@@ -351,7 +351,7 @@ describe("projects", () => {
     const db = fresh();
     const xml = readFileSync(join(import.meta.dir, "../../../packages/project/test/fixtures/sample-0.xml"), "utf8")
       .replace(/(Id="P-TEST-0_DI-2"[^>]*?) ApplicationProgramLoaded="true"/, "$1");
-    insertProject(db, "p1", parseProject(xml, undefined, "x"), "/tmp/p1", 1000);
+    insertProject(db, "p1", parseProject(xml, undefined, "x"), "/tmp/p1", 1000, new Set(), new Set());
     const flags = Object.fromEntries(getProject(db, "p1")!.devices.map((d) => [d.id, d.changes.neverProgrammed]));
     expect(flags).toEqual({ "P-TEST-0_DI-1": false, "P-TEST-0_DI-2": true });
   });
@@ -362,7 +362,7 @@ describe("projects", () => {
       .replace(/(Id="P-TEST-0_DI-1"[^>]*?) ParametersLoaded="true"/, "$1")
       .replace(/(Id="P-TEST-0_DI-1"[^>]*?) CommunicationPartLoaded="true"/, "$1")
       .replace(/(Id="P-TEST-0_DI-2"[^>]*?) ApplicationProgramLoaded="true"/, "$1");
-    insertProject(db, "p1", parseProject(xml, undefined, "x"), "/tmp/p1", 1000);
+    insertProject(db, "p1", parseProject(xml, undefined, "x"), "/tmp/p1", 1000, new Set(), new Set());
     const changes = (pid: string) => Object.fromEntries(getProject(db, pid)!.devices.map((d) => [d.id, d.changes]));
     // The application never downloaded: never programmed, no part to name.
     expect(changes("p1")).toEqual({
@@ -410,7 +410,7 @@ describe("projects", () => {
       const db = fresh();
       const xml = readFileSync(join(import.meta.dir, "../../../packages/project/test/fixtures/sample-0.xml"), "utf8")
         .replace(new RegExp(`(Id="P-TEST-0_DI-2"[^>]*?) ${flag}="true"`), "$1");
-      insertProject(db, "p1", parseProject(xml, undefined, "x"), "/tmp/p1", 1000);
+      insertProject(db, "p1", parseProject(xml, undefined, "x"), "/tmp/p1", 1000, new Set(), new Set());
       const flags = Object.fromEntries(getProject(db, "p1")!.devices.map((d) => [d.id, d.changes.neverProgrammed]));
       expect(flags).toEqual({ "P-TEST-0_DI-1": false, "P-TEST-0_DI-2": true });
     });
@@ -420,7 +420,7 @@ describe("projects", () => {
     const db = fresh();
     const xml = readFileSync(join(import.meta.dir, "../../../packages/project/test/fixtures/sample-0.xml"), "utf8")
       .replace(/(Id="P-TEST-0_DI-2"[^>]*?) ApplicationProgramLoaded="true"([^>]*?) Hardware2ProgramRefId="[^"]*"/, "$1$2");
-    insertProject(db, "p1", parseProject(xml, undefined, "x"), "/tmp/p1", 1000);
+    insertProject(db, "p1", parseProject(xml, undefined, "x"), "/tmp/p1", 1000, new Set(), new Set());
     const dev = getProject(db, "p1")!.devices.find((d) => d.id === "P-TEST-0_DI-2")!;
     expect(dev.appRef).toBe("");
     expect(dev.changes.neverProgrammed).toBe(false);
@@ -437,7 +437,7 @@ describe("projects", () => {
         </DeviceInstance></Line></Area>
       </Topology></Installation></Installations></Project></KNX>`;
     const db = fresh();
-    insertProject(db, "p1", parseProject(xml0, undefined, "x"), "/tmp/p1", 1000);
+    insertProject(db, "p1", parseProject(xml0, undefined, "x"), "/tmp/p1", 1000, new Set(), new Set());
     const dev = "DI-9";
     expect(getProjectChanges(db, "p1").get(dev)).toBeUndefined(); // clean
 
@@ -468,7 +468,7 @@ describe("projects", () => {
 
   test("tracks link changes and resets on flash", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     const dev = "P-TEST-0_DI-1"; // seeded from the fixture: O-1_R-1 -> [1, 2]
     expect(getProjectChanges(db, "p1").get(dev)).toBeUndefined();
 
@@ -481,7 +481,7 @@ describe("projects", () => {
 
   test("resetLinkBase re-baselines ONLY the flashed refs; a skipped link stays drift", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     const dev = "P-TEST-0_DI-1";
     setDeviceLink(db, "p1", dev, "O-1_R-1", [9]); // this one gets flashed
     setDeviceLink(db, "p1", dev, "O-2_R-2", [5]); // this one was skipped at flash (e.g. hidden com-object)
@@ -496,7 +496,7 @@ describe("projects", () => {
 
   test("flags the exact edited rows", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     const dev = "P-TEST-0_DI-1";
     expect(getDeviceChangedKeys(db, "p1", dev)).toMatchObject({ params: new Set(), links: new Set() });
 
@@ -511,7 +511,7 @@ describe("projects", () => {
 
   test("revert restores params and links to the baseline", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     const dev = "P-TEST-0_DI-1"; // baseline link O-1_R-1 -> [1, 2]
     const baseLinks = getDeviceLinks(db, "p1", dev).get("O-1_R-1");
 
@@ -527,7 +527,7 @@ describe("projects", () => {
 
   test("read-back baseline surfaces param drift; per-row revert adopts the device value", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     const dev = "P-TEST-0_DI-1";
     // Simulate a read-back result: the device drifted on a default param. The
     // baseline is the live rows plus that override (what the server stores).
@@ -546,7 +546,7 @@ describe("projects", () => {
 
   test("read-back baseline surfaces link drift; per-row revert adopts the device links", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     const dev = "P-TEST-0_DI-1"; // baseline link O-1_R-1 -> [1, 2]
     const base = new Map(getDeviceLinks(db, "p1", dev));
     base.set("O-1_R-1", [9]); // device points the com-object at a different GA
@@ -561,7 +561,7 @@ describe("projects", () => {
 
   test("getDeviceParamBase exposes the baseline; a float differs from its canonical form only textually", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     const dev = "P-TEST-0_DI-1";
     const ref = "M-X_A-1_P-9_R-1";
     // ETS stores a float baseline in scientific notation; the UI writes the canonical
@@ -580,7 +580,7 @@ describe("projects", () => {
 
   test("device searchText indexes text params, skips numbers", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     const dev = "P-TEST-0_DI-1";
     setDeviceParam(db, "p1", dev, "M-X_A-1_P-50_R-1", "Wohnzimmer Heizung");
     setDeviceParam(db, "p1", dev, "M-X_A-1_P-51_R-1", "600");
@@ -591,7 +591,7 @@ describe("projects", () => {
 
   test("project references a saved connection", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     createConnection(db, "c1", { name: "GW", type: "ip", host: "1.2.3.4", port: 3672, ipTransport: "auto", usbVendorId: null, usbProductId: null, usbSerial: null }, 1000);
     expect(setProjectConnection(db, "p1", "c1")).toBe(true);
     expect(getProject(db, "p1")!.connectionId).toBe("c1");
@@ -604,7 +604,7 @@ describe("projects", () => {
 
   test("delete cascades to children", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     insertTelegram(db, "p1", decodeGroupTpdu(0, 1, Buffer.from([0x00, 0x81]), 5));
     expect(deleteProject(db, "p1")).toBe(true);
     expect(db.query("SELECT COUNT(*) AS n FROM devices").get()).toMatchObject({ n: 0 });
@@ -618,7 +618,7 @@ describe("project export", () => {
 
   test("serializes the whole project plus referenced catalog and baggage", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     const dev = "P-TEST-0_DI-1";
     setDeviceParam(db, "p1", dev, "M-X_A-1_P-9_R-1", "7");
     resetParamBase(db, "p1", dev, getDeviceParams(db, "p1", dev)); // adopt as baseline so the export carries baselines too
@@ -643,7 +643,7 @@ describe("project export", () => {
 
   test("carries the active-connection reference; import restores it only if the connection exists", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     createConnection(db, "conn-1", { name: "GW", type: "ip", host: "1.2.3.4", port: 3671, ipTransport: "auto", usbVendorId: null, usbProductId: null, usbSerial: null }, 1000);
     setProjectConnection(db, "p1", "conn-1");
     const ex = exportProject(db, "p1", 5000, MK)!;
@@ -661,7 +661,7 @@ describe("project export", () => {
 
   test("round-trips Data Secure tool keys through export/import, re-sealed under the importing master key", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     const dev = "P-TEST-0_DI-1";
     const toolKey = Buffer.from("000102030405060708090a0b0c0d0e0f", "hex");
     const serial = Buffer.from("aabbccddeeff", "hex");
@@ -683,7 +683,7 @@ describe("project export", () => {
 
   test("round-trips the security state of recorded telegrams, and imports a log that has none", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     insertTelegram(db, "p1", decodeGroupTpdu(0x1203, 1, Buffer.from([0x00, 0x81]), 10));
     insertTelegram(db, "p1", { ...decodeGroupTpdu(0x1203, 1, Buffer.from([0x00, 0x80]), 20), security: "decrypted" });
     insertTelegram(db, "p1", undecodedSecureTelegram(0x1203, 1, "noKey", 30));
@@ -699,7 +699,7 @@ describe("project export", () => {
 
   test("round-trips Data Secure group keys through export/import, re-sealed under the importing master key", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     const key = Buffer.alloc(16, 0x5a);
     putGroupKeys(db, "p1", [{ raw: 1, key, source: "import" }], MK);
     const ex = exportProject(db, "p1", 5000, MK)!;
@@ -714,7 +714,7 @@ describe("project export", () => {
 describe("secured senders", () => {
   test("stores, lists, adds and removes the senders of a group address", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     putGroupSenders(db, "p1", [{ gaRaw: 1, ia: "1.2.250", source: "import" }]);
     addGroupSender(db, "p1", 1, "1.2.3");
     addGroupSender(db, "p1", 2, "1.2.250");
@@ -729,7 +729,7 @@ describe("secured senders", () => {
 
   test("refuses an address that is not an individual address", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     expect(() => addGroupSender(db, "p1", 1, "1/2/250")).toThrow(/individual address/);
     expect(() => addGroupSender(db, "p1", 1, "1.1.256")).toThrow(/individual address/);
     expect(() => addGroupSender(db, "p1", 70000, "1.1.1")).toThrow(/group address/);
@@ -738,14 +738,14 @@ describe("secured senders", () => {
 
   test("removing takes the same address written differently", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     addGroupSender(db, "p1", 1, "1.2.250");
     expect(removeGroupSender(db, "p1", 1, "01.2.250")).toBe(true);
   });
 
   test("the send sequence never repeats and never falls behind the clock", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     expect(nextSendSequence(db, "p1", "1.2.250", 500n)).toBe(500n);
     expect(nextSendSequence(db, "p1", "1.2.250", 400n)).toBe(501n); // clock went back: still ahead of the last
     expect(nextSendSequence(db, "p1", "1.2.250", 900n)).toBe(900n);
@@ -754,7 +754,7 @@ describe("secured senders", () => {
 
   test("round-trips senders and send sequences through export/import", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     putGroupSenders(db, "p1", [{ gaRaw: 1, ia: "1.2.250", source: "import" }]);
     nextSendSequence(db, "p1", "1.2.250", 777n);
     const ex = exportProject(db, "p1", 5000, MK_SENDERS)!;
@@ -778,7 +778,7 @@ describe("device security persistence", () => {
   const dev = "P-TEST-0_DI-1";
   const seed = () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     putDeviceSecurity(db, "p1", [{ deviceId: dev, toolKey, serialNumber: serial, sequenceNumber: "1", source: "import" }], MK);
     return db;
   };
@@ -996,7 +996,7 @@ describe("catalog (products + placement)", () => {
 describe("baggage (DCA blobs)", () => {
   test("put then get filters by device-id prefix; projectHasBaggage reflects presence", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     expect(projectHasBaggage(db, "p1")).toBe(false);
 
     putBaggage(db, "p1", "DI-1_Dalie64.bin", Buffer.from("aaa"));
@@ -1035,7 +1035,7 @@ describe("snapshots", () => {
 
   test("serialize captures params, links and project meta", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     setDeviceParam(db, "p1", dev, "M-X_A-1_P-9_R-1", "7");
     const cfg = serializeConfig(db, "p1");
     expect(cfg.project).toMatchObject({ name: "Demo" });
@@ -1045,7 +1045,7 @@ describe("snapshots", () => {
 
   test("refuses a restore point taken by a newer schema, and restores an older one", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     const snap = createSnapshot(db, "p1", { kind: "manual", label: "x", reason: "manual" }, 1000)!;
     db.prepare("UPDATE snapshots SET schema_version = ? WHERE id = ?").run(SCHEMA_VERSION + 1, snap.id);
     expect(() => restoreSnapshot(db, "p1", snap.id, 2000)).toThrow(expect.objectContaining({ code: "SNAPSHOT_SCHEMA_NEWER" }));
@@ -1056,7 +1056,7 @@ describe("snapshots", () => {
 
   test("captures and restores the connection reference (shared project properties)", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     createConnection(db, "c1", { name: "GW", type: "ip", host: "1.2.3.4", port: 3671, ipTransport: "auto", usbVendorId: null, usbProductId: null, usbSerial: null }, 1000);
     setProjectConnection(db, "p1", "c1");
     const snap = createSnapshot(db, "p1", { kind: "manual", label: "with conn", reason: "manual" }, 1000)!;
@@ -1075,7 +1075,7 @@ describe("snapshots", () => {
 
   test("restore rolls the config back to a captured point", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     const base = createSnapshot(db, "p1", { kind: "manual", label: "base", reason: "manual" }, 1000)!;
     expect(base.label).toBe("base");
 
@@ -1091,7 +1091,7 @@ describe("snapshots", () => {
 
   test("restore is undoable: it first captures the current state", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     const base = createSnapshot(db, "p1", { kind: "manual", reason: "manual" }, 1000)!;
     setDeviceParam(db, "p1", dev, "M-X_A-1_P-9_R-1", "7");
 
@@ -1106,7 +1106,7 @@ describe("snapshots", () => {
 
   test("restore leaves the programmed baseline untouched (drift stays truthful)", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     const clean = createSnapshot(db, "p1", { kind: "manual", reason: "manual" }, 1000)!;
     // Program a value: baseline := edited. Then restore the clean snapshot.
     setDeviceParam(db, "p1", dev, "M-X_A-1_P-9_R-1", "7");
@@ -1119,7 +1119,7 @@ describe("snapshots", () => {
 
   test("auto snapshots dedup against the latest; manual ones never do", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     expect(createSnapshot(db, "p1", { kind: "auto", reason: "before-flash" }, 1000)).not.toBeNull();
     expect(createSnapshot(db, "p1", { kind: "auto", reason: "before-flash" }, 1001)).toBeNull(); // identical -> skipped
     expect(listSnapshots(db, "p1")).toHaveLength(1);
@@ -1130,7 +1130,7 @@ describe("snapshots", () => {
 
   test("auto snapshots are pruned to the ring buffer; manual survive", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     const keep = createSnapshot(db, "p1", { kind: "manual", label: "keep", reason: "manual" }, 1000)!;
     for (let i = 0; i < 25; i++) {
       setDeviceParam(db, "p1", dev, "M-X_A-1_P-9_R-1", String(i)); // distinct payload each round
@@ -1143,7 +1143,7 @@ describe("snapshots", () => {
 
   test("delete removes one; restore/delete of an unknown id report failure", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     const s = createSnapshot(db, "p1", { kind: "manual", reason: "manual" }, 1000)!;
     expect(deleteSnapshot(db, "p1", s.id)).toBe(true);
     expect(listSnapshots(db, "p1")).toHaveLength(0);
@@ -1153,7 +1153,7 @@ describe("snapshots", () => {
 
   test("restore reports whether the restore point carried group structure", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     // A modern snapshot captures the GA structure, so restoring it covers the structure.
     const modern = createSnapshot(db, "p1", { kind: "manual", reason: "manual" }, 1000)!;
     expect(restoreSnapshot(db, "p1", modern.id, 2000).gaStructureRestored).toBe(true);
@@ -1170,7 +1170,7 @@ describe("snapshots", () => {
 
   test("snapshots cascade on project delete", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     createSnapshot(db, "p1", { kind: "manual", reason: "manual" }, 1000);
     deleteProject(db, "p1");
     expect(db.query("SELECT COUNT(*) AS n FROM snapshots").get()).toMatchObject({ n: 0 });
@@ -1180,7 +1180,7 @@ describe("snapshots", () => {
 describe("telegrams", () => {
   test("recent returns oldest-first with formatted dst", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     insertTelegram(db, "p1", decodeGroupTpdu(0x1203, 1, Buffer.from([0x00, 0x81]), 10));
     insertTelegram(db, "p1", decodeGroupTpdu(0x1203, 2, Buffer.from([0x00, 0x81]), 20));
     insertTelegram(db, "p1", decodeGroupTpdu(0x1203, 3, Buffer.from([0x00, 0x81]), 30));
@@ -1191,8 +1191,8 @@ describe("telegrams", () => {
 
   test("recent is scoped per project and honors the limit", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
-    insertProject(db, "p2", demo(), "/tmp/p2", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
+    insertProject(db, "p2", demo(), "/tmp/p2", 1000, new Set(), new Set());
     insertTelegram(db, "p1", decodeGroupTpdu(0, 1, Buffer.from([0x00, 0x81]), 1));
     insertTelegram(db, "p2", decodeGroupTpdu(0, 1, Buffer.from([0x00, 0x81]), 2));
     expect(recentTelegrams(db, "p1", 10)).toHaveLength(1);
@@ -1206,7 +1206,7 @@ describe("telegrams", () => {
 
   test("prune drops telegrams older than the cutoff", () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     insertTelegram(db, "p1", decodeGroupTpdu(0, 1, Buffer.from([0x00, 0x81]), 100));
     insertTelegram(db, "p1", decodeGroupTpdu(0, 1, Buffer.from([0x00, 0x81]), 500));
     expect(pruneTelegrams(db, 300)).toBe(1);
@@ -1296,7 +1296,7 @@ describe("parameter values assumed, not proven", () => {
     <ParameterRefs>${[7, 8, 9, 10].map((n) => `<ParameterRef Id="${APP}_P-${n}_R-${n}" RefId="${APP}_P-${n}" />`).join("")}</ParameterRefs></Static></ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
   const seeded = () => {
     const db = fresh();
-    insertProject(db, "p1", demo(), "/tmp/p1", 1000);
+    insertProject(db, "p1", demo(), "/tmp/p1", 1000, new Set(), new Set());
     putAppProgram(db, APP, appXml);
     setDeviceParam(db, "p1", dev, A, "2");
     replaceParamBase(db, "p1", dev, new Map([[A, "2"]]));

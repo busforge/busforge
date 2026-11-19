@@ -145,7 +145,7 @@ its product's Hardware2Program names both. Busforge's full download loads the ap
 System B unloads the PEI program first and never loads it again
 ([load-procedures.md](load-procedures.md#the-rules-by-level), R9). The import records such hardware, the
 device page withholds the full download, and the download is refused before anything is sent
-(`HARDWARE_PEI_PROGRAM_UNSUPPORTED`). A never-programmed device of this kind is pointed at ETS, as is a
+(`HARDWARE_PEI_PROGRAM_UNSUPPORTED`), on System 1 the parameter download too, which is its full download. A never-programmed device of this kind is pointed at ETS, as is a
 change that needs its com-object table rewritten and no structural flash can write.
 
 ## The full download

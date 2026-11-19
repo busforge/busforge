@@ -1,4 +1,4 @@
-import { parseAppConfig, collectApp, takesValue, resolveParamRef, resolveModuleInstances, buildDeviceConfig, assumableMemorylessRefs, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, CollectCancelled, comObjectTableChanges, fullDownloadRefusedForTunnelingEntries, HARDWARE_PEI_PROGRAM_REFUSAL, type CollectApp, type AppConfig, type DeviceReadbackInfo, type MatrixOperation, type ModuleInstance, type WriteGate, type KnxIpDevice } from "@busforge/product";
+import { parseAppConfig, collectApp, takesValue, resolveParamRef, resolveModuleInstances, buildDeviceConfig, assumableMemorylessRefs, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, CollectCancelled, comObjectTableChanges, fullDownloadRefusedForTunnelingEntries, HARDWARE_PEI_PROGRAM_REFUSAL, hardwareRefusals, type CollectApp, type AppConfig, type DeviceReadbackInfo, type MatrixOperation, type ModuleInstance, type WriteGate, type KnxIpDevice } from "@busforge/product";
 import { getProjectConnection, getGaMeta } from "../db/projects.ts";
 import type { Database } from "bun:sqlite";
 import type { Connection } from "../db/connections.ts";
@@ -107,7 +107,7 @@ function refuseNeverProgrammed(dev: { neverProgrammed: boolean; peiProgram: bool
     throw new ApiError("NEVER_PROGRAMMED_USE_DOWNLOAD", "no configuration of this project has been verified on this device since it was placed or its product replaced; a full download commissions it first", 400);
   }
   if (onlyEtsDownloads(app, dev.peiProgram)) {
-    throw new ApiError("NEVER_PROGRAMMED_USE_ETS", "no configuration of this project has been verified on this device since it was placed or its product replaced, and Busforge cannot download this application in full; commission it with ETS first", 400);
+    throw new ApiError("NEVER_PROGRAMMED_USE_ETS", "no configuration of this project has been verified on this device since it was placed or its product replaced, and Busforge cannot download this device in full (its application's load procedure or its hardware keeps it from that); commission it with ETS first", 400);
   }
 }
 
@@ -191,23 +191,22 @@ async function programOrPreview(
 // family that can commission from scratch is pointed at the full download with a distinct code (the
 // FlashDialog offers it), and any other is refused. Returns "surgical" when the table stays, a
 // "structural" verdict, or the refusal to short-circuit with. Runs pre-enqueue, like the capability
-// guards: no snapshot, no bus. `peiProgram`: the device's hardware carries a PEI program, which keeps it
-// from the full download.
+// guards: no snapshot, no bus. A device whose hardware carries a PEI program takes no full download.
 function comObjectTableGuard(
   app: AppConfig | null,
   base: Map<string, string>,
   now: Map<string, string>,
   modules: ModuleInstance[],
   secure: boolean,
-  peiProgram: boolean,
+  dev: { peiProgram: boolean },
 ): "surgical" | "structural" | Response {
   if (!app) return "surgical"; // no cfg: the profile layer's requireCfg refuses downstream
   if (!comObjectTableChanges(app, base, now, modules).length) return "surgical";
   if (secure && !classify(app).loadsSecurityObject) return secureTablesRefusal();
   const caps = classify(app).capabilities();
   if (caps.structuralFlash) return "structural";
-  if (caps.fullDownload && !peiProgram) return err("COM_OBJECT_TABLE_STALE_USE_DOWNLOAD", "this change alters the device's communication objects, which needs its com-object table rewritten; run a full download to apply it", 400);
-  if (onlyEtsDownloads(app, peiProgram)) return err("COM_OBJECT_TABLE_STALE_USE_ETS", "this change alters the device's communication objects, which needs its com-object table rewritten; Busforge cannot download this application in full, so apply it with ETS", 400);
+  if (canDownloadFull(app, dev.peiProgram)) return err("COM_OBJECT_TABLE_STALE_USE_DOWNLOAD", "this change alters the device's communication objects, which needs its com-object table rewritten; run a full download to apply it", 400);
+  if (onlyEtsDownloads(app, dev.peiProgram)) return err("COM_OBJECT_TABLE_STALE_USE_ETS", "this change alters the device's communication objects, which needs its com-object table rewritten; Busforge cannot download this device in full (its application's load procedure or its hardware keeps it from that), so apply it with ETS", 400);
   return err("COM_OBJECT_TABLE_STALE", "this change alters the device's communication objects, which needs its com-object table rewritten; busforge cannot do that for this device family yet", 400);
 }
 
@@ -678,7 +677,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const gaOverrideBase = resolveComObjOverrideBase(state, id, deviceId); // read with gaBase
     // If wiring these links would leave the device's kept-from-device com-object table stale, the
     // structural flash writes it (or the full download, or a refusal). Pre-enqueue.
-    const gaStale = comObjectTableGuard(gaApp, gaBase, gaParams, gaModules, secureCredsFor(state, id, deviceId) !== undefined, dev.peiProgram);
+    const gaStale = comObjectTableGuard(gaApp, gaBase, gaParams, gaModules, secureCredsFor(state, id, deviceId) !== undefined, dev);
     if (gaStale === "structural") return structuralFlash(state, url, id, deviceId, dev, conn, gaAppXml);
     if (gaStale !== "surgical") return gaStale;
     let gaFingerprint: string | null = null;
@@ -772,6 +771,8 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // Refuse an unsupported device up front (mirrors flash-ga), so we don't create a snapshot
     // and connect the bus just to have the profile throw.
     const flApp = loadApp(state, id, deviceId);
+    const hardware = flApp ? hardwareRefusals(flApp, dev).flashParams : undefined;
+    if (hardware) return err(hardware.code, hardware.message);
     refuseNeverProgrammed(dev, flApp);
     const paramsEndNever = dev.neverProgrammed && !canDownloadFull(flApp, dev.peiProgram);
     if (flApp && !classify(flApp).capabilities().flashParams) {
@@ -793,7 +794,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // If these parameters change which com-objects the device has (or their flags), a surgical
     // parameter flash would leave its kept-from-device com-object table stale. Promote to a full
     // download where the family can commission, else refuse. Pre-enqueue: no snapshot, no bus.
-    const flStale = comObjectTableGuard(flApp, flashBase, flashParams, flashModules, secure !== undefined, dev.peiProgram);
+    const flStale = comObjectTableGuard(flApp, flashBase, flashParams, flashModules, secure !== undefined, dev);
     if (flStale === "structural") return structuralFlash(state, url, id, deviceId, dev, conn, appXml);
     if (flStale !== "surgical") return flStale;
     // A System 1 parameter download is the full download, the security object loaded with it (system1.ts).

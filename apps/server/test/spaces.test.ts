@@ -16,7 +16,7 @@ const xml0 = readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "p
 
 function freshProject() {
   const db = openDb(":memory:");
-  insertProject(db, "P", parseProject(xml0, undefined, "x"), "", 1);
+  insertProject(db, "P", parseProject(xml0, undefined, "x"), "", 1, new Set(), new Set());
   return db;
 }
 

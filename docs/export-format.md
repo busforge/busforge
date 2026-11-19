@@ -94,6 +94,7 @@ node decrypt-busforge.mjs project.busforge "my-password" | jq .project.name
 | the **programmed baselines** for both, so drift survives the move | |
 | the marks on baseline values a read-back assumed, not proven | |
 | per device, whether its configuration came from an ETS project (`configFromEts`), and the parameters without memory a read-back assumed, proven or not (`deviceMemorylessAssumed`) | |
+| per device, whether its product carries no application program (`withoutApplication`) or its hardware a PEI program next to the application (`peiProgram`); an artifact without them imports such a device as one with an application and without a PEI program | |
 | device module instances | |
 | the com-objects whose ETS links the import did not take over in full, with the addresses ETS linked them to and why (`droppedLinks`) | |
 | the referenced catalog application programs | |

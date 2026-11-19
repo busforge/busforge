@@ -348,9 +348,10 @@ export type OperationRefusals = Partial<Record<"flashParams" | "flashLinks" | "f
 
 // The full download onto two-application hardware, whose Hardware2Program names a PEI program next to the
 // application (@busforge/project CatalogProduct.peiProgram). That is a fact of the device's product, not
-// of its application, so the caller that knows the product refuses with this before anything is queued.
-// No full download of Busforge loads a PEI program: the System B one unloads it first (rule R9) and loads
-// only the parameter segment and the tables, and no ETS capture of ours shows how ETS loads one.
+// of its application, so the caller that knows the product refuses with this before anything is queued
+// (hardwareRefusals). No full download of Busforge loads a PEI program: the System B one unloads it first
+// (rule R9) and loads only the parameter segment and the tables, and no ETS capture of ours shows how ETS
+// loads one.
 export const HARDWARE_PEI_PROGRAM_REFUSAL: OperationRefusal = {
   code: "HARDWARE_PEI_PROGRAM_UNSUPPORTED",
   message: "the device's hardware carries a PEI program next to its application; a full download loads the application only (on System B it unloads the PEI program first and never loads it again), and no ETS capture shows how ETS loads it, refusing before anything is sent",
@@ -2671,6 +2672,16 @@ function profileFor(mask: string, cfg: AppConfig | null): DeviceProfile {
 // Resolve a parsed application to its device profile. Dispatches on the MEMORY MODEL the mask
 // version implies (masks.ts), never on incidental structure (the old "has an absolute segment"
 // heuristic misrouted System 1 devices that happen to carry one).
+// The operations the device's hardware keeps Busforge from running with this application, on top of the
+// application's own (operationRefusals): on hardware that carries a PEI program the full download, and on
+// System 1 the parameter download as well, which is its full download.
+export function hardwareRefusals(cfg: AppConfig, hardware: { peiProgram: boolean }): OperationRefusals {
+  if (!hardware.peiProgram) return {};
+  return classify(cfg).memoryModel === "bcu1"
+    ? { fullDownload: HARDWARE_PEI_PROGRAM_REFUSAL, flashParams: HARDWARE_PEI_PROGRAM_REFUSAL }
+    : { fullDownload: HARDWARE_PEI_PROGRAM_REFUSAL };
+}
+
 export function classify(cfg: AppConfig): DeviceProfile {
   return profileFor(cfg.mask, cfg);
 }

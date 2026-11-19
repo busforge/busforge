@@ -3,7 +3,7 @@ import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { iaToNum, numToGa, formatGa, SENDER_ENTRY } from "@busforge/knx";
 import { appProgramId, readAppProgram, type Project, type DroppedLink, type DroppedLinkReason } from "@busforge/project";
-import { parseAppConfig, buildDeviceConfig, buildSecurityObject, HARDWARE_PEI_PROGRAM_REFUSAL, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, effectiveComObjFlags, ProductError, imageWritableType, resolveParamRef, sameParamValue, type SameParamValue, takesValue, type EffectiveComObjFlags, type ComObjInstanceOverride, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
+import { parseAppConfig, buildDeviceConfig, buildSecurityObject, hardwareRefusals, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, effectiveComObjFlags, ProductError, imageWritableType, resolveParamRef, sameParamValue, type SameParamValue, takesValue, type EffectiveComObjFlags, type ComObjInstanceOverride, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
 import { getAppProgram, putAppProgram, catalogBaggageNames, pictureType } from "./db/catalog.ts";
 import { getDeviceParams, getDeviceParamBase, getDeviceParamAssumed, getDeviceModules, getDeviceAppRef, getDeviceProductRef, getDeviceForFlash, deviceHasApplication, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps, getDeviceComObjOverrides, getDeviceComObjOverrideBase } from "./db/deviceparams.ts";
 import { deviceCompatibility } from "./compatibility.ts";
@@ -397,9 +397,10 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
   // A secure device's group tables and commissioning also need its security object, which only
   // some memory models load; on the others the UI must not offer either.
   view.capabilities = isSecureDevice(db, projectId, deviceId) && !classify(app).loadsSecurityObject ? { ...caps, flashLinks: false, fullDownload: false, structuralFlash: false } : caps;
-  // Hardware that carries a PEI program takes no full download, whatever its application allows.
-  if (device.peiProgram) view.capabilities = { ...view.capabilities, fullDownload: false };
-  const refusals = { ...classify(app).operationRefusals(), ...(device.peiProgram ? { fullDownload: HARDWARE_PEI_PROGRAM_REFUSAL } : {}) };
+  // What the hardware keeps Busforge from (a PEI program), whatever its application allows.
+  const hardware = hardwareRefusals(app, device);
+  for (const op of Object.keys(hardware) as (keyof typeof hardware)[]) view.capabilities = { ...view.capabilities, [op]: false };
+  const refusals = { ...classify(app).operationRefusals(), ...hardware };
   view.refusals = Object.fromEntries(Object.entries(refusals).map(([op, r]) => [op, r.code]));
   view.fullDownloadLoadsApplication = view.capabilities.fullDownload && classify(app).fullDownloadLoadsApplication();
   const productRef = getDeviceProductRef(db, projectId, deviceId);

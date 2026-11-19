@@ -160,8 +160,9 @@ any other step on it, and a segment of the application on it, refuses the downlo
 capture shows how ETS loads such a program. Whether a device's hardware carries a PEI program the
 application does not say: its product's Hardware2Program names it as a second program next to the
 application. The import records that, and a full download onto such hardware, in either form and on
-every family, is refused before anything is sent (`HARDWARE_PEI_PROGRAM_UNSUPPORTED`); so is every
-write that would point at the full download instead of at ETS. A segment of the application on another load-state
+every family, is refused before anything is sent (`HARDWARE_PEI_PROGRAM_UNSUPPORTED`), as is a System 1
+parameter download, which is its full download; a write that would point at the full download points at
+ETS instead. A segment of the application on another load-state
 machine than 4 or 5 refuses it too (`FULL_DOWNLOAD_SEGMENT_UNKNOWN`). Every write checks these refusals itself before it asks the device
 anything, as the routes do before they queue it (`operationRefusals`).
 

@@ -54,17 +54,18 @@ export function catalogBaggageIds(db: Database, appProgramId: string): Set<strin
 
 // Catalog product metadata (the browsable layer for placing devices). Idempotent:
 // the first ingest of a (product, app program) wins; richer Hardware.xml data is
-// not overwritten by a later minimal backfill. `pin` marks an official-source
+// not overwritten by a later minimal backfill. A PEI program any ingest shows is kept: a
+// row that arrived without one (a backfill from devices) takes it from the next ingest that names it. `pin` marks an official-source
 // (.knxprod) ingest: the row stays in the catalog independent of any project, and
 // re-importing a product that arrived earlier via a project upgrades it to pinned.
 export function putCatalogProduct(db: Database, p: CatalogProduct, pin = false): void {
   if (pin) {
     db.prepare(
-      "INSERT INTO catalog_products (app_ref, product_ref, app_program_id, manufacturer, name, order_number, hw_version, has_application, pei_program, pinned) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1) ON CONFLICT(app_ref, product_ref) DO UPDATE SET pinned = 1",
+      "INSERT INTO catalog_products (app_ref, product_ref, app_program_id, manufacturer, name, order_number, hw_version, has_application, pei_program, pinned) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1) ON CONFLICT(app_ref, product_ref) DO UPDATE SET pinned = 1, pei_program = MAX(pei_program, excluded.pei_program)",
     ).run(p.appRef, p.productRef, p.appProgramId, p.manufacturer, p.name, p.orderNumber, p.hwVersion, p.hasApplication ? 1 : 0, p.peiProgram ? 1 : 0);
   } else {
     db.prepare(
-      "INSERT OR IGNORE INTO catalog_products (app_ref, product_ref, app_program_id, manufacturer, name, order_number, hw_version, has_application, pei_program) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO catalog_products (app_ref, product_ref, app_program_id, manufacturer, name, order_number, hw_version, has_application, pei_program) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(app_ref, product_ref) DO UPDATE SET pei_program = MAX(pei_program, excluded.pei_program)",
     ).run(p.appRef, p.productRef, p.appProgramId, p.manufacturer, p.name, p.orderNumber, p.hwVersion, p.hasApplication ? 1 : 0, p.peiProgram ? 1 : 0);
   }
 }

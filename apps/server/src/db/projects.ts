@@ -114,7 +114,7 @@ export function readSpaces(db: Database, projectId: string): SpaceNode[] {
 // Persist a freshly parsed project (rows only; the caller stores the source file). `withoutApplication`:
 // the Hardware2Program ids (device appRefs) whose product carries no application program; `withPeiProgram`:
 // those whose hardware carries a PEI program next to its application.
-export function insertProject(db: Database, id: string, project: Project, sourceFile: string, now: number, withoutApplication: ReadonlySet<string> = new Set(), withPeiProgram: ReadonlySet<string> = new Set()): void {
+export function insertProject(db: Database, id: string, project: Project, sourceFile: string, now: number, withoutApplication: ReadonlySet<string>, withPeiProgram: ReadonlySet<string>): void {
   const insProject = db.prepare("INSERT INTO projects (id, name, imported_at, source_file, ga_levels) VALUES (?, ?, ?, ?, ?)");
   const insDevice = db.prepare("INSERT INTO devices (project_id, instance_id, ia, name, product_ref, app_ref, manufacturer, comment, never_programmed, ets_not_downloaded, config_from_ets, has_application, pei_program) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)");
   const insRange = db.prepare("INSERT INTO group_ranges (project_id, parent_id, name, range_start, range_end) VALUES (?, ?, ?, ?, ?)");
