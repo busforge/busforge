@@ -398,6 +398,7 @@ const en = {
     READBACK_IMAGE_NO_FLASH: "The product has no parameter or group-address download to compare the image on the device with.",
     SECURE_SYNC_FAILED: "Could not establish a secure session with the device (authentication failed). Check that the correct tool key is in the project.",
     SECURE_SYNC_NO_RESPONSE: "The device did not answer the secure session request. A wrong tool key in the project, or a device that is not in secure mode, looks exactly like this.",
+    SECURE_SYNC_NOT_SENT: "The interface did not put the secure session request on the bus. A Busforge bridge does this on a tunnel that does not hold its USB interface's own address: secured access through the bridge works only on that tunnel. Any other interface reports it when no device acknowledged the request (absent, unpowered, or still starting).",
     SECURE_IA_CONFIG_FAILED: "The device took its new address and answers there under its key, but its secured connection failed before the restart, so it was not restarted and may still be in programming mode. The details say which step failed.",
     SECURE_NOT_SYNCED: "The secure session moved to another tunnel address and has not been synchronised with the device under it yet, so nothing was sent. Run the operation again.",
     SECURE_MODE_OFF: "The device did not answer the secure session request, and read without a key it states that its security mode is off: it is not activated (factory state, for example after a master reset). Activate it from its device certificate.",

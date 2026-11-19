@@ -92,7 +92,7 @@ const connStateReq = (channel: number) =>
 
 interface Rig { sock: FakeSocket; bus: FakeBus; server: KnxIpServer; clock: { t: number }; }
 
-async function serve(addresses?: number[]): Promise<Rig> {
+async function serve(addresses?: number[], log?: (m: string) => void): Promise<Rig> {
   const sock = new FakeSocket();
   const bus = new FakeBus();
   const clock = { t: 1_000_000 };
@@ -103,6 +103,7 @@ async function serve(addresses?: number[]): Promise<Rig> {
     createTcpListener: noopTcpListener,
     now: () => clock.t,
     name: "Bench",
+    log,
   });
   await server.start();
   sock.clear();
@@ -619,6 +620,57 @@ describe("KnxIpServer: management NAT (the USB single-address limit)", () => {
     const byChannel = (x: number, y: number) => x - y;
     expect(out.map((f) => f[7]).sort(byChannel)).toEqual([op, mon].sort(byChannel));
     expect(out.every((f) => f.subarray(10).equals(group))).toBe(true); // bytes untouched
+  });
+
+  // A secured frame's MAC binds the source address it was sealed under. Rewritten to the interface's
+  // address, the device drops it unanswered: on the bench, the Jung 400021SE and the GVS AMMA left a
+  // Sync from tunnel 1.1.242 unanswered and answered the same Sync sealed under the interface's 1.1.100
+  // at once (private corpus internal/captures/secure-tunnel-2026-11-19).
+  const secured = Buffer.from([0x43, 0xf1, 0x92, ...Array<number>(22).fill(0)]); // S-A_Sync_Req, numbered
+  test("a secured frame on a tunnel that is not the interface's is refused: never on the bus, confirmed negatively, said in the log", async () => {
+    const logs: string[] = [];
+    const rig = await serve([IFACE_IA, SECOND_IA], (m) => logs.push(m));
+    rig.sock.deliver(connectReqAddr(SECOND_IA), CLIENT);
+    await tick();
+    const op = rig.sock.ofService(SVC.CONNECT_RES).at(-1)![6];
+    rig.sock.clear();
+
+    rig.sock.deliver(tunnelReq(op, 0, cemiLData(SECOND_IA, DEV, secured)), CLIENT);
+    await tick();
+
+    expect(rig.bus.written.length).toBe(0);
+    const con = rig.sock.ofService(SVC.TUNNEL_REQ)[0]!.subarray(10);
+    expect(con[0]).toBe(CEMI.LDATA_CON);
+    expect(con[2] & 0x01).toBe(1);
+    expect(logs.at(-1)).toBe(`channel ${op}: refused a secured frame to 1.2.3: this tunnel holds 1.1.251, point-to-point frames leave the bridge as the interface's own address 1.1.250, and a secured frame's MAC binds the address it was sealed under; secured device access through this bridge works only on the tunnel that holds 1.1.250`);
+
+    // The NAT took no ownership: a reply from the device still fans out.
+    rig.sock.deliver(tunnelAck(op, 0), CLIENT);
+    await tick();
+    rig.sock.clear();
+    rig.bus.emit(withMessageCode(cemiLData(DEV, IFACE_IA, tpAck(0)), CEMI.LDATA_IND));
+    await tick();
+    expect(rig.sock.ofService(SVC.TUNNEL_REQ)[0]!.subarray(10).readUInt16BE(6)).toBe(IFACE_IA);
+  });
+
+  test("a secured frame on the interface's own tunnel, and a secured group frame on any tunnel, go on the bus untouched", async () => {
+    const rig = await serve([IFACE_IA, SECOND_IA]);
+    const own = await open(rig, CLIENT); // IFACE_IA
+    rig.sock.deliver(connectReqAddr(SECOND_IA), CLIENT2);
+    await tick();
+    const other = rig.sock.ofService(SVC.CONNECT_RES).at(-1)![6];
+    rig.sock.clear();
+
+    const direct = cemiLData(IFACE_IA, DEV, secured);
+    rig.sock.deliver(tunnelReq(own, 0, direct), CLIENT);
+    await tick();
+    const group = Buffer.from([0x11, 0x00, 0xbc, 0xe0, (SECOND_IA >> 8) & 0xff, SECOND_IA & 0xff, 0x0a, 0x01, 0x04, 0x03, 0xf1, 0x10, 0, 0]);
+    rig.sock.deliver(tunnelReq(other, 0, group), CLIENT2);
+    await tick();
+
+    expect(rig.bus.written.length).toBe(2);
+    expect(rig.bus.written[0]!.equals(direct)).toBe(true);
+    expect(rig.bus.written[1]!.equals(group)).toBe(true);
   });
 });
 

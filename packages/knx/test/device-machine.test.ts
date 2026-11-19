@@ -344,6 +344,17 @@ describe("KnxDevice request machine (frame level)", () => {
     expect((err as { code?: string }).code).toBe("SECURE_SYNC_NO_RESPONSE");
   });
 
+  // A Sync request the interface confirms negatively never reached the device; Busforge's bridge does
+  // that on a tunnel that does not hold its USB interface's own address (KnxIpServer). Said as such at
+  // once, not as a wrong key after the Sync timeout.
+  test("secure: a Sync request the interface confirms negatively fails with its own code, at once", async () => {
+    const tun = new FakeTransport();
+    const dev = new KnxDevice(tun, "1.1.11", new SecureSession({ toolKey: Buffer.alloc(16, 1), src: tun.assignedIa, dst: DEV, serial: Buffer.alloc(6, 2) }), { ...FAST, syncResponseMs: 60_000 });
+    tun.failSend = (tpdu) => (tpdu[1] === 0xf1 ? "BUS_SEND_FAILED" : null);
+    const err = await dev.connect().catch((e: unknown) => e);
+    expect((err as { code?: string }).code).toBe("SECURE_SYNC_NOT_SENT");
+  });
+
   // The Jung 400021SE ignores a Sync request less than about a second after the previous one to it
   // (docs/findings.md §21). A second session to the same device keeps the gap; another device does not wait.
   test("secure: a second Sync to the same device waits out the gap, over any transport; another device's does not", async () => {
