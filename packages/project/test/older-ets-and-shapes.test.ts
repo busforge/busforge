@@ -156,6 +156,8 @@ describe("ETS 4/5 <Connectors> links", () => {
     expect(p(ref("GA-1 GA-9") + ref("GA-2 GA-1")).deviceLinks[0].links).toEqual([{ comObjRefId: "O-3_R-3", gaRaws: [10, 20] }]);
     expect(p(ref("GA-1 GA-2") + ref("GA-2 GA-1 GA-3")).deviceLinks[0].links).toEqual([{ comObjRefId: "O-3_R-3", gaRaws: [10, 20, 30] }]);
     expect(p(ref("GA-3 GA-1") + ref("GA-1 GA-2")).deviceLinks[0].links).toEqual([{ comObjRefId: "O-3_R-3", gaRaws: [30, 10, 20] }]);
+    // a duplicate inside one ref's own Links
+    expect(p(ref("GA-1 GA-2 GA-1")).deviceLinks[0].links).toEqual([{ comObjRefId: "O-3_R-3", gaRaws: [10, 20] }]);
   });
 
   test("a com-object whose links all imported is not listed as dropped", () => {

@@ -348,8 +348,9 @@ function parseDeviceLinks(scope: XmlNode, d: Device, gaIdToRaw: Map<string, numb
   // module-instance ids, or a malformed export). Stored per (refId, slot), two separate
   // rows would collide on the slot index and abort the whole import. Merging their GAs
   // keeps the assignments and never crashes; for the normal (unique-RefId) case it is a
-  // no-op that preserves document order. An address both refs link is kept once, at its first
-  // position, so the sending address stays first and the list passes setLink's duplicate check.
+  // no-op that preserves document order. An address linked twice, within a ref or by both refs, is
+  // kept once at its first position, so the sending address stays first and the list passes
+  // setLink's duplicate check.
   const byRef = new Map<string, number[]>();
   const instances = moduleInstanceIds(dev?.ModuleInstances);
   const dropped: DroppedLink[] = [];
@@ -376,9 +377,9 @@ function parseDeviceLinks(scope: XmlNode, d: Device, gaIdToRaw: Map<string, numb
       continue;
     } else if (gaRaws.length < tokens.length) dropped.push({ deviceId: d.id, comObjRefId: key, reason: "addressNotInProject", gas: gasOf(tokens) });
     if (!gaRaws.length) continue;
-    const existing = byRef.get(key);
-    if (existing) { for (const raw of gaRaws) if (!existing.includes(raw)) existing.push(raw); }
-    else byRef.set(key, gaRaws);
+    const merged = byRef.get(key) ?? [];
+    for (const raw of gaRaws) if (!merged.includes(raw)) merged.push(raw);
+    byRef.set(key, merged);
   }
   const listed = dropped.map((l) => {
     const own = new Set(l.gas.map((g) => g.etsId));
