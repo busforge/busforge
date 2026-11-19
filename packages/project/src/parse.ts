@@ -235,13 +235,14 @@ function buildGaIdMap(node: unknown, out: Map<string, number>) {
   for (const k of Object.keys(node)) buildGaIdMap(node[k], out);
 }
 
+// An id of application program `appId`'s without that program's prefix ("M-0083_A-0013-11-A9D6_O-0_R-1"
+// -> "O-0_R-1"); an id without the prefix as it is.
+export const stripAppPrefix = (appId: string, id: string): string => (id.startsWith(`${appId}_`) ? id.slice(appId.length + 1) : id);
+
 // A ComObjectInstanceRef's RefId as the key the project stores: without the application program's
-// prefix. ETS 5.7 and later write it so ("O-40_R-1433"); ETS 4 and 5 prefix it with the program id
-// ("M-0083_A-0013-11-A9D6_O-0_R-10000").
-const comObjKey = (d: Pick<Device, "appRef">, refId: string): string => {
-  const app = appProgramId(d.appRef);
-  return refId.startsWith(`${app}_`) ? refId.slice(app.length + 1) : refId;
-};
+// prefix. ETS 5.7 and later write it so ("O-40_R-1433"); ETS 4 and ETS 5 before 5.7 prefix it with the
+// program id ("M-0083_A-0013-11-A9D6_O-0_R-10000").
+const comObjKey = (d: Pick<Device, "appRef">, refId: string): string => stripAppPrefix(appProgramId(d.appRef), refId);
 
 // The group-address ids a ComObjectInstanceRef links, the sending one first. ETS 5.7 and later
 // write them in the Links attribute ("GA-1 GA-3", the first is the address the object sends on);
@@ -269,8 +270,9 @@ function moduleInstanceIds(n: unknown, out = new Set<string>()): Set<string> {
 }
 
 // A device's com-object -> GA links (ComObjectInstanceRef RefId + resolved GAs). Counts what it
-// does not import: link tokens that did not resolve to a group address in the tree, and those of
-// connectors that name no single sending address. Counts as well the tokens of a com-object whose
+// does not import: link tokens that did not resolve to a group address in the tree, and the tokens
+// of an assignment whose sending address is not known (connectors without a single <Send>, or a
+// sending address not in the tree). Counts as well the tokens of a com-object whose
 // module instance the device no longer has (ETS leaves such refs behind when a module goes away):
 // those are stored, but no com-object of the device carries them, so they are never programmed.
 function parseDeviceLinks(scope: XmlNode, d: Device, gaIdToRaw: Map<string, number>): { links: { comObjRefId: string; gaRaws: number[] }[]; unresolved: number; withoutSender: number; staleModule: number } {
@@ -293,9 +295,16 @@ function parseDeviceLinks(scope: XmlNode, d: Device, gaIdToRaw: Map<string, numb
     if (!tokens.length) continue;
     const key = comObjKey(d, text(c.RefId));
     const instance = /^(.*_MI-\d+)_/.exec(key)?.[1];
-    if (instance !== undefined && !instances.has(instance)) staleModule += tokens.length;
     const gaRaws = tokens.map((l) => gaIdToRaw.get(l)).filter((x): x is number => x !== undefined);
-    unresolved += tokens.length - gaRaws.length;
+    // A link of a vanished module instance is counted there and only there.
+    if (instance !== undefined && !instances.has(instance)) staleModule += tokens.length;
+    else if (gaIdToRaw.get(tokens[0]) === undefined) {
+      // The sending address is not in the project. Importing the rest would make a receiving address
+      // the one the object sends on, so none of the assignment is imported.
+      unresolved += tokens.length - gaRaws.length;
+      withoutSender += gaRaws.length;
+      continue;
+    } else unresolved += tokens.length - gaRaws.length;
     if (!gaRaws.length) continue;
     const existing = byRef.get(key);
     if (existing) existing.push(...gaRaws);

@@ -157,6 +157,19 @@ function zipCryptoDecrypt(payload: Buffer, password: Buffer, checkByte: number):
   return out.subarray(12);
 }
 
+// A ZipCrypto entry decrypted with the password as UTF-8, inflated and checked against its CRC.
+function zipCryptoEntry(e: CDEntry, data: Buffer, password: string): Buffer {
+  const checkByte = e.flags & FLAG_DATA_DESCRIPTOR ? e.modTime >>> 8 : e.crc >>> 24;
+  const plain = zipCryptoDecrypt(data, Buffer.from(password, "utf8"), checkByte);
+  let out: Buffer;
+  try { out = decompress(plain, e.method); } catch (err) {
+    if (err instanceof KnxprojError) throw err;
+    throw new KnxprojError("DECRYPT_FAILED", `entry ${e.name} did not inflate after decryption (wrong password or corrupt data)`);
+  }
+  if (crc32(out) !== e.crc) throw new KnxprojError("DECRYPT_FAILED", `entry ${e.name} fails its CRC after decryption (wrong password or corrupt data)`);
+  return out;
+}
+
 // What protects a zip's entries: "aes" (WinZip-AES), "zipcrypto" (traditional PKWARE) or "none".
 // ETS encrypts every entry of an inner archive the same way, so the first encrypted entry decides.
 export function zipEncryption(buf: Buffer): "aes" | "zipcrypto" | "none" {
@@ -178,15 +191,16 @@ export function readZip(buf: Buffer, password?: string): Map<string, Buffer> {
       // Strong encryption (bit 6) is PKWARE's certificate-based scheme, which no ETS version writes.
       if (e.flags & FLAG_STRONG_ENCRYPTION) throw new KnxprojError("ZIP_ENCRYPTION_UNSUPPORTED", `entry ${e.name} uses PKWARE strong encryption, which Busforge cannot decrypt`);
       if (!password) throw new KnxprojError("PASSWORD_REQUIRED", "password required");
-      const checkByte = e.flags & FLAG_DATA_DESCRIPTOR ? e.modTime >>> 8 : e.crc >>> 24;
-      const plain = zipCryptoDecrypt(data, Buffer.from(password, "utf8"), checkByte);
-      let out: Buffer;
-      try { out = decompress(plain, e.method); } catch (err) {
-        if (err instanceof KnxprojError) throw err;
-        throw new KnxprojError("DECRYPT_FAILED", `entry ${e.name} did not inflate after decryption (wrong password or corrupt data)`);
+      try {
+        files.set(e.name, zipCryptoEntry(e, data, password));
+      } catch (err) {
+        // Only ASCII passwords are shown to open an ETS 4/5 archive. Which encoding ETS uses for other
+        // characters is not established, so a failure with one does not show the password is wrong.
+        if (err instanceof KnxprojError && (err.code === "WRONG_PASSWORD" || err.code === "DECRYPT_FAILED") && Buffer.byteLength(password, "utf8") !== password.length) {
+          throw new KnxprojError("ZIPCRYPTO_PASSWORD_ENCODING", "this ETS 4/5 project did not open with a password that has characters outside ASCII; how ETS encodes them is not established, so the password may still be right");
+        }
+        throw err;
       }
-      if (crc32(out) !== e.crc) throw new KnxprojError("DECRYPT_FAILED", `entry ${e.name} fails its CRC after decryption (wrong password or corrupt data)`);
-      files.set(e.name, out);
     } else {
       files.set(e.name, decompress(data, e.method));
     }

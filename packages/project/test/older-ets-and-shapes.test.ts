@@ -1,7 +1,7 @@
 import { test, expect, describe } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadKnxproj } from "../src/knxproj.ts";
+import { loadKnxproj, readXml0 } from "../src/knxproj.ts";
 import { parseProject } from "../src/parse.ts";
 import { readZip, zipEncryption } from "../src/zip.ts";
 import { KnxprojError } from "../src/errors.ts";
@@ -41,6 +41,17 @@ describe("ETS 4/5 password projects (ZipCrypto)", () => {
     });
   }
 
+  test("readXml0 decrypts the same 0.xml loadKnxproj reads", () => {
+    const xml = readXml0(knxproj(fixture("zipcrypto-crc-check.zip")), "secret12");
+    expect(xml).toContain(`<DeviceInstance Id="P-0001-0_DI-1"`);
+  });
+
+  test("a failing password with characters outside ASCII is refused as unproven, not as wrong", () => {
+    for (const name of ["zipcrypto-crc-check.zip", "zipcrypto-data-descriptor.zip"]) {
+      expect(codeOf(() => readZip(fixture(name), "secret12ä"))).toBe("ZIPCRYPTO_PASSWORD_ENCODING");
+    }
+  });
+
   test("without a password it asks for one", () => {
     expect(codeOf(() => loadKnxproj(knxproj(fixture("zipcrypto-crc-check.zip")), undefined, "x"))).toBe("PASSWORD_REQUIRED");
   });
@@ -63,6 +74,15 @@ describe("ETS 4/5 password projects (ZipCrypto)", () => {
       if (codeOf(() => readZip(buf, `pw${i}`)) === "DECRYPT_FAILED") passing = `pw${i}`;
     }
     expect(passing).toBeDefined();
+  });
+
+  test("an entry that inflates but fails its CRC is refused", () => {
+    // Flip the CRC's low bit in the central directory: the header check byte (the CRC's high byte)
+    // still passes with the right password and the entry inflates, so only the CRC catches it.
+    const zip = Buffer.from(fixture("zipcrypto-crc-check.zip"));
+    const cd = zip.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+    zip.writeUInt32LE((zip.readUInt32LE(cd + 16) ^ 1) >>> 0, cd + 16);
+    expect(codeOf(() => readZip(zip, "secret12"))).toBe("DECRYPT_FAILED");
   });
 
   test("PKWARE strong encryption is refused with its own code", () => {
@@ -101,7 +121,18 @@ describe("ETS 4/5 <Connectors> links", () => {
     expect(twoSends.linksWithoutSender).toBe(2);
   });
 
-  test("a connector to an address not in the project is counted as unresolved", () => {
+  test("an assignment whose sending address is not in the project is not imported at all", () => {
+    const p = project(`<Send GroupAddressRefId="P-0001-0_GA-9"/><Receive GroupAddressRefId="P-0001-0_GA-1"/>`);
+    expect(p.deviceLinks[0].links).toEqual([]);
+    expect(p.unresolvedLinks).toBe(1);
+    expect(p.linksWithoutSender).toBe(1);
+    const links = parseProject(doc(`<Installation Name=""><Topology><Area Address="1"><Line Address="1">${device("P-0001-0_DI-1", 5, `<ComObjectInstanceRefs><ComObjectInstanceRef RefId="O-3_R-3" Links="GA-9 GA-1 GA-2"/></ComObjectInstanceRefs>`)}</Line></Area></Topology>${gas("P-0001-0", 10, 20)}</Installation>`), undefined, "x");
+    expect(links.deviceLinks[0].links).toEqual([]);
+    expect(links.unresolvedLinks).toBe(1);
+    expect(links.linksWithoutSender).toBe(2);
+  });
+
+  test("a receiving connector to an address not in the project is counted as unresolved", () => {
     const p = project(`<Send GroupAddressRefId="P-0001-0_GA-1"/><Receive GroupAddressRefId="P-0001-0_GA-9"/>`);
     expect(p.deviceLinks[0].links).toEqual([{ comObjRefId: "O-3_R-3", gaRaws: [10] }]);
     expect(p.unresolvedLinks).toBe(1);
@@ -149,10 +180,11 @@ describe("project shapes beyond a single installation and line", () => {
     const refs = `<ModuleInstances><ModuleInstance Id="MD-1_M-1_MI-1" RefId="MD-1_M-1"/></ModuleInstances>
       <ComObjectInstanceRefs>
         <ComObjectInstanceRef RefId="MD-1_M-1_MI-1_O-2-1_R-1" Links="GA-1"/>
-        <ComObjectInstanceRef RefId="MD-1_M-1_MI-2_O-2-1_R-1" Links="GA-1 GA-2"/>
+        <ComObjectInstanceRef RefId="MD-1_M-1_MI-2_O-2-1_R-1" Links="GA-1 GA-9"/>
       </ComObjectInstanceRefs>`;
     const p = parseProject(doc(`<Installation Name=""><Topology><Area Address="1"><Line Address="1">${device("P-0001-0_DI-1", 5, refs)}</Line></Area></Topology>${gas("P-0001-0", 10, 20)}</Installation>`), undefined, "x");
     expect(p.staleModuleLinks).toBe(2);
+    expect(p.unresolvedLinks).toBe(0);
     expect(p.deviceLinks[0].links.map((l) => l.comObjRefId)).toEqual(["MD-1_M-1_MI-1_O-2-1_R-1", "MD-1_M-1_MI-2_O-2-1_R-1"]);
   });
 });

@@ -238,7 +238,7 @@ export function lookupAppXml(state: AppState, projectId: string, appRef: string)
 // DeviceInstances the parser dropped as unkeyable/unaddressable (missing Id or address), bus
 // interfaces assigned to a group address whose own address could not be resolved, secure devices
 // ETS never commissioned, imported without their tool key, installations after the first, devices
-// outside the topology, ETS 4/5 links that name no single sending address, and links of module
+// outside the topology, links whose sending address is not known, and links of module
 // instances the device no longer has.
 // A device whose product carries no application program (`withoutApplication`, by Hardware2Program id)
 // lacks nothing.

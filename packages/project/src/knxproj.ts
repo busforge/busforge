@@ -14,9 +14,9 @@ function deriveWinzipPassword(password: string): string {
 // Resolve the inner project archive ("P-XXXX.zip" at the root of the outer zip),
 // decrypting with the project password when it is encrypted. Returns undefined
 // for an unencrypted export that has no inner archive (0.xml sits in the outer
-// zip). Shared by loadKnxproj and readBaggage so the decryption lives once.
+// zip). Shared by loadKnxproj, readXml0 and readBaggage so the decryption lives once.
 // ETS 6 encrypts with WinZip-AES under a password derived from the project password; ETS 4 and 5
-// use traditional PKWARE encryption keyed by the project password itself, as UTF-8.
+// use traditional PKWARE encryption keyed by the project password itself (ASCII shown; zip.ts).
 function resolveInner(outer: Map<string, Buffer>, password: string | undefined): Map<string, Buffer> | undefined {
   const innerName = [...outer.keys()].find((n) => /(^|\/)P-[^/]+\.zip$/.test(n));
   if (!innerName) return undefined;
@@ -33,14 +33,22 @@ export function loadKnxproj(bytes: Buffer, password: string | undefined, fallbac
   const outer = readZip(bytes);
   const inner = resolveInner(outer, password);
 
-  // Encrypted/normal export keeps 0.xml in the inner archive; an unencrypted
-  // export keeps it directly in the outer zip under P-XXXX/.
-  const xml0 = inner ? textOf(inner, "0.xml") : textOf(outer, "0.xml");
+  const xml0 = xml0Of(outer, inner);
   // ETS 4 names it Project.xml, later versions project.xml.
   const projectXml = (inner && tryTextOf(inner, "project.xml", true)) ?? tryTextOf(outer, "project.xml", true);
 
   const programs = [...outer].filter(([k]) => /\/M-[^/]+_A-[^/]+\.xml$/.test(k)).map(([, b]) => dec.decode(b));
   return parseProject(xml0, projectXml, fallbackName, parseProductNames(outer), busInterfaceIndexes(programs), parseProductTranslations(outer));
+}
+
+// Encrypted/normal export keeps 0.xml in the inner archive; an unencrypted
+// export keeps it directly in the outer zip under P-XXXX/.
+const xml0Of = (outer: Map<string, Buffer>, inner: Map<string, Buffer> | undefined): string => (inner ? textOf(inner, "0.xml") : textOf(outer, "0.xml"));
+
+// A project's 0.xml, decrypted with the project password where the project has one.
+export function readXml0(bytes: Buffer, password: string | undefined): string {
+  const outer = readZip(bytes);
+  return xml0Of(outer, resolveInner(outer, password));
 }
 
 // BusInterface Id -> AddressIndex, as the application programs declare them. It says which of a

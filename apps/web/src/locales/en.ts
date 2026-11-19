@@ -107,7 +107,7 @@ const en = {
     gapMalformedDevices: "{{count}} device(s) had no id or a missing address in the file and were skipped",
     gapSkippedInstallations: "The project holds {{count}} further installation(s); only the first was imported",
     gapUnassignedDevices: "{{count}} device(s) sit outside the topology in ETS (no line, no address) and were not imported",
-    gapLinksWithoutSender: "{{count}} group-address link(s) from an ETS 4/5 project name no single sending address and were not imported",
+    gapLinksWithoutSender: "{{count}} group-address link(s) belong to an assignment whose sending address is not in the project, or not a single one, and were not imported",
     gapStaleModuleLinks: "{{count}} group-address link(s) belong to a module instance the device no longer has; kept in the project, never programmed",
   },
   export: {
@@ -146,6 +146,7 @@ const en = {
     WRONG_PASSWORD: "Wrong password.",
     DECRYPT_FAILED: "Could not decrypt the project. Check the password, the file may also be corrupt.",
     ZIP_ENCRYPTION_UNSUPPORTED: "The project archive uses an encryption no ETS version writes (PKWARE strong encryption); Busforge cannot open it.",
+    ZIPCRYPTO_PASSWORD_ENCODING: "This ETS 4/5 project did not open with this password. It has characters outside plain ASCII, and how ETS 4/5 encodes those is not established, so the password may still be right.",
     PASSWORD_REQUIRED: "This project is password-protected. Enter its password.",
     INVALID_KNXPROJ: "This file is not a valid .knxproj.",
     FILE_MISSING: "No file was provided.",

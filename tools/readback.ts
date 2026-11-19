@@ -18,8 +18,7 @@
 // --prior-busforge-writes the records claim neither transfer nor reference.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { readZip } from "../packages/project/src/zip.ts";
-import { loadKnxproj, readAppProgram, deriveWinzipPassword, appProgramId, deviceParamValues } from "../packages/project/src/index.ts";
+import { loadKnxproj, readXml0, readAppProgram, appProgramId, deviceParamValues } from "../packages/project/src/index.ts";
 import { parseApplication, buildParameterImage } from "../packages/product/src/index.ts";
 import { KnxIpTunnel, KnxDevice, assocFormOf, ASSOC_TABLE_DESCRIPTION } from "../packages/knx/src/index.ts";
 import type { EvidenceRecord, Firmware } from "../packages/product/src/index.ts";
@@ -56,11 +55,7 @@ writeFileSync(join(outDir, "DO_NOT_COMMIT_device_memory.txt"), "This directory h
 const bytes = Buffer.from(await Bun.file(projPath).arrayBuffer());
 const proj = loadKnxproj(bytes, password || undefined, "project");
 // Decrypt 0.xml once for the parameter value source (the proven image-build input).
-const outer = readZip(bytes);
-const innerName = [...outer.keys()].find((n) => /(^|\/)P-[^/]+\.zip$/.test(n));
-const xml0 = innerName
-  ? new TextDecoder().decode([...readZip(outer.get(innerName)!, password ? deriveWinzipPassword(password) : undefined)].find(([k]) => k.endsWith("0.xml"))![1])
-  : new TextDecoder().decode(outer.get([...outer.keys()].find((k) => k.endsWith("0.xml"))!)!);
+const xml0 = readXml0(bytes, password || undefined);
 
 const withTimeout = <T>(p: Promise<T>): Promise<T> =>
   Promise.race([p, new Promise<T>((_, r) => setTimeout(() => r(new Error(`timeout ${PER_DEVICE_TIMEOUT_MS / 1000}s`)), PER_DEVICE_TIMEOUT_MS))]);

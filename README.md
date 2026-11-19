@@ -48,7 +48,7 @@ read-back from real hardware, by a comparison with an ETS capture, or explicitly
 
 | | |
 |---|---|
-| **Import** | Decrypt and parse `.knxproj` (ETS 5/6) and manufacturer `.knxprod` catalogs |
+| **Import** | Decrypt and parse `.knxproj` (ETS 4, 5 and 6) and manufacturer `.knxprod` catalogs |
 | **Browse** | Topology, building structure, devices, group addresses, full-text search |
 | **Watch** | Live bus monitor with DPT-decoded values and group-address names |
 | **Configure** | The complete dynamic parameter UI: conditions, unions, modules, channels, translations |

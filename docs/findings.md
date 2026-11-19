@@ -34,9 +34,11 @@ inside holds installations, topology, devices, group addresses and com-object in
 
 **ETS 4 and ETS 5 project decryption.** Their `P-XXXX.zip` uses traditional PKWARE encryption
 (ZipCrypto, APPNOTE 6.1), method 8 with the encrypted flag set, keyed by the project password
-itself as UTF-8; no data descriptor, so the header's check byte is the CRC's high byte. The check is
-one byte, so a wrong password passes it once in 256 tries; the entry's CRC after inflating is what
-refuses it.
+itself; no data descriptor, so the header's check byte is the CRC's high byte. The check is one byte,
+so a wrong password passes it once in 256 tries; the entry's CRC after inflating is what refuses it.
+Only ASCII passwords are shown to open such an archive. Which encoding ETS uses for other characters
+is not established; Busforge tries UTF-8, and a password with such characters that fails is refused
+with its own code (`ZIPCRYPTO_PASSWORD_ENCODING`), not as a wrong password.
 
 Key relations in `0.xml`:
 
@@ -47,7 +49,8 @@ Key relations in `0.xml`:
   `<Connectors><Send GroupAddressRefId="P-XXXX-0_GA-a"/><Receive GroupAddressRefId="…"/></Connectors>`
   under the `ComObjectInstanceRef`, the address ids with their project prefix, and the `RefId`
   with its application program's (`M-XXXX_A-…_O-x_R-y`). Connectors without exactly one `Send` do not
-  say which address the object sends on, and are not imported. ETS 5 before 5.7 (schema 14) is
+  say which address the object sends on, and are not imported; neither is an assignment, in either
+  form, whose sending address is not in the project, since the next address would take its place. ETS 5 before 5.7 (schema 14) is
   read by the same rules; no real file of it has been read. ETS 4 also names the project file
   `Project.xml`, keeps the building structure in `<Buildings>` as nested `<BuildingPart>`s instead
   of `<Locations>` with `<Space>`s, and writes its boolean attributes as `1` and `0`.

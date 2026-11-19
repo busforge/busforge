@@ -9,9 +9,10 @@ export interface Device {
   appRef: string;       // Hardware2ProgramRefId
   manufacturer: number; // from the M-XXXX prefix
   comment: string;      // ETS "Beschreibung" (Comment/Description), for search
-  // What ETS last downloaded into the device, from its per-device load flags. ETS sets each to "true"
-  // when it downloads that part and drops it when the part is edited afterwards (a false flag is left
-  // off); a device another tool programmed reads false throughout.
+  // What ETS last downloaded into the device, from its per-device load flags. ETS 5 and 6 set each to
+  // "true" when they download that part and drop it when the part is edited afterwards (a false flag is
+  // left off); ETS 4 writes every flag, "0" where false. A device another tool programmed reads false
+  // throughout.
   etsLoaded: EtsLoaded;
   etsLoadedImage?: string; // DeviceInstance/@LoadedImage as written, undecoded; absent where ETS wrote none
   etsCheckSums?: string;   // DeviceInstance/@CheckSums as written, undecoded; absent where ETS wrote none
@@ -52,7 +53,8 @@ export interface ModuleInstanceData { id: string; refId: string; args: DevicePar
 export interface DeviceModules { deviceId: string; instances: ModuleInstanceData[]; }
 
 // A device's com-object -> group-address links (from 0.xml). comObjRefId is the
-// instance ComObjectInstanceRef RefId (prefix-stripped, as ETS stores it).
+// instance ComObjectInstanceRef RefId without the application program's prefix (as ETS 5.7 and
+// later write it; parse.ts strips the prefix ETS 4 and older ETS 5 write).
 export interface DeviceLink { comObjRefId: string; gaRaws: number[]; }
 export interface DeviceLinks { deviceId: string; links: DeviceLink[]; }
 
@@ -177,6 +179,6 @@ export interface Project {
   malformedDevices: number;       // DeviceInstances dropped for a missing Id or non-numeric address (unkeyable/unaddressable; surfaced, not silently defaulted)
   skippedInstallations: number;   // <Installation>s after the first; only the first is imported
   unassignedDevices: number;      // DeviceInstances ETS keeps outside the topology (<UnassignedDevices>, no line, no address): not imported
-  linksWithoutSender: number;     // link tokens of ETS 4/5 <Connectors> that name no single <Send> address: not imported
+  linksWithoutSender: number;     // link tokens of an assignment without a known sending address (ETS 4/5 <Connectors> without a single <Send>, or a sending address not in the project): not imported
   staleModuleLinks: number;       // link tokens of com-objects whose module instance the device no longer has: stored, never programmed
 }
