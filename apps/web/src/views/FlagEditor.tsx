@@ -51,8 +51,8 @@ export function FlagEditorPanel({ co, editable, onEdit, onRevert, disabled, test
           )}
         </div>
       ))}
-      <div className="flex items-center gap-2">
-        <label className={cn("flex flex-1 items-center gap-2", !can.has("priority") && "text-muted-foreground")} title={can.has("priority") ? undefined : t("device.flagNotWritable")}>
+      <div className="flex flex-wrap items-center gap-2">
+        <label className={cn("flex items-center gap-2", !can.has("priority") && "text-muted-foreground")} title={can.has("priority") ? undefined : t("device.flagNotWritable")}>
           <span>{t("device.priority")}{co.overriddenPriority ? "*" : ""}</span>
           <NativeSelect
             size="sm" value={co.priority} disabled={disabled || !can.has("priority")} data-testid={`${testId}-priority`}
