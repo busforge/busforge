@@ -708,48 +708,54 @@ export function DeviceConfig() {
 
   return (
     <div className="space-y-4">
-      {/* Two rows: who the device is and what state it is in; then what stands against it, the filter
-          of its parameters, and what can be done with it, right-aligned as one group. Every mark in the
-          first row has one height. */}
-      {/* Pinned below the project bar on wide windows, so the device, its state and its actions stay
-          in view while its parameters scroll. */}
-      <header ref={headerRef} className="space-y-2 lg:sticky lg:top-(--bar-h) lg:z-10 lg:-mx-2 lg:border-b lg:border-border/60 lg:bg-background/95 lg:px-2 lg:pt-2 lg:pb-3 lg:backdrop-blur" data-testid="device-header">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <IconButton asChild variant="ghost" size="icon-sm" label={t("device.back")} className="-ml-1 text-muted-foreground">
-            <Link to="/projects/$projectId/devices" params={{ projectId }} search={{ q: search.q, changed: search.changed, b: search.b }}><ChevronLeft className="size-5" /></Link>
-          </IconButton>
-          <h1 className="mr-1 flex min-w-0 items-baseline gap-2" data-testid="device-title">
-            <span className={cn("truncate text-xl font-semibold tracking-tight sm:text-2xl", !device?.name && "text-muted-foreground")}>{device?.name || t("common.unnamed")}</span>
-            <span className="shrink-0 font-mono text-sm text-muted-foreground">{device?.ia}</span>
-          </h1>
-          <ChangePill changes={device?.changes} size="md" targets={changeTargets} showProgrammed={!!device?.appRef} />
-          <CompatibilityBadge view={view} manufacturer={device?.manufacturer} />
+      {/* Two rows: who the device is, what state it is in and what stands against it, every mark in one
+          height; then the filter of its parameters and what can be done with it, right-aligned as one
+          group. Pinned below the project bar on wide windows, so the device, its state and its actions
+          stay in view while its parameters scroll. */}
+      <header ref={headerRef} className="space-y-3 lg:sticky lg:top-(--bar-h) lg:z-10 lg:-mx-2 lg:border-b lg:border-border/60 lg:bg-background/95 lg:px-2 lg:pt-2 lg:pb-3 lg:backdrop-blur" data-testid="device-header">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">
+          {/* The back button stays with the name, which truncates rather than leaving it alone on a line. */}
+          <div className="flex min-w-0 max-w-full items-center gap-2">
+            <IconButton asChild variant="ghost" size="icon-sm" label={t("device.back")} className="-ml-1 text-muted-foreground">
+              <Link to="/projects/$projectId/devices" params={{ projectId }} search={{ q: search.q, changed: search.changed, b: search.b }}><ChevronLeft className="size-5" /></Link>
+            </IconButton>
+            <h1 className="flex min-w-0 items-baseline gap-2" data-testid="device-title">
+              <span className={cn("truncate text-xl font-semibold tracking-tight sm:text-2xl", !device?.name && "text-muted-foreground")}>{device?.name || t("common.unnamed")}</span>
+              <span className="shrink-0 font-mono text-sm text-muted-foreground">{device?.ia}</span>
+            </h1>
+          </div>
+          {/* The marks: under the name on a narrow window; on a wide one beside it while a few fit, wrapping
+              among themselves. */}
+          <div className="flex min-w-0 basis-full flex-wrap items-center gap-2 empty:hidden sm:flex-1 sm:basis-64" data-testid="device-marks">
+            <ChangePill changes={device?.changes} size="md" targets={changeTargets} showProgrammed={!!device?.appRef} />
+            <CompatibilityBadge view={view} manufacturer={device?.manufacturer} />
+            {/* What this device's values are never compared with the device for. Not the product's test
+                state (the compatibility badge): a fully tested product has these gaps too. */}
+            <HeaderWarning label={t("device.warnReadback")} title={t("device.readbackUnsupportedTitle")} items={readbackNotes} testId="readback-unsupported" />
+            <HeaderWarning label={t("device.warnRefused")} title={t("device.refusedTitle")} items={refusedNotes} testId="device-refusals" />
+            <HeaderWarning
+              label={t("device.warnGaps")} title={t("device.gapsTitle")} testId="device-gaps"
+              items={[...gaps.types.map(([label, n]) => t("device.gapType", { type: label, count: n })), ...gaps.elements.map(([label, n]) => t("device.gapElement", { tag: label, count: n }))]}
+            />
+            {droppedQuery.error && (
+              <HeaderWarning label={t("import.dropped.label")} title={t("import.dropped.title")} count={null} testId="device-dropped-links" items={[t("import.dropped.error", { reason: errMsg(t, droppedQuery.error) })]} />
+            )}
+            {dropped.length > 0 && (
+              <HeaderWarning
+                label={t("import.dropped.label")} title={t("import.dropped.title")} count={dropped.length} testId="device-dropped-links"
+                detail={<><p className="text-muted-foreground">{t("import.dropped.hint")}</p><DroppedLinksList links={dropped} showDevice={false} /></>}
+              />
+            )}
+            {!!view?.linkBaseGaps && (
+              <HeaderWarning
+                label={t("device.warnLinkGaps")} title={t("device.linkGapsTitle")} testId="link-gaps-notice"
+                count={view.linkBaseGaps > 0 ? view.linkBaseGaps : null}
+                items={[view.linkBaseGaps > 0 ? t("device.linkGapsBlocked", { count: view.linkBaseGaps }) : t("device.linkGapsUnknown")]}
+              />
+            )}
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2" data-testid="device-toolbar">
-          {/* What this device's values are never compared with the device for. Not the product's test
-              state (the compatibility badge): a fully tested product has these gaps too. */}
-          <HeaderWarning label={t("device.warnReadback")} title={t("device.readbackUnsupportedTitle")} items={readbackNotes} testId="readback-unsupported" />
-          <HeaderWarning label={t("device.warnRefused")} title={t("device.refusedTitle")} items={refusedNotes} testId="device-refusals" />
-          <HeaderWarning
-            label={t("device.warnGaps")} title={t("device.gapsTitle")} testId="device-gaps"
-            items={[...gaps.types.map(([label, n]) => t("device.gapType", { type: label, count: n })), ...gaps.elements.map(([label, n]) => t("device.gapElement", { tag: label, count: n }))]}
-          />
-          {droppedQuery.error && (
-            <HeaderWarning label={t("import.dropped.label")} title={t("import.dropped.title")} count={null} testId="device-dropped-links" items={[t("import.dropped.error", { reason: errMsg(t, droppedQuery.error) })]} />
-          )}
-          {dropped.length > 0 && (
-            <HeaderWarning
-              label={t("import.dropped.label")} title={t("import.dropped.title")} count={dropped.length} testId="device-dropped-links"
-              detail={<><p className="text-muted-foreground">{t("import.dropped.hint")}</p><DroppedLinksList links={dropped} showDevice={false} /></>}
-            />
-          )}
-          {!!view?.linkBaseGaps && (
-            <HeaderWarning
-              label={t("device.warnLinkGaps")} title={t("device.linkGapsTitle")} testId="link-gaps-notice"
-              count={view.linkBaseGaps > 0 ? view.linkBaseGaps : null}
-              items={[view.linkBaseGaps > 0 ? t("device.linkGapsBlocked", { count: view.linkBaseGaps }) : t("device.linkGapsUnknown")]}
-            />
-          )}
           {view && view.blocks.length > 0 && (
             <div className="flex w-full items-center gap-2 sm:w-auto" data-testid="config-filter">
               <div className="relative min-w-0 flex-1 sm:w-64 sm:flex-none">

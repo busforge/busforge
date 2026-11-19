@@ -54,6 +54,18 @@ describe("the state marks of a device", () => {
     expect(tag(html, "programmed")).toBe("span");
   });
 
+  test("every mark that warns has the one warning tone, in a row and in the header, the programmed mark its quiet one", () => {
+    const targets = { never: { action: "a", onClick: noop }, changes: { action: "b", onClick: noop }, security: { action: "c", onClick: noop } };
+    const tones = (html: string) => [...html.matchAll(/data-tone="(\w+)"/g)].map((m) => m[1]);
+    for (const t of [undefined, targets]) {
+      expect(tones(render(<ChangePill size="md" targets={t} changes={changes({ neverProgrammed: true })} />))).toEqual(["warning"]);
+      expect(tones(render(<ChangePill size="md" targets={t} changes={changes({ neverProgrammed: true, etsNotDownloaded: ["links"] })} />))).toEqual(["warning"]);
+      expect(tones(render(<ChangePill size="md" targets={t} changes={changes({ params: 2, security: "changed" })} />))).toEqual(["warning", "warning"]);
+      expect(tones(render(<ChangePill size="md" targets={t} changes={changes({ links: 1, security: "unknown" })} />))).toEqual(["warning", "warning"]);
+    }
+    expect(tones(render(<ChangePill size="md" showProgrammed changes={changes({})} />))).toEqual(["neutral"]);
+  });
+
   test("a clean device shows nothing", () => {
     expect(render(<ChangePill changes={changes({})} targets={{ changes: { action: "x", onClick: noop } }} />)).toBe("");
   });

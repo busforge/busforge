@@ -502,7 +502,8 @@ const en = {
   compat: {
     badge: "Product: {{summary}}",
     title: "Shown on hardware for this product",
-    summary: { tested: "Transfer tested for all supported operations", partial: "Partly tested", derived: "Tested on a sibling", otherVersion: "Tested with another version", failed: "Failed on hardware", untested: "Untested", unsupported: "Not supported" },
+    testedDetail: "The transfer is tested on this product for every operation Busforge supports for this device.",
+    summary: { tested: "Transfer tested", partial: "Partly tested", derived: "Tested on a sibling", otherVersion: "Tested with another version", failed: "Failed on hardware", untested: "Untested", unsupported: "Not supported" },
     state: { tested: "tested", failed: "failed", conflict: "contradictory", derived: "derived", otherVersion: "other version tested", eligible: "untested", refused: "not supported" },
     colOperation: "Operation", colState: "State", colTransfer: "Bytes held (API / UI)", colPersistence: "Survives restart (API / UI)",
     derivedFrom: "same hardware and application tested as {{product}}",

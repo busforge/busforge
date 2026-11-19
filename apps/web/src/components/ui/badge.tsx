@@ -6,8 +6,8 @@ import { cn } from "@/lib/utils"
 
 // Badges and tags: short status or label marks. One radius (the control radius), one height per
 // size, so marks next to each other line up whatever their text. A tone carries meaning only:
-// primary for the user's own pending work, ok/danger for proven success or failure, warning for an
-// unproven state, info for a derived one, neutral for plain labels (docs/design-system.md).
+// warning for every mark that warns, ok/danger for proven success or failure, info for a derived
+// state, primary for the one item a group singles out, neutral for plain labels (docs/design-system.md).
 const badgeVariants = cva(
   "inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-md border font-medium whitespace-nowrap [&>svg]:pointer-events-none [&>svg]:shrink-0",
   {
@@ -17,8 +17,8 @@ const badgeVariants = cva(
         outline: "border-border bg-transparent text-muted-foreground",
         primary: "border-primary/40 bg-primary/10 text-primary",
         ok: "border-ok/40 bg-ok/10 text-ok",
-        info: "border-sky-500/40 bg-sky-500/10 text-sky-300",
-        warning: "border-amber-500/40 bg-amber-500/10 text-amber-300",
+        info: "border-info/40 bg-info/10 text-info",
+        warning: "border-warning/40 bg-warning/10 text-warning",
         danger: "border-destructive/40 bg-destructive/10 text-destructive",
       },
       size: {

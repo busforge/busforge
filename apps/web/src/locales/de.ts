@@ -499,7 +499,8 @@ const de: Messages = {
   compat: {
     badge: "Produkt: {{summary}}",
     title: "Für dieses Produkt auf Hardware gezeigt",
-    summary: { tested: "Übertragung für alle unterstützten Vorgänge getestet", partial: "Teilweise getestet", derived: "An Schwesterprodukt getestet", otherVersion: "Mit anderer Version getestet", failed: "Auf Hardware fehlgeschlagen", untested: "Ungetestet", unsupported: "Nicht unterstützt" },
+    testedDetail: "Die Übertragung ist an diesem Produkt für jeden Vorgang getestet, den Busforge für dieses Gerät unterstützt.",
+    summary: { tested: "Übertragung getestet", partial: "Teilweise getestet", derived: "An Schwesterprodukt getestet", otherVersion: "Mit anderer Version getestet", failed: "Auf Hardware fehlgeschlagen", untested: "Ungetestet", unsupported: "Nicht unterstützt" },
     state: { tested: "getestet", failed: "fehlgeschlagen", conflict: "widersprüchlich", derived: "abgeleitet", otherVersion: "andere Version getestet", eligible: "ungetestet", refused: "nicht unterstützt" },
     colOperation: "Vorgang", colState: "Stand", colTransfer: "Bytes gehalten (API / UI)", colPersistence: "Übersteht Neustart (API / UI)",
     derivedFrom: "dieselbe Hardware und Applikation getestet als {{product}}",

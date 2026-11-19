@@ -11,14 +11,17 @@ export const changeTotal = (c?: DeviceChanges) => (c ? c.params + c.links + (c.f
 export type ChangeTarget = { action: string; onClick: () => void };
 export type ChangeTargets = { never?: ChangeTarget; changes?: ChangeTarget; security?: ChangeTarget };
 
+// A static mark in the header (md) is as tall on a touch screen as the marks beside it that open something.
+const staticHeight = (size: "sm" | "md") => (size === "md" ? "pointer-coarse:h-8" : undefined);
+
 function Mark({ size, explain, target, testId, children }: {
   size: "sm" | "md"; explain: string; target?: ChangeTarget; testId?: string; children: ReactNode;
 }) {
-  if (!target) return <Badge tone="primary" size={size} title={explain} data-testid={testId}>{children}</Badge>;
+  if (!target) return <Badge tone="warning" size={size} className={staticHeight(size)} title={explain} data-testid={testId}>{children}</Badge>;
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <BadgeButton tone="primary" size={size} onClick={target.onClick} data-testid={testId}>
+        <BadgeButton tone="warning" size={size} onClick={target.onClick} data-testid={testId}>
           {children}
         </BadgeButton>
       </TooltipTrigger>
@@ -30,9 +33,9 @@ function Mark({ size, explain, target, testId, children }: {
   );
 }
 
-// Amber badge flagging a device with unprogrammed edits, or one never programmed at all: small in a
-// device row, medium in the device page header. With `targets` a mark opens what clears it. A clean
-// device renders nothing, or with `showProgrammed` (the header) a quiet "programmed" mark: the
+// Warning mark flagging a device with unprogrammed edits, or one never programmed at all, in the one
+// tone of every mark that warns: small in a device row, medium in the device page header. With
+// `targets` a mark opens what clears it. A clean device renders nothing, or with `showProgrammed` (the header) a quiet "programmed" mark: the
 // project's record (ETS's at import, or Busforge's last verified write or read-back), not a read of the
 // device, so it is neutral, never ok.
 export function ChangePill({ changes, size = "sm", targets, showProgrammed = false }: { changes?: DeviceChanges; size?: "sm" | "md"; targets?: ChangeTargets; showProgrammed?: boolean }) {
@@ -60,7 +63,7 @@ export function ChangePill({ changes, size = "sm", targets, showProgrammed = fal
   if (!n && !security) {
     if (!showProgrammed || !changes) return null;
     return (
-      <Badge tone="neutral" size={size} title={t("changes.programmedTitle")} data-testid="programmed">
+      <Badge tone="neutral" size={size} className={staticHeight(size)} title={t("changes.programmedTitle")} data-testid="programmed">
         <CheckCircle2 /> {t("changes.programmed")}
       </Badge>
     );
