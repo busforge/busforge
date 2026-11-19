@@ -30,6 +30,22 @@ export const DEMO_PRODUCT_FILES = ["demo/bench-products.knxprod", "demo/house-pr
 // without the network.
 export const OPENKNX_DEMO_DIR = "demo/openknx";
 
+// bussard's ETS captures of its synthetic products, MIT-licensed third-party data (its README in the corpus).
+// `captures/manifest.json` lists every variant; the products the tests hold against ETS, each with its
+// application program, are named here, so a corpus without one of their files is reported incomplete.
+export const BUSSARD_SYNTHETIC_DIR = "captures/external/bussard-synthetic";
+export const BUSSARD_SYNTHETIC_TESTED: readonly (readonly [product: string, application: string])[] = [
+  ["syn-minimal", "2700-10"], ["syn-assign", "271F-10"], ["syn-assign-rewrite", "27B3-10"], ["syn-choose-never-shown", "270E-10"],
+  ["syn-choose-per-ref", "2719-10"], ["syn-color-param", "2728-10"], ["syn-com-objects", "271B-10"], ["syn-dynamic-tests", "271C-10"],
+  ["syn-hidden-default", "270C-10"], ["syn-ip-address-param", "2715-10"], ["syn-ip-enabled-tp", "2A22-10"], ["syn-legacy-patch-always", "2714-10"],
+  ["syn-map-error", "2726-10"], ["syn-master-reset", "270A-10"], ["syn-master-reset-code4", "278A-10"], ["syn-module-choose", "27B2-10"],
+  ["syn-object-size-ref", "2729-10"], ["syn-param-calculation", "270B-10"], ["syn-product-07b0", "2725-10"], ["syn-property-param", "271E-10"],
+  ["syn-union-bitfields", "271D-10"], ["syn-union-default-range", "2705-10"], ["syn-user-memory-extmem", "2796-10"], ["syn-writerelmem-tail", "272A-10"],
+  ["syn-s7-0701", "2801-10"], ["syn-s7-no-comobjects", "281A-10"], ["syn-s7-pei80", "2810-10"],
+].map(([p, a]) => [p, `M-00FA_A-${a}-0000`] as const);
+export const bussardCapture = (product: string, variant: string, file = "ets.pcapng") => `${BUSSARD_SYNTHETIC_DIR}/captures/${product}/${variant}/${file}`;
+export const bussardApplication = (product: string, application: string) => `${BUSSARD_SYNTHETIC_DIR}/products/${product}/xml/M-00FA/${application}.xml`;
+
 // Every file the tests and tools read, relative to the corpus root. A corpus may hold more; it
 // may not hold less.
 export const CORPUS_FILES: readonly string[] = [
@@ -214,6 +230,9 @@ export const CORPUS_FILES: readonly string[] = [
   ...IN_SERVICE_COLLECTIONS.map(inServiceCollection),
   ...DEMO_PRODUCT_FILES,
   ...OPENKNX_RELEASES.map((r) => `${OPENKNX_DEMO_DIR}/${r.asset}`),
+  `${BUSSARD_SYNTHETIC_DIR}/LICENSE`,
+  `${BUSSARD_SYNTHETIC_DIR}/captures/manifest.json`,
+  ...BUSSARD_SYNTHETIC_TESTED.flatMap(([p, a]) => [bussardCapture(p, "defaults"), bussardApplication(p, a)]),
 ];
 
 // Bun loads the .env files of the directory a process starts in: `bun run check` those of the

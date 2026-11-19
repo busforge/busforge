@@ -18,7 +18,7 @@ describes the machinery, not the claims.
 | Round-trip lock | same file, "the parameter image codec round-trips" | `build → decode` is its own inverse on every real fixture, so a codec cannot silently lose or shift a value | That the encoding matches the device's reading of it |
 | Doc lock | `apps/server/test/device-support-doc.test.ts` (needs the [private corpus](#the-private-corpus)) | [device-support.md](device-support.md) stays in sync with the mask registry: a new or changed mask fails the suite until the table is updated | Anything about hardware |
 | Server route tests | `apps/server/test` | Endpoint contracts, the task queue, and above all the **refusals**: flash guards, stale com-object tables, unsupported profiles, secure devices | That a permitted write lands correctly on a device |
-| Capture comparison | `tools/etsdiff.test.ts` (needs the [private corpus](#the-private-corpus)) | **Reference**: the bytes and services Busforge plans for a device equal what ETS wrote to that device in a capture, byte for byte | Wire behaviour no capture holds: timing, restarts, link handling |
+| Capture comparison | `tools/etsdiff.test.ts`, and `tools/bussard-synthetic.test.ts` for [third-party captures](#third-party-test-data) (both need the [private corpus](#the-private-corpus)) | **Reference**: the bytes and services Busforge plans for a device equal what ETS wrote to that device in a capture, byte for byte | Wire behaviour no capture holds: timing, restarts, link handling |
 | Capture CRC check | `tools/mcb-crc.test.ts` (needs the [private corpus](#the-private-corpus)) | **Reference** for the check a full download takes in place of a read-back: after each captured ETS full download, the CRC every region of every object reports in its memory-control block is the CRC over the bytes ETS wrote there | That a device without such a capture computes its CRC the same way (where it does not, the download reads back), and that a device computes it from its memory again after the restart: the file shows that on the Jung 400021SE only |
 | Hardware smoke | `tools/smoke` | That busforge places the intended bytes on a real device **and** that the device acts on them | Only what it was run against |
 
@@ -173,6 +173,32 @@ later question no one has asked yet, and an ETS run is expensive to repeat (hard
 unit in service). So each one goes into the corpus with everything that explains it: the proxy log,
 the ETS6.log lines of the same minutes, and the ETS project as exported right after (without a
 password), next to a short README naming the unit, the ETS action and what the frames show.
+
+### Captures in pcap form
+
+A capture taken with a packet sniffer instead of the proxy, KNXnet/IP over UDP in the classic pcap
+format, is turned into the proxy's log by `tools/pcap.ts`:
+
+```bash
+bun run tools/pcap.ts <capture.pcap> <capture.log>
+```
+
+One datagram becomes one log line. The side that sends the server's answers (search, description,
+connect and connection-state responses) is the server; a datagram that neither comes from nor goes
+to it, an IP fragment, a truncated record or a datagram that is not one whole KNXnet/IP frame is
+refused, as is the pcapng block format.
+
+### Third-party test data
+
+The private corpus holds one set of captures taken by another project:
+`captures/external/bussard-synthetic/`, the ETS 6.4.1 downloads of the synthetic products of
+[bussard](https://github.com/tmbo/bussard) (MIT License, copyright Tom Bocklisch), with the product
+data they were taken from. Each product is fabricated under the KNX test manufacturer `M-00FA` and
+isolates one construct. ETS downloaded them into a device simulator, so they show what ETS sends for
+a construct; where ETS branches on a device's answer, they show its answer to the simulator, never a
+device's behaviour. `tools/bussard-synthetic.test.ts` checks the pcap conversion against the set and
+holds Busforge's images for these products against ETS's bytes. The set's README in the corpus names
+the commit it was taken from and carries bussard's licence.
 
 ## Why the golden snapshot is not a correctness proof
 
