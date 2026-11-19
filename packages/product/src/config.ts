@@ -42,6 +42,7 @@ export interface CfgParamView {
   suffix?: string;
   step?: number; // number spinner step (ETS Increment)
   slider?: boolean; // ETS UIHint="Slider": render a range slider (needs min+max)
+  checkbox?: boolean; // ETS UIHint="CheckBox" on a 0..1 range: 1 is ticked, 0 unticked
   unit?: string; // for control "time": the TypeTime Unit (e.g. "Seconds") the raw value counts
   float?: boolean; // control "number" backing a TypeFloat: accept decimal input (step="any")
   readOnly?: boolean;
@@ -589,11 +590,14 @@ export function buildDeviceConfig(
     // bounded range to render, so fall back to the plain number input without one.
     const step = control === "number" ? type?.increment : undefined;
     const slider = control === "number" && type?.uiHint === "Slider" && type.min !== undefined && type.max !== undefined;
+    // A checkbox has two states, and ETS stores 1 for a ticked box over the default 0: only the range 0..1
+    // names them. Any other range keeps the number input, which shows every value of it.
+    const checkbox = (control === "number" && type?.uiHint === "CheckBox" && type.min === 0 && type.max === 1) || undefined;
     const unit = control === "time" ? type?.unit : undefined;
     // A float number accepts decimals; the frontend uses step="any" so the browser does
     // not reject a fractional value against an integer step grid.
     const float = type?.base === "Float" || undefined;
-    return { kind: "param", param: { refId: scope.rewrite(defRefId), name, control, value, options, min: type?.min, max: type?.max, suffix, step, slider, unit, float, readOnly: access === "Read" || control === "display" || control === "picture", defaultValue, typeLabel,
+    return { kind: "param", param: { refId: scope.rewrite(defRefId), name, control, value, options, min: type?.min, max: type?.max, suffix, step, slider, checkbox, unit, float, readOnly: access === "Read" || control === "display" || control === "picture", defaultValue, typeLabel,
       ...(control === "picture" ? { picture: { baggageId: type!.pictureRefId!, ...(type!.pictureAlign ? { align: type!.pictureAlign } : {}) } } : {}), ...(!param.hasMemory && !param.onProperty ? { memoryless: true as const } : {}) } };
   };
 

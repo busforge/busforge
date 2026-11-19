@@ -48,7 +48,7 @@ limit, because it records drift only for the refs the view exposes.
 | Type | Status | Notes |
 |---|---|---|
 | `TypeRestriction` (enumeration) | full | dropdown, options ordered by `DisplayOrder` |
-| `TypeNumber` | full | number input; `Increment` becomes the spinner step, `UIHint="Slider"` renders a bounded range slider |
+| `TypeNumber` | full | number input; `Increment` becomes the spinner step, `UIHint="Slider"` renders a bounded range slider, `UIHint="CheckBox"` on the range 0..1 a checkbox (ticked is 1, unticked 0, as ETS stores them); a `CheckBox` on any other range stays a number input, because its range names no ticked and unticked value, and a value outside 0..1 shows as no value of the parameter, never as a box state. These two are the only `UIHint` values on a `TypeNumber` in the catalogues Busforge is tested against |
 | `TypeFloat` | full | decimal input; the codec takes its width from `Encoding` (KNX 2-byte DPT-9, or IEEE-754 Single) and refuses an unknown width |
 | `TypeText` | full | text input; the image writes its characters in the application's `TextParameterEncoding` (one byte per character where it declares none, UTF-8 for `utf-8`) and zero bytes to the end of the field (a value as long as the field without a zero), and refuses what no capture shows ([device-memory-model.md](device-memory-model.md#which-parameter-types-reach-the-image-at-all)) |
 | `TypeTime` | full | raw integer count of the type's `Unit`; rendered as an `hh:mm:ss` duration for second-based units, else number plus unit |
@@ -82,7 +82,7 @@ Read and honoured:
 | `ComObject` | `ReadOnInitFlag` | the sixth flag, alongside C/R/W/T/U |
 | `Parameter` | `InitialValue` | a device placed in Busforge, or given another product, starts a text parameter at its translation into the client's language; other forms refuse the placement where they reach the device ([device-memory-model.md](device-memory-model.md#which-parameter-types-reach-the-image-at-all)) |
 | `Options` | `TextParameterEncoding` | the bytes of a text parameter's characters beyond ASCII |
-| `TypeNumber` | `Increment`, `UIHint="Slider"` | spinner step and slider |
+| `TypeNumber` | `Increment`, `UIHint="Slider"`, `UIHint="CheckBox"` | spinner step, slider and checkbox |
 | `Parameter` | `LegacyPatchAlways` | parsed; the parameter is built and owned like any other, because ETS always writes its value over the `<Data>` byte (see [findings.md](findings.md) §8) |
 | `ParameterBlock` (item-less) | self-closing collector blocks | a reached childless header renders as an empty navigable section; headers inside an inactive `choose` branch stay hidden |
 

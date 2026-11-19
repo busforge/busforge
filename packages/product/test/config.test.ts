@@ -96,6 +96,22 @@ describe("buildDeviceConfig visibility", () => {
     expect(level.slider).toBe(true);
   });
 
+  // OpenKNX and Jung applications declare TypeNumber 0..1 with UIHint="CheckBox"; ETS stores 1 for a ticked
+  // box over the default 0. A range of other or more than two values names no ticked and unticked value.
+  test("TypeNumber UIHint=CheckBox becomes a checkbox only for the range 0..1", () => {
+    const types: [string, string][] = [["8", 'minInclusive="0" maxInclusive="1"'], ["1", 'minInclusive="0" maxInclusive="1"'], ["8", 'minInclusive="0" maxInclusive="2"'], ["8", 'minInclusive="1" maxInclusive="2"'], ["8", ""]];
+    const xml = `<KNX><ApplicationProgram Id="M-TEST_A-14" DefaultLanguage="en-US"><Static>
+      <Parameters>${types.map((_, i) => `<Parameter Id="M-TEST_A-14_P-${i}" ParameterType="M-TEST_A-14_PT-${i}" Text="P${i}" Value="1" />`).join("")}</Parameters>
+      <ParameterRefs>${types.map((_, i) => `<ParameterRef Id="M-TEST_A-14_P-${i}_R-1" RefId="M-TEST_A-14_P-${i}" />`).join("")}</ParameterRefs>
+      <ParameterTypes>${types.map(([size, range], i) => `<ParameterType Id="M-TEST_A-14_PT-${i}"><TypeNumber SizeInBit="${size}" Type="unsignedInt" ${range} UIHint="CheckBox" /></ParameterType>`).join("")}</ParameterTypes>
+      </Static><Dynamic><ChannelIndependentBlock><ParameterBlock Id="M-TEST_A-14_PB-1" Text="Page">
+        ${types.map((_, i) => `<ParameterRefRef RefId="M-TEST_A-14_P-${i}_R-1" />`).join("")}
+      </ParameterBlock></ChannelIndependentBlock></Dynamic></ApplicationProgram></KNX>`;
+    const shown = params(buildDeviceConfig(parseAppConfig(xml), new Map()));
+    expect(shown.map((p) => [p.param.control, p.param.checkbox])).toEqual([["number", true], ["number", true], ["number", undefined], ["number", undefined], ["number", undefined]]);
+    expect(params(buildDeviceConfig(app, new Map()))[1].param.checkbox).toBeUndefined();
+  });
+
   test("Mode=0 takes the default branch: shows Label, hides Level + com-object", () => {
     const v = buildDeviceConfig(app, new Map([["M-TEST_A-1_P-1_R-1", "0"]]));
     expect(params(v).map((p) => p.param.name)).toEqual(["Mode", "Label"]);

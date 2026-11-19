@@ -44,6 +44,7 @@ import {
 import { type GaOption } from "./GaCombobox.tsx";
 import { LinkEditor } from "./LinkEditor.tsx";
 import { FlagEditor } from "./FlagEditor.tsx";
+import { ParamCheckbox } from "./ParamCheckbox.tsx";
 import { ComObjLinks } from "./ComObjLinks.tsx";
 import { AssumeValuesPanel, NeverProgrammedKeptNote, UnprovenAssumptionsNote, UnresolvedNotes, assumeCandidates, assumeList, assumeReducer, assumedParams, initialAssumeState } from "./AssumeValues.tsx";
 import { addedLinks } from "@/lib/links.ts";
@@ -1189,6 +1190,8 @@ function ParamRow({ param, compact, changedTitle, revertTitle, reverting, onChan
             </Badge>
             <span className="truncate font-mono text-xs text-muted-foreground">{param.value}</span>
           </span>
+        ) : param.checkbox ? (
+          <ParamCheckbox value={param.value} label={label} disabled={param.readOnly} onChange={onChange} testId={`param-${param.refId}`} />
         ) : param.readOnly ? (
           param.control === "color" ? (
             <span className="flex w-full items-center gap-2 text-sm text-muted-foreground" data-testid={`param-${param.refId}`}>
