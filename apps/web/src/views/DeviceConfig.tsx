@@ -400,22 +400,21 @@ export function DeviceConfig() {
       // Each shown block's own and shown items, to move its inline blocks' places; the pages that matched.
       const shown = new Map<string, [CfgItem[], CfgItem[]]>([[g.head.id, [g.head.items, headItems]]]);
       const matched = new Set<string>(headMatch ? [g.head.id] : []);
-      // Stage a dropped level-1 block so a surviving deeper child can still show
-      // its parent heading as context (kept with no items).
-      let pendingParent: CfgBlock | null = null;
+      // A dropped block comes back (with no items) when a block below it survives, so
+      // that one keeps its parents' headings as context and an inline one its page.
+      const dropped = new Map<string, CfgBlock>();
+      const show = (b: CfgBlock, items: CfgItem[]) => {
+        const parent = b.parentId ? dropped.get(b.parentId) : undefined;
+        if (parent) { dropped.delete(parent.id); show(parent, []); }
+        children.push({ ...b, items });
+        shown.set(b.id, [b.items, items]);
+      };
       for (const c of g.children) {
         const cMatch = headMatch || norm(c.name).includes(q) || (!!c.inline && !!c.parentId && matched.has(c.parentId));
         if (cMatch) matched.add(c.id);
         const items = cMatch ? c.items : keep(c.items);
-        const kept = cMatch || items.length > 0;
-        if (c.level === 1) {
-          if (kept) { children.push({ ...c, items }); shown.set(c.id, [c.items, items]); pendingParent = null; }
-          else pendingParent = c;
-        } else if (kept) {
-          if (pendingParent) { children.push({ ...pendingParent, items: [] }); shown.set(pendingParent.id, [pendingParent.items, []]); pendingParent = null; }
-          children.push({ ...c, items });
-          shown.set(c.id, [c.items, items]);
-        }
+        if (cMatch || items.length > 0) show(c, items);
+        else dropped.set(c.id, c);
       }
       const placed = children.map((c) => {
         const parent = c.inline && c.at !== undefined && c.parentId ? shown.get(c.parentId) : undefined;
@@ -459,9 +458,9 @@ export function DeviceConfig() {
     return { types: [...types.entries()], elements: [...elements.entries()] };
   }, [view]);
 
-  // Section index. Only top-level group headers are tracked/scroll targets (one
-  // per channel/area), so the index stays short and the scroll-spy reliable even
-  // on devices with hundreds of rows.
+  // Section index. Only the sections it lists (group heads and their named level-1
+  // pages) are tracked/scroll targets, so the index stays short and the scroll-spy
+  // reliable even on devices with hundreds of rows.
   const { active: activeSec, registerRef, jump: scrollToSec } = useScrollSpy(filteredGroups[0] ? `sec-${filteredGroups[0].head.id}` : null, filteredGroups);
 
   // The com-object the URL names: the one a link led to (co), else the one whose linked objects are
@@ -729,30 +728,29 @@ export function DeviceConfig() {
 
   // A block's page together with the inline blocks that stand on it, each at its authored place. The
   // rows of a Grid/Table share one geometry, so inline blocks inside one follow it.
-  const renderPage = (b: CfgBlock, inline: Map<string, CfgBlock[]>): ReactNode[] => {
-    const kids = inline.get(b.id) ?? [];
-    const parts = b.layout
-      ? [{ kind: "items" as const, items: b.items, from: 0 }, ...kids.map((block) => ({ kind: "inline" as const, block }))]
-      : flowOf(b.items, kids);
-    return parts.flatMap((p) => p.kind === "items"
+  const renderPage = (b: CfgBlock, inline: Map<string, CfgBlock[]>): ReactNode[] =>
+    flowOf(b.items, inline.get(b.id) ?? [], !!b.layout).flatMap((p) => p.kind === "items"
       ? (b.layout ? [renderItems(b, b.id)] : p.items.map((item, i) => renderItem(item, `${b.id}-${p.from + i}`)))
-      : [<div key={p.block.id} id={`sec-${p.block.id}`}>{inlineHeading(p.block, inline)}{renderPage(p.block, inline)}</div>]);
-  };
-  // ETS draws an inline block's Text above it; one without Text has no heading at all.
-  const inlineHeading = (b: CfgBlock, inline: Map<string, CfgBlock[]>) => b.name ? (
-    <h4 className="mt-4 mb-3 flex items-center gap-2.5 text-sm font-semibold text-muted-foreground">
-      <span className="min-w-0 shrink truncate">{b.name}</span>
+      // ETS draws an inline block's Text above it; one without Text has no heading at all.
+      : [<div key={p.block.id} id={`sec-${p.block.id}`}>{p.block.name && subHeading(p.block, inline, true)}{renderPage(p.block, inline)}</div>]);
+  // A sub-section's heading: the label followed by a hairline that fades out, so each sub-block reads
+  // as its own section without a heavy left bar; `deep` (below a sub-section, or inline) is lighter.
+  // A page without a name keeps only the line.
+  const subHeading = (b: CfgBlock, inline: Map<string, CfgBlock[]>, deep: boolean) => (
+    <h4 className={cn("mb-3 flex items-center gap-2.5 font-semibold first:mt-0",
+      deep ? "mt-4 text-sm text-muted-foreground" : "mt-5 text-foreground")}>
+      {b.name && <span className="min-w-0 shrink truncate">{b.name}</span>}
       {pageChanged(b, inline) && <span className="size-1.5 shrink-0 rounded-full bg-primary" title={t("device.changedDot")} />}
-      <span className="h-px flex-1 bg-gradient-to-r from-border/40 to-transparent" />
+      <span className={cn("h-px flex-1 bg-gradient-to-r to-transparent", deep ? "from-border/40" : "from-border/70")} />
     </h4>
-  ) : null;
+  );
 
   // The section index mirrors the (filtered) tree shown on the right, so it stays
   // useful while searching; show it whenever there is more than one place to jump.
   // It lists each group head plus its direct (level-1) pages that carry a name; an
   // inline block is part of its parent's page and has no entry.
-  // A group without a name holds the leaves of a ChannelIndependentBlock (it has no Name) or a
-  // top-level block without Text; the index needs a label for it, so it is called channel-independent.
+  // A group without a name holds the leaves of a ChannelIndependentBlock (it has no Name), or is an
+  // inline block placed outside every page; the index needs a label for it: channel-independent.
   const inIndex = (c: CfgBlock) => c.level === 1 && !c.inline && !!c.name;
   const navEntries = filteredGroups.flatMap((g, gi) => [
     { id: `sec-${g.head.id}`, label: g.head.name || t("device.channelIndependent"), changed: groupChanged(g) },
@@ -1062,8 +1060,6 @@ export function DeviceConfig() {
                   )}
                   {renderPage(g.head, inline)}
                   {g.children.filter((c) => !onPage.has(c.id)).map((child: CfgBlock) => {
-                    // An inline block shown here lost its page to the filter: it stands as itself, without index entry.
-                    if (child.inline) return <div key={child.id} id={`sec-${child.id}`} className="pt-3 first:pt-0">{inlineHeading(child, inline)}{renderPage(child, inline)}</div>;
                     const deep = child.level >= 2; // sub-block of a sub-section: indent further, lighter heading
                     return (
                       <section
@@ -1071,15 +1067,7 @@ export function DeviceConfig() {
                         ref={inIndex(child) ? registerRef(`sec-${child.id}`) : undefined}
                         className={cn("scroll-mt-chrome pt-3 first:pt-0", deep && "pl-3")}
                       >
-                        {/* Channel sub-heading: the label followed by a hairline that fades out,
-                            so each sub-block reads as its own section without a heavy left bar.
-                            A page without a name keeps only the line. */}
-                        <h4 className={cn("mb-3 flex items-center gap-2.5 font-semibold first:mt-0",
-                          deep ? "mt-4 text-sm text-muted-foreground" : "mt-5 text-foreground")}>
-                          {child.name && <span className="min-w-0 shrink truncate">{child.name}</span>}
-                          {pageChanged(child, inline) && <span className="size-1.5 shrink-0 rounded-full bg-primary" title={t("device.changedDot")} />}
-                          <span className={cn("h-px flex-1 bg-gradient-to-r to-transparent", deep ? "from-border/40" : "from-border/70")} />
-                        </h4>
+                        {subHeading(child, inline, deep)}
                         {renderPage(child, inline)}
                       </section>
                     );

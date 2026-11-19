@@ -78,7 +78,7 @@ Read and honoured:
 | `ParameterBlock`, `ParameterSeparator`, `ParameterRef`, `ComObjectRef`, `ComObject` | `TextParameterRefId` | `{{0}}` / `{{0:default}}` substituted, see [Text placeholders](#text-placeholders) |
 | `ParameterRef` | `Text`, `SuffixText` | shown instead of its `Parameter`'s, as the parameter's label and unit and as the heading of a block named by `ParamRefId`; see [Parameter labels](#parameter-labels) |
 | `ParameterBlock` | `Access="None"` / `"Read"` | a hidden block is not rendered, but its `Assign` side effects still gate later conditions |
-| `ParameterBlock` | `Inline="true"` | the block is part of its parent's page: its rows stand where it is authored among the parent's rows, it has no entry in the section index, and its heading is its `Text` only (none without one, never its `Name`) |
+| `ParameterBlock` | `Inline="true"` | the block is part of its parent's page: its rows stand where it is authored among the parent's rows, it has no entry in the section index, and its heading comes from its `Text` or the parameter its `ParamRefId` names (none without either, never its `Name`); inside a `Grid`/`Table` block it follows the grid, whose cells share one geometry |
 | `ComObject` | `ReadOnInitFlag` | the sixth flag, alongside C/R/W/T/U |
 | `Parameter` | `InitialValue` | a device placed in Busforge, or given another product, starts a text parameter at its translation into the client's language; other forms refuse the placement where they reach the device ([device-memory-model.md](device-memory-model.md#which-parameter-types-reach-the-image-at-all)) |
 | `Options` | `TextParameterEncoding` | the bytes of a text parameter's characters beyond ASCII |

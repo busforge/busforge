@@ -132,8 +132,9 @@ export interface CfgBlock {
   // geometry; the items carry the Cell that places them in it.
   layout?: "Grid" | "Table"; rows?: CfgGridLine[]; cols?: CfgGridLine[];
   // ETS Inline="true": the block belongs to its parent's page, not a page of its own, so it has no
-  // entry in the page index and a heading only where its Text gives one. `at` is where it stands among
-  // the parent's items (it comes before parent.items[at]), as authored; set when the parent is a block.
+  // entry in the page index, and a heading only from its Text or the text of the parameter it names
+  // (ParamRefId), never from its Name. `at` is where it stands among the parent's items (it comes
+  // before parent.items[at]), as authored; set when the parent is a block.
   inline?: true; at?: number;
 }
 // The read-back facts the server attaches to a config response (never set by
@@ -668,12 +669,14 @@ export function buildDeviceConfig(
   };
   const instancesFor = (moduleNodeId: string) => instances.filter((mi) => `${app.id}_${mi.refId}` === moduleNodeId);
 
+  // Where each shown inline block stands among its parent's items, keyed by its instance id (a
+  // module's nodes are shared by its instances), and how many collect() has met: collect() records
+  // them, walk() reads them right after.
+  const inlineAt = new Map<string, number>();
+  let inlineSeen = 0;
   // Walk a node sequence in order, appending items to the current block. Active
   // choose branches inline their items; Assign mutates env; Module nodes expand
   // each device instance with its own scope.
-  // Where each inline block stands among its parent's items, keyed by its instance id (a module's
-  // nodes are shared by its instances). collect() records it, walk() reads it right after.
-  const inlineAt = new Map<string, number>();
   const collect = (nodes: DynNode[], items: CfgItem[], scope: Scope) => {
     for (const n of nodes) {
       switch (n.kind) {
@@ -695,7 +698,7 @@ export function buildDeviceConfig(
         // that way is known (Jung/HMG place the hidden block at container/top level, where walk
         // orders it correctly). Should one leave the view's objects different from the image's,
         // the configuration is refused (CONFIG_VIEW_INCOMPLETE below), not shown short.
-        case "block": if (n.inline) inlineAt.set(scope.rewrite(n.id), items.length); break;
+        case "block": if (n.inline && n.access !== "None") { inlineAt.set(scope.rewrite(n.id), items.length); inlineSeen++; } break;
       }
     }
   };
@@ -762,27 +765,30 @@ export function buildDeviceConfig(
     }
   };
 
-  // `loose` receives the leaves placed outside every ParameterBlock: a ComObjectRefRef or
-  // ParameterRefRef directly under a <Channel> or ChannelIndependentBlock (Theben places its
-  // measured-value objects there; ETS lists them and its tables link them). Inside a block it is
-  // null, because collect() has already gathered that block's leaves, nested containers included.
-  // `section` is the items of the nearest enclosing section, where a hidden block's objects go.
   const inlineOf = (n: Extract<DynNode, { kind: "block" }>, id: string): Pick<CfgBlock, "inline" | "at"> => {
     if (!n.inline) return {};
     const at = inlineAt.get(id);
     return at === undefined ? { inline: true } : { inline: true, at };
   };
+  // `loose` receives the leaves placed outside every ParameterBlock: a ComObjectRefRef or
+  // ParameterRefRef directly under a <Channel> or ChannelIndependentBlock (Theben places its
+  // measured-value objects there; ETS lists them and its tables link them). Inside a block it is
+  // null, because collect() has already gathered that block's leaves, nested containers included.
+  // `section` is the items of the nearest enclosing section, where a hidden block's objects go.
   const walk = (nodes: DynNode[], scope: Scope, into: Node[], loose: CfgItem[] | null, section: CfgItem[]) => {
     for (const n of nodes) {
       switch (n.kind) {
         case "block": {
           if (n.access === "None") { applyEnv(n.children, scope, section); break; } // hidden, but its Merker/Assign side effects still gate later chooses
           const items: CfgItem[] = [];
+          const inlineBefore = inlineSeen;
           collect(n.children, items, scope);
-          if (items.length) {
+          // A page whose rows all sit in inline blocks is still a page: they stand on it, not above it.
+          if (items.length || inlineSeen > inlineBefore) {
             const name = blockTitle(n, scope);
             const id = scope.rewrite(n.id);
-            const node: Node = { block: { id, name: cap(name), items, level: 0, ...gridOf(n, scope), ...inlineOf(n, id) }, order: headOrder(n), seq: seq++, children: [] };
+            // An inline block keeps its authored place among its siblings: DisplayOrder orders pages, not rows on one.
+            const node: Node = { block: { id, name: cap(name), items, level: 0, ...gridOf(n, scope), ...inlineOf(n, id) }, order: n.inline ? 0 : headOrder(n), seq: seq++, children: [] };
             into.push(node);
             walk(n.children, scope, node.children, null, items);
           } else if (n.children.length === 0 && (n.paramRefId || n.text)) {

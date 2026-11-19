@@ -4,7 +4,7 @@ import type { CfgBlock, CfgItem } from "../api.ts";
 // items at its authored place (CfgBlock.at), not after them as a section of its own.
 
 // The inline blocks each block of `blocks` carries on its page, by parent id, in authored order. An
-// inline block whose parent is not in `blocks` (a filter dropped it) is not listed: it stands alone.
+// inline block whose parent is not in `blocks` is not listed.
 export function inlineChildren(blocks: CfgBlock[]): Map<string, CfgBlock[]> {
   const ids = new Set(blocks.map((b) => b.id));
   const out = new Map<string, CfgBlock[]>();
@@ -19,8 +19,9 @@ export function inlineChildren(blocks: CfgBlock[]): Map<string, CfgBlock[]> {
 export type FlowPart = { kind: "items"; items: CfgItem[]; from: number } | { kind: "inline"; block: CfgBlock };
 
 // A page's items with its inline blocks placed between them. `from` is the index of the run's first
-// item in `items`. An inline block without a place (its parent is no block) follows the items.
-export function flowOf(items: CfgItem[], inline: CfgBlock[]): FlowPart[] {
+// item in `items`. An inline block without a place (its parent is no block) follows the items, and
+// so does every one when `whole` keeps the items together (a Grid/Table, whose cells share one geometry).
+export function flowOf(items: CfgItem[], inline: CfgBlock[], whole = false): FlowPart[] {
   const parts: FlowPart[] = [];
   let i = 0;
   const run = (end: number) => {
@@ -28,7 +29,7 @@ export function flowOf(items: CfgItem[], inline: CfgBlock[]): FlowPart[] {
     i = Math.max(i, end);
   };
   for (const b of inline) {
-    run(Math.min(b.at ?? items.length, items.length));
+    run(whole ? items.length : Math.min(b.at ?? items.length, items.length));
     parts.push({ kind: "inline", block: b });
   }
   run(items.length);

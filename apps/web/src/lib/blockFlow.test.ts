@@ -28,6 +28,10 @@ describe("flowOf", () => {
     const parts = flowOf(items, [block("X", { inline: true })]);
     expect(parts.map((p) => (p.kind === "inline" ? p.block.id : `${p.from}:${p.items.length}`))).toEqual(["0:3", "X"]);
   });
+  test("kept whole (a grid), the items stay one run and every inline block follows them", () => {
+    const parts = flowOf(items, [block("X", { inline: true, at: 1 })], true);
+    expect(parts.map((p) => (p.kind === "inline" ? p.block.id : `${p.from}:${p.items.length}`))).toEqual(["0:3", "X"]);
+  });
   test("no inline blocks: one run of all items", () => {
     expect(flowOf(items, [])).toEqual([{ kind: "items", items, from: 0 }]);
   });

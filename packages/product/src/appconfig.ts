@@ -779,7 +779,7 @@ function parseDyn(n: ONode): DynNode | null {
       return {
         kind: "block", id: a.Id ?? "", name: a.Name ?? "", text: a.Text ?? "", textParamRefId: a.TextParameterRefId,
         paramRefId: a.ParamRefId, access: a.Access,
-        inline: a.Inline === "true" || a.Inline === "1" ? true : undefined,
+        inline: a.Inline === "true" || undefined,
         layout: grid ? declared : undefined,
         rows: grid ? rows ?? undefined : undefined, // `grid` already excludes null
         cols: grid ? cols ?? undefined : undefined,
