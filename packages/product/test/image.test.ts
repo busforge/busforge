@@ -1,10 +1,11 @@
 import { test, expect, describe } from "bun:test";
 import { buildParameterImage, decodeParameterImage, encodeDpt9, decodeDpt9 } from "../src/image.ts";
 import { unmappedParamRefs } from "../src/application.ts";
-import { parseAppConfig, parseLoadProcedures, classify, resolveModuleInstances } from "../src/index.ts";
+import { parseAppConfig, parseLoadProcedures, classify, resolveModuleInstances, takesValue } from "../src/index.ts";
 import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusTest } from "../../../tools/corpus-test.ts";
 import type { AppModel, ParamType, Param, ParamRef } from "../src/application.ts";
+import type { CfgType } from "../src/appconfig.ts";
 
 // A minimal application model covering one of each codec path: a bit-field enum,
 // an unsigned byte, a signed 16-bit, a 2-byte DPT-9 float, and a text param.
@@ -56,9 +57,35 @@ describe("DPT-9 float codec", () => {
     expect(encodeDpt9(-12.5)).toBe(0x831e);
     // Rounded once at the final exponent: 1000000 / 2^9 = 1953.125 -> 1953.
     expect(encodeDpt9(10000)).toBe(0x4fa1);
-    // Beyond the range: the largest mantissa at exponent 15.
-    expect(encodeDpt9(1e9)).toBe(0x7fff);
-    expect(encodeDpt9(-1e9)).toBe(0xf800);
+  });
+
+  test("refuses a value outside the range instead of saturating, 0x7FFF being DPT 9's invalid data", () => {
+    // The ends of the range: the largest mantissa at exponent 15, 0x7FFF itself excluded.
+    expect(encodeDpt9(670433.28)).toBe(0x7ffe);
+    expect(encodeDpt9(-671088.64)).toBe(0xf800);
+    for (const v of [670760.96, 670600.01, 1e9, -672000, -1e9, 1e21]) {
+      expect(() => encodeDpt9(v)).toThrow(expect.objectContaining({ code: "PARAM_VALUE_OUT_OF_RANGE" }));
+    }
+    // Judged before the rounding: a value just beyond an end, which would round onto it, is refused too.
+    for (const v of [670433.29, 670500, 670597.12, -671088.65, -671200, -671252.48]) {
+      expect(() => encodeDpt9(v)).toThrow(expect.objectContaining({ code: "PARAM_VALUE_OUT_OF_RANGE" }));
+    }
+    expect(encodeDpt9(670433.27)).toBe(0x7ffe); // 67043327 / 2^15 = 2045.99997 -> 2046
+  });
+
+  test("a parameter takes no value the float has no code for, so a device holding 0x7FFF holds no value of it", () => {
+    const type: CfgType = { id: "T", base: "Float", kind: "TypeFloat", sizeInBit: 16, signed: false, enums: [] };
+    expect(takesValue(type, "1000000")).toBe(false);
+    expect(takesValue(type, " 670760.96 ")).toBe(false);
+    expect(takesValue(type, "21.5")).toBeUndefined();
+    expect(takesValue(type, "")).toBeUndefined();
+    expect(takesValue({ ...type, sizeInBit: 32 }, "1000000")).toBeUndefined();
+    const img = buildParameterImage(model(), 4, new Map());
+    img.writeUInt16BE(0x7fff, 4);
+    const held = decodeParameterImage(model(), 4, img).get("R-P-float")!;
+    expect(takesValue(type, held)).toBe(false); // what the device holds is no value of its parameter
+    img.writeUInt16BE(0x7ffe, 4);
+    expect(decodeParameterImage(model(), 4, img).get("R-P-float")).toBe("670433.28");
   });
 
   corpusTest("the MDT BE-02001.02 input B sending 1000 Lux: Busforge's image holds the 12 bytes ETS wrote", () => {

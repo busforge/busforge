@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, Calculator, ChevronDown, ChevronLeft, ChevronsUpDown, Cpu, HardDriveDownload, Info, KeyRound, Loader2, MapPin, MessageSquareWarning, MoreVertical, Puzzle, RadioTower, Repeat2, RotateCcw, Search, ShieldCheck, Stethoscope, X } from "lucide-react";
+import { AlertTriangle, Calculator, ChevronDown, ChevronLeft, ChevronsUpDown, Cpu, HardDriveDownload, Info, KeyRound, Loader2, LocateFixed, MapPin, MessageSquareWarning, MoreVertical, Puzzle, RadioTower, Repeat2, RotateCcw, Search, ShieldCheck, Stethoscope, X } from "lucide-react";
 import { Link, useLocation, useNavigate, useParams, useRouter, useSearch } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -35,6 +35,7 @@ import { ToolKeyDialog } from "./ToolKeyDialog.tsx";
 import { DiagnosticDialog } from "./DiagnosticDialog.tsx";
 import { ReportDialog } from "./ReportDialog.tsx";
 import { AddressDialog } from "./AddressDialog.tsx";
+import { LocateDialog } from "./LocateDialog.tsx";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -213,6 +214,7 @@ export function DeviceConfig() {
   const [secureOpen, setSecureOpen] = useState(false);
   const [toolKeyOpen, setToolKeyOpen] = useState(false);
   const [addressOpen, setAddressOpen] = useState(false);
+  const [locateOpen, setLocateOpen] = useState(false);
   const [diagnosticOpen, setDiagnosticOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   // What the last read-back of this device left open, and the offer of values to assume; reset when
@@ -869,6 +871,9 @@ export function DeviceConfig() {
                 <DropdownMenuItem onClick={() => setAddressOpen(true)} disabled={!device} data-testid="change-address">
                   <MapPin className="size-4" /> {t("address.menu")}
                 </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setLocateOpen(true)} disabled={!device} data-testid="locate-device">
+                  <LocateFixed className="size-4" /> {t("locate.menu")}
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setReplaceOpen(true)} disabled={!view} data-testid="replace-product">
                   <Repeat2 className="size-4" /> {t("replace.menu")}
                 </DropdownMenuItem>
@@ -923,6 +928,10 @@ export function DeviceConfig() {
           onSaved={() => qc.invalidateQueries({ queryKey: qk.project(projectId) })}
           onAssign={() => setCommissionOpen(true)}
         />
+      )}
+
+      {device && (
+        <LocateDialog open={locateOpen} onOpenChange={setLocateOpen} projectId={projectId} device={device} />
       )}
 
       {device && (
