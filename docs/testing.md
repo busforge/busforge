@@ -20,6 +20,7 @@ describes the machinery, not the claims.
 | Server route tests | `apps/server/test` | Endpoint contracts, the task queue, and above all the **refusals**: flash guards, stale com-object tables, unsupported profiles, secure devices | That a permitted write lands correctly on a device |
 | Capture comparison | `tools/etsdiff.test.ts`, and `tools/bussard-synthetic.test.ts` for [third-party captures](#third-party-test-data) (both need the [private corpus](#the-private-corpus)) | **Reference**: the bytes and services Busforge plans for a device equal what ETS wrote to that device in a capture, byte for byte | Wire behaviour no capture holds: timing, restarts, link handling |
 | Capture CRC check | `tools/mcb-crc.test.ts` (needs the [private corpus](#the-private-corpus)) | **Reference** for the check a full download takes in place of a read-back: after each captured ETS full download, the CRC every region of every object reports in its memory-control block is the CRC over the bytes ETS wrote there | That a device without such a capture computes its CRC the same way (where it does not, the download reads back), and that a device computes it from its memory again after the restart: the file shows that on the Jung 400021SE only |
+| Corpus archive smoke | `tools/corpus-archives.test.ts` (needs the [private corpus](#the-private-corpus)) | **Readability**: every `.knxproj`, `.knxprod` and `.busforge` in the corpus opens with Busforge's own readers (ZIP, WinZip-AES decryption, the `.busforge` container), a failure naming the file | That what opens is parsed correctly (it opens the archive and reads `0.xml`, nothing more), and the traditional PKWARE encryption of ETS 4 and 5, which no corpus archive uses (`packages/project/test/older-ets-and-shapes.test.ts` covers it) |
 | Hardware smoke | `tools/smoke` | That busforge places the intended bytes on a real device **and** that the device acts on them | Only what it was run against |
 
 Everything except the last row runs offline and is bundled in the gate:
@@ -102,6 +103,17 @@ no longer in the corpus):
 
 ```bash
 KNXPROJ_PASSWORD=... bun run tools/ets-records.ts <corpus-relative project.knxproj>...
+```
+
+`tools/corpus-archives.test.ts` opens every `.knxproj`, `.knxprod` and `.busforge` the corpus holds, so a
+stricter rule in the ZIP reader or a broken decryption fails the check naming the archive. What needs no
+password it opens in every corpus run. A project's inner archive and an encrypted `.busforge` open only with
+their password, which the check does not hold: pass them, one per line, in `KNXPROJ_PASSWORDS` (every
+protected archive is tried with each; one that none opens fails). Without the variable that one test is
+registered as skipped, `[needs KNXPROJ_PASSWORDS] ...`, and announced as the corpus tests are.
+
+```bash
+KNXPROJ_PASSWORDS=$'<first password>\n<second password>' bun test tools/corpus-archives.test.ts
 ```
 
 The kept evidence records are in the corpus as well (`evidence/runs/`, `evidence/reference/`): they
