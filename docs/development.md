@@ -35,7 +35,7 @@ Four environment variables move the pair; unset, each keeps the default above.
 
 | Variable | Read by | Meaning | Default |
 |---|---|---|---|
-| `BUSFORGE_DATA_DIR` | server | The data directory (database, master key, backups); created if missing. Give an absolute path: a relative one resolves against `apps/server` when the server starts through `dev:server`. Set but empty is refused | `apps/server/data` |
+| `BUSFORGE_DATA_DIR` | server, `dump-param-memory.ts`, `verify-images.ts` | The data directory (database, master key, backups); created if missing. Give an absolute path: a relative one resolves against `apps/server` when the server starts through `dev:server`. Set but empty is refused | `apps/server/data` |
 | `PORT` | server | The port the server listens on, `0` for any free one; anything but a port number is refused | `3000` |
 | `BUSFORGE_API` | Vite | The server's origin (no path), the target of the `/api` proxy and the bus-monitor WebSocket | `http://localhost:3000` |
 | `BUSFORGE_WEB` | Vite | The dev server's http origin (no path); only its port (not 0) is used, Vite listens on `localhost`. A busy port is an error instead of a move to the next one | Vite's own `5173` |
@@ -141,8 +141,11 @@ database.
 bun run tools/dump-param-memory.ts <interface-ip> [out-dir]
 ```
 
-Writes one `<ia>__<seg>.device.bin` per segment plus `manifest.json`. The default output directory
-is `apps/server/data/readback/parammem` (git-ignored).
+Writes one `<ia>__<seg>.device.bin` per segment plus `manifest.json`. The database is the one in the
+server's data directory, `BUSFORGE_DATA_DIR` or else `apps/server/data` (a relative value resolves
+against the directory the tool runs in), and the tool prints the path it opened; a directory without
+a database, or one with no project, is refused. The default output directory is
+`readback/parammem` inside that data directory (git-ignored).
 
 ### verify-images.ts
 
@@ -153,6 +156,10 @@ against real devices rather than against our own frozen golden snapshot.
 ```bash
 bun run tools/verify-images.ts [dump-dir]
 ```
+
+The project values come from the same database as in `dump-param-memory.ts` (`BUSFORGE_DATA_DIR`,
+else `apps/server/data`), and the default dump directory is the same one. Run both against the same
+data directory, or the dumps are compared with another instance's project.
 
 The match is **owned-scoped**: a segment passes when the bytes busforge derives from active
 parameters (the ones it would actually flash) equal the device. Unowned bytes (manufacturer

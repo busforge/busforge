@@ -16,20 +16,21 @@
 // reported as "+Nu" for context but never fail a device: we do not write them, and a
 // mismatch there is not config drift (it may even be device-internal runtime state).
 // See docs/device-memory-model.md. Also reports the union-parameter count.
-import { Database } from "bun:sqlite";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { parseAppConfig, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget } from "../packages/product/src/index.ts";
 import type { ModuleInstance } from "../packages/product/src/index.ts";
 import { appProgramId } from "../packages/project/src/index.ts";
+import { firstProjectId, openServerDb, serverDataDir } from "./serverdb.ts";
 
-const corpus = process.argv[2] ?? "apps/server/data/readback/parammem";
+const corpus = process.argv[2] ?? join(serverDataDir(), "readback", "parammem");
 const manifestPath = join(corpus, "manifest.json");
 if (!existsSync(manifestPath)) { console.error(`no manifest at ${manifestPath} (run dump-param-memory.ts first)`); process.exit(2); }
 const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
 
-const db = new Database("apps/server/data/busforge.db", { readonly: true });
-const projectId = (db.query("SELECT id FROM projects LIMIT 1").get() as any).id;
+const { db, path: dbPath } = openServerDb();
+console.log(`database ${dbPath}`);
+const projectId = firstProjectId(db, dbPath);
 
 let okDevices = 0, totalDevices = 0, okSegments = 0, totalSegments = 0;
 const fails: any[] = [];
