@@ -5,9 +5,11 @@ import { useTranslation } from "react-i18next";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api, type Device, type CatalogProduct, type SpaceNode } from "../api.ts";
-import { useProject, useCatalog, useManufacturers, useSpaceEdit, qk } from "../queries.ts";
+import { useProject, useCatalog, useManufacturers, useSpaceEdit, useDroppedLinks, qk } from "../queries.ts";
 import { ChangePill, changeTotal as total } from "@/components/ChangePill.tsx";
 import { DeviceLabel } from "@/components/DeviceLabel.tsx";
+import { HeaderWarning } from "@/components/HeaderWarning.tsx";
+import { DroppedLinksList } from "@/components/DroppedLinksList.tsx";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/icon-button";
@@ -134,6 +136,7 @@ export function DevicesView() {
   const { t } = useTranslation();
   const { projectId } = useParams({ from: "/projects/$projectId" });
   const { data: project } = useProject(projectId);
+  const { data: dropped } = useDroppedLinks(projectId);
   const { data: manufacturers } = useManufacturers();
   const manufNames = useMemo(() => new Map((manufacturers ?? []).map((m) => [m.id, m.name])), [manufacturers]);
   // The manufacturer's name where the KNX list in Busforge knows it, else its id (M-xxxx).
@@ -309,6 +312,12 @@ export function DevicesView() {
           )}
         </div>
         <div className="flex flex-wrap items-center gap-3">
+          {!!dropped?.length && (
+            <HeaderWarning
+              label={t("import.dropped.label")} title={t("import.dropped.title")} count={dropped.length} testId="project-dropped-links"
+              detail={<><p className="text-muted-foreground">{t("import.dropped.hint")}</p><DroppedLinksList links={dropped} projectId={projectId} /></>}
+            />
+          )}
           {anyChanged && (
             <Chip
               active={onlyChanged}

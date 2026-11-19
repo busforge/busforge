@@ -12,6 +12,7 @@ import { putDeviceSecurity, type SecuritySource } from "./deviceSecurity.ts";
 import { isKnxIpSettings } from "./deviceparams.ts";
 import { putGroupKeys, type GroupKeySource } from "./groupKeys.ts";
 import { putGroupSenders, putSendSequences, isIndividualAddress, MAX_SEQUENCE, type SenderSource } from "./groupSenders.ts";
+import { isDroppedLink, putDroppedLinks } from "./droppedLinks.ts";
 import { putDeviceCertificate } from "./deviceCertificates.ts";
 import { TELEGRAM_SECURITY, type TelegramSecurity } from "../telegram.ts";
 
@@ -115,7 +116,7 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
   checkBaggageSize(baggage.map((b) => ({ name: b.name as string, bytes: Buffer.byteLength(b.dataBase64 as string, "base64") })));
   // Optional arrays: absent is fine, but a present non-array must fail cleanly as
   // a 400 rather than throwing mid-insert and surfacing as a generic 500.
-  for (const key of ["snapshots", "telegrams", "spaces", "deviceSecurity", "groupKeys", "groupSenders", "sendSequences", "deviceCertificates", "deviceKnxIp"]) {
+  for (const key of ["snapshots", "telegrams", "spaces", "deviceSecurity", "groupKeys", "groupSenders", "sendSequences", "deviceCertificates", "deviceKnxIp", "droppedLinks"]) {
     if (d[key] !== undefined && !Array.isArray(d[key])) throw new ApiError("BUSFORGE_INVALID", `malformed ${key}`);
   }
   const knxIpDevices = new Set<string>();
@@ -167,6 +168,9 @@ export function validateExport(data: unknown): asserts data is ProjectExport {
       || typeof src.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(src.sha256) || !Number.isSafeInteger(src.bytes) || (src.bytes as number) < 0) {
       throw new ApiError("BUSFORGE_INVALID", "malformed source");
     }
+  }
+  for (const l of (d.droppedLinks as unknown[] | undefined) ?? []) {
+    if (!isDroppedLink(l) || !exportedDevices.has(l.deviceId)) throw new ApiError("BUSFORGE_INVALID", "malformed droppedLinks entry");
   }
   for (const c of (d.deviceCertificates as Record<string, unknown>[] | undefined) ?? []) {
     if (typeof c.deviceId !== "string" || typeof c.fdsk !== "string" || typeof c.serialNumber !== "string") throw new ApiError("BUSFORGE_INVALID", "malformed deviceCertificates entry");
@@ -306,6 +310,7 @@ export function importProjectExport(db: Database, data: ProjectExport, id: strin
     }
     if (data.groupSenders?.length) putGroupSenders(db, id, data.groupSenders.map((g) => ({ gaRaw: g.gaRaw, ia: g.ia, source: g.source as SenderSource })));
     if (data.sendSequences?.length) putSendSequences(db, id, data.sendSequences);
+    putDroppedLinks(db, id, data.droppedLinks ?? []);
     if (data.groupKeys?.length) {
       putGroupKeys(db, id, data.groupKeys.map((g) => ({ raw: g.raw, key: Buffer.from(g.key, "base64"), source: (g.source as GroupKeySource) || "import" })), masterKey);
     }

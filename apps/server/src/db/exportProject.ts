@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { appProgramId, type SpaceNode, type GroupAddressSecurity, type DeviceKnxIp, type EtsPart } from "@busforge/project";
+import { appProgramId, type SpaceNode, type GroupAddressSecurity, type DeviceKnxIp, type EtsPart, type DroppedLink } from "@busforge/project";
 import { getDeviceKnxIp } from "./deviceparams.ts";
 import { getAppProgram, listCatalogBaggage } from "./catalog.ts";
 import { readSpaces, getProjectSource, type ImportSource } from "./projects.ts";
@@ -7,6 +7,7 @@ import { readProjectProperties, type ProjectProperties } from "./projectProps.ts
 import { open } from "../secrets.ts";
 import { listGroupKeyRows } from "./groupKeys.ts";
 import { listGroupSenders, listSendSequences } from "./groupSenders.ts";
+import { listDroppedLinks } from "./droppedLinks.ts";
 import { listDeviceCertificateRows } from "./deviceCertificates.ts";
 import type { TelegramSecurity } from "../telegram.ts";
 
@@ -60,6 +61,9 @@ export interface ProjectExport {
   // A KNXnet/IP device's settings from the project (device_knxip, @busforge/project DeviceKnxIp). Optional so
   // artifacts from before they were kept still import; such a device's download that writes them is refused.
   deviceKnxIp?: DeviceKnxIp[];
+  // The com-objects whose ETS links the project's import did not take over in full (import_dropped_links),
+  // in import order. Optional: absent, none is known.
+  droppedLinks?: DroppedLink[];
   catalog: Record<string, string>; // appProgramId -> application-program XML
   // The images the carried programs' TypePicture parameters show (catalog_baggage). Optional so
   // artifacts from before they were kept still import, their pictures then not in the catalogue.
@@ -170,6 +174,7 @@ export function exportProject(db: Database, projectId: string, now: number, mast
       .all(projectId) as NonNullable<ProjectExport["deviceMemorylessAssumed"]>,
     deviceKnxIp: (db.query("SELECT device_id AS deviceId FROM device_knxip WHERE project_id = ? ORDER BY device_id").all(projectId) as { deviceId: string }[])
       .map(({ deviceId }) => ({ deviceId, ...getDeviceKnxIp(db, projectId, deviceId)! })),
+    droppedLinks: listDroppedLinks(db, projectId),
     catalog,
     catalogPictures,
     baggage,

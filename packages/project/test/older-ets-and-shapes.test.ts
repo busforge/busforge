@@ -119,6 +119,8 @@ describe("ETS 4/5 <Connectors> links", () => {
     const twoSends = project(`<Send GroupAddressRefId="P-0001-0_GA-1"/><Send GroupAddressRefId="P-0001-0_GA-2"/>`);
     expect(twoSends.deviceLinks[0].links).toEqual([]);
     expect(twoSends.linksWithoutSender).toBe(2);
+    expect(receiveOnly.droppedLinks).toEqual([{ deviceId: "P-0001-0_DI-1", comObjRefId: "O-3_R-3", reason: "noSingleSender", gas: [{ etsId: "GA-1", raw: 10 }, { etsId: "GA-2", raw: 20 }] }]);
+    expect(twoSends.droppedLinks.map((l) => l.reason)).toEqual(["noSingleSender"]);
   });
 
   test("an assignment whose sending address is not in the project is not imported at all", () => {
@@ -130,12 +132,19 @@ describe("ETS 4/5 <Connectors> links", () => {
     expect(links.deviceLinks[0].links).toEqual([]);
     expect(links.unresolvedLinks).toBe(1);
     expect(links.linksWithoutSender).toBe(2);
+    expect(p.droppedLinks).toEqual([{ deviceId: "P-0001-0_DI-1", comObjRefId: "O-3_R-3", reason: "senderNotInProject", gas: [{ etsId: "GA-9" }, { etsId: "GA-1", raw: 10 }] }]);
+    expect(links.droppedLinks).toEqual([{ deviceId: "P-0001-0_DI-1", comObjRefId: "O-3_R-3", reason: "senderNotInProject", gas: [{ etsId: "GA-9" }, { etsId: "GA-1", raw: 10 }, { etsId: "GA-2", raw: 20 }] }]);
   });
 
   test("a receiving connector to an address not in the project is counted as unresolved", () => {
     const p = project(`<Send GroupAddressRefId="P-0001-0_GA-1"/><Receive GroupAddressRefId="P-0001-0_GA-9"/>`);
     expect(p.deviceLinks[0].links).toEqual([{ comObjRefId: "O-3_R-3", gaRaws: [10] }]);
     expect(p.unresolvedLinks).toBe(1);
+    expect(p.droppedLinks).toEqual([{ deviceId: "P-0001-0_DI-1", comObjRefId: "O-3_R-3", reason: "addressNotInProject", gas: [{ etsId: "GA-1", raw: 10 }, { etsId: "GA-9" }] }]);
+  });
+
+  test("a com-object whose links all imported is not listed as dropped", () => {
+    expect(project(`<Send GroupAddressRefId="P-0001-0_GA-1"/><Receive GroupAddressRefId="P-0001-0_GA-2"/>`).droppedLinks).toEqual([]);
   });
 
   test("com-object flags keyed by a prefixed ref are stored under the unprefixed key", () => {
@@ -186,5 +195,6 @@ describe("project shapes beyond a single installation and line", () => {
     expect(p.staleModuleLinks).toBe(2);
     expect(p.unresolvedLinks).toBe(0);
     expect(p.deviceLinks[0].links.map((l) => l.comObjRefId)).toEqual(["MD-1_M-1_MI-1_O-2-1_R-1", "MD-1_M-1_MI-2_O-2-1_R-1"]);
+    expect(p.droppedLinks).toEqual([{ deviceId: "P-0001-0_DI-1", comObjRefId: "MD-1_M-1_MI-2_O-2-1_R-1", reason: "moduleInstanceGone", gas: [{ etsId: "GA-1", raw: 10 }, { etsId: "GA-9" }] }]);
   });
 });

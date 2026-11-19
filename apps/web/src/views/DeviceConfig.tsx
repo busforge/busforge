@@ -5,7 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import type { AssumedValue, CfgBlock, CfgComObjView, CfgItem, CfgParamView, DeviceConfigView, GroupRangeNode } from "../api.ts";
-import { qk, useProject, useDeviceConfig, useDeviceEdit } from "../queries.ts";
+import { qk, useProject, useDeviceConfig, useDeviceEdit, useDroppedLinks } from "../queries.ts";
 import { isSecondsUnit, formatDuration, parseDuration, isValidIPv4, normalizeFloat } from "@/lib/paramFormat.ts";
 import { CompatibilityBadge } from "@/components/CompatibilityBadge.tsx";
 import { ChangePill, type ChangeTarget, type ChangeTargets, changeTotal } from "@/components/ChangePill.tsx";
@@ -42,6 +42,7 @@ import { FlagEditor } from "./FlagEditor.tsx";
 import { AssumeValuesPanel, NeverProgrammedKeptNote, UnprovenAssumptionsNote, UnresolvedNotes, assumeCandidates, assumeList, assumeReducer, assumedParams, initialAssumeState } from "./AssumeValues.tsx";
 import { addedLinks } from "@/lib/links.ts";
 import { HeaderWarning } from "@/components/HeaderWarning.tsx";
+import { DroppedLinksList } from "@/components/DroppedLinksList.tsx";
 import { DcaModuleDialog } from "../dca/DcaModuleDialog.tsx";
 import { cn } from "@/lib/utils";
 import { errMsg } from "../lib/apiError.ts";
@@ -143,6 +144,7 @@ export function DeviceConfig() {
   const qc = useQueryClient();
   const { data: project } = useProject(projectId);
   const device = project?.devices.find((d) => d.id === deviceId);
+  const dropped = useDroppedLinks(projectId).data?.filter((l) => l.deviceId === deviceId) ?? [];
   const gaOptions = useMemo(() => { const o: GaOption[] = []; if (project) flattenGas(project.groupRanges, o); return o; }, [project]);
 
   // A product without an application program takes its individual address and nothing else: it has no
@@ -622,6 +624,12 @@ export function DeviceConfig() {
             label={t("device.warnGaps")} title={t("device.gapsTitle")} testId="device-gaps"
             items={[...gaps.types.map(([label, n]) => t("device.gapType", { type: label, count: n })), ...gaps.elements.map(([label, n]) => t("device.gapElement", { tag: label, count: n }))]}
           />
+          {dropped.length > 0 && (
+            <HeaderWarning
+              label={t("import.dropped.label")} title={t("import.dropped.title")} count={dropped.length} testId="device-dropped-links"
+              detail={<><p className="text-muted-foreground">{t("import.dropped.hint")}</p><DroppedLinksList links={dropped} showDevice={false} /></>}
+            />
+          )}
           {!!view?.linkBaseGaps && (
             <HeaderWarning
               label={t("device.warnLinkGaps")} title={t("device.linkGapsTitle")} testId="link-gaps-notice"

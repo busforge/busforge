@@ -58,6 +58,18 @@ export interface DeviceModules { deviceId: string; instances: ModuleInstanceData
 export interface DeviceLink { comObjRefId: string; gaRaws: number[]; }
 export interface DeviceLinks { deviceId: string; links: DeviceLink[]; }
 
+// A com-object whose ETS links the import did not take over in full, kept so they can be made again by
+// hand. `gas` are the object's group addresses in ETS's order (the first is the one it sends on), each
+// with its raw address where the project has it and with ETS's id for it always. The reason says what
+// was left out:
+// - addressNotInProject: the addresses without `raw` (the rest of the object's links is imported);
+// - senderNotInProject: every link, since the sending address is not in the project;
+// - noSingleSender: every link, since the assignment names no sending address or several (ETS 4/5 <Connectors>);
+// - moduleInstanceGone: every link is stored, but the device has no such module instance, so none is programmed.
+export type DroppedLinkReason = "addressNotInProject" | "senderNotInProject" | "noSingleSender" | "moduleInstanceGone";
+export interface DroppedLinkGa { etsId: string; raw?: number; }
+export interface DroppedLink { deviceId: string; comObjRefId: string; reason: DroppedLinkReason; gas: DroppedLinkGa[]; }
+
 // The com-object flags and priority the project sets on one device over its application's (from 0.xml
 // ComObjectInstanceRef ReadFlag, WriteFlag, CommunicationFlag, TransmitFlag, UpdateFlag,
 // ReadOnInitFlag, Priority). `attrs` holds each attribute present, verbatim; what a value means is
@@ -181,4 +193,5 @@ export interface Project {
   unassignedDevices: number;      // DeviceInstances ETS keeps outside the topology (<UnassignedDevices>, no line, no address): not imported
   linksWithoutSender: number;     // link tokens of an assignment without a known sending address (ETS 4/5 <Connectors> without a single <Send>, or a sending address not in the project): not imported
   staleModuleLinks: number;       // link tokens of com-objects whose module instance the device no longer has: stored, never programmed
+  droppedLinks: DroppedLink[];    // per com-object, the links behind unresolvedLinks, linksWithoutSender and staleModuleLinks
 }

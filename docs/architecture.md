@@ -89,7 +89,7 @@ rather than generating a fresh key that cannot open them.
 | Group | Routes |
 |---|---|
 | Version | `GET /api/version` |
-| Projects | `GET/POST /api/projects`, `POST /api/projects/import`, `GET/PATCH/DELETE /api/projects/:id`, `GET /api/projects/:id/telegrams` |
+| Projects | `GET/POST /api/projects`, `POST /api/projects/import`, `GET/PATCH/DELETE /api/projects/:id`, `GET /api/projects/:id/telegrams`, `GET /api/projects/:id/dropped-links` (the com-objects whose ETS links the import did not take over in full) |
 | Group addresses | `POST/PATCH/DELETE` on `/api/projects/:id/group-ranges[/:rangeId]` and `/group-addresses[/:raw]`, plus `/impact` (what a delete would drop) and `/group-addresses/:raw/devices` (senders and receivers) |
 | Building structure | `POST/PATCH/DELETE /api/projects/:id/spaces[/:spaceId]`, `/impact`, `PUT /api/projects/:id/devices/:deviceId/space` |
 | Devices (model only) | `POST /api/projects/:id/devices` (place from catalog), `PATCH /api/projects/:id/devices/:deviceId` (rename), `GET .../config`, `GET .../baggage`, `PUT .../params`, `PUT .../links`, `PUT .../address`, `POST .../replace`, `POST .../revert`, `/revert-param`, `/revert-link` |

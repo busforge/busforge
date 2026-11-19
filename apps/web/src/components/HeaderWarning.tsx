@@ -3,11 +3,12 @@ import { AlertTriangle } from "lucide-react";
 import { BadgeButton } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
-// A standing warning about the device page, as a mark in the header's second row: a short label and
+// A standing warning, as a mark in the device page header's second row or the device list's toolbar: a short label and
 // a count (the number of points unless given; null where the count is not known), the full title and
-// the points in the popover it opens.
-export function HeaderWarning({ label, title, items, count = items.length, testId }: { label: string; title: string; items: ReactNode[]; count?: number | null; testId: string }) {
-  if (items.length === 0) return null;
+// the points in the popover it opens. A warning whose points need more than a line each gives them as
+// `detail`, shown in place of the list.
+export function HeaderWarning({ label, title, items = [], detail, count = items.length, testId }: { label: string; title: string; items?: ReactNode[]; detail?: ReactNode; count?: number | null; testId: string }) {
+  if (items.length === 0 && detail === undefined) return null;
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -16,11 +17,13 @@ export function HeaderWarning({ label, title, items, count = items.length, testI
           {count !== null && <span className="font-mono opacity-80">{count}</span>}
         </BadgeButton>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-[28rem] max-w-[calc(100vw-2rem)] space-y-2 text-xs" data-testid={`${testId}-detail`}>
+      <PopoverContent align="start" className="max-h-[min(36rem,var(--radix-popover-content-available-height))] w-[28rem] max-w-[calc(100vw-2rem)] space-y-2 overflow-y-auto text-xs" data-testid={`${testId}-detail`}>
         <p className="text-sm font-medium">{title}</p>
-        <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
-          {items.map((n, i) => <li key={i}>{n}</li>)}
-        </ul>
+        {detail ?? (
+          <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
+            {items.map((n, i) => <li key={i}>{n}</li>)}
+          </ul>
+        )}
       </PopoverContent>
     </Popover>
   );

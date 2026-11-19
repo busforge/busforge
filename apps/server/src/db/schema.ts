@@ -544,6 +544,20 @@ const MIGRATIONS: string[] = [
   ALTER TABLE devices ADD COLUMN has_application INTEGER NOT NULL DEFAULT 1;
   ALTER TABLE catalog_products ADD COLUMN has_application INTEGER NOT NULL DEFAULT 1;
   `,
+  // The com-objects whose ETS links an import did not take over in full (@busforge/project DroppedLink),
+  // in the project file's order: what ETS had, so it can be linked again by hand. `gas` is the JSON
+  // [{etsId, raw?}] of the object's ETS addresses. Cleared with the device by a product replacement.
+  `
+  CREATE TABLE import_dropped_links (
+    project_id     TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    seq            INTEGER NOT NULL,
+    device_id      TEXT NOT NULL,
+    com_obj_ref_id TEXT NOT NULL,
+    reason         TEXT NOT NULL,
+    gas            TEXT NOT NULL,
+    PRIMARY KEY (project_id, seq)
+  );
+  `,
 ];
 
 // The schema version stamped into a snapshot at capture, so a future migration

@@ -50,11 +50,21 @@ export interface ImportSource { kind: "knxproj" | "busforge"; name: string; sha2
 export interface ProjectSummary { id: string; name: string; deviceCount: number; gaCount: number; snapshotCount: number; buildingCount: number; floorCount: number; roomCount: number; importedAt: number; source: ImportSource | null; }
 export interface Project { id: string; name: string; connectionId: string | null; groupAddressLevels: 2 | 3; devices: Device[]; groupRanges: GroupRangeNode[]; locations: SpaceNode[]; gaCount: number; secureDeviceCount: number; groupKeyCount: number; }
 export interface ImportGap { ia: string; name: string }
+// A com-object whose ETS links an import did not take over in full (server DroppedLinkView): the object's
+// number and texts are null where the device's configuration does not have the object; an address is null
+// where the project does not hold it, and only ETS's id names it.
+export type DroppedLinkReason = "addressNotInProject" | "senderNotInProject" | "noSingleSender" | "moduleInstanceGone";
+export interface DroppedLink {
+  deviceId: string; ia: string; deviceName: string; comObjRefId: string;
+  comObjNumber: number | null; comObjName: string | null; functionText: string | null;
+  reason: DroppedLinkReason;
+  gas: { etsId: string; address: string | null; name: string | null }[];
+}
 export interface ImportResult { id: string; name: string; deviceCount: number; gaCount: number; devicesWithoutProgram?: ImportGap[]; unresolvedLinks?: number; malformedDevices?: number; unresolvedSenders?: number; secureDevicesWithoutSerial?: number; skippedInstallations?: number; unassignedDevices?: number; linksWithoutSender?: number; staleModuleLinks?: number; baggageUnreadable?: boolean; }
 // Metadata from analyzing an import file without persisting it (the preview step).
 // `modifiedAt` is the export timestamp for a .busforge artifact, null for a
 // .knxproj (the UI falls back to the picked file's last-modified date).
-export interface AnalyzeResult { kind: "knxproj" | "busforge"; name: string; deviceCount: number; gaCount: number; snapshotCount: number; buildingCount: number; floorCount: number; roomCount: number; modifiedAt: number | null; devicesWithoutProgram?: ImportGap[]; unresolvedLinks?: number; malformedDevices?: number; unresolvedSenders?: number; secureDevicesWithoutSerial?: number; skippedInstallations?: number; unassignedDevices?: number; linksWithoutSender?: number; staleModuleLinks?: number; baggageUnreadable?: boolean; }
+export interface AnalyzeResult { kind: "knxproj" | "busforge"; name: string; deviceCount: number; gaCount: number; snapshotCount: number; buildingCount: number; floorCount: number; roomCount: number; modifiedAt: number | null; devicesWithoutProgram?: ImportGap[]; droppedLinks?: DroppedLink[]; unresolvedLinks?: number; malformedDevices?: number; unresolvedSenders?: number; secureDevicesWithoutSerial?: number; skippedInstallations?: number; unassignedDevices?: number; linksWithoutSender?: number; staleModuleLinks?: number; baggageUnreadable?: boolean; }
 // A placeable catalog product (the device picker's list for blank projects).
 // hasApplication: false for a product that carries no application program (appProgramId is then "").
 export interface CatalogProduct { appRef: string; productRef: string; appProgramId: string; manufacturer: number; name: string; orderNumber: string; hwVersion: string; hasApplication: boolean; }
@@ -208,10 +218,12 @@ export const api = {
 
   // Parse an import file's metadata (for the preview card) without persisting it.
   // Works for both .knxproj and .busforge; a password is used when the file needs it.
-  async analyzeImport(file: File, password?: string): Promise<AnalyzeResult> {
+  // `lang`: the language of the catalogue texts the preview names com-objects in.
+  async analyzeImport(file: File, password?: string, lang?: string): Promise<AnalyzeResult> {
     const form = new FormData();
     form.set("file", file);
     if (password) form.set("password", password);
+    if (lang) form.set("lang", lang);
     return jsonOrThrow<AnalyzeResult>(await fetch("/api/projects/analyze", { method: "POST", body: form }));
   },
 
@@ -285,6 +297,8 @@ export const api = {
     fetch(`/api/projects/${id}/devices/${encodeURIComponent(deviceId)}/config${lang ? `?lang=${lang}` : ""}`).then((r) => jsonOrThrow<DeviceConfigView>(r)),
 
   // Which devices use a group address (senders/receivers) + its readable path.
+  droppedLinks: (id: string, lang?: string): Promise<DroppedLink[]> =>
+    fetch(`/api/projects/${id}/dropped-links${lang ? `?lang=${lang}` : ""}`).then((r) => jsonOrThrow<DroppedLink[]>(r)),
   gaDevices: (id: string, raw: number, lang?: string): Promise<GaDevicesView> =>
     fetch(`/api/projects/${id}/group-addresses/${raw}/devices${lang ? `?lang=${lang}` : ""}`).then((r) => jsonOrThrow<GaDevicesView>(r)),
 

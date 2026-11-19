@@ -18,6 +18,12 @@ describe("a standing warning of the device page header", () => {
     expect(unknown).not.toContain("font-mono");
   });
 
+  test("counts and opens a detail given in place of points", () => {
+    const html = renderToStaticMarkup(<HeaderWarning label="Links not imported" title="t" detail={<p>two objects</p>} count={2} testId="dropped-links-notice" />);
+    expect(new RegExp('<button[^>]*data-testid="dropped-links-notice"').test(html)).toBe(true);
+    expect(html).toContain(">2</span>");
+  });
+
   test("is not shown when there is nothing to warn about", () => {
     expect(renderToStaticMarkup(<HeaderWarning label="Not compared" title="x" items={[]} testId="readback-unsupported" />)).toBe("");
   });

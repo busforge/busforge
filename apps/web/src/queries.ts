@@ -15,6 +15,7 @@ export const qk = {
   // available catalogue language.
   deviceConfig: (id: string, deviceId: string, lang: string) => ["deviceConfig", id, deviceId, lang] as const,
   gaDevices: (id: string, raw: number, lang: string) => ["gaDevices", id, raw, lang] as const,
+  droppedLinks: (id: string, lang: string) => ["droppedLinks", id, lang] as const,
   tasks: (id: string) => ["tasks", id] as const,
   snapshots: (id: string) => ["snapshots", id] as const,
   catalog: ["catalog"] as const,
@@ -172,6 +173,14 @@ export function useSpaceEdit(projectId: string) {
   };
 }
 
+// The com-objects whose ETS links the project's import did not take over in full. Their texts follow the
+// device's configuration, so a device edit refetches them.
+export const useDroppedLinks = (id: string) => {
+  const { i18n } = useTranslation();
+  const lang = i18n.language;
+  return useQuery({ queryKey: qk.droppedLinks(id, lang), queryFn: () => api.droppedLinks(id, lang) });
+};
+
 // Devices linked to a group address, fetched only when the details overlay opens
 // (enabled). Language-keyed so com-object names match the UI; cached briefly so
 // reopening the same GA is instant.
@@ -216,6 +225,7 @@ export function useDeviceEdit(projectId: string, deviceId: string) {
     // Link edits (setLink, revert*, replaceProduct) change which devices a GA
     // reaches, so the GA details overlay must not serve its stale sender/receiver list.
     void qc.invalidateQueries({ queryKey: ["gaDevices", projectId] });
+    void qc.invalidateQueries({ queryKey: ["droppedLinks", projectId] });
   };
   const setParam = useMutation({
     mutationFn: (v: { refId: string; value: string }) => api.setDeviceParam(projectId, deviceId, v.refId, v.value, lang),

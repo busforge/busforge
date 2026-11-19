@@ -111,6 +111,22 @@ const de: Messages = {
     gapUnassignedDevices: "{{count}} Gerät(e) liegen in ETS außerhalb der Topologie (keine Linie, keine Adresse) und wurden nicht übernommen",
     gapLinksWithoutSender: "{{count}} Gruppenadress-Verknüpfung(en) gehören zu einer Zuordnung, deren Sendeadresse nicht im Projekt oder nicht eindeutig ist, und wurden nicht übernommen",
     gapStaleModuleLinks: "{{count}} Gruppenadress-Verknüpfung(en) gehören zu einer Modulinstanz, die das Gerät nicht mehr hat; im Projekt behalten, nie programmiert",
+    dropped: {
+      show: "Betroffene Kommunikationsobjekte zeigen ({{count}})",
+      label: "Verknüpfungen nicht übernommen",
+      title: "Verknüpfungen aus ETS, die der Import nicht übernommen hat",
+      hint: "Jedes Kommunikationsobjekt mit den Gruppenadressen, die es in ETS hatte; die erste ist die, auf der es sendet. Auf der Seite des Geräts von Hand neu verknüpfen.",
+      object: "Objekt {{number}}",
+      objectUnknown: "Objekt nicht in der Konfiguration des Geräts",
+      gaMissing: "nicht im Projekt",
+      gaMissingTitle: "ETS verknüpft eine Adresse, die das Projekt nicht hat (ETS-Id {{id}})",
+      reason: {
+        addressNotInProject: "Eine Adresse ist nicht im Projekt; die übrigen Verknüpfungen des Objekts wurden übernommen.",
+        senderNotInProject: "Die Adresse, auf der das Objekt sendet, ist nicht im Projekt; keine seiner Verknüpfungen wurde übernommen.",
+        noSingleSender: "ETS nennt keine oder mehrere Adressen, auf denen das Objekt sendet; keine seiner Verknüpfungen wurde übernommen.",
+        moduleInstanceGone: "Das Gerät hat die Modulinstanz des Objekts nicht mehr; seine Verknüpfungen bleiben gespeichert und werden nie programmiert.",
+      },
+    },
   },
   export: {
     title: "Projekt exportieren",

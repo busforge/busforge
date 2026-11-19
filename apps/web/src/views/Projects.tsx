@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { FilePlus2, FolderUp, KeyRound, Loader2, Plus, Trash2, Cpu, Network, History, MoreVertical, Pencil, Download, AlertTriangle, Building2, Layers, DoorOpen, type LucideIcon } from "lucide-react";
+import { FilePlus2, FolderUp, KeyRound, Loader2, Plus, Trash2, Cpu, Network, History, MoreVertical, Pencil, Download, AlertTriangle, Building2, Layers, DoorOpen, ChevronDown, type LucideIcon } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -26,6 +26,8 @@ import {
 import { ExportDialog } from "@/components/ExportDialog.tsx";
 import { ReportDialog } from "./ReportDialog.tsx";
 import { SourceCodeLink } from "@/components/SourceCodeLink.tsx";
+import { DroppedLinksList } from "@/components/DroppedLinksList.tsx";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 import { errMsg } from "../lib/apiError.ts";
 
@@ -384,7 +386,7 @@ function BlankProjectDialog({
 function ImportDialog({
   open, onOpenChange, onImported,
 }: { open: boolean; onOpenChange: (o: boolean) => void; onImported: (id: string) => void }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [file, setFile] = useState<File | null>(null);
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -398,7 +400,7 @@ function ImportDialog({
 
   // Step 1: analyze the file (parse metadata, persist nothing) for the preview.
   const analyzeMut = useMutation({
-    mutationFn: () => api.analyzeImport(file!, password || undefined),
+    mutationFn: () => api.analyzeImport(file!, password || undefined, i18n.language),
     onSuccess: (res) => { setAnalysis(res); setError(null); },
     onError: (e) => { const msg = errMsg(t, e); setError(msg); toast.error(t("import.analyzeFailed"), { description: msg }); },
   });
@@ -447,11 +449,25 @@ function ImportDialog({
               {importGaps(analysis).length > 0 && (
                 <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300" data-testid="import-gaps">
                   <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-                  <div className="space-y-1">
+                  <div className="min-w-0 flex-1 space-y-1">
                     <p className="font-medium">{t("import.gapsTitle")}</p>
                     <ul className="space-y-0.5 text-amber-700/90 dark:text-amber-300/90">
                       {importGaps(analysis).map(({ key, count }) => <li key={key}>{t(key, { count })}</li>)}
                     </ul>
+                    {!!analysis.droppedLinks?.length && (
+                      <Collapsible>
+                        <CollapsibleTrigger asChild>
+                          <Button variant="ghost" size="xs" className="group -ml-2 text-amber-700 dark:text-amber-300" data-testid="dropped-links-toggle">
+                            <ChevronDown className="transition-transform group-data-[state=open]:rotate-180" />
+                            {t("import.dropped.show", { count: analysis.droppedLinks.length })}
+                          </Button>
+                        </CollapsibleTrigger>
+                        <CollapsibleContent className="mt-2 max-h-64 space-y-2 overflow-y-auto pr-1 text-foreground">
+                          <p className="text-xs text-muted-foreground">{t("import.dropped.hint")}</p>
+                          <DroppedLinksList links={analysis.droppedLinks} />
+                        </CollapsibleContent>
+                      </Collapsible>
+                    )}
                   </div>
                 </div>
               )}

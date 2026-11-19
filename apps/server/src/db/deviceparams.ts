@@ -210,7 +210,7 @@ export function replaceDeviceProduct(db: Database, projectId: string, deviceId: 
     // that gap, a 0-row UPDATE would silently commit orphan device_links rows below
     // (device_links has no FK on the device row). Throwing rolls the transaction back.
     if (updated === 0) throw new ApiError("DEVICE_NOT_FOUND", "device not found", 404);
-    for (const t of ["device_parameters", "device_param_base", "device_link_base", "device_modules", "device_security", "device_links", "device_comobj_overrides", "device_comobj_override_base", "device_knxip", "device_param_assumed", "device_memoryless_assumed"]) {
+    for (const t of ["device_parameters", "device_param_base", "device_link_base", "device_modules", "device_security", "device_links", "device_comobj_overrides", "device_comobj_override_base", "device_knxip", "device_param_assumed", "device_memoryless_assumed", "import_dropped_links"]) {
       db.prepare(`DELETE FROM ${t} WHERE project_id = ? AND device_id = ?`).run(projectId, deviceId);
     }
     // DCA baggage is keyed by a `${deviceId}_`-prefixed name, not a device_id column.

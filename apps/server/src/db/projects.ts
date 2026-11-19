@@ -6,6 +6,7 @@ import type { Levels } from "@busforge/knx";
 import { ApiError } from "../errors.ts";
 import { getProjectChanges, type DeviceChanges } from "./deviceparams.ts";
 import { getConnection, type Connection } from "./connections.ts";
+import { putDroppedLinks } from "./droppedLinks.ts";
 
 // searchText is a server-built, lowercased blob (comment + user-entered text
 // parameter values like channel/actuator names) so the device list can search
@@ -157,6 +158,7 @@ export function insertProject(db: Database, id: string, project: Project, source
     for (const dl of project.deviceLinks) for (const link of dl.links) link.gaRaws.forEach((raw, slot) => { insLink.run(id, dl.deviceId, link.comObjRefId, slot, raw); insLinkBase.run(id, dl.deviceId, link.comObjRefId, slot, raw); });
     for (const d of project.deviceComObjOverrides) d.overrides.forEach((o, seq) => { insOverride.run(id, d.deviceId, seq, o.comObjRefId, JSON.stringify(o.attrs)); insOverrideBase.run(id, d.deviceId, seq, o.comObjRefId, JSON.stringify(o.attrs)); });
     for (const { deviceId, ...settings } of project.deviceKnxIp) insKnxIp.run(id, deviceId, JSON.stringify(settings));
+    putDroppedLinks(db, id, project.droppedLinks);
     insertSpaces(db, id, project.locations);
   })();
 }

@@ -109,6 +109,23 @@ const en = {
     gapUnassignedDevices: "{{count}} device(s) sit outside the topology in ETS (no line, no address) and were not imported",
     gapLinksWithoutSender: "{{count}} group-address link(s) belong to an assignment whose sending address is not in the project, or not a single one, and were not imported",
     gapStaleModuleLinks: "{{count}} group-address link(s) belong to a module instance the device no longer has; kept in the project, never programmed",
+    // The com-objects behind the link counts, with what ETS linked them to.
+    dropped: {
+      show: "Show the com-objects concerned ({{count}})",
+      label: "Links not imported",
+      title: "Links from ETS the import did not take over",
+      hint: "Each com-object with the group addresses ETS linked it to, the first being the one it sends on. Link them again by hand on the device's page.",
+      object: "Object {{number}}",
+      objectUnknown: "Object not in the device's configuration",
+      gaMissing: "not in the project",
+      gaMissingTitle: "ETS links an address the project does not have (ETS id {{id}})",
+      reason: {
+        addressNotInProject: "An address is not in the project; the object's other links were imported.",
+        senderNotInProject: "The address the object sends on is not in the project; none of its links was imported.",
+        noSingleSender: "ETS names no address or several for the object to send on; none of its links was imported.",
+        moduleInstanceGone: "The device no longer has this object's module instance; its links are kept, never programmed.",
+      },
+    },
   },
   export: {
     title: "Export project",

@@ -95,6 +95,7 @@ node decrypt-busforge.mjs project.busforge "my-password" | jq .project.name
 | the marks on baseline values a read-back assumed, not proven | |
 | per device, whether its configuration came from an ETS project (`configFromEts`), and the parameters without memory a read-back assumed, proven or not (`deviceMemorylessAssumed`) | |
 | device module instances | |
+| the com-objects whose ETS links the import did not take over in full, with the addresses ETS linked them to and why (`droppedLinks`) | |
 | the referenced catalog application programs | |
 | the images those programs' `TypePicture` parameters show (`catalogPictures`) | |
 | DCA baggage | |
@@ -103,7 +104,7 @@ node decrypt-busforge.mjs project.busforge "my-password" | jq .project.name
 | KNX Data Secure tool keys | |
 
 Several fields are optional in the schema (building structure, catalogue pictures, restore points, bus log, tool keys,
-source, `configFromEts`, `deviceMemorylessAssumed`), and an artifact without them imports: without the last
+source, `configFromEts`, `deviceMemorylessAssumed`, `droppedLinks`), and an artifact without them imports: without the last
 two, a device counts as holding the values of its parameters without memory only where its configuration
 shows none a read-back could assume (a System 7 flash otherwise refuses to overwrite a hidden byte the unit
 holds otherwise than `<Data>`). The marks on assumed baseline values

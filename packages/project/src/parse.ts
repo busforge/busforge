@@ -1,6 +1,6 @@
 import { XMLParser } from "fast-xml-parser";
 import { formatGa, type Levels } from "@busforge/knx";
-import { COM_OBJ_INSTANCE_ATTRS, type Project, type Device, type EtsPart, type Topology, type TopologyArea, type GroupAddress, type GroupRangeNode, type SpaceNode, type DeviceSecurity, type DeviceKnxIp, type GroupKey, type SecureSender, type GroupAddressSecurity, type ComObjInstanceAttrs } from "./model.ts";
+import { COM_OBJ_INSTANCE_ATTRS, type Project, type Device, type EtsPart, type Topology, type TopologyArea, type GroupAddress, type GroupRangeNode, type SpaceNode, type DeviceSecurity, type DeviceKnxIp, type GroupKey, type SecureSender, type GroupAddressSecurity, type ComObjInstanceAttrs, type DroppedLink } from "./model.ts";
 import { KnxprojError } from "./errors.ts";
 
 export const arr = <T,>(x: T | T[] | undefined): T[] => (x === undefined ? [] : Array.isArray(x) ? x : [x]);
@@ -91,7 +91,7 @@ export function parseProject(xml0: string, projectXml: string | undefined, fallb
   buildGaIdMap(scope, gaIdToRaw);
   const linkResults = devices.map((d) => ({ deviceId: d.id, ...parseDeviceLinks(scope, d, gaIdToRaw) }));
   const deviceLinks = linkResults.map(({ deviceId, links }) => ({ deviceId, links }));
-  const sum = (k: "unresolved" | "withoutSender" | "staleModule") => linkResults.reduce((n, r) => n + r[k], 0);
+  const droppedLinks = linkResults.flatMap((r) => r.dropped);
   const deviceComObjOverrides = devices.map((d) => ({ deviceId: d.id, overrides: parseDeviceComObjOverrides(scope, d) })).filter((o) => o.overrides.length > 0);
   const securities = devices.map((d) => parseDeviceSecurity(scope, d.id));
   const deviceSecurity = securities.filter((x): x is DeviceSecurity => x !== undefined && x !== "noSerial");
@@ -101,7 +101,7 @@ export function parseProject(xml0: string, projectXml: string | undefined, fallb
 
   return {
     name: parseName(projectInfo, installation, fallbackName), groupAddressLevels, topology, locations, devices, groupRanges, groupAddresses, deviceParams, deviceModules, deviceLinks, deviceComObjOverrides, deviceSecurity, deviceKnxIp, groupKeys, secureSenders, unresolvedSenders, secureDevicesWithoutSerial,
-    unresolvedLinks: sum("unresolved"), malformedDevices, skippedInstallations, unassignedDevices, linksWithoutSender: sum("withoutSender"), staleModuleLinks: sum("staleModule"),
+    malformedDevices, skippedInstallations, unassignedDevices, ...droppedLinkCounts(droppedLinks), droppedLinks,
   };
 }
 
@@ -257,7 +257,27 @@ function linkTokens(c: XmlNode): string[] | undefined {
   const send = kids(conn?.Send), receive = kids(conn?.Receive);
   if (!send.length && !receive.length) return [];
   if (send.length !== 1) return undefined;
-  return [...send, ...receive].map((x) => text(x.GroupAddressRefId).split("_").pop()!);
+  return connectorIds(conn);
+}
+
+// The group-address ids of an ETS 4/5 <Connectors>, the <Send> first.
+const connectorIds = (conn: XmlNode | undefined): string[] =>
+  [...kids(conn?.Send), ...kids(conn?.Receive)].map((x) => text(x.GroupAddressRefId).split("_").pop()!);
+
+// The import notices' link counts, in link tokens: those that name an address not in the project, those
+// of an assignment without a known sending address, and those of a vanished module instance.
+function droppedLinkCounts(dropped: DroppedLink[]): { unresolvedLinks: number; linksWithoutSender: number; staleModuleLinks: number } {
+  let unresolvedLinks = 0, linksWithoutSender = 0, staleModuleLinks = 0;
+  for (const { reason, gas } of dropped) {
+    const missing = gas.filter((g) => g.raw === undefined).length;
+    if (reason === "moduleInstanceGone") staleModuleLinks += gas.length;
+    else if (reason === "noSingleSender") linksWithoutSender += gas.length;
+    else {
+      unresolvedLinks += missing;
+      if (reason === "senderNotInProject") linksWithoutSender += gas.length - missing;
+    }
+  }
+  return { unresolvedLinks, linksWithoutSender, staleModuleLinks };
 }
 
 // Every ModuleInstance id under a device, nested ones included.
@@ -269,13 +289,13 @@ function moduleInstanceIds(n: unknown, out = new Set<string>()): Set<string> {
   return out;
 }
 
-// A device's com-object -> GA links (ComObjectInstanceRef RefId + resolved GAs). Counts what it
-// does not import: link tokens that did not resolve to a group address in the tree, and the tokens
-// of an assignment whose sending address is not known (connectors without a single <Send>, or a
-// sending address not in the tree). Counts as well the tokens of a com-object whose
-// module instance the device no longer has (ETS leaves such refs behind when a module goes away):
-// those are stored, but no com-object of the device carries them, so they are never programmed.
-function parseDeviceLinks(scope: XmlNode, d: Device, gaIdToRaw: Map<string, number>): { links: { comObjRefId: string; gaRaws: number[] }[]; unresolved: number; withoutSender: number; staleModule: number } {
+// A device's com-object -> GA links (ComObjectInstanceRef RefId + resolved GAs), and per com-object what
+// it does not import (DroppedLink): link tokens that did not resolve to a group address in the tree, and
+// the tokens of an assignment whose sending address is not known (connectors without a single <Send>,
+// or a sending address not in the tree). Lists as well the com-objects whose module instance the device
+// no longer has (ETS leaves such refs behind when a module goes away): their links are stored, but no
+// com-object of the device carries them, so they are never programmed.
+function parseDeviceLinks(scope: XmlNode, d: Device, gaIdToRaw: Map<string, number>): { links: { comObjRefId: string; gaRaws: number[] }[]; dropped: DroppedLink[] } {
   const dev = findDeviceInstance(scope, d.id);
   // Merge by RefId: two ComObjectInstanceRefs on one device can share a RefId (synthetic
   // module-instance ids, or a malformed export). Stored per (refId, slot), two separate
@@ -284,33 +304,32 @@ function parseDeviceLinks(scope: XmlNode, d: Device, gaIdToRaw: Map<string, numb
   // no-op that preserves document order.
   const byRef = new Map<string, number[]>();
   const instances = moduleInstanceIds(dev?.ModuleInstances);
-  let unresolved = 0, withoutSender = 0, staleModule = 0;
+  const dropped: DroppedLink[] = [];
+  const gasOf = (ids: string[]) => ids.map((etsId) => { const raw = gaIdToRaw.get(etsId); return raw === undefined ? { etsId } : { etsId, raw }; });
   for (const c of kids(node(dev?.ComObjectInstanceRefs)?.ComObjectInstanceRef)) {
+    const key = comObjKey(d, text(c.RefId));
     const tokens = linkTokens(c);
     if (tokens === undefined) {
-      const conn = node(c.Connectors);
-      withoutSender += kids(conn?.Send).length + kids(conn?.Receive).length;
+      dropped.push({ deviceId: d.id, comObjRefId: key, reason: "noSingleSender", gas: gasOf(connectorIds(node(c.Connectors))) });
       continue;
     }
     if (!tokens.length) continue;
-    const key = comObjKey(d, text(c.RefId));
     const instance = /^(.*_MI-\d+)_/.exec(key)?.[1];
     const gaRaws = tokens.map((l) => gaIdToRaw.get(l)).filter((x): x is number => x !== undefined);
-    // A link of a vanished module instance is counted there and only there.
-    if (instance !== undefined && !instances.has(instance)) staleModule += tokens.length;
+    // A link of a vanished module instance is listed there and only there.
+    if (instance !== undefined && !instances.has(instance)) dropped.push({ deviceId: d.id, comObjRefId: key, reason: "moduleInstanceGone", gas: gasOf(tokens) });
     else if (gaIdToRaw.get(tokens[0]) === undefined) {
       // The sending address is not in the project. Importing the rest would make a receiving address
       // the one the object sends on, so none of the assignment is imported.
-      unresolved += tokens.length - gaRaws.length;
-      withoutSender += gaRaws.length;
+      dropped.push({ deviceId: d.id, comObjRefId: key, reason: "senderNotInProject", gas: gasOf(tokens) });
       continue;
-    } else unresolved += tokens.length - gaRaws.length;
+    } else if (gaRaws.length < tokens.length) dropped.push({ deviceId: d.id, comObjRefId: key, reason: "addressNotInProject", gas: gasOf(tokens) });
     if (!gaRaws.length) continue;
     const existing = byRef.get(key);
     if (existing) existing.push(...gaRaws);
     else byRef.set(key, gaRaws);
   }
-  return { links: [...byRef].map(([comObjRefId, gaRaws]) => ({ comObjRefId, gaRaws })), unresolved, withoutSender, staleModule };
+  return { links: [...byRef].map(([comObjRefId, gaRaws]) => ({ comObjRefId, gaRaws })), dropped };
 }
 
 // A device's com-object flags and priority set in the project (COM_OBJ_INSTANCE_ATTRS), per

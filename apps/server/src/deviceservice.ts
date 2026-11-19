@@ -2,13 +2,14 @@ import { existsSync, readFileSync } from "node:fs";
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { iaToNum, numToGa, SENDER_ENTRY } from "@busforge/knx";
-import { appProgramId, readAppProgram, type Project } from "@busforge/project";
+import { appProgramId, readAppProgram, type Project, type DroppedLink, type DroppedLinkReason } from "@busforge/project";
 import { parseAppConfig, buildDeviceConfig, buildSecurityObject, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, effectiveComObjFlags, ProductError, imageWritableType, resolveParamRef, sameParamValue, type SameParamValue, takesValue, type EffectiveComObjFlags, type ComObjInstanceOverride, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
 import { getAppProgram, putAppProgram, catalogBaggageNames, pictureType } from "./db/catalog.ts";
 import { getDeviceParams, getDeviceParamBase, getDeviceParamAssumed, getDeviceModules, getDeviceAppRef, getDeviceProductRef, getDeviceForFlash, deviceHasApplication, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps, getDeviceComObjOverrides, getDeviceComObjOverrideBase } from "./db/deviceparams.ts";
 import { deviceCompatibility } from "./compatibility.ts";
 import { isUntestedAcknowledged } from "./db/untestedAcks.ts";
 import { projectExists, getGaMeta } from "./db/projects.ts";
+import { listDroppedLinks } from "./db/droppedLinks.ts";
 import { getDeviceSecurity, isSecureDevice, setDeviceSequence } from "./db/deviceSecurity.ts";
 import { sendersByGroup, listGroupSenders, type SenderSource } from "./db/groupSenders.ts";
 import { getGroupKeys } from "./db/groupKeys.ts";
@@ -596,6 +597,68 @@ export function buildGaDevicesView(state: AppState, projectId: string, raw: numb
   const secured = getGroupKeys(db, projectId, state.masterKey).has(raw);
   const interfaceSenders = listGroupSenders(db, projectId).filter((s) => s.gaRaw === raw).map(({ ia, source }) => ({ ia, source }));
   return { address: meta.address, name: meta.name, dpt: meta.dpt, path: meta.path, senders: senders.sort(byIa), receivers: receivers.sort(byIa), secured, interfaceSenders } satisfies GaDevicesView;
+}
+
+// One com-object whose ETS links an import did not take over in full, as the import preview and the
+// project show it: the device, the object's number and texts where the device's configuration or its
+// application's declaration has the object, null where neither has it (an object of a module instance
+// the device no longer has, or of no application in the file), and its ETS addresses, each with its
+// address and name where the project holds it.
+export interface DroppedLinkView {
+  deviceId: string; ia: string; deviceName: string; comObjRefId: string;
+  comObjNumber: number | null; comObjName: string | null; functionText: string | null;
+  reason: DroppedLinkReason;
+  gas: { etsId: string; address: string | null; name: string | null }[];
+}
+interface DroppedLinkDevice { ia: string; name: string; app: AppConfig | null; params: StoredParams; modules: StoredModules }
+
+function droppedLinkViews(links: DroppedLink[], deviceOf: (deviceId: string) => DroppedLinkDevice, gaOf: (raw: number) => { address: string; name: string } | undefined, lang?: string): DroppedLinkView[] {
+  const devices = new Map<string, { dev: DroppedLinkDevice; objs: ReturnType<typeof comObjsByKey> | null }>();
+  return links.map((l) => {
+    let d = devices.get(l.deviceId);
+    if (!d) {
+      const dev = deviceOf(l.deviceId);
+      d = { dev, objs: dev.app ? comObjsByKey(dev.app, buildDeviceConfig(dev.app, dev.params, lang, dev.modules), lang) : null };
+      devices.set(l.deviceId, d);
+    }
+    const co = d.objs?.get(l.comObjRefId);
+    return {
+      deviceId: l.deviceId, ia: d.dev.ia, deviceName: d.dev.name, comObjRefId: l.comObjRefId,
+      comObjNumber: co?.number ?? null, comObjName: co?.name ?? null, functionText: co?.functionText ?? null,
+      reason: l.reason,
+      gas: l.gas.map(({ etsId, raw }) => {
+        const ga = raw === undefined ? undefined : gaOf(raw);
+        return { etsId, address: ga?.address ?? null, name: ga?.name ?? null };
+      }),
+    };
+  });
+}
+
+// The dropped links of a parsed project file, for the import preview: each device's application from the
+// file's programs, its values and module instances from the file.
+export function previewDroppedLinks(state: AppState, project: Project, programs: Map<string, string>, lang?: string): DroppedLinkView[] {
+  const gas = new Map(project.groupAddresses.map((g) => [g.raw, g]));
+  return droppedLinkViews(project.droppedLinks, (deviceId) => {
+    const d = project.devices.find((x) => x.id === deviceId)!; // the parser lists links of its own devices only
+    const pid = appProgramId(d.appRef);
+    const xml = programs.get(pid);
+    const app = state.appCache.get(pid) ?? (xml ? parseAppConfig(xml) : null);
+    return {
+      ia: d.ia, name: d.name, app,
+      params: new Map((project.deviceParams.find((p) => p.deviceId === deviceId)?.values ?? []).map((v) => [v.refId, v.value])),
+      modules: project.deviceModules.find((m) => m.deviceId === deviceId)?.instances ?? [],
+    };
+  }, (raw) => gas.get(raw), lang);
+}
+
+// The dropped links an imported project keeps, resolved against the project as it is now.
+export function projectDroppedLinks(state: AppState, projectId: string, lang?: string): DroppedLinkView[] {
+  const { db } = state;
+  if (!projectExists(db, projectId)) throw new ApiError("PROJECT_NOT_FOUND", "project not found", 404);
+  return droppedLinkViews(listDroppedLinks(db, projectId), (deviceId) => {
+    const d = getDeviceForFlash(db, projectId, deviceId)!; // listDroppedLinks keeps the project's devices only
+    return { ia: d.ia, name: d.name, app: loadApp(state, projectId, deviceId), params: getDeviceParams(db, projectId, deviceId), modules: getDeviceModules(db, projectId, deviceId) };
+  }, (raw) => getGaMeta(db, projectId, raw) ?? undefined, lang);
 }
 
 // Choose which stored com-object links to program into the device's association

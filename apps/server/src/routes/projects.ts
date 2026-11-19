@@ -15,7 +15,7 @@ import { recentTelegrams } from "../db/telegrams.ts";
 import { putGroupSenders } from "../db/groupSenders.ts";
 import { putDeviceSecurity, countOwnToolKeys } from "../db/deviceSecurity.ts";
 import { putGroupKeys } from "../db/groupKeys.ts";
-import { resolveAppXml, importGaps, securityChanges } from "../deviceservice.ts";
+import { resolveAppXml, importGaps, securityChanges, previewDroppedLinks, projectDroppedLinks } from "../deviceservice.ts";
 import { json, err, text } from "../httputil.ts";
 import type { AppState } from "../app.ts";
 
@@ -127,7 +127,9 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
       // gaps match what import will actually produce (no clean-looking false promise).
       const programs = extractAppPrograms(bytes, project.devices.map((d) => d.appRef));
       const { baggageUnreadable } = readCheckedBaggage(bytes, password);
-      return json({ kind: "knxproj", name: project.name, deviceCount: project.devices.length, gaCount: project.groupAddresses.length, snapshotCount: 0, ...countSpacesByType(project.locations), modifiedAt: null, ...importGaps(project, programs, applicationless(extractCatalogProducts(bytes))), baggageUnreadable });
+      // Each com-object behind the link counts, for the preview to list (`lang`: the catalogue texts' language).
+      const droppedLinks = previewDroppedLinks(state, project, programs, text(form.get("lang")) || undefined);
+      return json({ kind: "knxproj", name: project.name, deviceCount: project.devices.length, gaCount: project.groupAddresses.length, snapshotCount: 0, ...countSpacesByType(project.locations), modifiedAt: null, ...importGaps(project, programs, applicationless(extractCatalogProducts(bytes))), droppedLinks, baggageUnreadable });
     }
     const data = await unpackBusforge(bytes, password); // throws a coded ApiError (encrypted/wrong-password/invalid)
     validateExport(data);
@@ -153,6 +155,9 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
   }
 
   const id = seg[2];
+
+  // /api/projects/:id/dropped-links?lang=  -> the com-objects whose ETS links the import did not take over in full
+  if (seg.length === 4 && seg[3] === "dropped-links" && req.method === "GET") return json(projectDroppedLinks(state, id, url.searchParams.get("lang") ?? undefined));
 
   // /api/projects/:id
   if (seg.length === 3 && req.method === "GET") {
