@@ -264,6 +264,8 @@ holds Busforge's images for these products against ETS's bytes; `tools/bussard-u
 holds Busforge's `A_UserMemory_Write` requests against ETS's, frame by frame. The set's README in the corpus names
 the commit it was taken from and carries bussard's licence.
 `tools/bussard-text.test.ts` holds the bytes of two products' text parameters beyond ASCII against ETS's.
+`tools/bussard-unfilled-allocation.test.ts` holds the full download's request and segment bytes of an
+unfilled parameter-segment allocation against ETS's.
 
 ### The capture index
 

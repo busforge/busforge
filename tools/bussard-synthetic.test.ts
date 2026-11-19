@@ -76,8 +76,9 @@ corpusDescribe("bussard's synthetic captures: System 7 MV-0701 full download aga
 // Busforge's full download builds (the steps of planSystemBFull: module instances resolved as it resolves them,
 // the bytes it owns, the rest at the fill byte relParamFillByte gives), held against the bytes ETS wrote into
 // the segment it allocated, at the base the simulator reported (PID 7). Busforge's full download refuses every
-// one of these programs before it builds anything (a Mode 0 allocation, a load-control step it does not model,
-// or two sizes for one segment), so the image is held against ETS here on its own.
+// one of these programs before it builds anything (a com-object numbered 0, a load-control step it does not
+// model, or two sizes for one segment), so the image is held against ETS here on its own; the unfilled (Mode 0)
+// allocation and its whole-segment write are held in tools/bussard-unfilled-allocation.test.ts.
 corpusDescribe("bussard's synthetic captures: System B parameter segments at defaults against ETS", () => {
   const cases: [product: string, construct: string, variant?: string, params?: Record<string, string>][] = [
     ["syn-minimal", "two parameters, the rest of the segment from its <Data>"],

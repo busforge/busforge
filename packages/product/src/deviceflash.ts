@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { AppConfig, CfgAbsSegment, ModuleInstance } from "./appconfig.ts";
 import { buildAbsoluteSegmentTargets, absoluteBuildInstances, mergeOwnedBits, wholeBytes, parameterMemoryBytes, differingConstants, type ConstantDifference, type DeviceSegmentTarget } from "./deviceimage.ts";
-import { flattenSteps, lsmIdx, stepAddress, stepSize, memType, segType, segAccess, segFlags, closingSteps, taskCtrl1Of, PEI_LSM, relativeFullStepRefusal, stepObject, type LoadProcedures, type McbWrite, type ClosingStep, type ClosingOp } from "./loadproc.ts";
+import { flattenSteps, lsmIdx, stepAddress, stepSize, memType, segType, segAccess, segFlags, closingSteps, taskCtrl1Of, PEI_LSM, relativeFullStepRefusal, relParamFullMode, stepObject, type LoadProcedures, type McbWrite, type ClosingStep, type ClosingOp } from "./loadproc.ts";
 import { buildGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
 import { buildComObjectTableMv0705 } from "./comobjbuild.ts";
 import type { CfgComObjImage } from "./config.ts";
@@ -770,12 +770,30 @@ export function taskSegmentManufacturerRefusal(app: AppConfig, procedure: LoadPr
 // download from it and sizes that disagree (both checked first, SystemBProfile.operationRefusals): a
 // segment of the application on another load-state machine than the parameter segment's (on LSM 5 the
 // PEI program; the download loads only the parameter segment and the tables, and its full form unloads
-// the PEI program first), a full-download step it does not run (relativeFullStepRefusal).
+// the PEI program first), a full-download step it does not run (relativeFullStepRefusal), an unfilled
+// allocation of a segment the captures do not show it with (unfilledAllocationRefusal).
 export function relativeFullDownloadRefusal(app: AppConfig, procedure: LoadProcedures): StepRefusal | null {
   const other = app.segments.find((sg) => sg.lsm === PEI_LSM) ?? app.segments.find((sg) => sg.lsm !== 4);
   if (other?.lsm === PEI_LSM) return { code: "PEI_PROGRAM_UNSUPPORTED", message: `the application carries a segment for the PEI program (${other.id}, LSM ${PEI_LSM}); the System B full download loads only the parameter segment and the tables, and no ETS capture shows how ETS loads such a program, refusing to leave it unloaded or out of date` };
   if (other) return { code: "FULL_DOWNLOAD_SEGMENT_UNKNOWN", message: `the application carries a segment on load-state machine ${other.lsm} (${other.id}); the System B full download loads only the parameter segment (LSM 4) and the tables, refusing to leave it unloaded` };
-  return relativeFullStepRefusal(procedure);
+  return relativeFullStepRefusal(procedure) ?? unfilledAllocationRefusal(app, procedure);
+}
+
+// A parameter segment allocated unfilled (LdCtrlRelSegment Mode 0) holds, past the bytes the download
+// writes, what the unit held before. ETS's downloads of such applications into a device simulator write a
+// segment that declares <Data> over its whole length and no <Mask> whole, every byte equal to the fill too,
+// after an allocation that carries the declared fill byte with the fill flag off; the full download sends
+// the same. Of a segment without <Data> they write the bytes up to its last parameter's only, so the
+// segment's content after the download is not the image and no read of the image proves it. No capture
+// shows such an allocation of a segment with a <Mask>, or ETS's partial form on one.
+function unfilledAllocationRefusal(app: AppConfig, procedure: LoadProcedures): StepRefusal | null {
+  const seg = app.segments.find((sg) => sg.lsm === 4);
+  if (!seg || relParamFullMode(procedure) !== "0") return null;
+  const unfilled = `the full download allocates the parameter segment ${seg.id} unfilled (LdCtrlRelSegment Mode=0)`;
+  if (!seg.data.length) return { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: `${unfilled} and the segment declares no <Data>; ETS writes such a segment only up to its last parameter's byte and leaves the rest as the unit holds it, which the image cannot state, refusing to write bytes ETS does not or to leave bytes nothing proves` };
+  if (seg.mask) return { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: `${unfilled} and the segment declares a <Mask>; no ETS capture shows which bytes a download writes into such a segment, refusing to guess them` };
+  if (procedure.preferPartialIfLoaded) return { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: `${unfilled} and the application asks for ETS's partial form on a unit that holds it; no ETS capture shows that form on an unfilled allocation, refusing to guess it` };
+  return null;
 }
 const taskSegmentManufacturer = (app: AppConfig, procedure: LoadProcedures): number => {
   const r = taskSegmentManufacturerRefusal(app, procedure);

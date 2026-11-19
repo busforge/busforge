@@ -1206,14 +1206,11 @@ export class SystemBProfile extends DeviceProfile {
     assertParCoverage(proc, "relative");
     refuseTunnelingEntries(cfg);
     // What the application wants the parameter segment pre-filled with (0 for most, 0xFF for e.g. the
-    // GVS AMMA). Threaded into the plan so the allocation and the bytes left out agree with it. Every
-    // captured application declares the filled allocation (Mode 1) for its full download, and an
-    // application declaring no allocation gets it with fill 0. No capture shows what ETS writes into
-    // an unfilled one.
-    const mode = relParamFullMode(proc);
-    if (mode !== undefined && mode !== "1") {
-      throw new ProductError("FULL_DOWNLOAD_STEP_UNSUPPORTED", `the full download allocates the parameter segment with LdCtrlRelSegment Mode=${mode}; no ETS capture shows which bytes a download writes into a segment allocated so`);
-    }
+    // GVS AMMA). Threaded into the plan so the allocation and the bytes left out agree with it. The
+    // allocation is the filled one (Mode 1, and with fill 0 where the application declares none) or the
+    // unfilled one (Mode 0), whose segment is written whole; operationRefusals, which both callers check
+    // first, refuses every other mode and the unfilled allocation of a segment no capture shows it with.
+    const filled = relParamFullMode(proc) !== "0";
     const fillByte = relParamFillByte(proc);
     const { target, comObj, addr, assoc, security } = images ? images() : this.systemBImages(cfg, ctx);
 
@@ -1225,13 +1222,13 @@ export class SystemBProfile extends DeviceProfile {
     // secure procedure closes with the confirmed restart (IsSecureEnabled), the plain one with A_Restart.
     const plan = withClosing(withConfirmedRestart(planSystemBFullDownload({
       params: target.bytes, paramsInImage: fullDownloadImageCoverage(cfg, target.owned), comObj, addr, assoc, programId: programIdStamp(cfg),
-    }, fillByte, requireReboot, declaredMcbWrites(proc, target.size), security, true, closesAtOnce(cfg)), proc.secureEnabled), proc, "full");
+    }, fillByte, requireReboot, declaredMcbWrites(proc, target.size), security, true, closesAtOnce(cfg), filled), proc.secureEnabled), proc, "full");
     const imageBytes = target.size + comObj.length + addr.length + assoc.length;
 
     return {
       plan, imageBytes, target, comObj, addr, assoc, security,
       segments: [
-        { id: "L4 parameter segment", lsm: LSM, source: "params", address: null, image: target.bytes, fillByte },
+        { id: "L4 parameter segment", lsm: LSM, source: "params", address: null, image: target.bytes, ...(filled ? { fillByte } : {}) },
         { id: "L3 com-object table", lsm: OBJ.COMOBJ_TABLE, source: "comObjTable", address: null, image: comObj },
         { id: "L2 association table", lsm: OBJ.ASSOC_TABLE, source: "assocTable", address: null, image: assoc },
         { id: "L1 address table", lsm: OBJ.ADDR_TABLE, source: "addrTable", address: null, image: addr },
@@ -1295,7 +1292,8 @@ export class SystemBProfile extends DeviceProfile {
     refuseRawDataWrites(cfg, ctx.params, instances);
     refuseCalculationWrites(cfg, ctx.params, instances);
     // In the full form the download owns the whole segment: every byte we do not derive is the
-    // allocation's fill. The partial form merges the owned bytes into the unit's segment.
+    // allocation's fill (filled allocation) or the segment's <Data> it writes (unfilled). The partial form
+    // merges the owned bytes into the unit's segment.
     const target = buildRelativeSegmentTarget(cfg, ctx.params, LSM, { moduleInstances: instances, ownIdleUnionDefaults: true });
     if (!target || target.size === 0) throw new ProductError("EMPTY_IMAGE", "built an empty parameter image; refusing to download");
 

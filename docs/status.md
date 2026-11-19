@@ -635,6 +635,12 @@ report a device family as working on the strength of a passing test suite.
   bytes written equal ETS's. The earlier hardware runs of a System B full download (the OpenKNX
   RaumController's and the Theben MIX 2's logging-proxy runs, Theben DALI-Gateway, Jung 400021SE, GVS
   AMMA) wrote a wider set of the same values, which leaves the unit the same.
+- **The unfilled allocation of a System B full download has run on no device.** An application whose
+  full download allocates the parameter segment unfilled (`LdCtrlRelSegment` Mode 0) gets the request
+  and the whole-segment write ETS's downloads of bussard's synthetic products into a device simulator
+  show (offline byte-match, [load-procedures.md](load-procedures.md#par-download-step-policy-the-coverage-guard)); no
+  application of a real product in the corpus declares one. Without `<Data>`, with a `<Mask>` and in
+  ETS's partial form it is refused (`FULL_DOWNLOAD_STEP_UNSUPPORTED`).
 - **Our image equals what ETS would write** is checked only where an ETS capture of the same
   device exists (`tools/etsdiff.ts`, its records shipped with the others, [compatibility.md](compatibility.md)). Full
   download: the MDT BE-02001.02, the ABB US/U 4.2, the GVS AMMA, the Jung 400021SE and the MEAN WELL

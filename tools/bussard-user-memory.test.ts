@@ -88,7 +88,7 @@ corpusDescribe("bussard's synthetic captures: memory past 0xFFFF without the ext
     const dev = new KnxDevice(sim, "1.1.1");
     dev.setExtendedMemoryServices(false);
     // ETS's segment, written with the options of the System B full download's segment write (packages/knx/src/flash.ts).
-    // The full download's own plan for this synthetic product is refused (its allocation is Mode 0).
+    // The full download's own plan for this synthetic product is refused (its com-object numbered 0).
     await dev.memWrite(SEGMENT, segment, { verify: false, echo: true });
     const ours = sim.sent.filter((b) => parseApdu(Buffer.concat([Buffer.from([0x40 | b[0]]), b.subarray(1)])).apci === APCI.USER_MEMORY_WRITE);
     const ets = all.filter((f) => f.from === "ets" && f.apci === APCI.USER_MEMORY_WRITE).map((f) => f.apdu);

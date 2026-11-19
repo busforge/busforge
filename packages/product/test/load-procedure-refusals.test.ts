@@ -1,7 +1,7 @@
 import { test, expect, describe, setDefaultTimeout } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseAppConfig, parseLoadProcedures, classify, relParamFullMode, assessParCoverage } from "@busforge/product";
+import { parseAppConfig, parseLoadProcedures, classify, assessParCoverage, buildDeviceConfig, buildComObjectTable } from "@busforge/product";
 import { catalogueXml, listCatalogue, captureText, corpusPath, bussardCapture, bussardApplication } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
 import { parseCapture } from "../../../tools/etsdiff.ts";
@@ -105,8 +105,41 @@ describe("a System B full download refuses the PEI program (LSM 5), which it doe
     expect(fullDownload(xml)).not.toThrow();
   });
 
-  test("a full download that allocates the parameter segment unfilled is not offered", () => {
-    const xml = once(base, '<LdCtrlRelSegment AppliesTo="full" LsmIdx="4" Size="8" Mode="1" Fill="0" />', '<LdCtrlRelSegment AppliesTo="full" LsmIdx="4" Size="8" Mode="0" Fill="0" />');
+  // An unfilled allocation (Mode 0) as bussard's ETS captures show it (tools/bussard-unfilled-allocation.test.ts):
+  // the fill flag off, the declared fill byte carried, and the segment's <Data> image written whole.
+  const unfilled = (fill = "0") => once(base, '<LdCtrlRelSegment AppliesTo="full" LsmIdx="4" Size="8" Mode="1" Fill="0" />', `<LdCtrlRelSegment AppliesTo="full" LsmIdx="4" Size="8" Mode="0" Fill="${fill}" />`);
+  test("a full download that allocates a parameter segment with <Data> unfilled allocates it so and writes every byte of it", () => {
+    const xml = unfilled("255");
+    expect(classify(parseAppConfig(xml)).operationRefusals()).toEqual({});
+    const build = fullDownload(xml)();
+    expect(build.plan.filter((st) => st.op === "alloc" && st.lsm === 4)).toEqual([{ op: "alloc", lsm: 4, size: 8, fill: false, fillByte: 0xff }]);
+    const writes = build.plan.flatMap((st) => (st.op === "writeSegment" && st.lsm === 4 ? [st] : []));
+    expect(writes.map((w) => [w.offset, w.bytes.length])).toEqual([[0, 8]]);
+    expect(writes[0].bytes.equals(build.segments[0].image)).toBe(true);
+    expect(build.segments[0].fillByte).toBeUndefined();
+  });
+
+  test.each([
+    ["a segment without <Data>", (xml: string) => once(xml, "<Data>AAAAAAAAAKs=</Data>", ""), "declares no <Data>"],
+    ["a segment with a <Mask>", (xml: string) => once(xml, "<Data>AAAAAAAAAKs=</Data>", "<Data>AAAAAAAAAKs=</Data><Mask>//////////8=</Mask>"), "declares a <Mask>"],
+    ["an application asking for ETS's partial form", (xml: string) => once(xml, "<LoadProcedures>", '<Options PreferPartialDownloadIfApplicationLoaded="true" />\n            <LoadProcedures>'), "partial form"],
+  ])("an unfilled allocation of %s is not offered", (_, change, reason) => {
+    const xml = change(unfilled());
+    const refusal = classify(parseAppConfig(xml)).operationRefusals().fullDownload;
+    expect(refusal).toEqual(refusedWith("FULL_DOWNLOAD_STEP_UNSUPPORTED"));
+    expect(refusal?.message).toContain(reason);
+    expect(fullDownload(xml)).toThrow(refusedWith("FULL_DOWNLOAD_STEP_UNSUPPORTED"));
+  });
+
+  test("a full download that allocates the parameter segment twice, filled and unfilled, is not offered", () => {
+    const xml = once(base, '<LdCtrlRelSegment AppliesTo="full" LsmIdx="4" Size="8" Mode="1" Fill="0" />', '<LdCtrlRelSegment AppliesTo="full" LsmIdx="4" Size="8" Mode="1" Fill="0" />\n                <LdCtrlRelSegment AppliesTo="full" Size="8" Mode="0" Fill="0" />');
+    const refusal = classify(parseAppConfig(xml)).operationRefusals().fullDownload;
+    expect(refusal).toEqual(refusedWith("FULL_DOWNLOAD_STEP_UNSUPPORTED"));
+    expect(refusal?.message).toContain("twice");
+  });
+
+  test("a full download that allocates the parameter segment in another mode is not offered", () => {
+    const xml = once(base, '<LdCtrlRelSegment AppliesTo="full" LsmIdx="4" Size="8" Mode="1" Fill="0" />', '<LdCtrlRelSegment AppliesTo="full" LsmIdx="4" Size="8" Mode="2" Fill="0" />');
     expect(classify(parseAppConfig(xml)).operationRefusals()).toEqual({ fullDownload: refusedWith("FULL_DOWNLOAD_STEP_UNSUPPORTED") });
     expect(fullDownload(xml)).toThrow(refusedWith("FULL_DOWNLOAD_STEP_UNSUPPORTED"));
   });
@@ -162,10 +195,14 @@ corpusDescribe("System 7: LSM 5, the task segment's manufacturer and the declare
 
   // The synthetic captures of sizes that disagree within one segment show ETS taking the procedure's sizes.
   // Busforge refuses each of them by its size check, and by another rule besides, so the size check takes
-  // nothing from a download that would run otherwise: a Mode 0 allocation for the full download, a Mode 1
-  // allocation declared for the parameter download too, a segment only the procedure declares.
+  // nothing from a download that would run otherwise: a com-object numbered 0 (which the com-object table
+  // refuses, COM_OBJECT_NUMBER_INVALID), a Mode 1 allocation declared for the parameter download too, a segment
+  // only the procedure declares.
   test.each([
-    ["syn-writerelmem-size", "M-00FA_A-2717-10-0000", (xml: string) => expect(relParamFullMode(parseLoadProcedures(xml))).toBe("0")],
+    ["syn-writerelmem-size", "M-00FA_A-2717-10-0000", (xml: string) => {
+      const view = buildDeviceConfig(parseAppConfig(xml), new Map());
+      expect(() => buildComObjectTable(view.imageComObjects, view.maxComObjectNumber, new Set())).toThrow(refusedWith("COM_OBJECT_NUMBER_INVALID"));
+    }],
     ["syn-writerelmem-tail", "M-00FA_A-272A-10-0000", (xml: string) => expect(assessParCoverage(parseLoadProcedures(xml), "relative").blocked.map((b) => b.verb)).toEqual(["LdCtrlRelSegment"])],
     ["syn-s7-static-split", "M-00FA_A-2889-10-0000", (xml: string) => expect(parseAppConfig(xml).absoluteSegments.some((sg) => sg.address === 0x4443)).toBe(false)],
   ] as const)("%s: refused for its sizes, and by another rule besides", (product, app, otherRule) => {

@@ -139,9 +139,18 @@ honoured, not hardcoded. Most System B devices declare `Fill=0`; some declare `F
 erased-flash state). The full download reads it (`relParamFillByte`) and threads it into both the
 allocation and the choice of the bytes it leaves to the allocation, so the un-written regions read
 back as the fill and the device's own segment CRC still proves the whole image. The full download's
-allocation **mode** is read from the step: every captured application declares Mode 1 (filled); one
-declaring another is refused (`FULL_DOWNLOAD_STEP_UNSUPPORTED`), and one declaring no allocation gets
-the filled one.
+allocation **mode** is read from the step. Mode 1 is the filled allocation, which every application of
+a real product in the corpus declares; one declaring no allocation gets it too. Mode 0 is the unfilled
+one: the request carries the declared fill byte with the fill flag off (`03 0B <size> 00 <fill>`), and
+the segment holds nothing the download does not write, so the download writes every byte of the
+segment's image, those equal to the fill too. It is taken where the segment declares `<Data>` over its
+whole length and no `<Mask>`, as ETS's downloads of bussard's synthetic products into a device simulator
+show it (`tools/bussard-unfilled-allocation.test.ts`: the request and every byte of 26 such segments,
+the one with `Fill=255` over a `<Data>` of `FF` included). Refused (`FULL_DOWNLOAD_STEP_UNSUPPORTED`):
+any other mode, and Mode 0 for a segment without `<Data>` (ETS writes it only up to its last parameter's
+byte and leaves the rest as the unit holds it, which the image cannot state), for one with a `<Mask>`,
+and for an application asking for ETS's partial form, which no capture shows on an unfilled
+allocation.
 
 The full `LdCtrl` vocabulary present in the catalogue (15 verbs) is parsed and pinned by a
 coverage test, so a new device introducing an unknown verb fails the build instead of
@@ -151,8 +160,8 @@ The **System B full download** holds every step it applies to (`full`, `all`, `a
 dispositions, not only the steps a parameter download shares with it (`relativeFullStepRefusal`):
 the mask's base bracket runs them, and a step it does not run refuses the download
 (`FULL_DOWNLOAD_STEP_UNSUPPORTED`) instead of vanishing from it. Its one step of its own is the
-parameter segment's allocation for the full download, `RelSegment` on LSM 4, whose fill it reads and
-whose mode must be the filled one, as every captured application declares it. It runs the checks
+parameter segment's allocation for the full download, `RelSegment` on LSM 4, whose fill and mode it
+reads (filled or unfilled, as above). It runs the checks
 the parameter download declares, so a `CompareProp` declared for the full download alone refuses it.
 An unload of the **PEI program** (LSM 5) is the base bracket's own first step ([R9](#the-rules-by-level));
 any other step on it, and a segment of the application on it, refuses the download
@@ -255,7 +264,8 @@ implemented.
 | A step on LSM 5 other than its task segment, System 7 (`FULL_DOWNLOAD_STEP_UNSUPPORTED`) | 0 | none | an ETS download of an application declaring one |
 | The PEI program (LSM 5) on System B: a segment of the application or a full-download step on it (`PEI_PROGRAM_UNSUPPORTED`), or hardware whose Hardware2Program names one (`HARDWARE_PEI_PROGRAM_UNSUPPORTED`, any full download) | 0; no product of the private corpus names a PEI program | reported, on a two-application Busch-Jaeger unit (MV-07B0): the mask's form that loads every program, unload 5 to 1, LSM 5 loaded and allocated (34 bytes, filled), device-object property writes in the middle of the load, the PEI segment written by memory write, the application id in object 5 PID 13, then the tables | an ETS download of a two-application System B unit |
 | `LegacyPatchManufacturerIdInTaskSegment` with an `OriginalManufacturer` of another maker (`TASK_SEGMENT_MANUFACTURER_UNSUPPORTED`) | 0 (the ABB declares the option without one) | reported: the task segment carries the original manufacturer | an ETS download of such an OEM application (a Busch-Jaeger application is reported) |
-| Sizes of one segment that disagree (`LOAD_PROCEDURE_SIZE_MISMATCH`) | 0 | synthetic capture: ETS takes the load procedure's sizes, not the segment's; it allocates and writes 128 of a 256-byte segment, writes inside a write's `Size` up to the last byte that differs from the fill, and leaves the bytes between two declared parts of a segment untouched | lifting what refuses each captured product besides (a Mode 0 allocation for the full download, a Mode 1 allocation declared for the parameter download too, a segment only the procedure declares), then building the image from the procedure's sizes, pinned to those captures |
+| Sizes of one segment that disagree (`LOAD_PROCEDURE_SIZE_MISMATCH`) | 0 | synthetic capture: ETS takes the load procedure's sizes, not the segment's; it allocates and writes 128 of a 256-byte segment, writes inside a write's `Size` up to the last byte that differs from the fill, and leaves the bytes between two declared parts of a segment untouched | lifting what refuses each captured product besides (a com-object numbered 0, a Mode 1 allocation declared for the parameter download too, a segment only the procedure declares), then building the image from the procedure's sizes, pinned to those captures |
+| The unfilled allocation (`RelSegment` Mode 0) for the full download of a segment without `<Data>`, of one with a `<Mask>`, or of an application asking for ETS's partial form (`FULL_DOWNLOAD_STEP_UNSUPPORTED`) | 0 | synthetic capture, without `<Data>`: the request `03 0B <size> 00 <fill>`, the bytes up to the last parameter's written (3 and 5 of 16), the rest not touched; with a `<Mask>` and in the partial form: none | writing only the bytes ETS writes and verifying them alone, the rest left unowned, pinned to those captures; an ETS download of the other two |
 | `LdCtrlDelay` (`LOAD_STEP_UNSUPPORTED`, `FULL_DOWNLOAD_STEP_UNSUPPORTED`) | 0 | synthetic capture: a pause, nothing on the wire (200 ms before the restart) | the pause in the planner, pinned to the capture; Hager and Berker MV-0701 are reported to declare it |
 | `LdCtrlMapError` beyond the mask's own PEI unload | 0 | synthetic capture: nothing on the wire; what ETS does when the device answers the mapped error is not shown | an ETS download onto a device that answers it; Siemens MV-07B0 applications are reported to declare it |
 | `LdCtrlInvokeFunctionProp` | 0 | reported: `A_FunctionPropertyCommand` (by object index) or its extended form (by object type), return code 00 for success, the description of PID 53 read after each call | an ETS download of one of the Berker or Hager MV-0701 applications, or a Gira application, reported to declare it |
@@ -536,7 +546,8 @@ and wire on the OpenKNX RaumController, the three Theben MIX 2 products, the The
 plus, the MDT IP Interface/Router and the MEAN WELL power supply (largest gap bridged 30 bytes, smallest
 left out 31), and by its
 wire on the Jung 400021SE and the GVS AMMA; `tools/etsdiff.test.ts` pins Busforge's written bytes to
-ETS's for each. The tables are written whole, as ETS writes them.
+ETS's for each. That is the filled allocation (Mode 1); a segment allocated unfilled (Mode 0) is written
+whole ([above](#par-download-step-policy-the-coverage-guard)). The tables are written whole, as ETS writes them.
 
 **The System B parameter flash keeps ETS's record and decides as ETS does.** A download that writes the
 parameters reads the stamps its procedure declares after the last LoadCompleted (`LdCtrlLoadImageProp`,

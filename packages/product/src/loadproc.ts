@@ -479,11 +479,13 @@ export const PEI_LSM = 5;
 // (assessParStep): the download runs the mask's base bracket parameterized by them, and a step it does
 // not run must refuse it, not vanish. The one step of its own is the parameter segment's allocation for
 // the full download (LdCtrlRelSegment on LSM 4, whose Mode and Fill relParamFullMode and relParamFillByte
-// read; it must be the filled one, Mode 1, as every captured application declares it). The checks it runs
-// are the parameter download's (assessParCoverage), so a CompareProp declared for the full download alone
-// is refused. An unload of the PEI program (LSM 5) is the base bracket's own first step (rule R9); any other
+// read; Mode 1, filled, or Mode 0, unfilled, which relativeFullDownloadRefusal holds to the segment
+// ETS's captures show it with; any other mode, and two allocations of different modes, are refused). The
+// checks it runs are the parameter download's (assessParCoverage), so a CompareProp declared for the full
+// download alone is refused. An unload of the PEI program (LSM 5) is the base bracket's own first step (rule R9); any other
 // step on it is refused with PEI_PROGRAM_UNSUPPORTED: no ETS capture shows a System B download that loads it.
 export function relativeFullStepRefusal(lp: LoadProcedures): StepRefusal | null {
+  let allocMode: string | undefined;
   for (const s of flattenSteps(lp, "full")) {
     if (s.verb === "LdCtrlCompareProp") {
       if (stepApplies(s, "par")) continue;
@@ -494,8 +496,13 @@ export function relativeFullStepRefusal(lp: LoadProcedures): StepRefusal | null 
       return { code: "PEI_PROGRAM_UNSUPPORTED", message: `the load procedure declares ${s.verb} on the PEI program (load-state machine ${PEI_LSM}) for the full download; no ETS capture shows a System B download that loads that program, refusing to run the step or to leave it out` };
     }
     if (s.verb === "LdCtrlRelSegment" && (s.attrs.LsmIdx ?? "4") === "4") {
-      if ((s.attrs.Mode ?? "0") === "1") continue;
-      return { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: `the full download allocates the parameter segment with LdCtrlRelSegment Mode=${s.attrs.Mode ?? "0"}; no ETS capture shows which bytes a download writes into a segment allocated so` };
+      const mode = s.attrs.Mode ?? "0";
+      if (allocMode !== undefined && mode !== allocMode) {
+        return { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: `the full download allocates the parameter segment twice, with LdCtrlRelSegment Mode=${allocMode} and Mode=${mode}; no ETS capture shows such a procedure, refusing to pick one` };
+      }
+      allocMode = mode;
+      if (mode === "1" || mode === "0") continue;
+      return { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: `the full download allocates the parameter segment with LdCtrlRelSegment Mode=${mode}; no ETS capture shows a download with an allocation of that mode, refusing to guess what it sends` };
     }
     const d = assessParStep(s, "relative", lp);
     if (d.kind === "blocked") return { code: "FULL_DOWNLOAD_STEP_UNSUPPORTED", message: `the load procedure declares a step the full download cannot execute yet (${d.detail}); refusing to run a partial recipe` };

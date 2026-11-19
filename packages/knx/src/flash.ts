@@ -23,8 +23,10 @@ function allocPayload(size: number, fill: boolean, fillByte = 0): Buffer {
   b.writeUInt32BE(size >>> 0, 2);    // size, big-endian
   // The device pre-fills the freshly allocated segment with `fillByte` when doFill is set (thelsing/knx
   // TableObject::additionalLoadControls: `bool doFill = data[6] == 0x1; uint8_t fillByte = data[7]`).
-  // A first-time download wants it, so no byte of a previous application survives in a region the
-  // new one does not write. A parameter-only download must NOT: it re-writes an existing segment.
+  // A first-time download whose load procedure declares the filled allocation (Mode 1) wants it, so no
+  // byte of a previous application survives in a region the new one does not write; one declaring the
+  // unfilled one (Mode 0) writes the whole segment instead. A parameter-only download must NOT: it
+  // re-writes an existing segment.
   // The fill VALUE is the mask/application's choice, declared in the load procedure's LdCtrlRelSegment
   // (Fill attribute): most System B devices zero the segment (Fill=0), but some fill it with 0xFF (the
   // erased-flash state, Fill=255). It must match what the built image leaves in the bytes it does not
@@ -312,7 +314,7 @@ export function planSystemBFullDownload(tables: {
   addr: Buffer;     // LSM 1, the group-address table
   assoc: Buffer;    // LSM 2, the association table
   programId: Buffer; // PID 13: manufacturer + application number + version
-}, fillByte = 0, requireReboot = true, mcb: { obj: number; element: number; data: Buffer; echoPrefix?: number }[] = [], security?: SecurityObjectTables, unloadPei = false, closeAtOnce = false): LoadPlan {
+}, fillByte = 0, requireReboot = true, mcb: { obj: number; element: number; data: Buffer; echoPrefix?: number }[] = [], security?: SecurityObjectTables, unloadPei = false, closeAtOnce = false, filled = true): LoadPlan {
   const P = OBJ.APP_PROGRAM, C = OBJ.COMOBJ_TABLE, A = OBJ.ASSOC_TABLE, D = OBJ.ADDR_TABLE;
   // The memory-control-block entries the application declares (PID 27), written right after the
   // object's allocation as ETS does. They split a segment into regions the device checks at boot;
@@ -336,10 +338,11 @@ export function planSystemBFullDownload(tables: {
     // after every memory write and before any other object completes, as ETS does it.
     ...(security ? [securityUnload] : []),
     // All four brackets are opened and allocated before anything is written, which is what the
-    // mask's procedure does. The parameter segment is allocated with the fill its LdCtrlRelSegment
-    // declares (Mode 1, `fillByte`), so every byte the download leaves out holds the fill rather than
-    // what a previous application left there.
-    { op: "load", lsm: P }, { op: "alloc", lsm: P, size: tables.params.length, fill: true, fillByte }, ...mcbFor(P),
+    // mask's procedure does. The parameter segment is allocated as its LdCtrlRelSegment declares:
+    // filled (Mode 1, `filled`) with `fillByte`, so every byte the download leaves out holds the fill
+    // rather than what a previous application left there; unfilled (Mode 0) with the declared fill byte
+    // carried in the request all the same, as ETS sends it.
+    { op: "load", lsm: P }, { op: "alloc", lsm: P, size: tables.params.length, fill: filled, fillByte }, ...mcbFor(P),
     { op: "load", lsm: C, assert: false }, { op: "alloc", lsm: C, size: tables.comObj.length }, ...mcbFor(C),
     { op: "load", lsm: D, assert: false }, { op: "alloc", lsm: D, size: tables.addr.length }, ...mcbFor(D),
     { op: "load", lsm: A, assert: false }, { op: "alloc", lsm: A, size: tables.assoc.length }, ...mcbFor(A),
@@ -354,9 +357,12 @@ export function planSystemBFullDownload(tables: {
     { op: "writeSegment", lsm: A, bytes: tables.assoc, echo: true, verify: false },
     { op: "writeSegment", lsm: D, bytes: tables.addr, echo: true, verify: false },
     // Of a filled segment the runs ETS writes (fillAllocatedRuns); the allocation set every other byte
-    // to the fill. Every chunk is echo-checked as it is written (verify mode, above), and the device's
-    // CRCs over the finished segment (or its read-back) prove the whole segment after the restart.
-    ...fillAllocatedRuns(tables.params, tables.paramsInImage, fillByte).map((r): LoadStep => ({ op: "writeSegment", lsm: P, offset: r.offset, bytes: r.bytes, echo: true, verify: false })),
+    // to the fill. An unfilled segment holds nothing the download did not write, so it is written
+    // whole, every byte equal to the fill too. Every chunk is echo-checked as it is written (verify
+    // mode, above), and the device's CRCs over the finished segment (or its read-back) prove the whole
+    // segment after the restart.
+    ...(filled ? fillAllocatedRuns(tables.params, tables.paramsInImage, fillByte) : [{ offset: 0, bytes: tables.params }])
+      .map((r): LoadStep => ({ op: "writeSegment", lsm: P, offset: r.offset, bytes: r.bytes, echo: true, verify: false })),
     ...(security ? planSecurityObjectLoad(security) : []),
     { op: "stampAppId", lsm: P, data: tables.programId },
     { op: "loadCompleted", lsm: P }, { op: "loadCompleted", lsm: C, assert: false },

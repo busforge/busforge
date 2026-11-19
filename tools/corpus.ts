@@ -67,6 +67,7 @@ export const BUSSARD_SYNTHETIC_VARIANTS: readonly { product: string; variant: st
 // The products whose application programs the tests read, with the program's id.
 export const BUSSARD_SYNTHETIC_TESTED: readonly (readonly [product: string, application: string])[] = [
   ["syn-minimal", "2700-10"], ["syn-assign", "271F-10"], ["syn-assign-rewrite", "27B3-10"], ["syn-choose-never-shown", "270E-10"],
+  ["syn-relseg-fill", "2707-10"], ["syn-relseg-dataless", "2A25-10"],
   ["syn-choose-per-ref", "2719-10"], ["syn-color-param", "2728-10"], ["syn-com-objects", "271B-10"], ["syn-dynamic-tests", "271C-10"],
   ["syn-hidden-default", "270C-10"], ["syn-ip-address-param", "2715-10"], ["syn-ip-enabled-tp", "2A22-10"], ["syn-legacy-patch-always", "2714-10"],
   ["syn-map-error", "2726-10"], ["syn-master-reset", "270A-10"], ["syn-master-reset-code4", "278A-10"], ["syn-module-choose", "27B2-10"],

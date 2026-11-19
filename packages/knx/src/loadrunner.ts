@@ -30,7 +30,7 @@ export type LoadStep =
   | { op: "load"; lsm: number; assert?: boolean }
   | { op: "loadCompleted"; lsm: number; assert?: boolean }
   | { op: "assertLoaded"; lsm: number }                  // read LSM state, throw unless LOADED (batch completion check)
-  | { op: "alloc"; lsm: number; size: number; fill?: boolean; fillByte?: number } // relative-segment allocate; `fill` pre-fills it with `fillByte` (default 0) — a full download does, a par download does not
+  | { op: "alloc"; lsm: number; size: number; fill?: boolean; fillByte?: number } // relative-segment allocate; `fill` pre-fills it with `fillByte` (default 0): a full download whose procedure declares the filled allocation does, a par download does not
   // absolute addr, or relative resolved by the planner. `opens`/`closes`: the write stops / lets run again an
   // application outside any load-state machine (a System 1 run error), so a failure between the two leaves
   // the device without a running application, as an open load-state machine does.
