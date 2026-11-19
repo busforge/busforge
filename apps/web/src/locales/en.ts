@@ -166,6 +166,8 @@ const en = {
     ZIPCRYPTO_PASSWORD_ENCODING: "This ETS 4/5 project did not open with this password. It has characters outside plain ASCII, and how ETS 4/5 encodes those is not established, so the password may still be right.",
     PASSWORD_REQUIRED: "This project is password-protected. Enter its password.",
     INVALID_KNXPROJ: "This file is not a valid .knxproj.",
+    ARCHIVE_TOO_LARGE: "The file unpacks to more than Busforge accepts: 512 MiB per file inside it and 1 GiB in all. Nothing was imported.",
+    ZIP64_UNSUPPORTED: "The file is a ZIP64 archive, which Busforge does not read. Nothing was imported.",
     FILE_MISSING: "No file was provided.",
     NOT_FOUND: "Not found.",
     PROJECT_NOT_FOUND: "Project not found.",

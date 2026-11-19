@@ -40,6 +40,14 @@ Only ASCII passwords are shown to open such an archive. Which encoding ETS uses 
 is not established; Busforge tries UTF-8, and a password with such characters that fails is refused
 with its own code (`ZIPCRYPTO_PASSWORD_ENCODING`), not as a wrong password.
 
+**Reading the archive.** Busforge reads the ZIP itself: stored and deflated entries, one disk, no
+ZIP64 (refused as such, `ZIP64_UNSUPPORTED`). Every offset and length the central directory and the
+local headers declare is checked against the bytes the archive has, and an archive that points past
+them is refused (`INVALID_KNXPROJ`). An entry unpacks to exactly the size its directory declares or is
+refused; one declared over 512 MiB, or an archive over 1 GiB in all, is refused before anything is
+unpacked (`ARCHIVE_TOO_LARGE`). The largest project and product databases read so far unpack to
+under 100 MiB.
+
 Key relations in `0.xml`:
 
 - `GroupAddress Id="…_GA-n" Address="<16-bit>"`.

@@ -165,6 +165,8 @@ const de: Messages = {
     ZIPCRYPTO_PASSWORD_ENCODING: "Dieses ETS-4/5-Projekt ließ sich mit diesem Passwort nicht öffnen. Es enthält Zeichen außerhalb von ASCII, und wie ETS 4/5 solche Zeichen kodiert, ist nicht belegt; das Passwort kann trotzdem stimmen.",
     PASSWORD_REQUIRED: "Dieses Projekt ist passwortgeschützt. Bitte das Passwort eingeben.",
     INVALID_KNXPROJ: "Diese Datei ist keine gültige .knxproj.",
+    ARCHIVE_TOO_LARGE: "Die Datei entpackt sich zu mehr, als Busforge akzeptiert: 512 MiB pro enthaltener Datei und 1 GiB insgesamt. Es wurde nichts importiert.",
+    ZIP64_UNSUPPORTED: "Die Datei ist ein ZIP64-Archiv, das Busforge nicht liest. Es wurde nichts importiert.",
     FILE_MISSING: "Es wurde keine Datei übergeben.",
     NOT_FOUND: "Nicht gefunden.",
     PROJECT_NOT_FOUND: "Projekt nicht gefunden.",

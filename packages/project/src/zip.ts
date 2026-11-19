@@ -10,8 +10,16 @@ import { KnxprojError } from "./errors.ts";
 const EOCD_SIG = 0x06054b50;
 const CD_SIG = 0x02014b50;
 const LFH_SIG = 0x04034b50;
+const ZIP64_LOCATOR_SIG = 0x07064b50;
+const ZIP64_SENTINEL = 0xffffffff;
 
-interface CDEntry { name: string; method: number; flags: number; modTime: number; crc: number; lfhOffset: number; compSize: number; }
+interface CDEntry { name: string; method: number; flags: number; modTime: number; crc: number; lfhOffset: number; compSize: number; size: number; }
+
+// What one archive may unpack to. The largest entry of any project or product database in the corpus
+// unpacks to about 73 MB and the largest archive to about 96 MB in all; the caps leave room above that
+// and keep a deflate bomb from exhausting the server's memory before anything else can refuse it.
+export const ZIP_ENTRY_LIMIT = 512 * 1024 * 1024;
+export const ZIP_TOTAL_LIMIT = 1024 * 1024 * 1024;
 
 // General-purpose bit flags (APPNOTE 4.4.4).
 const FLAG_ENCRYPTED = 0x0001;
@@ -27,37 +35,63 @@ function findEOCD(buf: Buffer): number {
   throw new KnxprojError("INVALID_KNXPROJ", "not a zip (no EOCD)");
 }
 
-function readCentralDirectory(buf: Buffer): CDEntry[] {
+// Every offset and length an archive declares is checked against the bytes it has before it is read,
+// so a truncated or forged archive is refused with a code instead of read past its end.
+function malformed(what: string): KnxprojError {
+  return new KnxprojError("INVALID_KNXPROJ", `malformed zip: ${what}`);
+}
+
+function zip64(): KnxprojError {
+  return new KnxprojError("ZIP64_UNSUPPORTED", "the archive is a ZIP64 archive, which Busforge does not read");
+}
+
+interface CentralDirectory { entries: CDEntry[]; start: number; }
+
+function readCentralDirectory(buf: Buffer): CentralDirectory {
   const eocd = findEOCD(buf);
+  // ZIP64 moves the directory's offset and the entries' sizes into records this reader does not parse;
+  // its sentinels read as plain numbers would be taken for offsets and sizes that are not there.
+  if (eocd >= 20 && buf.readUInt32LE(eocd - 20) === ZIP64_LOCATOR_SIG) throw zip64();
   const count = buf.readUInt16LE(eocd + 10);
-  let off = buf.readUInt32LE(eocd + 16);
+  const start = buf.readUInt32LE(eocd + 16);
+  // The central directory lies between the entries' data and the end record.
+  if (start > eocd) throw malformed(`central directory at ${start} lies past the end record at ${eocd}`);
+  let off = start;
   const entries: CDEntry[] = [];
   for (let i = 0; i < count; i++) {
+    if (off + 46 > eocd) throw malformed(`central directory entry ${i} of ${count} runs past the end record`);
     if (buf.readUInt32LE(off) !== CD_SIG) throw new KnxprojError("INVALID_KNXPROJ", "bad central directory entry");
     const flags = buf.readUInt16LE(off + 8);
     const method = buf.readUInt16LE(off + 10);
     const modTime = buf.readUInt16LE(off + 12);
     const crc = buf.readUInt32LE(off + 16);
     const compSize = buf.readUInt32LE(off + 20);
+    const size = buf.readUInt32LE(off + 24);
     const nameLen = buf.readUInt16LE(off + 28);
     const extraLen = buf.readUInt16LE(off + 30);
     const commentLen = buf.readUInt16LE(off + 32);
     const lfhOffset = buf.readUInt32LE(off + 42);
+    if (compSize === ZIP64_SENTINEL || size === ZIP64_SENTINEL || lfhOffset === ZIP64_SENTINEL) throw zip64();
+    const next = off + 46 + nameLen + extraLen + commentLen;
+    if (next > eocd) throw malformed(`central directory entry ${i} of ${count} runs past the end record`);
     const name = buf.toString("utf8", off + 46, off + 46 + nameLen);
-    entries.push({ name, method, flags, modTime, crc, lfhOffset, compSize });
-    off += 46 + nameLen + extraLen + commentLen;
+    entries.push({ name, method, flags, modTime, crc, lfhOffset, compSize, size });
+    off = next;
   }
-  return entries;
+  return { entries, start };
 }
 
 // Locate the compressed payload and the AES extra field (if any) from the local
 // file header, which is authoritative for where the data begins.
-function readLocal(buf: Buffer, e: CDEntry): { data: Buffer; aes?: { strength: number; method: number } } {
+// An entry's local header and data lie before the central directory (cdStart).
+function readLocal(buf: Buffer, e: CDEntry, cdStart: number): { data: Buffer; aes?: { strength: number; method: number } } {
+  if (e.lfhOffset + 30 > cdStart) throw malformed(`local header of ${e.name} at ${e.lfhOffset} runs into the central directory`);
   if (buf.readUInt32LE(e.lfhOffset) !== LFH_SIG) throw new KnxprojError("INVALID_KNXPROJ", "bad local header");
   const nameLen = buf.readUInt16LE(e.lfhOffset + 26);
   const extraLen = buf.readUInt16LE(e.lfhOffset + 28);
   const extraStart = e.lfhOffset + 30 + nameLen;
   const dataStart = extraStart + extraLen;
+  if (dataStart + e.compSize > cdStart) throw malformed(`data of ${e.name} (${e.compSize} bytes at ${dataStart}) runs into the central directory at ${cdStart}`);
   const data = buf.subarray(dataStart, dataStart + e.compSize);
 
   let aes: { strength: number; method: number } | undefined;
@@ -65,7 +99,10 @@ function readLocal(buf: Buffer, e: CDEntry): { data: Buffer; aes?: { strength: n
   while (p + 4 <= dataStart) {
     const id = buf.readUInt16LE(p);
     const len = buf.readUInt16LE(p + 2);
+    if (p + 4 + len > dataStart) throw malformed(`extra field of ${e.name} runs past its local header`);
     if (id === 0x9901) {
+      // WinZip-AES extra field: version(2) vendor(2) strength(1) method(2).
+      if (len < 7) throw malformed(`AES extra field of ${e.name} is ${len} bytes, shorter than 7`);
       aes = { strength: buf[p + 8], method: buf.readUInt16LE(p + 9) };
     }
     p += 4 + len;
@@ -73,17 +110,34 @@ function readLocal(buf: Buffer, e: CDEntry): { data: Buffer; aes?: { strength: n
   return { data, aes };
 }
 
-function decompress(data: Buffer, method: number): Buffer {
-  if (method === 0) return Buffer.from(data);
-  if (method === 8) return inflateRawSync(data);
-  throw new KnxprojError("INVALID_KNXPROJ", `unsupported compression method ${method}`);
+function checkMethod(method: number): void {
+  if (method !== 0 && method !== 8) throw new KnxprojError("INVALID_KNXPROJ", `unsupported compression method ${method}`);
+}
+
+// Unpacks an entry to exactly the size its central directory declares: inflation stops one byte past
+// it, so an entry can never unpack to more than readZip has already admitted under the caps.
+function decompress(data: Buffer, method: number, e: CDEntry): Buffer {
+  checkMethod(method);
+  let out: Buffer;
+  if (method === 0) out = Buffer.from(data);
+  else {
+    try {
+      out = inflateRawSync(data, { maxOutputLength: e.size + 1 });
+    } catch {
+      throw malformed(`entry ${e.name} does not inflate to the ${e.size} bytes its directory declares`);
+    }
+  }
+  if (out.length !== e.size) throw malformed(`entry ${e.name} holds ${out.length} bytes, its directory declares ${e.size}`);
+  return out;
 }
 
 // WinZip-AES (AE-1/AE-2): payload = salt | pwVerify(2) | ciphertext | authCode(10).
 // Key material from PBKDF2-HMAC-SHA1(password, salt, 1000) = encKey | macKey | verify.
 function aesDecrypt(payload: Buffer, password: string, strength: number): Buffer {
+  if (strength !== 1 && strength !== 2 && strength !== 3) throw malformed(`AES key strength ${strength} is none of 1, 2, 3`);
   const keyLen = strength === 1 ? 16 : strength === 2 ? 24 : 32;
   const saltLen = keyLen / 2;
+  if (payload.length < saltLen + 2 + 10) throw malformed(`AES entry of ${payload.length} bytes is shorter than its salt, check and authentication code`);
   const salt = payload.subarray(0, saltLen);
   const pwVerify = payload.subarray(saltLen, saltLen + 2);
   const cipher = payload.subarray(saltLen + 2, payload.length - 10);
@@ -160,11 +214,11 @@ function zipCryptoDecrypt(payload: Buffer, password: Buffer, checkByte: number):
 // A ZipCrypto entry decrypted with the password as UTF-8, inflated and checked against its CRC.
 function zipCryptoEntry(e: CDEntry, data: Buffer, password: string): Buffer {
   const checkByte = e.flags & FLAG_DATA_DESCRIPTOR ? e.modTime >>> 8 : e.crc >>> 24;
+  checkMethod(e.method);
   const plain = zipCryptoDecrypt(data, Buffer.from(password, "utf8"), checkByte);
   let out: Buffer;
-  try { out = decompress(plain, e.method); } catch (err) {
-    if (err instanceof KnxprojError) throw err;
-    throw new KnxprojError("DECRYPT_FAILED", `entry ${e.name} did not inflate after decryption (wrong password or corrupt data)`);
+  try { out = decompress(plain, e.method, e); } catch {
+    throw new KnxprojError("DECRYPT_FAILED", `entry ${e.name} did not inflate to its declared size after decryption (wrong password or corrupt data)`);
   }
   if (crc32(out) !== e.crc) throw new KnxprojError("DECRYPT_FAILED", `entry ${e.name} fails its CRC after decryption (wrong password or corrupt data)`);
   return out;
@@ -173,26 +227,36 @@ function zipCryptoEntry(e: CDEntry, data: Buffer, password: string): Buffer {
 // What protects a zip's entries: "aes" (WinZip-AES), "zipcrypto" (traditional PKWARE) or "none".
 // ETS encrypts every entry of an inner archive the same way, so the first encrypted entry decides.
 export function zipEncryption(buf: Buffer): "aes" | "zipcrypto" | "none" {
-  const e = readCentralDirectory(buf).find((x) => x.flags & FLAG_ENCRYPTED || x.method === 99);
+  const e = readCentralDirectory(buf).entries.find((x) => x.flags & FLAG_ENCRYPTED || x.method === 99);
   return !e ? "none" : e.method === 99 ? "aes" : "zipcrypto";
 }
 
 export function readZip(buf: Buffer, password?: string): Map<string, Buffer> {
-  const files = new Map<string, Buffer>();
-  for (const e of readCentralDirectory(buf)) {
-    if (e.name.endsWith("/")) continue;
-    const { data, aes } = readLocal(buf, e);
+  const { entries, start } = readCentralDirectory(buf);
+  const files = entries.filter((e) => !e.name.endsWith("/"));
+  // Admitted before anything is unpacked, on the sizes the directory declares; decompress holds each
+  // entry to its declared size.
+  let total = 0;
+  for (const e of files) {
+    if (e.size > ZIP_ENTRY_LIMIT) throw new KnxprojError("ARCHIVE_TOO_LARGE", `entry ${e.name} unpacks to ${e.size} bytes, over the ${ZIP_ENTRY_LIMIT}-byte limit per entry`);
+    total += e.size;
+  }
+  if (total > ZIP_TOTAL_LIMIT) throw new KnxprojError("ARCHIVE_TOO_LARGE", `the archive unpacks to ${total} bytes, over the ${ZIP_TOTAL_LIMIT}-byte limit per archive`);
+
+  const out = new Map<string, Buffer>();
+  for (const e of files) {
+    const { data, aes } = readLocal(buf, e, start);
     if (e.method === 99) {
       if (!aes) throw new KnxprojError("INVALID_KNXPROJ", `AES entry ${e.name} missing AES extra field`);
       if (!password) throw new KnxprojError("PASSWORD_REQUIRED", "password required");
       const plain = aesDecrypt(data, password, aes.strength);
-      files.set(e.name, decompress(plain, aes.method));
+      out.set(e.name, decompress(plain, aes.method, e));
     } else if (e.flags & FLAG_ENCRYPTED) {
       // Strong encryption (bit 6) is PKWARE's certificate-based scheme, which no ETS version writes.
       if (e.flags & FLAG_STRONG_ENCRYPTION) throw new KnxprojError("ZIP_ENCRYPTION_UNSUPPORTED", `entry ${e.name} uses PKWARE strong encryption, which Busforge cannot decrypt`);
       if (!password) throw new KnxprojError("PASSWORD_REQUIRED", "password required");
       try {
-        files.set(e.name, zipCryptoEntry(e, data, password));
+        out.set(e.name, zipCryptoEntry(e, data, password));
       } catch (err) {
         // Only ASCII passwords are shown to open an ETS 4/5 archive. Which encoding ETS uses for other
         // characters is not established, so a failure with one does not show the password is wrong.
@@ -202,8 +266,8 @@ export function readZip(buf: Buffer, password?: string): Map<string, Buffer> {
         throw err;
       }
     } else {
-      files.set(e.name, decompress(data, e.method));
+      out.set(e.name, decompress(data, e.method, e));
     }
   }
-  return files;
+  return out;
 }
