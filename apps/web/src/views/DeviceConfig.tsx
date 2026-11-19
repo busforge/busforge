@@ -595,7 +595,7 @@ export function DeviceConfig() {
             {co.changed && <RevertButton title={t("device.revertRow")} disabled={saving} onClick={() => revertLink.mutate(co.refId, { onError })} />}
             {!view?.comObjFlagsRefused && (
               <FlagEditor
-                co={co} editable={view?.comObjFlagsEditable ?? []} disabled={saving} testId={`flags-${co.number}`}
+                co={co} editable={view?.comObjFlagsUneditable?.includes(co.number) ? [] : view?.comObjFlagsEditable ?? []} disabled={saving} testId={`flags-${co.number}`}
                 onEdit={(edit) => setFlags.mutate({ comObjRefId: co.refId, edit }, { onError })}
                 onRevert={() => revertFlags.mutate(co.refId, { onError })}
               />

@@ -502,9 +502,22 @@ for this family; OpenKNX devices run the open thelsing/knx stack, so it is read 
 firmware that consumes it (`group_object_table_object.cpp`, `group_object.cpp`), and Kaenx's
 independent implementation agrees bit for bit.
 
+An object numbered 0 has no entry: entry 0 is the count. ETS 6.4.1, downloading products that
+number their objects from 0 into a device simulator
+([third-party test data](testing.md#third-party-test-data)), writes the count (the highest object
+number) in that place, the entries of objects 1 and up after it, and links object 0's group
+addresses to object 0 in the association table: objects 0 (`C W`) and 1 (`C R T`) give
+`00 01 4B 00` without links and `00 01 4F 00` with both linked. Busforge writes the same. What a
+device does with object 0 is not shown, and no manufacturer's application in the test corpus
+numbers a System B object 0 outside a module. A write that would have to carry object 0's flags is refused: a project
+override of them (`COM_OBJECT_OVERRIDE_UNWRITABLE`) and a secured group address on it
+(`COM_OBJECT_NUMBER_INVALID`). An application that declares no object numbered 1 or higher would
+get a table of no entries, which no capture shows; its full download and group-address flash are
+refused before they are offered (`COM_OBJECT_TABLE_EMPTY`). The device page offers no flag
+edit on object 0, and a read-back takes no flags of it.
+
 A configuration that activates no object (every output of the GVS AMMA disabled) still gets the
-table: ETS writes the declared count with every entry `0x0000`, and so does Busforge. Only an
-application that declares no object at all is refused (`COM_OBJECT_TABLE_EMPTY`).
+table: ETS writes the declared count with every entry `0x0000`, and so does Busforge.
 
 The size field is the KNX "value field type" code, which is genuinely irregular (5 bytes is
 code 15, not 11), so it is written out rather than computed. The size comes from ETS's

@@ -183,6 +183,9 @@ export interface DeviceConfigView {
   // The com-object flags (and "priority") the device page lets the user set per object; attached by the
   // server (buildDeviceView).
   comObjFlagsEditable?: (keyof ComObjFlags | "priority")[];
+  // The com-object numbers whose flags no write carries, as the family's table holds no entry for them
+  // (DeviceProfile.comObjNumbersWithoutEntry); none of comObjFlagsEditable applies to them.
+  comObjFlagsUneditable?: number[];
   // The full capability record for this device (classify().capabilities()), attached by the
   // server. The single source of truth the server gate, the UI, and the smoke framework all read,
   // so the UI never offers a flash the server's capability gate would refuse (refusals from the

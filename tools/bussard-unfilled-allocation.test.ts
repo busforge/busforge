@@ -51,9 +51,9 @@ corpusDescribe("bussard's synthetic captures: a System B full download allocatin
   // the bytes equal to that fill too (syn-relseg-fill: Fill 255 over a <Data> of FF). Busforge's full download
   // planner, given the unfilled allocation as the profile derives it from the procedure (planSystemBFull), plans
   // the same allocation request and the same bytes at the base the simulator reported (PID 7). The profile's
-  // own plan of these products is not held here: each is refused besides, for a load-control step the
-  // download does not model or for its com-object numbered 0. The allocation adds no refusal of its own: the
-  // download's refusal is the procedure's step refusal alone.
+  // own plan is not held here, as some of these products are refused for a load-control step the download
+  // does not model. The allocation adds no refusal of its own: the download's refusal is the procedure's step
+  // refusal alone.
   for (const { product, cfg, proc } of withData) {
     test(`${product}: the allocation request and every byte of the segment are ETS's`, async () => {
       expect(relativeFullDownloadRefusal(cfg, proc)).toEqual(relativeFullStepRefusal(proc));
