@@ -519,6 +519,9 @@ interface GaComObj {
   // The device's own com-object flags cannot be placed (deviceComObjFlags): `flags` are the
   // application's, and the split by them is not the device's.
   flagsRefused?: string;
+  // The device's current configuration does not show the object (a parameter hides it); its link is
+  // kept in the project and its page has no row for it.
+  hidden?: true;
 }
 export interface GaDevicesView {
   address: string; name: string; dpt: string; path: string[];
@@ -534,9 +537,9 @@ export interface GaDevicesView {
 // resolved name and read/write flags. Built from the flat application model so
 // hidden objects are covered too (translated, text placeholders fed by the device's
 // values), then overridden by the module-resolved config view (module-instance
-// numbering). Mirrors buildDeviceView's key stripping (stripRef).
-function comObjsByKey(app: AppConfig, view: ReturnType<typeof buildDeviceConfig>, lang?: string, effective?: Map<number, EffectiveComObjFlags> | null): Map<string, { name: string; functionText: string; number: number; flags: ComObjFlags }> {
-  const out = new Map<string, { name: string; functionText: string; number: number; flags: ComObjFlags }>();
+// numbering). Mirrors buildDeviceView's key stripping (stripRef). `shown`: the view lists the object.
+function comObjsByKey(app: AppConfig, view: ReturnType<typeof buildDeviceConfig>, lang?: string, effective?: Map<number, EffectiveComObjFlags> | null): Map<string, { name: string; functionText: string; number: number; flags: ComObjFlags; shown: boolean }> {
+  const out = new Map<string, { name: string; functionText: string; number: number; flags: ComObjFlags; shown: boolean }>();
   for (const [full, ref] of app.comObjectRefs) {
     const obj = app.comObjects.get(ref.refId);
     if (!obj) continue;
@@ -544,12 +547,13 @@ function comObjsByKey(app: AppConfig, view: ReturnType<typeof buildDeviceConfig>
       ...comObjectRefTexts(app, full, lang, view.paramValue)!,
       number: obj.number,
       flags: { ...obj.flags, ...ref.flags },
+      shown: false,
     });
   }
   for (const b of view.blocks) for (const it of b.items) {
     if (it.kind !== "comObject") continue;
     out.set(stripRef(app.id, it.comObject.refId), {
-      name: it.comObject.name, functionText: it.comObject.functionText, number: it.comObject.number, flags: effective?.get(it.comObject.number)?.flags ?? it.comObject.flags,
+      name: it.comObject.name, functionText: it.comObject.functionText, number: it.comObject.number, flags: effective?.get(it.comObject.number)?.flags ?? it.comObject.flags, shown: true,
     });
   }
   return out;
@@ -588,7 +592,7 @@ export function buildGaDevicesView(state: AppState, projectId: string, raw: numb
     for (const { refId, slot } of links) {
       const co = comObjs.get(refId);
       if (!co) continue; // link to a com-object absent from the app model: skip
-      const entry: GaComObj = { deviceId, deviceName: dev.name, ia: dev.ia, comObjName: co.name, functionText: co.functionText, comObjNumber: co.number, flags: co.flags, ...(flags.refused ? { flagsRefused: flags.refused } : {}) };
+      const entry: GaComObj = { deviceId, deviceName: dev.name, ia: dev.ia, comObjName: co.name, functionText: co.functionText, comObjNumber: co.number, flags: co.flags, ...(flags.refused ? { flagsRefused: flags.refused } : {}), ...(co.shown ? {} : { hidden: true as const }) };
       const sends = co.flags.comm && co.flags.transmit && slot === 0;
       if (sends) senders.push(entry);
       if (co.flags.write || !sends) receivers.push(entry);

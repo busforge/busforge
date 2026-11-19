@@ -10,15 +10,17 @@ import { DptBadge } from "@/components/DptBadge.tsx";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { errMsg } from "@/lib/apiError";
 import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { flagLetters } from "@/lib/comObjFlags.ts";
 import { IconButton } from "@/components/ui/icon-button";
 import { Input } from "@/components/ui/input";
 
 // A group-address pill that opens a details overlay on click: the address's
 // readable range path and datapoint type, plus the devices that use it, split
 // into senders (transmit flag, the object's first address) and receivers (write
-// flag), by the flags each device gets. Each device links to its
-// configuration. Wraps GaLabel so the resting appearance is unchanged; used
+// flag), by the flags each device gets. Each object links to its row on its
+// device's page. Wraps GaLabel so the resting appearance is unchanged; used
 // wherever a GA is shown standalone (group list, bus monitor).
 export function GaPill({ projectId, raw, name, address, fallback, columns, className, onEdit }: {
   projectId: string;
@@ -104,7 +106,6 @@ function Section({ icon, title, entries, projectId, emptyHint, onNavigate }: {
   emptyHint: string;
   onNavigate: () => void;
 }) {
-  const { t } = useTranslation();
   return (
     <div>
       <div className="mb-1.5 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -116,23 +117,53 @@ function Section({ icon, title, entries, projectId, emptyHint, onNavigate }: {
         <ul className="space-y-0.5">
           {entries.map((e, i) => (
             <li key={`${e.deviceId}-${e.comObjNumber}-${i}`}>
-              <Link
-                to="/projects/$projectId/devices/$deviceId"
-                params={{ projectId, deviceId: e.deviceId }}
-                onClick={onNavigate}
-                className="flex flex-col gap-0.5 rounded-md px-1.5 py-1 outline-none hover:bg-secondary/60 focus-visible:ring-[3px] focus-visible:ring-ring/50"
-              >
-                <DeviceLabel name={e.deviceName} ia={e.ia} className="max-w-full" />
-                <span className="truncate pl-1 text-xs text-muted-foreground" title={[e.comObjName, e.functionText].filter(Boolean).join(" · ")}>
-                  {e.comObjName}{e.functionText && e.functionText !== e.comObjName ? ` · ${e.functionText}` : ""}
-                </span>
-                {e.flagsRefused && <span className="pl-1 text-xs text-amber-700 dark:text-amber-300" data-testid="ga-flags-refused">{t("gaDevices.flagsRefused")}</span>}
-              </Link>
+              <ComObjRow projectId={projectId} entry={e} onNavigate={onNavigate} />
             </li>
           ))}
         </ul>
       )}
     </div>
+  );
+}
+
+// One linked com-object of a group address: its device, number, texts and flags, linking to its row on
+// the device's page (`co` in the page's URL). `direction` adds whether it sends or receives on the
+// address, where the list does not say it by its section; `sameDevice` marks an object of the device
+// the list is shown from.
+export function ComObjRow({ projectId, entry: e, onNavigate, direction, sameDevice }: {
+  projectId: string;
+  entry: GaComObj;
+  onNavigate?: () => void;
+  direction?: { sends: boolean; receives: boolean };
+  sameDevice?: boolean;
+}) {
+  const { t } = useTranslation();
+  const letters = flagLetters(e.flags, t);
+  return (
+    <Link
+      to="/projects/$projectId/devices/$deviceId"
+      params={{ projectId, deviceId: e.deviceId }}
+      search={{ co: e.comObjNumber }}
+      onClick={onNavigate}
+      className="flex flex-col gap-0.5 rounded-md px-1.5 py-1 outline-none hover:bg-secondary/60 focus-visible:ring-[3px] focus-visible:ring-ring/50"
+      data-testid={`co-row-${e.ia}-${e.comObjNumber}`}
+    >
+      <span className="flex min-w-0 items-center gap-1.5">
+        <DeviceLabel name={e.deviceName} ia={e.ia} className="min-w-0 max-w-full" />
+        {sameDevice && <Badge tone="outline" size="sm">{t("gaDevices.sameDevice")}</Badge>}
+        {direction?.sends && <Badge size="sm" className="ml-auto" data-testid="co-row-sends"><ArrowUpFromLine /> {t("gaDevices.sends")}</Badge>}
+        {direction?.receives && <Badge size="sm" className={cn(!direction.sends && "ml-auto")} data-testid="co-row-receives"><ArrowDownToLine /> {t("gaDevices.receives")}</Badge>}
+      </span>
+      <span className="flex min-w-0 items-baseline gap-1.5 pl-1 text-xs text-muted-foreground">
+        <span className="shrink-0 font-mono tabular-nums">{e.comObjNumber}</span>
+        <span className="min-w-0 flex-1 truncate" title={[e.comObjName, e.functionText].filter(Boolean).join(" · ")}>
+          {e.comObjName}{e.functionText && e.functionText !== e.comObjName ? ` · ${e.functionText}` : ""}
+        </span>
+        {letters && <span className="shrink-0 font-mono" title={t("gaDevices.flags")}>{letters}</span>}
+      </span>
+      {e.hidden && <span className="pl-1 text-xs text-amber-700 dark:text-amber-300" data-testid="ga-object-hidden">{t("gaDevices.hidden")}</span>}
+      {e.flagsRefused && <span className="pl-1 text-xs text-amber-700 dark:text-amber-300" data-testid="ga-flags-refused">{t("gaDevices.flagsRefused")}</span>}
+    </Link>
   );
 }
 

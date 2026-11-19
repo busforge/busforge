@@ -46,16 +46,23 @@ const devicesRoute = createRoute({
     b: typeof s.b === "string" && s.b ? s.b : undefined,
   }),
 });
+const objectNumber = (v: unknown): number | undefined => {
+  const n = typeof v === "string" && /^\d+$/.test(v) ? Number(v) : v;
+  return typeof n === "number" && Number.isSafeInteger(n) && n >= 0 ? n : undefined;
+};
 // Carries the device-list filter (q, changed) and the building shown (b) so the back button returns
-// to the same list and the match highlighting can reuse the search.
+// to the same list and the match highlighting can reuse the search; the com-object a link led to (co),
+// scrolled to and marked; and the com-object whose linked objects are open (links).
 const deviceRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: "devices/$deviceId",
   component: DeviceConfig,
-  validateSearch: (s: Record<string, unknown>): { q?: string; changed?: boolean; b?: string } => ({
+  validateSearch: (s: Record<string, unknown>): { q?: string; changed?: boolean; b?: string; co?: number; links?: number } => ({
     q: typeof s.q === "string" && s.q ? s.q : undefined,
     changed: s.changed === true || s.changed === "true" ? true : undefined,
     b: typeof s.b === "string" && s.b ? s.b : undefined,
+    co: objectNumber(s.co),
+    links: objectNumber(s.links),
   }),
 });
 // Group-address filter text lives in the URL so it survives back/forward and reload.

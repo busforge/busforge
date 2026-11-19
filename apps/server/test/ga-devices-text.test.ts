@@ -90,3 +90,22 @@ describe("group-address devices: a hidden linked com-object's name", () => {
     expect(await names(s)).toEqual(["Cellar: value"]);
   });
 });
+
+// The device page has no row for an object its configuration hides, so the list says so for each one.
+describe("group-address devices: whether the device's configuration shows the object", () => {
+  const entries = async (s: { state: AppState; projectId: string; raw: number }) => {
+    const res = (await handleApi(new Request(`http://x/api/projects/${s.projectId}/group-addresses/${s.raw}/devices`), s.state))!;
+    return ((await res.json()) as { receivers: { comObjNumber: number; hidden?: boolean }[] }).receivers;
+  };
+  test("an object a parameter hides is marked hidden", async () => {
+    const s = await setup();
+    expect(await entries(s)).toEqual([expect.objectContaining({ comObjNumber: 1, hidden: true })]);
+  });
+  test("once the parameter shows it, it is not", async () => {
+    const s = await setup();
+    setDeviceParam(s.state.db, s.projectId, s.deviceId, `${A}_P-1_R-1`, "1");
+    const [e] = await entries(s);
+    expect(e.comObjNumber).toBe(1);
+    expect(e.hidden).toBeUndefined();
+  });
+});

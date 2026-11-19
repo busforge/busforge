@@ -15,7 +15,7 @@ import { IconButton } from "@/components/ui/icon-button";
 import { Card, CardContent } from "@/components/ui/card";
 import { SectionNav } from "@/components/SectionNav.tsx";
 import { BreakableText } from "@/components/BreakableText.tsx";
-import { useStickyVar } from "@/lib/stickyChrome.ts";
+import { scrollToSection, useStickyVar } from "@/lib/stickyChrome.ts";
 import { useScrollSpy } from "@/lib/scrollSpy.ts";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
@@ -39,6 +39,7 @@ import {
 import { type GaOption } from "./GaCombobox.tsx";
 import { LinkEditor } from "./LinkEditor.tsx";
 import { FlagEditor } from "./FlagEditor.tsx";
+import { ComObjLinks } from "./ComObjLinks.tsx";
 import { AssumeValuesPanel, NeverProgrammedKeptNote, UnprovenAssumptionsNote, UnresolvedNotes, assumeCandidates, assumeList, assumeReducer, assumedParams, initialAssumeState } from "./AssumeValues.tsx";
 import { addedLinks } from "@/lib/links.ts";
 import { HeaderWarning } from "@/components/HeaderWarning.tsx";
@@ -400,6 +401,24 @@ export function DeviceConfig() {
   // on devices with hundreds of rows.
   const { active: activeSec, registerRef, jump: scrollToSec } = useScrollSpy(filteredGroups[0] ? `sec-${filteredGroups[0].head.id}` : null, filteredGroups);
 
+  // The com-object the URL names, a link led to (co) or whose linked objects are open (links): scrolled
+  // to once the configuration is shown, and else said why it is not on the page.
+  const coRows = useRef(new Map<number, HTMLElement>());
+  const coTarget = search.co ?? search.links;
+  const coTargetDone = useRef<string | null>(null);
+  useEffect(() => {
+    if (coTarget == null || !view) return;
+    const key = `${assumeKey}/${coTarget}`;
+    if (coTargetDone.current === key) return;
+    coTargetDone.current = key;
+    const el = coRows.current.get(coTarget);
+    if (el) { scrollToSection(el); return; }
+    const inView = view.blocks.some((b) => b.items.some((i) => i.kind === "comObject" && i.comObject.number === coTarget));
+    toast.warning(t(inView ? "linkedObjects.targetFiltered" : "linkedObjects.targetNotShown", { number: coTarget }));
+  }, [coTarget, view, assumeKey, t]);
+  const setLinksOpen = (number: number, open: boolean) =>
+    void navigate({ search: (p) => ({ ...p, links: open ? number : undefined }), replace: true });
+
   const secondary = [
     { key: "device.revert", icon: <RotateCcw className="size-4" />, onClick: () => setRevertOpen(true), opts: { ghost: true, disabled: !hasChanges || saving, testId: "revert-device" } },
     { key: "device.readFromDevice", icon: readBack.isPending ? <Loader2 className="size-4 animate-spin" /> : <HardDriveDownload className="size-4" />, onClick: doReadBack, opts: { disabled: addressOnly || readBack.isPending || saving || (!!view?.readbackSupport && !view.readbackSupport.params && !view.readbackSupport.links), testId: "read-back" } },
@@ -470,10 +489,14 @@ export function DeviceConfig() {
       return (
         <div
           key={key}
+          ref={(el) => { if (el) coRows.current.set(co.number, el); else coRows.current.delete(co.number); }}
           className={cn(
             "flex flex-col gap-1 border-l-2 py-1.5 pl-3 text-sm sm:flex-row sm:items-center sm:justify-between sm:gap-4 pointer-fine:py-1",
             co.changed || co.flagsChanged ? "border-primary bg-primary/5" : "border-transparent",
+            search.co === co.number && "rounded-r-md ring-1 ring-inset ring-primary/60",
           )}
+          data-testid={`co-${co.number}`}
+          data-target={search.co === co.number || undefined}
         >
           <span className="flex min-w-0 items-center gap-2 sm:flex-1">
             {/* The object number, as ETS lists it: objects of one channel often share their text. */}
@@ -500,6 +523,13 @@ export function DeviceConfig() {
               />
             )}
             <div className="min-w-0 flex-1 sm:w-72 sm:flex-none"><LinkEditor options={gaOptions} gaRaws={co.gaRaws ?? []} onChange={(next) => relink(co.refId, co.gaRaws ?? [], next)} disabled={saving} testId={`link-${co.number}`} levels={project?.groupAddressLevels ?? 3} /></div>
+            {co.gaRaws?.length ? (
+              <ComObjLinks
+                projectId={projectId} deviceId={deviceId} number={co.number} label={comObjLabel(co)} gaRaws={co.gaRaws}
+                options={gaOptions} levels={project?.groupAddressLevels ?? 3}
+                open={search.links === co.number} onOpenChange={(open) => setLinksOpen(co.number, open)}
+              />
+            ) : <span className="size-7 shrink-0" aria-hidden />}
           </div>
         </div>
       );

@@ -3,15 +3,10 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { FLAGS, flagLetters } from "@/lib/comObjFlags.ts";
 import type { CfgComObjView, ComObjFlagEdit, DeviceConfigView } from "../api.ts";
 
-type Flag = keyof CfgComObjView["flags"];
 type Bit = NonNullable<DeviceConfigView["comObjFlagsEditable"]>[number];
-// ETS's order of the flags (C R W T U I).
-const FLAGS: { flag: Flag; key: string }[] = [
-  { flag: "comm", key: "Communication" }, { flag: "read", key: "Read" }, { flag: "write", key: "Write" },
-  { flag: "transmit", key: "Transmit" }, { flag: "update", key: "Update" }, { flag: "readOnInit", key: "ReadOnInit" },
-];
 const PRIORITIES = ["Low", "High", "Alert"] as const;
 
 interface Props {
@@ -84,7 +79,7 @@ export function FlagEditorPanel({ co, editable, onEdit, onRevert, disabled, test
 export function FlagEditor(props: Props) {
   const { t } = useTranslation();
   const { co, testId } = props;
-  const letters = FLAGS.filter(({ flag }) => co.flags[flag]).map(({ key }) => t(`device.flagLetter${key}`)).join(" ");
+  const letters = flagLetters(co.flags, t);
   return (
     <Popover>
       <PopoverTrigger asChild>

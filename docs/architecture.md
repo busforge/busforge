@@ -471,6 +471,14 @@ Conventions that hold across views:
   (`PUT .../links`, `gaRaws`), which refuses an address twice (`LINK_GA_DUPLICATE`) or one the
   project does not hold (`GA_NOT_FOUND`). The group-address overlay lists an object as a sender
   only on its first address.
+- **A com-object shows what it is linked to.** The object row's link button opens, for each of its
+  addresses in order, the other objects on that address (on other devices and on the same one), each
+  with its number, flags and whether it sends or receives there, from the same
+  `/group-addresses/:raw/devices` views the group-address overlay shows. Each object in either list
+  leads to its row on its device's page (`?co=`), which scrolls to it and marks it; the open list is
+  in the URL too (`?links=`), so back returns to it. An object its device's configuration hides is
+  marked as such (`hidden`), and a page whose configuration hides or whose filter drops the object
+  named in the URL says so instead of landing nowhere.
 - **Flags are the ones the project gives.** The device page and the group-address overlay show each
   object's flags with the project's own overrides laid over the application's, resolved where the
   writes resolve them (`effectiveComObjFlags`, [load-procedures.md](load-procedures.md#project-level-com-object-flags));

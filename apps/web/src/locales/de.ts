@@ -974,6 +974,18 @@ const de: Messages = {
     removeSender: "{{ia}} entfernen",
     senderSource: { import: "aus der Projektdatei", busforge: "in Busforge hinzugefügt" },
     sendersNeedDownload: "Die Geräte an dieser Adresse nehmen ein gesichertes Telegramm nur von einem Absender an, den ihre Sicherheitstabelle führt. Nach einer Änderung ihre Gruppenadressen programmieren.",
+    sends: "sendet",
+    receives: "empfängt",
+    sameDevice: "dieses Gerät",
+    flags: "Flags",
+    hidden: "Von der aktuellen Konfiguration seines Geräts nicht gezeigt: Die Verknüpfung bleibt erhalten, die Geräteseite hat keine Zeile dafür.",
+  },
+  linkedObjects: {
+    open: "Verknüpfte Objekte",
+    title: "Verknüpfte Objekte",
+    none: "Kein anderes Objekt an dieser Adresse.",
+    targetFiltered: "Objekt {{number}} ist durch den Filter ausgeblendet.",
+    targetNotShown: "Objekt {{number}} wird von der aktuellen Konfiguration dieses Geräts nicht gezeigt.",
   },
   groupEdit: {
     security: "Sicherheit",

@@ -1,7 +1,7 @@
 // TanStack Query hooks over the API client. Query keys are centralized so
 // mutations can invalidate precisely. Reads are hooks; writes use useMutation in
 // the components with explicit invalidation.
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, ApiError, type ReplaceMappingEntry, type Task, type GroupAddressSecurity, type ComObjFlagEdit, type AssumedValue } from "./api.ts";
 
@@ -190,6 +190,13 @@ export const useGaDevices = (id: string, raw: number, enabled: boolean) => {
   const { i18n } = useTranslation();
   const lang = i18n.language;
   return useQuery({ queryKey: qk.gaDevices(id, raw, lang), queryFn: () => api.gaDevices(id, raw, lang), enabled, staleTime: 30_000 });
+};
+
+// The device views of several addresses at once (a com-object's links), cached as useGaDevices caches each.
+export const useGaDevicesOf = (id: string, raws: number[], enabled: boolean) => {
+  const { i18n } = useTranslation();
+  const lang = i18n.language;
+  return useQueries({ queries: raws.map((raw) => ({ queryKey: qk.gaDevices(id, raw, lang), queryFn: () => api.gaDevices(id, raw, lang), enabled, staleTime: 30_000 })) });
 };
 
 // Add or remove an assigned sender of a group address; refreshes that address's overlay.

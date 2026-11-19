@@ -94,6 +94,8 @@ export interface GaComObj {
   flags: { read: boolean; write: boolean; comm: boolean; transmit: boolean; update: boolean; readOnInit: boolean };
   // The device's own com-object flags cannot be placed: `flags` are the application's (error code).
   flagsRefused?: string;
+  // The device's current configuration does not show the object: its page has no row for it.
+  hidden?: true;
 }
 // Which devices use a group address, split into senders (transmit, on the object's first address)
 // and receivers (write), plus the address's readable range path.

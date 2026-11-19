@@ -975,6 +975,18 @@ const en = {
     removeSender: "Remove {{ia}}",
     senderSource: { import: "from the project file", busforge: "added in Busforge" },
     sendersNeedDownload: "The devices on this address accept a secured telegram only from a sender their security table lists. After a change, program their group addresses.",
+    sends: "sends",
+    receives: "receives",
+    sameDevice: "this device",
+    flags: "Flags",
+    hidden: "Not shown by its device's current configuration: the link is kept, the device page has no row for it.",
+  },
+  linkedObjects: {
+    open: "Linked objects",
+    title: "Linked objects",
+    none: "No other object on this address.",
+    targetFiltered: "Object {{number}} is hidden by the filter.",
+    targetNotShown: "Object {{number}} is not shown by this device's current configuration.",
   },
   groupEdit: {
     security: "Security",
