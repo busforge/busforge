@@ -4,7 +4,7 @@
 // Busforge BUILDS against what the real hardware HOLDS, not against our own frozen
 // golden snapshot. Read-only, offline (no bus): it reads the dumped .bin files.
 //
-//   bun run tools/verify-images.ts [corpus-dir]
+//   bun run tools/verify-images.ts [corpus-dir] [--project <id>]
 //
 // Absolute-segment (MV-0705) devices build via buildAbsoluteSegmentTargets; LSM4
 // (RelativeSegment) devices via buildRelativeSegmentTarget (the surgical owned-mask
@@ -22,15 +22,16 @@ import { parseAppConfig, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget
 import type { ModuleInstance } from "../packages/product/src/index.ts";
 import { appProgramId } from "../packages/project/src/index.ts";
 import { resolveDataDir } from "../apps/server/src/app.ts";
-import { firstProject, openServerDb, refusing } from "./serverdb.ts";
+import { openServerDb, pickProject, refusing, takeProjectFlag } from "./serverdb.ts";
 
+const { project: requestedProject, rest: args } = refusing(() => takeProjectFlag(process.argv.slice(2), 1));
 const dataDir = refusing(() => resolveDataDir(process.env));
 const { db, path: dbPath } = refusing(() => openServerDb(dataDir));
-const project = refusing(() => firstProject(db, dbPath));
+const project = refusing(() => pickProject(db, dbPath, requestedProject));
 console.log(`database ${dbPath}, project ${project.name} (${project.id})`);
 const projectId = project.id;
 
-const corpus = process.argv[2] ?? join(dataDir, "readback", "parammem");
+const corpus = args[0] ?? join(dataDir, "readback", "parammem");
 const manifestPath = join(corpus, "manifest.json");
 if (!existsSync(manifestPath)) { console.error(`no manifest at ${manifestPath} (run dump-param-memory.ts first)`); process.exit(2); }
 const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));

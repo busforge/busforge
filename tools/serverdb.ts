@@ -19,10 +19,40 @@ export function openServerDb(dataDir: string): { db: Database; path: string } {
   return { db: new Database(path, { readonly: true }), path };
 }
 
-// The project the tools work on: the first one, as they always did. An empty database is refused
-// instead of failing on the missing row.
-export function firstProject(db: Database, path: string): { id: string; name: string } {
-  const row = db.query("SELECT id, name FROM projects LIMIT 1").get() as { id: string; name: string } | null;
-  if (!row) throw new Error(`the database at ${path} holds no project`);
-  return row;
+// Splits `--project <id>` (or `--project=<id>`) out of a tool's arguments; the rest keeps its order for the
+// positional ones. A flag without a value or given twice, any other `--` option, and more positional
+// arguments than the tool takes are refused rather than taken for a path.
+export function takeProjectFlag(args: readonly string[], maxPositional: number): { project: string | undefined; rest: string[] } {
+  const rest: string[] = [];
+  let project: string | undefined;
+  const name = (value: string | undefined) => {
+    if (project !== undefined) throw new Error("--project is given twice; name one project");
+    if (value === undefined || value === "" || value.startsWith("--")) throw new Error("--project needs a project id");
+    project = value;
+  };
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === "--project") name(args[++i]);
+    else if (arg.startsWith("--project=")) name(arg.slice("--project=".length));
+    else if (arg.startsWith("--")) throw new Error(`unknown option ${arg}; the only option is --project <id>`);
+    else rest.push(arg);
+  }
+  if (rest.length > maxPositional) throw new Error(`unexpected argument ${rest[maxPositional]}`);
+  return { project, rest };
+}
+
+// The project the tools work on. A database with one project needs no flag; with several the tool
+// refuses until `--project <id>` names one, and lists the ids. An empty database, and an id the
+// database does not hold, are refused too.
+export function pickProject(db: Database, path: string, requested?: string): { id: string; name: string } {
+  const rows = db.query("SELECT id, name FROM projects ORDER BY id").all() as { id: string; name: string }[];
+  if (rows.length === 0) throw new Error(`the database at ${path} holds no project`);
+  const listing = rows.map((r) => `${r.id} (${r.name})`).join(", ");
+  if (requested !== undefined) {
+    const row = rows.find((r) => r.id === requested);
+    if (!row) throw new Error(`the database at ${path} holds no project ${requested}; it holds: ${listing}`);
+    return row;
+  }
+  if (rows.length > 1) throw new Error(`the database at ${path} holds ${rows.length} projects; name one with --project <id>: ${listing}`);
+  return rows[0]!;
 }

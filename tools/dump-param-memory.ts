@@ -3,7 +3,7 @@
 // ground-truth corpus, so the image build can be byte-verified against real
 // hardware (not just the self-referential golden snapshot). Read-only, no writes.
 //
-//   bun run tools/dump-param-memory.ts <interface-ip> [out-dir]
+//   bun run tools/dump-param-memory.ts <interface-ip> [out-dir] [--project <id>]
 //
 // DB-sourced (no .knxproj password needed), from the database of the server data directory
 // (BUSFORGE_DATA_DIR, else apps/server/data). For each device it locates the
@@ -20,16 +20,17 @@ import { resolveDataDir } from "../apps/server/src/app.ts";
 import { parseAppConfig, toAppModel } from "../packages/product/src/index.ts";
 import { appProgramId } from "../packages/project/src/index.ts";
 import { KnxIpTunnel, KnxDevice } from "../packages/knx/src/index.ts";
-import { firstProject, openServerDb, refusing } from "./serverdb.ts";
+import { openServerDb, pickProject, refusing, takeProjectFlag } from "./serverdb.ts";
 
-const ip = process.argv[2];
-if (!ip) { console.error("usage: bun run tools/dump-param-memory.ts <interface-ip> [out-dir]"); process.exit(2); }
+const { project: requestedProject, rest: args } = refusing(() => takeProjectFlag(process.argv.slice(2), 2));
+const ip = args[0];
+if (!ip) { console.error("usage: bun run tools/dump-param-memory.ts <interface-ip> [out-dir] [--project <id>]"); process.exit(2); }
 const dataDir = refusing(() => resolveDataDir(process.env));
 const { db, path: dbPath } = refusing(() => openServerDb(dataDir));
-const project = refusing(() => firstProject(db, dbPath));
+const project = refusing(() => pickProject(db, dbPath, requestedProject));
 console.log(`database ${dbPath}, project ${project.name} (${project.id})`);
 const projectId = project.id;
-const outDir = process.argv[3] ?? join(dataDir, "readback", "parammem");
+const outDir = args[1] ?? join(dataDir, "readback", "parammem");
 mkdirSync(outDir, { recursive: true });
 
 const PER_DEVICE_TIMEOUT_MS = 120_000;

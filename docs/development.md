@@ -138,13 +138,15 @@ and needs no `.knxproj` password: application programs and values come from the 
 database.
 
 ```bash
-bun run tools/dump-param-memory.ts <interface-ip> [out-dir]
+bun run tools/dump-param-memory.ts <interface-ip> [out-dir] [--project <id>]
 ```
 
 Writes one `<ia>__<seg>.device.bin` per segment plus `manifest.json`. The database is the one in the
 server's data directory, `BUSFORGE_DATA_DIR` or else `apps/server/data`. The tool prints the database
-and the project it works on (the first one); a directory without a database, or a database with no
-project, is refused. The default output directory is `readback/parammem` inside that data directory,
+and the project it works on. A database with one project needs no flag; with several, the tool
+refuses until `--project <id>` (or `--project=<id>`) names one, and lists the ids and names it holds.
+An id the database does not hold, a directory without a database, a database with no project, any
+other `--` option and surplus arguments are refused too. The default output directory is `readback/parammem` inside that data directory,
 git-ignored for the default `apps/server/data` only: keep a dump of an instance elsewhere out of git.
 
 ### verify-images.ts
@@ -154,12 +156,13 @@ files and compares them against what busforge builds now. This is the honest cor
 against real devices rather than against our own frozen golden snapshot.
 
 ```bash
-bun run tools/verify-images.ts [dump-dir]
+bun run tools/verify-images.ts [dump-dir] [--project <id>]
 ```
 
 The project values come from the same database as in `dump-param-memory.ts` (`BUSFORGE_DATA_DIR`,
-else `apps/server/data`), and the default dump directory is the same one. Run both against the same
-data directory, or the dumps are compared with another instance's project.
+else `apps/server/data`), the project is chosen the same way (`--project <id>` when the database
+holds several), and the default dump directory is the same one. Run both against the same data
+directory and the same project, or the dumps are compared with another instance's or project's values.
 
 The match is **owned-scoped**: a segment passes when the bytes busforge derives from active
 parameters (the ones it would actually flash) equal the device. Unowned bytes (manufacturer
