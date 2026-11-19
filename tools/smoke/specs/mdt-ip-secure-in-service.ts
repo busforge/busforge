@@ -20,6 +20,7 @@ export const mdtIpSecureInService: DeviceSpec = {
   id: "mdt-ip-secure-in-service",
   device: {
     appRef: "M-0083_H-135-3-O0072_HP-0138-21-F18E-O0072",
+    appProgramId: "M-0083_A-0138-21-F18E-O0072",
     productRef: "M-0083_H-135-3-O0072_P-SCN.2DIP000.2E03",
     ia: "1.1.90",
     mask: "MV-0012",

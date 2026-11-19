@@ -20,6 +20,7 @@ export const openknxRaumControllerInService: DeviceSpec = {
   id: "openknx-raumcontroller-in-service",
   device: {
     appRef: "M-00FA_H-0xA012-1_HP-A012-55-0000",
+    appProgramId: "M-00FA_A-A012-55-0000",
     productRef: "M-00FA_H-0xA012-1_P-OpenKnxRaumController",
     ia: "1.1.32",
     mask: "MV-07B0",

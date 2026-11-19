@@ -4,7 +4,7 @@ import { buildDeviceConfig, editComObjOverride, initialValues, resolveParamRef, 
 import { addDevice, setDeviceAddress, renameDevice, projectExists, getGaMeta } from "../db/projects.ts";
 import { getCatalogProduct } from "../db/catalog.ts";
 import { getDeviceBaggage, projectHasBaggage } from "../db/baggage.ts";
-import { getDeviceParams, setDeviceParam, deleteDeviceParam, getDeviceModules, setDeviceLink, getDeviceForFlash, deviceHasApplication, getDeviceLinks, replaceDeviceProduct, revertDevice, revertDeviceParam, revertDeviceLink, getDeviceComObjOverrides, getDeviceComObjOverrideBase, setDeviceComObjOverride, revertDeviceComObjFlags } from "../db/deviceparams.ts";
+import { getDeviceParams, setDeviceParam, deleteDeviceParam, getDeviceModules, setDeviceLink, getDeviceForFlash, deviceHasApplication, getDeviceLinks, replaceDeviceProduct, revertDevice, revertDeviceParam, revertDeviceLink, getDeviceComObjOverrides, getDeviceComObjOverrideBase, setDeviceComObjOverride, revertDeviceComObjFlags, startDeviceParams } from "../db/deviceparams.ts";
 import { buildDeviceView, missingApplication, loadApp, loadCatalogApp, mapLinksForReplace, resolveParamForEdit, revertOutsideType, deviceComObjFlags, type ReplaceMappingEntry } from "../deviceservice.ts";
 import { fullRef, stripRef } from "../refids.ts";
 import { json, err, text } from "../httputil.ts";
@@ -36,7 +36,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     }
     const device = db.transaction(() => {
       const placed = addDevice(db, id, product, text(body.name));
-      for (const [refId, value] of start) setDeviceParam(db, id, placed.id, refId, value);
+      startDeviceParams(db, id, placed.id, start);
       return placed;
     })();
     return json(device, 201);
@@ -97,8 +97,8 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     if (!body.paramRefId || body.value === undefined) return err("PARAM_FIELDS_REQUIRED", "paramRefId and value required");
     const value = String(body.value);
     // If the value equals the parameter's default, drop the override instead of
-    // storing it, so restoring the default clears the "changed" marker (the
-    // sparse baseline has no row for default-valued params). A float default is
+    // storing it: the project's values are sparse like the baseline's, no row being
+    // the default. A float default is
     // stored in scientific notation; compare it numerically so the canonical decimal
     // the UI sends still collapses to it.
     const pv = resolveParamForEdit(state, id, deviceId, body.paramRefId);
@@ -221,7 +221,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const start = initialValues(newApp, body.lang);
     db.transaction(() => {
       replaceDeviceProduct(db, id, deviceId, product, newLinks);
-      for (const [refId, value] of start) setDeviceParam(db, id, deviceId, refId, value);
+      startDeviceParams(db, id, deviceId, start);
     })();
     return json(buildDeviceView(state, id, deviceId, body.lang));
   }

@@ -87,7 +87,7 @@ export function TaskIndicator({ projectId }: { projectId: string }) {
           {queued > 0 && <Badge tone="primary" size="sm" mono>+{queued}</Badge>}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" sideOffset={8} className="w-96 p-3">
+      <PopoverContent align="end" sideOffset={8} className="max-h-[var(--radix-popover-content-available-height)] w-96 overflow-y-auto p-3">
         <ConnectionPanel projectId={projectId} status={status} />
         <div className="mb-1.5 mt-3 border-t border-border/60 px-1 pt-2.5 text-xs font-semibold text-muted-foreground">{t("task.title")}</div>
         {tasks.length === 0 ? (
@@ -264,10 +264,10 @@ function TaskRow({ task, t, onCancel, canceling, onView }: { task: Task; t: (k: 
         const r = task.state === "done" ? task.result as FlashResult | null : null;
         if (r?.kind !== "unchanged" || !r.constantsDiffer?.length) return null;
         const msg = t("task.constantsDiffer", { params: r.constantsDiffer.map((c) => c.label).join(", ") });
-        return <div className="mt-0.5 truncate text-[10px] text-amber-600 dark:text-amber-400" title={msg} data-testid="task-constants-differ">{msg}</div>;
+        return <div className="mt-0.5 text-[10px] break-words text-warning" data-testid="task-constants-differ">{msg}</div>;
       })()}
-      {task.state === "cancelled" && <div className="mt-0.5 text-[10px] text-muted-foreground">{task.errorCode ? localizeError(t, task.errorCode, task.error) : t("task.cancelled")}</div>}
-      {(task.state === "error" || task.state === "interrupted") && (() => { const msg = localizeError(t, task.errorCode, task.error); return <div className="mt-0.5 truncate text-[10px] text-destructive" title={msg}>{msg}</div>; })()}
+      {task.state === "cancelled" && <div className="mt-0.5 text-[10px] text-muted-foreground">{task.errorCode ? localizeError(t, task.errorCode, task.error, task.errorDetails) : t("task.cancelled")}</div>}
+      {(task.state === "error" || task.state === "interrupted") && (() => { const msg = localizeError(t, task.errorCode, task.error, task.errorDetails); return <div className="mt-0.5 text-[10px] break-words text-destructive" data-testid="task-error">{msg}</div>; })()}
     </div>
   );
 }

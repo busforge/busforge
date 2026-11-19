@@ -27,6 +27,7 @@ export const thebenJmg4tInService: DeviceSpec = {
   id: "theben-jmg4t-in-service",
   device: {
     appRef: "M-0048_H-4930250-2_HP-493B-21-B471",
+    appProgramId: "M-0048_A-493B-21-B471",
     productRef: "M-0048_H-4930250-2_P-4930250",
     ia: "1.1.54",
     mask: "MV-07B0",

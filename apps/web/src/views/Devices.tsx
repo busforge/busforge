@@ -264,7 +264,7 @@ export function DevicesView() {
       </Link>
       <div className="col-start-1 flex min-w-0 shrink-0 items-center gap-2 max-sm:pl-[calc(var(--addr-col)+0.75rem)]">
         {d.secure && (
-          <Badge tone="warning" size="sm" title={t("devices.secure")} data-testid={`device-secure-${d.ia}`}>
+          <Badge tone="neutral" size="sm" title={t("devices.secure")} data-testid={`device-secure-${d.ia}`}>
             <ShieldCheck /> <span className="hidden sm:inline">{t("devices.secure")}</span>
           </Badge>
         )}

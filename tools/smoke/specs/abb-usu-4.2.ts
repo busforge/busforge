@@ -7,6 +7,7 @@ export const abbUsu42: DeviceSpec = {
   id: "abb-usu-4.2",
   device: {
     appRef: "M-0002_H-2.20.2F.2F.20GHQ.20631.200070-1_HP-A001-13-63C2",
+    appProgramId: "M-0002_A-A001-13-63C2",
     productRef: "M-0002_H-2.20.2F.2F.20GHQ.20631.200070-1_P-GH.20Q631.200070.20R0111",
     ia: "1.1.201",
     mask: "MV-0701",

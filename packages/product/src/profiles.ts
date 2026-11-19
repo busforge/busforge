@@ -499,7 +499,8 @@ async function runDeclaredChecks(dev: KnxDevice, coverage: ParCoverage): Promise
 // programmed, which this operation leaves alone and counts nowhere (leaveUnreadUnchanged); absent where
 // there is none.
 // `alwaysWrite` on a dry run: the operation is written even where `diffBytes` is 0, since it also writes
-// state it does not read (the System 1 download), so this dry run never reports unchanged.
+// state it does not read (the System 1 download) or what the device holds is not known (the System B
+// parameter flash of a device never programmed from this project), so this dry run never reports unchanged.
 // `constantsDiffer` on an unchanged result: the constant parameters (deviceimage.ts constantParams) the
 // device holds other bits in, no change of the configuration, named so a difference that is no
 // download marker is seen; absent where there is none.
@@ -653,7 +654,8 @@ export interface FlashOp {
   // covers it, so run it even without a diff and let it finish the load. "refuse": the plan brackets
   // only what differs and could leave it as it is, with or without a diff.
   loadIncomplete?: "rewrite" | "refuse";
-  // Written even where every byte compared is equal: the operation writes state it does not read.
+  // Written even where every byte compared is equal: the operation writes state it does not read, or what
+  // the device holds is not known (FlashResult.alwaysWrite).
   alwaysWrite?: boolean;
   // Filled by `write` with the closing stamp reads of a download that writes the parameters (ImageStamp).
   stamps?: ImageStamp[];
@@ -846,9 +848,11 @@ export interface ParamFlashCtx extends WriteGate {
   // otherwise (HiddenBytes). Absent: not known.
   memorylessKnown?: boolean;
   // The device has had no configuration of this project verified on it (it was placed, its product replaced,
-  // or ETS never downloaded it), so what it holds is not what `baseParams` describes: the flash takes every
-  // byte it owns, as without a record, and judges what it cannot encode against the application's defaults,
-  // as a full download does. Absent: the device holds `baseParams`.
+  // or ETS never downloaded it), so what it holds is not what `baseParams` describes. The System B flash then
+  // writes every byte it owns, also where the unit reads them all as the target, whatever the unit's stamps
+  // and the bytes it reads as FF included; the System B and System 7 flashes judge a colour and a calculation
+  // against the application's defaults, as a full download does, and refuse a raw-data parameter in use,
+  // whose bytes no image writes. Absent: the device holds `baseParams`.
   neverProgrammed?: boolean;
 }
 // Commissioning a device from nothing needs everything at once: the parameters AND the links,
@@ -1062,13 +1066,14 @@ function refuseSystem7UnknownFlags(baseline: () => BaselineObjects, ctx: FlagBas
 // A parameter or structural flash whose change Busforge cannot encode: a colour parameter (refuseColorWrites), a
 // raw-data parameter (refuseRawDataWrites), or a changed parameter of a <ParameterCalculation>
 // (refuseCalculationWrites); each configuration's module instances resolved as moduleAwareModel does. Each is judged
-// against the configuration the device was last programmed with, and on a device never programmed from this project
-// (ParamFlashCtx.neverProgrammed) against the defaults, as for a full download.
+// against the configuration the device was last programmed with. On a device never programmed from this project
+// (ParamFlashCtx.neverProgrammed) a colour and a calculation are judged against the defaults, as for a full
+// download, and every raw-data parameter in use is refused: the flash keeps its bytes as the device holds them.
 function refuseUnencodableChange(cfg: AppConfig, ctx: { params: Map<string, string>; baseParams: Map<string, string>; moduleInstances?: ModuleInstance[]; neverProgrammed?: boolean }, rgbWritten: boolean): void {
   const at = (values: Map<string, string>) => moduleAwareModel(cfg, values, ctx.moduleInstances ?? []).instances;
   const instances = at(ctx.params), base = ctx.neverProgrammed ? undefined : { values: ctx.baseParams, instances: at(ctx.baseParams) };
   refuseColorWrites(cfg, ctx.params, instances, rgbWritten, base);
-  refuseRawDataWrites(cfg, ctx.params, instances, base);
+  refuseRawDataWrites(cfg, ctx.params, instances, base ?? "unknown");
   refuseCalculationWrites(cfg, ctx.params, instances, base);
 }
 
@@ -1612,8 +1617,8 @@ export class SystemBProfile extends DeviceProfile {
     })();
 
     await runDeclaredChecks(dev, coverage);
-    // A parameter (par) download rewrites an EXISTING segment; on a never-programmed device
-    // there is nothing to back up and nothing to merge our owned bytes into. Refuse: that device
+    // A parameter (par) download rewrites an EXISTING segment; on a device whose parameter segment is
+    // not loaded there is nothing to back up and nothing to merge our owned bytes into. Refuse: that device
     // needs a full download, which is a different operation (docs/commissioning.md).
     const addr = await loadedTableAddr(dev, LSM, "parameter segment");
     const current = await dev.memRead(addr, projected.size, undefined, (d, t) => ctx.onProgress?.("backup", d, t), ctx.signal);
@@ -1652,6 +1657,7 @@ export class SystemBProfile extends DeviceProfile {
       get leftFF() { return moved ? undefined : leftFF; },
       constantsDiffer,
       ...(loaded ? {} : { loadIncomplete: "rewrite" as const }),
+      ...(ctx.neverProgrammed ? { alwaysWrite: true } : {}),
       backup: backupFile,
       backups: [{ file: backupFile, bytes: current }],
       stamps: parStamps.stamps,
