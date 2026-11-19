@@ -379,13 +379,13 @@ where the colour lies. Seven type details are easy to get wrong:
   as `31 2c 30 00` over a `<Data>` byte `19`. A text value is text, never a number: "123" is
   `31 32 33 00…`. A character beyond ASCII takes the bytes of the application's
   `<Options TextParameterEncoding>`, which ETS's downloads of two synthetic System B products show
-  (bussard's, MIT): where the application declares none, ISO 8859-1, "Störung" as
+  (bussard's, MIT): where the application declares none, one byte per character, "Störung" as
   `53 74 F6 72 75 6E 67 00…`; where it declares `utf-8`, UTF-8, "Süd" as `53 C3 BC 64`, the field's
-  size counted in bytes. The encoding is the application's, so System 7 takes the same bytes; no
+  size counted in bytes. The encoding is the application's, so System 7 takes the same bytes, and its field checks count them; no
   System 7 capture shows a character beyond ASCII. What no capture shows is refused
   (`PARAM_TEXT_UNSUPPORTED`, `PARAM_TEXT_TOO_LONG`): where the application declares no encoding a
-  character outside ISO 8859-1 or in its range `80`-`9F` (there it and Windows-1252 differ, and the
-  euro sign is one of them), a character beyond ASCII under any other declared encoding (an OpenKNX
+  character above `FF` or one where ISO 8859-1, Windows-1252 and ISO 8859-15 give different bytes
+  (`80`-`9F`, and `A4`, `A6`, `A8`, `B4`, `B8`, `BC`-`BE`: the euro sign is one of them), a character beyond ASCII under any other declared encoding (an OpenKNX
   application declares `iso-8859-15`), a zero character, a value longer than its field, a value as long as
   its field where the application declares `<Options TextParameterZeroTerminate="true">` and on any
   System 7 application (no System 7 capture shows a field filled), on System 7 a zero over a non-zero
@@ -397,11 +397,12 @@ where the colour lies. Seven type details are easy to get wrong:
   `InitialValue`**, translated into the language the client works in, as ETS does for a device added to a project of that
   language: ETS's download of a synthetic product (bussard's) added to a German project wrote the
   de-DE `InitialValue` "Bussardhorst Süd", not the `Value` "Buzzard nest". A device imported from
-  ETS keeps the values ETS stored. An `InitialValue` in a form no capture shows (on a `ParameterRef`,
-  beside a `ParameterRef`'s own `Value`, on a parameter that is no text, in a module definition)
+  ETS keeps the values ETS stored. An `InitialValue` in a form no capture shows (untranslated, on a
+  `ParameterRef`, beside a `ParameterRef`'s own `Value`, on a parameter that is no text, in a module
+  definition)
   refuses the placement (`PARAM_INITIAL_VALUE_UNSUPPORTED`) where it differs from the default and its
-  parameter reaches the device: in memory, in a property, tested by a `<choose>`, or set by an
-  `<Assign>` into one that does. The Jung 400021SE translates such `InitialValue`s on memoryless
+  parameter reaches the device: in memory, in a property, tested by a `<choose>`, or computed
+  with by an `<Assign>` or a `<ParameterCalculation>` into one that does. The Jung 400021SE translates such `InitialValue`s on memoryless
   module texts its `<Assign>`s pass among themselves to name its pages; they keep their default.
 
 - **`TypeRawData` writes nothing.** No ETS download shows its layout, so the segment's `<Data>` or

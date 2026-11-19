@@ -153,19 +153,21 @@ describe("text parameters", () => {
     expect(() => buildParameterImage(m(), 4, new Map([["R-Ptext", "a\0b"]]))).toThrow(/zero character/);
   });
   // bussard's ETS 6.4.1 downloads of its synthetic products (private corpus captures/external/bussard-synthetic/;
-  // tools/bussard-synthetic.test.ts holds Busforge's images against them): an application declaring no
+  // tools/bussard-text.test.ts holds Busforge's images against them): an application declaring no
   // TextParameterEncoding gets "Störung" as 53 74 F6 72 75 6E 67 (syn-text-undeclared), one declaring "utf-8" its
   // text in UTF-8 (syn-text-initialvalue, "Süd" = 53 C3 BC 64). What no capture shows is refused.
   describe("a character beyond ASCII", () => {
     const enc = (textEncoding?: string) => mk({ T: { base: "Text", sizeInBit: 64, ...(textEncoding ? { textEncoding } : {}) } }, { P: { type: "T", offset: 0, value: "" } }, [{ id: "S", lsm: 4, size: 8, data: Buffer.alloc(8) }]);
     const bytes = (model: ReturnType<typeof enc>, v: string) => buildParameterImage(model, 4, new Map([["R-P", v]])).toString("hex");
-    test("without a declared encoding: ISO 8859-1, and decodes back", () => {
+    test("without a declared encoding: one byte per character as ISO 8859-1 has it, and decodes back", () => {
       expect(bytes(enc(), "Küche")).toBe("4bfc636865000000");
       expect(roundtrip(enc(), { "R-P": "Störung" })["R-P"]).toBe("Störung");
     });
-    test("without a declared encoding: a character in 80-9F or above FF, where ISO 8859-1 and Windows-1252 part, is refused", () => {
+    test("without a declared encoding: a character above FF, or where ISO 8859-1, Windows-1252 and ISO 8859-15 part, is refused", () => {
       expect(() => bytes(enc(), "5 €")).toThrow(/Windows-1252/);
       expect(() => bytes(enc(), "a\x85")).toThrow(/Windows-1252/);
+      expect(() => bytes(enc(), "½ l")).toThrow(/ISO 8859-15/);
+      expect(decodeParameterImage(enc(), 4, Buffer.from("bd206c0000000000", "hex")).has("R-P")).toBe(false);
     });
     test("declared utf-8: UTF-8, counted in bytes, and decodes back", () => {
       expect(bytes(enc("utf-8"), "Süd")).toBe("53c3bc6400000000");

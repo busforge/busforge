@@ -50,7 +50,7 @@ limit, because it records drift only for the refs the view exposes.
 | `TypeRestriction` (enumeration) | full | dropdown, options ordered by `DisplayOrder` |
 | `TypeNumber` | full | number input; `Increment` becomes the spinner step, `UIHint="Slider"` renders a bounded range slider |
 | `TypeFloat` | full | decimal input; the codec takes its width from `Encoding` (KNX 2-byte DPT-9, or IEEE-754 Single) and refuses an unknown width |
-| `TypeText` | full | text input; the image writes its characters in the application's `TextParameterEncoding` (ISO 8859-1 where it declares none, UTF-8 for `utf-8`) and zero bytes to the end of the field (a value as long as the field without a zero), and refuses what no capture shows ([device-memory-model.md](device-memory-model.md#which-parameter-types-reach-the-image-at-all)) |
+| `TypeText` | full | text input; the image writes its characters in the application's `TextParameterEncoding` (one byte per character where it declares none, UTF-8 for `utf-8`) and zero bytes to the end of the field (a value as long as the field without a zero), and refuses what no capture shows ([device-memory-model.md](device-memory-model.md#which-parameter-types-reach-the-image-at-all)) |
 | `TypeTime` | full | raw integer count of the type's `Unit`; rendered as an `hh:mm:ss` duration for second-based units, else number plus unit |
 | `TypeIPAddress` | full | validated dotted quad, 4-byte codec |
 | `TypeColor` (RGB) | full on System B (bytes pinned to ETS's captures, not yet written by Busforge onto a device), edit only elsewhere | native colour picker, stores `#RRGGBB` in the project; on a relative segment (System B) the image writes and the read-back reads its red, green and blue bytes, as ETS's downloads write them; on a System 7 device programming a colour in use is refused, no capture shows one there ([device-memory-model.md](device-memory-model.md#which-parameter-types-reach-the-image-at-all)) |
@@ -79,7 +79,7 @@ Read and honoured:
 | `ParameterRef` | `Text`, `SuffixText` | shown instead of its `Parameter`'s, as the parameter's label and unit and as the heading of a block named by `ParamRefId`; see [Parameter labels](#parameter-labels) |
 | `ParameterBlock` | `Access="None"` / `"Read"` | a hidden block is not rendered, but its `Assign` side effects still gate later conditions |
 | `ComObject` | `ReadOnInitFlag` | the sixth flag, alongside C/R/W/T/U |
-| `Parameter` | `InitialValue` | a device placed in Busforge, or given another product, starts a text parameter at it, translated into the client's language; other forms refuse the placement where they reach the device ([device-memory-model.md](device-memory-model.md#which-parameter-types-reach-the-image-at-all)) |
+| `Parameter` | `InitialValue` | a device placed in Busforge, or given another product, starts a text parameter at its translation into the client's language; other forms refuse the placement where they reach the device ([device-memory-model.md](device-memory-model.md#which-parameter-types-reach-the-image-at-all)) |
 | `Options` | `TextParameterEncoding` | the bytes of a text parameter's characters beyond ASCII |
 | `TypeNumber` | `Increment`, `UIHint="Slider"` | spinner step and slider |
 | `Parameter` | `LegacyPatchAlways` | parsed; the parameter is built and owned like any other, because ETS always writes its value over the `<Data>` byte (see [findings.md](findings.md) §8) |

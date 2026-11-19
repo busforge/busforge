@@ -2,7 +2,7 @@ import { resolveParamRef, sameParamValue, type AppConfig, type CfgParamRef, type
 import { toAppModel } from "./application.ts";
 import { buildDeviceConfig, decodeTextEntities } from "./config.ts";
 import { resolveModuleInstances } from "./modules.ts";
-import { byteWidth, MAX_INT_BYTES, encode } from "./image.ts";
+import { byteWidth, MAX_INT_BYTES, encode, textLength } from "./image.ts";
 import { ProductError } from "./errors.ts";
 import { maskInfo } from "./masks.ts";
 import { applyCalculations, instanceMarker, paramKey, steeringParamIds, type CalculationRun } from "./calculations.ts";
@@ -336,12 +336,16 @@ export function buildAbsoluteSegmentTargets(
         const size = type.sizeInBit / 8;
         if (maskInfo(app.mask).family !== "system-7") {
           textRefusal = new ProductError("PARAM_TEXT_UNSUPPORTED", `text parameter ${param.id} at offset ${param.offset} of ${segId}: no ETS capture shows a text parameter on this memory model`);
-        } else if (v.length === size) {
-          textRefusal = new ProductError("PARAM_TEXT_TOO_LONG", `text parameter ${param.id} at offset ${param.offset} of ${segId}: "${v}" fills its ${size}-byte field, which no ETS capture of a System 7 product shows; it holds at most ${size - 1} characters`);
         } else {
-          // The codec's zeros take the field from the value's length on.
-          const over = Array.from({ length: Math.max(0, size - v.length) }, (_, i) => param.offset! + v.length + i).find((o) => (seg.data[o] ?? 0) !== 0);
-          if (over !== undefined) textRefusal = new ProductError("PARAM_TEXT_UNSUPPORTED", `text parameter ${param.id} at offset ${param.offset} of ${segId}: "${v}" would write a zero over the <Data> byte ${seg.data[over].toString(16).padStart(2, "0")} at offset ${over}, which no ETS capture of a System 7 product shows`);
+          // The characters' bytes in the application's text encoding; the codec's zeros take the rest of the field.
+          let n: number | undefined;
+          try { n = textLength(type, v); } catch (e) { if (!isTextRefusal(e)) throw e; textRefusal = e as ProductError; }
+          if (n === size) {
+            textRefusal = new ProductError("PARAM_TEXT_TOO_LONG", `text parameter ${param.id} at offset ${param.offset} of ${segId}: "${v}" takes ${n} bytes and fills its ${size}-byte field, which no ETS capture of a System 7 product shows; it holds at most ${size - 1} bytes`);
+          } else if (n !== undefined) {
+            const over = Array.from({ length: Math.max(0, size - n) }, (_, i) => param.offset! + n + i).find((o) => (seg.data[o] ?? 0) !== 0);
+            if (over !== undefined) textRefusal = new ProductError("PARAM_TEXT_UNSUPPORTED", `text parameter ${param.id} at offset ${param.offset} of ${segId}: "${v}" would write a zero over the <Data> byte ${seg.data[over].toString(16).padStart(2, "0")} at offset ${over}, which no ETS capture of a System 7 product shows`);
+          }
         }
       }
       // Only mark bytes owned if encode ACTUALLY wrote them. A time/color/other

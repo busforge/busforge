@@ -34,7 +34,7 @@ corpusDescribe("bussard's synthetic captures: a text parameter beyond ASCII agai
     });
   }
 
-  test("placed in the application's default language, the device starts at the untranslated InitialValue, here its default", () => {
+  test("placed in de-DE the device starts at the translated InitialValue, placed in the default language at its default", () => {
     const entry = BUSSARD_SYNTHETIC_TESTED.find(([p]) => p === "syn-text-initialvalue")!;
     const cfg = parseAppConfig(readFileSync(corpusPath(bussardApplication(...entry)), "utf8"));
     expect([...initialValues(cfg, "de-DE").values()]).toEqual(["Bussardhorst Süd"]);

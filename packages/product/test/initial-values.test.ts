@@ -12,7 +12,7 @@ setDefaultTimeout(60_000);
 // 6.4.1 on bussard's syn-text-initialvalue, added to a de-DE project, wrote the de-DE InitialValue
 // (tools/bussard-text.test.ts holds Busforge's image against that capture). What no capture shows refuses.
 const A = "M-TEST_A-47";
-const app = (params: string, refs: string, translations: string, moduleDefs = "") => parseAppConfig(`<?xml version="1.0" encoding="utf-8"?>
+const app = (params: string, refs: string, translations: string, moduleDefs = "", staticExtra = "") => parseAppConfig(`<?xml version="1.0" encoding="utf-8"?>
 <KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-TEST"><ApplicationPrograms>
 <ApplicationProgram Id="${A}" ApplicationNumber="47" ApplicationVersion="1" MaskVersion="MV-07B0" DefaultLanguage="en-US" Name="Initial values">
 <Static>
@@ -22,7 +22,7 @@ const app = (params: string, refs: string, translations: string, moduleDefs = ""
 </ParameterTypes>
 <Parameters>${params}</Parameters>
 <ParameterRefs>${refs}</ParameterRefs>
-<Code><RelativeSegment Id="${A}_RS-1" Offset="0" Size="64" LoadStateMachine="4" /></Code>
+<Code><RelativeSegment Id="${A}_RS-1" Offset="0" Size="64" LoadStateMachine="4" /></Code>${staticExtra}
 </Static>${moduleDefs}
 </ApplicationProgram></ApplicationPrograms></Manufacturer>
 <Languages><Language Identifier="de-DE"><TranslationUnit RefId="${A}">${translations}</TranslationUnit></Language></Languages>
@@ -34,11 +34,10 @@ const tr = (id: string, value: string) => `<TranslationElement RefId="${id}"><Tr
 describe("initialValues", () => {
   const cfg = app(text(1, `Value="Nest" InitialValue="Nest"`) + text(2, `Value="Plain"`), ref(1) + ref(2), tr(`${A}_P-1`, "Horst Süd"));
 
-  test("a text parameter's InitialValue in the placing language: the translation, else the untranslated text", () => {
+  test("a text parameter starts at its InitialValue's translation into the placing language", () => {
     expect([...initialValues(cfg, "de")]).toEqual([[`${A}_P-1_R-1`, "Horst Süd"]]);
     expect(initialValues(cfg, "en").size).toBe(0);
     expect(initialValues(cfg).size).toBe(0);
-    expect([...initialValues(app(text(1, `Value="Nest" InitialValue="Start"`), ref(1), ""), "en")]).toEqual([[`${A}_P-1_R-1`, "Start"]]);
   });
 
   test("an InitialValue equal to the default gives nothing to store", () => {
@@ -50,6 +49,8 @@ describe("initialValues", () => {
     refused(app(text(1, `Value="Nest"`), ref(1, `Value="Taster"`), tr(`${A}_P-1_R-1`, "Schalter")), "de"); // on a ParameterRef
     refused(app(text(1, `Value="Nest" InitialValue="Nest"`), ref(1, `Value="Other"`), tr(`${A}_P-1`, "Horst")), "de"); // a ref Value beside it
     refused(app(`<Parameter Id="${A}_P-1" Name="N" ParameterType="${A}_PT-Num" Text="N" Value="1" InitialValue="2"><Memory CodeSegment="${A}_RS-1" Offset="0" BitOffset="0" /></Parameter>`, ref(1), ""), "en"); // no text
+    refused(app(text(1, `Value="Nest" InitialValue="Start"`), ref(1), ""), "en"); // untranslated
+    refused(app(text(1, `Value="Nest"`), ref(1, `InitialValue="Start"`), ""), "en"); // the ParameterRef's own, untranslated
   });
 
   test("a ParameterRef's translated InitialValue equal to its Value is no refusal", () => {
@@ -66,6 +67,15 @@ describe("initialValues", () => {
     expect(initialValues(memoryless(dyn(`<Assign TargetParamRefRef="${A}_P-3_R-3" SourceParamRefRef="${A}_P-1_R-1" />`)), "de").size).toBe(0);
     refused(memoryless(dyn(`<Assign TargetParamRefRef="${A}_P-3_R-3" SourceParamRefRef="${A}_P-1_R-1" /><Assign TargetParamRefRef="${A}_P-2_R-2" SourceParamRefRef="${A}_P-3_R-3" />`)), "de");
     refused(memoryless(dyn(`<choose ParamRefId="${A}_P-1_R-1"><when test="Taster"><ParameterRefRef RefId="${A}_P-2_R-2" /></when></choose>`)), "de");
+  });
+
+  test("a memoryless parameter a <ParameterCalculation> computes a parameter with memory from refuses", () => {
+    const calc = `<ParameterCalculations><ParameterCalculation Id="${A}_PC-1" Name="c" Language="JavaScript"><LRTransformation>function f(x){return x*2;}</LRTransformation>
+      <LParameters><ParameterRefRef RefId="${A}_P-1_R-1" /></LParameters><RParameters><ParameterRefRef RefId="${A}_P-2_R-2" /></RParameters></ParameterCalculation></ParameterCalculations>`;
+    const input = `<Parameter Id="${A}_P-1" Name="In" ParameterType="${A}_PT-Num" Text="In" Value="1" InitialValue="2" />`;
+    const output = `<Parameter Id="${A}_P-2" Name="Out" ParameterType="${A}_PT-Num" Text="Out" Value="0"><Memory CodeSegment="${A}_RS-1" Offset="0" BitOffset="0" /></Parameter>`;
+    refused(app(input + output, ref(1) + ref(2), "", "", calc), "en");
+    expect(initialValues(app(input + output, ref(1) + ref(2), ""), "en").size).toBe(0); // without the calculation it reaches nothing
   });
 });
 

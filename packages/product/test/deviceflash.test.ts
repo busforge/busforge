@@ -99,6 +99,17 @@ test("an active text parameter on a System 7 absolute segment is written as ETS 
   expect(() => buildAbsoluteSegmentTargets(system1, new Map())).toThrow(expect.objectContaining({ code: "PARAM_TEXT_UNSUPPORTED" }));
 });
 
+// The System 7 field checks count the characters' bytes in the application's text encoding: in UTF-8 "üü" takes the
+// whole 4-byte field (refused, as a filled field is), and "ü" takes two bytes, so its zeros fall on offsets 2 and 3.
+test("an active text parameter on a System 7 absolute segment is judged by its encoded bytes", () => {
+  const utf8 = (data?: string) => parseAppConfig(textXml.replace("</Static>", '<Options TextParameterEncoding="utf-8"/></Static>')
+    .replace('MemoryType="EEPROM"/>', data ? `MemoryType="EEPROM"><Data>${data}</Data></AbsoluteSegment>` : 'MemoryType="EEPROM"/>'));
+  const P = "M-0006_A-0001-01-0001_P-1_R";
+  expect(() => planAbsoluteSegmentFlash(utf8(), new Map([[P, "üü"]]))).toThrow(expect.objectContaining({ code: "PARAM_TEXT_TOO_LONG" }));
+  expect([...buildAbsoluteSegmentTargets(utf8("AEEAAAA="), new Map([[P, "ü"]]))[0].bytes.subarray(0, 4)]).toEqual([0xc3, 0xbc, 0x00, 0x00]);
+  expect(() => buildAbsoluteSegmentTargets(utf8("AABBAAA="), new Map([[P, "ü"]]))).toThrow(expect.objectContaining({ code: "PARAM_TEXT_UNSUPPORTED" }));
+});
+
 test("with a device read-back, only owned bytes that actually differ are scheduled", () => {
   // Device already holds the correct P-1 value (5) but a stale P-3 value (0).
   const current = new Map([["M-0005_A-0001-01-0001_AS-1", Buffer.from([5, 0xff, 0, 0xff])]]);

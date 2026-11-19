@@ -45,9 +45,9 @@ depends on is hardware-proven.
   that differ from the unit's read, without a stamp check; every ETS capture of the partial form ran with
   matching stamps, so what ETS writes there without a record is not shown. The unit ends the same.
 - **Text parameters beyond what ETS's images show.** Characters beyond ASCII that ETS's captures do not
-  show (outside ISO 8859-1 or in its range `80`-`9F` where the application declares no encoding, any
-  under a declared encoding other than `utf-8`; next capture: a download of an application declaring
-  `iso-8859-15` with such a text), a value that fills its field where the application declares
+  show (where the application declares no encoding, one above `FF` or one where ISO 8859-1,
+  Windows-1252 and ISO 8859-15 differ, such as the euro sign; any under a declared encoding other than
+  `utf-8`; next capture: ETS downloads of such texts, with and without `iso-8859-15` declared), a value that fills its field where the application declares
   `TextParameterZeroTerminate` (the GVS AMMA), and text on
   System 7 applications beyond what ETS's captures show (the Steinel M-008E; on the Meteodata 140 S a
   value that fills its field or meets a non-zero `<Data>` byte) are refused until a capture shows them. The editor does not check a text against its field when it is saved: the
@@ -59,8 +59,8 @@ depends on is hardware-proven.
   raw-data parameter changed in the editor
   ([device-memory-model.md](device-memory-model.md#which-parameter-types-reach-the-image-at-all)).
 - **`InitialValue` forms ETS's captures do not show.** A device placed in Busforge, or given another
-  product, starts a text parameter at its `Parameter`'s translated `InitialValue`; one on a
-  `ParameterRef`, beside a ref's own `Value`, on another type or in a module definition refuses the
+  product, starts a text parameter at its `Parameter`'s translated `InitialValue`; an untranslated one,
+  one on a `ParameterRef`, beside a ref's own `Value`, on another type or in a module definition refuses the
   placement where it reaches the device (`PARAM_INITIAL_VALUE_UNSUPPORTED`); next capture: ETS adding
   such a product to a project and downloading it. Busforge has no project language: the client's
   language stands in for it.

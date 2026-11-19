@@ -2,7 +2,6 @@ import { XMLParser } from "fast-xml-parser";
 import { ProductError } from "./errors.ts";
 import { type ONode, tagOf, attrsOf, kidsOf, childrenByTag, firstByTag } from "./onode.ts";
 import { loadProceduresOf, type LoadProcedures } from "./loadproc.ts";
-import { decodeTextEntities } from "./config.ts";
 
 // Parse a KNX ApplicationProgram for the configuration UI: parameter types with
 // their enumerations and ranges, parameters and refs, communication objects, the
@@ -41,7 +40,7 @@ export interface CfgType {
 export interface CfgParam {
   id: string; typeId: string; text: string; name?: string; suffix?: string; value?: string; access?: string; hasMemory: boolean;
   // The parameter's InitialValue: the value ETS gives it when the device is added to a project, translated
-  // into the project's language (initialValues in deviceimage.ts). Absent where the parameter declares none.
+  // into the project's language (initialValues in config.ts). Absent where the parameter declares none.
   initialValue?: string;
   // Located in an interface object property (<Property>) instead of memory: also held by the device.
   onProperty?: true;
@@ -62,7 +61,8 @@ export interface CfgParam {
 }
 // `text`/`suffix` are the ref's own Text/SuffixText, which ETS shows instead of its Parameter's;
 // `textParamRefId` feeds the {{0}} / {{0:default}} placeholder in that text.
-export interface CfgParamRef { id: string; paramId: string; value?: string; access?: string; displayOrder?: number; moduleDefId?: string; text?: string; suffix?: string; textParamRefId?: string; }
+// `initialValue`: the ref's own InitialValue (initialValues in config.ts), absent where it declares none.
+export interface CfgParamRef { id: string; paramId: string; value?: string; access?: string; displayOrder?: number; moduleDefId?: string; text?: string; suffix?: string; textParamRefId?: string; initialValue?: string; }
 export interface CfgSegment { id: string; lsm: number; size: number; data: Buffer; mask?: Buffer; }
 // An absolute-addressed memory segment (Code/AbsoluteSegment). Used by the MV-0705
 // parameter model, where parameters live in an EEPROM segment at a FIXED address
@@ -430,7 +430,7 @@ function calculationsOf(nodes: ONode[]): CfgCalculation[] {
       out.push({
         id: a.Id, name: a.Name, lRefs: side("LParameters"), rRefs: side("RParameters"), aliases,
         ...(a.Language !== undefined ? { language: a.Language } : {}),
-        ...(lr ? { lrScript: decodeTextEntities(concatText(lr)) } : {}),
+        ...(lr ? { lrScript: concatText(lr) } : {}),
         ...(a.LRTransformationFunc !== undefined ? { lrFunc: a.LRTransformationFunc } : {}),
       });
     }
@@ -603,7 +603,8 @@ function parseRefs(staticKids: ONode[]): Map<string, CfgParamRef> {
   const container = firstByTag(staticKids, "ParameterRefs");
   for (const r of container ? childrenByTag(kidsOf(container), "ParameterRef") : []) {
     const a = attrsOf(r);
-    refs.set(a.Id, { id: a.Id, paramId: a.RefId, value: a.Value, access: a.Access, displayOrder: a.DisplayOrder !== undefined ? Number(a.DisplayOrder) : undefined, text: a.Text, suffix: a.SuffixText, textParamRefId: a.TextParameterRefId });
+    refs.set(a.Id, { id: a.Id, paramId: a.RefId, value: a.Value, access: a.Access, displayOrder: a.DisplayOrder !== undefined ? Number(a.DisplayOrder) : undefined, text: a.Text, suffix: a.SuffixText, textParamRefId: a.TextParameterRefId,
+      ...(a.InitialValue !== undefined ? { initialValue: a.InitialValue } : {}) });
   }
   return refs;
 }

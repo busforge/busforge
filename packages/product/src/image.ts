@@ -158,19 +158,23 @@ export const imageWritableType = (t: { base: string; colorSpace?: string }): boo
 // ETS 6.4.1's downloads of bussard's synthetic products (private corpus captures/external/bussard-synthetic/,
 // System B, parameter segment +3):
 //  - syn-text-undeclared, no encoding declared: "Störung" as 53 74 F6 72 75 6E 67 and zeros to the 14-byte
-//    field, so ISO 8859-1. It and Windows-1252 differ only in 80-9F, which no capture shows: a character
-//    there or above FF is refused.
+//    field: one byte per character, "ö" as F6, as ISO 8859-1, Windows-1252 and ISO 8859-15 all write it. A
+//    character where those three differ (80-9F, the eight of A4-BE that ISO 8859-15 replaces) or above FF has no
+//    byte a capture shows, and is refused.
 //  - syn-text-initialvalue, "utf-8": "Bussardhorst Süd" as 42 75 … 53 C3 BC 64 and zeros to the 20-byte field.
 // No capture shows another declared encoding (an OpenKNX application declares "iso-8859-15") with a
 // character beyond ASCII, a zero character, a field that is not whole bytes from bit 0, or a field-length
 // value in an application declaring TextParameterZeroTerminate: those are refused.
+const LATIN_AMBIGUOUS = new Set([0xa4, 0xa6, 0xa8, 0xb4, 0xb8, 0xbc, 0xbd, 0xbe]);
+const latinShown = (c: number) => c <= 0x7f || (c >= 0xa0 && c <= 0xff && !LATIN_AMBIGUOUS.has(c));
+
 function textChars(type: ParamType, where: string, valStr: string): Buffer {
   const refuse = (why: string): never => { throw new ProductError("PARAM_TEXT_UNSUPPORTED", `a ${where}: "${valStr}" ${why}`); };
   if (valStr.includes("\0")) refuse("holds a zero character, whose bytes no ETS image shows");
   const codes = Array.from(valStr, (c) => c.codePointAt(0)!);
   if (codes.every((c) => c <= 0x7f)) return Buffer.from(valStr, "latin1");
   if (type.textEncoding === undefined) {
-    if (!codes.every((c) => c <= 0x7f || (c >= 0xa0 && c <= 0xff))) refuse("holds a character outside ISO 8859-1 or in its range 80-9F, where it and Windows-1252 differ; no ETS image shows which an application declaring no encoding gets");
+    if (!codes.every(latinShown)) refuse("holds a character above FF, or one where ISO 8859-1, Windows-1252 and ISO 8859-15 differ; no ETS image shows which an application declaring no encoding gets");
     return Buffer.from(valStr, "latin1");
   }
   if (type.textEncoding === "utf-8") {
@@ -180,10 +184,13 @@ function textChars(type: ParamType, where: string, valStr: string): Buffer {
   return refuse(`holds a character beyond ASCII, and no ETS image shows the bytes of the application's text encoding "${type.textEncoding}"`);
 }
 
+// How many bytes a text value's characters take in its field (its closing zeros not counted); refuses as textChars.
+export const textLength = (type: ParamType, valStr: string): number => textChars(type, `text parameter type ${type.id}`, valStr).length;
+
 // The inverse of textChars: undefined where encode would not write these bytes.
 function textOfChars(type: ParamType, chars: Buffer): string | undefined {
   if (chars.every((b) => b <= 0x7f)) return chars.toString("latin1");
-  if (type.textEncoding === undefined) return chars.some((b) => b >= 0x80 && b < 0xa0) ? undefined : chars.toString("latin1");
+  if (type.textEncoding === undefined) return chars.every(latinShown) ? chars.toString("latin1") : undefined;
   if (type.textEncoding !== "utf-8") return undefined;
   try { return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(chars); } catch { return undefined; }
 }
