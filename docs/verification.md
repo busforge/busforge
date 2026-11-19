@@ -21,9 +21,10 @@ and the image is **computed** from them on demand:
 | Project instance data | the parameter **values**, device addresses, group addresses | `0.xml`, WinZip-AES (ETS 6) or ZipCrypto (ETS 4 and 5) encrypted |
 
 The flashed image is `layout + defaults + your values -> build -> bytes`. ETS computes it
-this way, Busforge computes it this way. Nothing stores the baked result, so "compare against
-what was flashed" always means comparing against a **freshly computed** image, never a value
-read out of the project file.
+this way, Busforge computes it this way. No project stores an image to flash from, so a download
+always flashes a **freshly computed** image. What ETS does keep, for some applications, is its own
+record of the bytes it loaded last ([below](#etss-download-record)): a reference to compare
+against, never an input.
 
 ## Three independent checks
 
@@ -218,6 +219,74 @@ exercised only by synthetic frames, because no System B capture is kept in the r
 the project mode has no offline test against a real `.knxproj`. The durable form of this check
 diffs the built image against a **live read-back**, resolving the segment base from the device
 itself, so no capture is needed. That is not built yet.
+
+### ETS's download record
+
+ETS keeps a record of each download in the project it saves afterwards, on the device's
+`DeviceInstance`: `LoadedImage` (the bytes it loaded) and `CheckSums` (the CRCs the device reported
+for them). It is a second ETS oracle that needs no capture: Busforge's image for the configuration
+the project stores is held against ETS's bytes offline, for every device of every project that
+carries a record (`tools/ets-records.test.ts`).
+
+**Which devices carry one.** Exactly those whose application's load procedure names
+`LdCtrlLoadImageProp`, once ETS has downloaded them, and only for the load-state machines 3 and 4
+(the com-object table and the application). In the test corpus: every MV-07B0 application and the
+Gira Tastsensor 3 Komfort (MV-0705). The applications without it (MDT BE-02001.02 and BE-06001.02,
+ABB US/U 4.2, Theben TheLuxa P300 and Meteodata 140 S, the Auro presence detector, the Steinel
+TruePresence, the MDT IP Interface Secure) carry none, also after a download.
+
+**The layout**, little-endian throughout (`packages/project/src/loadedimage.ts`, which refuses every
+kind, object, flag and mask value below that the corpus does not show, and any length that does not
+add up to the attribute):
+
+```
+LoadedImage = base64(raw deflate(
+  [u16 1][u16 1][u32 records]
+  per record: [u32 kind][u16 object][u16 pid][u32 start][u32 length][u8 3][data: length][mask: length]))
+    kind 12: object 3 or 4, pid 7; start is an offset into the segment the table reference points at
+    kind 1:  object 0, pid 0; start is an absolute address (System 7 application segments)
+    mask:    0xFF where ETS's image holds the byte, 0x00 where it holds none
+
+CheckSums = base64([u16 1][u16 1][u32 1][u32 objects]
+  per object: [u8 object][u32 regions], per region: [u8 flag][u16 crc])
+```
+
+**What the record holds.** The bytes of ETS's last download of that object. After a full download a
+System B record covers the whole segment, the fill ETS did not write included. After a parameter
+download it holds what that download wrote: on a Theben MIX 2, the 575 bytes of a partial download
+are exactly the bytes its record marks. On the Gira, the 80 bytes of `AS-444E` no parameter covers
+are masked out, as ETS leaves them unwritten ([load-procedures.md](load-procedures.md#which-bytes-ets-writes)).
+A record can also lack an object that `CheckSums` still names: after a parameter download the Jung
+400021SE, the Theben MIX 2 and the OpenKNX RaumController, and the Theben DALI-Gateway, hold the
+application only. Their com-object table is then not compared.
+
+**What `CheckSums` holds.** For each region of the object's memory-control block (PID 27), the CRC the
+device reported at the end of that download, in the device's own CRC convention: CRC-16/CCITT-FALSE
+on the GVS AMMA, the augmented CRC-16/CCITT (`crc16Ccitt`) on the Jung 400021SE, the Theben MIX 2, the
+MDT IP Router and the MEAN WELL KNX-40E. The test pins it on every record that covers its regions whole,
+and on the GVS AMMA against ETS's PID 27 read in the capture of the download; ETS's PID 27 reads in the
+captures of the Jung, three Theben MIX 2 and the Gira show the same values. The flag is 1
+where the block reports the region with CRC control 00 and 0 where it reports 01 (the Jung's one-byte
+second region, the Theben DALI-Gateway's com-object table). ETS reads PID 27 before its next download
+and compares it with this record; where they differ its log says "Differential Image Stamp does not
+match, falling back to partial download".
+
+**What it proves.** The reference axis of [`evidence-contract.md`](evidence-contract.md), offline: on
+every byte ETS marks, Busforge's image equals ETS's for that configuration. It proves nothing about
+transfer, behaviour or persistence, and it holds only where the project still shows the configuration
+of that download. So the comparison skips a device ETS marks as changed since (a load flag cleared,
+see [findings.md](findings.md)), and names each one. Even with every flag set the record can be
+older than the project: ETS does not always write an object again when a link changes. On a GVS AMMA,
+the record still held a com-object table from before an object was linked, with its communication
+flag cleared, while ETS's own later download of the linked object sets it. Such a byte is a lead to
+explain against a capture, never a reason to change what Busforge writes; the known ones are named
+in the test.
+
+Today the comparison agrees on every byte ETS marks, but for that one AMMA byte, for the GVS AMMA,
+the Jung 400021SE, the Theben MIX 2 (HMG 6 T, JMG 4 T, RMG 8 T), the Theben DALI-Gateway, the MEAN
+WELL KNX-40E, the OpenKNX RaumController and the Gira Tastsensor 3 Komfort, the latter in ETS's form
+that leaves the application loaded. The MDT IP Router is named as not compared: Busforge refuses its
+full download.
 
 ## Placement is not behaviour
 

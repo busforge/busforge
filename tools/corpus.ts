@@ -121,6 +121,7 @@ export const CORPUS_FILES: readonly string[] = [
     "dali-ets-fulldownload.log",
     "dali-ets6log-fulldownload.txt",
     "dali-gateway-unit-fulldownload.json",
+    "ets-download-records.json.gz",
     "gira-m0008-ets-fulldownload.log",
     "gira-m0008-ets-partial-links.log",
     "gira-m0008-ets-partial-params.log",

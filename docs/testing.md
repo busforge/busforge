@@ -92,6 +92,18 @@ A new file the tests read from the corpus is added to `CORPUS_FILES` in `tools/c
 corpus without it is reported incomplete. A contributor without the corpus attaches the file (a
 catalogue, a capture) privately to the issue or pull request, and a maintainer adds it.
 
+Most corpus projects are password-protected, and the check holds no password. What
+`tools/ets-records.test.ts` needs of them (ETS's download record of each device, its load flags and
+the configuration the project stores, never a key) is kept in
+`captures/ets-download-records.json.gz`, written by `tools/ets-records.ts` with the password from the
+environment. The test fails when a corpus project is added, removed or changed without that file
+following it; run the tool on each added or changed project (every run also drops the entries of projects
+no longer in the corpus):
+
+```bash
+KNXPROJ_PASSWORD=... bun run tools/ets-records.ts <corpus-relative project.knxproj>...
+```
+
 The kept evidence records are in the corpus as well (`evidence/runs/`, `evidence/reference/`): they
 name run times, builds and devices' addresses. `tools/evidence-bundle.ts` generates the shipped
 bundle from them ([evidence-contract.md](evidence-contract.md#the-shipped-records)); to keep a smoke

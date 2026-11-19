@@ -52,7 +52,7 @@
 // (ETS's requests) and `... BRIDGE->ETS ... TUNNELLING_REQ ... | <frame-hex>` (the device's answers).
 import { gunzipSync } from "node:zlib";
 import { iaToNum, OBJ } from "../packages/knx/src/index.ts";
-import { loadKnxproj, readAppProgram, readZip } from "../packages/project/src/index.ts";
+import { loadKnxproj, readAppProgram, readZip, type Project, type DeviceParam, type ModuleInstanceData, type DeviceLink, type ComObjInstanceAttrs } from "../packages/project/src/index.ts";
 import {
   parseAppConfig, classify, parseLoadProcedures, isMemoryMappedLsm, buildDeviceConfig, placeComObjOverrides,
   type AppConfig, type ComObjectLink, type ComObjInstanceOverride, type FullDownloadSegment, type ModuleInstance,
@@ -287,6 +287,36 @@ function readAppXml(path: string, bytes: Buffer, appId: string | undefined): str
   return new TextDecoder().decode(zip.get(apps[0])!);
 }
 
+// One device's configuration as a project stores it.
+export interface DeviceRows { values: DeviceParam[]; instances: ModuleInstanceData[]; links: DeviceLink[]; overrides: ComObjInstanceAttrs[] }
+export function deviceRows(proj: Project, deviceId: string): DeviceRows {
+  return {
+    values: proj.deviceParams.find((p) => p.deviceId === deviceId)?.values ?? [],
+    instances: proj.deviceModules.find((m) => m.deviceId === deviceId)?.instances ?? [],
+    links: proj.deviceLinks.find((l) => l.deviceId === deviceId)?.links ?? [],
+    overrides: proj.deviceComObjOverrides.find((o) => o.deviceId === deviceId)?.overrides ?? [],
+  };
+}
+
+// The configuration a download takes from a device's stored rows. Links resolve to com-object numbers
+// through the configured view, as the server's download does (deviceservice resolveDeviceLinks and
+// selectFlashLinks; the server module is not imported because it drags the server's DOM-less type
+// environment into this workspace). A link on a com-object this configuration hides is kept in the
+// project but not downloaded, by the server as by ETS; `hidden` counts them. The project's flags on its
+// com-objects are placed as the server places them for its download.
+export function deviceConfiguration(cfg: AppConfig, rows: DeviceRows): { params: Map<string, string>; instances: ModuleInstance[]; links: ComObjectLink[]; comObjectOverrides: Map<number, ComObjInstanceOverride>; hidden: number } {
+  const params = new Map(rows.values.map((v) => [v.refId, v.value] as [string, string]));
+  const instances = rows.instances;
+  const view = buildDeviceConfig(cfg, params, undefined, instances);
+  const numByRef = new Map<string, number>();
+  for (const b of view.blocks) for (const it of b.items) if (it.kind === "comObject") numByRef.set(it.comObject.refId, it.comObject.number);
+  const stored = new Map(rows.links.map((l) => [l.comObjRefId, l.gaRaws] as [string, number[]]));
+  const links: ComObjectLink[] = [];
+  for (const [refId, gaRaws] of stored) { const num = numByRef.get(fullRef(cfg.id, refId)); if (num !== undefined) links.push({ comObjNum: num, gaRaws }); }
+  const comObjectOverrides = placeComObjOverrides(cfg, view, rows.overrides);
+  return { params, instances, links, comObjectOverrides, hidden: stored.size - links.length };
+}
+
 interface Subject { ia: string; name: string; productRef: string | null; appRef: string; appXml: string; params: Map<string, string>; instances: ModuleInstance[]; links: ComObjectLink[]; comObjectOverrides: Map<number, ComObjInstanceOverride>; configuration: string }
 
 async function loadSubject(opt: (k: string) => string | undefined, many: (k: string) => string[], redact: boolean): Promise<Subject> {
@@ -301,24 +331,7 @@ async function loadSubject(opt: (k: string) => string | undefined, many: (k: str
     if (!d) throw new Error(ia ? `no device ${ia} in the project` : `no device at index ${opt("device") ?? 0} (project has ${proj.devices.length})`);
     const appXml = readAppProgram(bytes, d.appRef);
     if (!appXml) throw new Error(`the project does not carry ${d.appRef}`);
-    const params = new Map((proj.deviceParams.find((p) => p.deviceId === d.id)?.values ?? []).map((v) => [v.refId, v.value] as [string, string]));
-    const instances = proj.deviceModules.find((m) => m.deviceId === d.id)?.instances ?? [];
-    // Links resolve to com-object numbers through the configured view, as the server's download does
-    // (deviceservice resolveDeviceLinks).
-    const cfg = parseAppConfig(appXml);
-    const view = buildDeviceConfig(cfg, params, undefined, instances);
-    const numByRef = new Map<string, number>();
-    for (const b of view.blocks) for (const it of b.items) if (it.kind === "comObject") numByRef.set(it.comObject.refId, it.comObject.number);
-    const stored = new Map((proj.deviceLinks.find((l) => l.deviceId === d.id)?.links ?? []).map((l) => [l.comObjRefId, l.gaRaws] as [string, number[]]));
-    // deviceservice.selectFlashLinks; the server module is not imported because it drags the server's
-    // DOM-less type environment into this workspace.
-    const links: ComObjectLink[] = [];
-    for (const [refId, gaRaws] of stored) { const num = numByRef.get(fullRef(cfg.id, refId)); if (num !== undefined) links.push({ comObjNum: num, gaRaws }); }
-    // A link on a com-object this configuration hides is kept in the project but not downloaded, by
-    // the server as by ETS; say how many.
-    const hidden = stored.size - links.length;
-    // The project's flags on its com-objects, placed as the server places them for its download.
-    const comObjectOverrides = placeComObjOverrides(cfg, view, proj.deviceComObjOverrides.find((o) => o.deviceId === d.id)?.overrides ?? []);
+    const { params, instances, links, comObjectOverrides, hidden } = deviceConfiguration(parseAppConfig(appXml), deviceRows(proj, d.id));
     return { ia: d.ia, name: d.name, productRef: d.productRef, appRef: d.appRef, appXml, params, instances, links, comObjectOverrides, configuration: `the project's configuration of ${redact ? "the device" : d.ia} (${params.size} parameter values, ${instances.length} module instances, ${links.length} linked objects${hidden ? `, ${hidden} links on hidden objects not downloaded` : ""})` };
   }
   const ia = opt("ia");
