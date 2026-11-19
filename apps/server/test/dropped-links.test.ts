@@ -143,10 +143,13 @@ describe("links an import does not take over, per com-object", () => {
     expect(await listed(state, again.id)).toEqual(expected);
   });
 
-  test("a device whose configuration refuses its application shows the refusal on its objects, and the preview still answers", async () => {
-    const refused = appXml(`<ChannelIndependentBlock><ParameterBlock Id="${A}_PB-1" Name="Main" Text="Main"><choose ParamRefId="${A}_P-1_R-1"><when test="on"><ComObjectRefRef RefId="${A}_O-1_R-1"/></when></choose></ParameterBlock></ChannelIndependentBlock>`);
+  test("a device whose configuration refuses its application shows the refusal on its objects, with the number the application declares, and the preview still answers", async () => {
+    // Object 1 is declared with Number 0: the digit of its ETS id is no number.
+    const refused = appXml(`<ChannelIndependentBlock><ParameterBlock Id="${A}_PB-1" Name="Main" Text="Main"><choose ParamRefId="${A}_P-1_R-1"><when test="on"><ComObjectRefRef RefId="${A}_O-1_R-1"/></when></choose></ParameterBlock></ChannelIndependentBlock>`).replace(`_O-1" Number="1"`, `_O-1" Number="0"`);
     const a = await post(freshState(), "/api/projects/analyze", new File([knxprojWith(refused)], "Dropped.knxproj"));
-    expect(a.droppedLinks.map((l: any) => [l.comObjNumber, l.unresolved, l.refusal, l.unrecoverable])).toEqual([[null, "refused", "PARAM_TEST_UNSUPPORTED", true], [null, "refused", "PARAM_TEST_UNSUPPORTED", true]]);
+    expect(a.droppedLinks.map((l: any) => [l.comObjNumber, l.comObjName, l.functionText, l.unresolved, l.refusal, l.unrecoverable])).toEqual([
+      [0, "Switch", "On/off", "refused", "PARAM_TEST_UNSUPPORTED", true], [2, "Status", "Feedback", "refused", "PARAM_TEST_UNSUPPORTED", true],
+    ]);
   });
 
   test("a device without its application program in the file says so on its objects", async () => {
@@ -242,9 +245,22 @@ describe("links an import does not take over, per com-object", () => {
     const project = xml0.replace(/<ComObjectInstanceRefs>[\s\S]*<\/ComObjectInstanceRefs>/, `<ComObjectInstanceRefs><ComObjectInstanceRef RefId="O-4" Links="GA-1 GA-9"/></ComObjectInstanceRefs>`);
     const imp = await post(state, "/api/projects/import", new File([knxprojWith(direct, project)], "Dropped.knxproj"));
     const entries = async () => ((await listed(state, imp.id)) as any[]).map((l) => [l.comObjRefId, l.comObjNumber, l.unresolved, l.unrecoverable]);
-    expect(await entries()).toEqual([["O-4", null, "notInConfiguration", false]]);
+    expect(await entries()).toEqual([["O-4", 4, "notInConfiguration", false]]);
     await put(state, imp.id, "params", { paramRefId: `${A}_P-1_R-1`, value: "1" });
     expect(await entries()).toEqual([["O-4", 4, null, false]]);
+  });
+
+  test("an object the configuration does not place carries the application's number and texts, never the digit of its ETS id", async () => {
+    const state = freshState();
+    const direct = appXml(`<ChannelIndependentBlock><ParameterBlock Id="${A}_PB-1" Name="Main" Text="Main"><ParameterRefRef RefId="${A}_P-1_R-1"/>
+      <choose ParamRefId="${A}_P-1_R-1"><when test="1"><ComObjectRefRef RefId="${A}_O-4"/></when></choose>
+    </ParameterBlock></ChannelIndependentBlock>`).replace("</ComObjectTable>", `${obj(4, "Scene", "Recall").replace(`Number="4"`, `Number="14"`)}</ComObjectTable>`);
+    const project = xml0.replace(/<ComObjectInstanceRefs>[\s\S]*<\/ComObjectInstanceRefs>/, `<ComObjectInstanceRefs><ComObjectInstanceRef RefId="O-4" Links="GA-1 GA-9"/><ComObjectInstanceRef RefId="O-8_R-8" Links="GA-1 GA-9"/></ComObjectInstanceRefs>`);
+    const imp = await post(state, "/api/projects/import", new File([knxprojWith(direct, project)], "Dropped.knxproj"));
+    // O-8 is no object of the application: nothing names its number, so none is sent.
+    expect(((await listed(state, imp.id)) as any[]).map((l) => [l.comObjRefId, l.comObjNumber, l.comObjName, l.functionText, l.unresolved])).toEqual([
+      ["O-4", 14, "Scene", "Recall", "notInConfiguration"], ["O-8_R-8", null, null, null, "notInApplication"],
+    ]);
   });
 
   test("a module object is open while its instance is there and can never be linked again once a parameter removes it", async () => {
@@ -271,7 +287,8 @@ describe("links an import does not take over, per com-object", () => {
     const entries = async () => ((await listed(state, imp.id)) as any[]).map((l) => [l.comObjRefId, l.comObjNumber, l.unresolved, l.unrecoverable]);
     expect(await entries()).toEqual([["MD-1_M-1_MI-2_O-1_R-1", 2, null, false], ["MD-1_M-1_MI-2_O-9_R-9", null, "notInApplication", true]]);
     await put(state, imp.id, "params", { paramRefId: `${MA}_P-2_R-1`, value: "2" });
-    expect(await entries()).toEqual([["MD-1_M-1_MI-2_O-1_R-1", null, "notInConfiguration", false], ["MD-1_M-1_MI-2_O-9_R-9", null, "notInApplication", true]]);
+    // Hidden, the object keeps the number its instance's base gives it; the one its module lacks has none.
+    expect(await entries()).toEqual([["MD-1_M-1_MI-2_O-1_R-1", 2, "notInConfiguration", false], ["MD-1_M-1_MI-2_O-9_R-9", null, "notInApplication", true]]);
   });
 
   test("a project without dropped links lists none, and an unknown project is refused", async () => {

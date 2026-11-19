@@ -15,19 +15,6 @@ const UNRESOLVED_TEXT = {
   notInConfiguration: "import.dropped.objectUnknown",
 } as const;
 
-// What an ETS com-object ref names of an object the configuration does not place, all there is to call it by.
-// An object of the application itself ("O-7_R-7", "O-4") is named by the number of its ETS id, which is not
-// guaranteed to be the object's own Number (the tooltip carries the ref). A module object's
-// number in the ref is relative to its module and lacks the instance's base number, so only its module
-// instance ("MD-14_M-40_MI-3_O-2-5_R-19") is named. A ref of another shape is shown as it is.
-function RefLabel({ comObjRefId }: { comObjRefId: string }) {
-  const { t } = useTranslation();
-  const instance = /_MI-(\d+)_/.exec(comObjRefId);
-  if (instance) return <>{t("import.dropped.moduleInstance", { number: Number(instance[1]) })}</>;
-  const object = /^O-(\d+)(?:_R-\d+)?$/.exec(comObjRefId);
-  return <>{object ? t("import.dropped.object", { number: Number(object[1]) }) : comObjRefId}</>;
-}
-
 // The project's links not taken over, as a mark in a page header: a warning counting the entries a link made
 // by hand can still close; where every entry is one no link reaches, a plain mark without a count, so the list
 // stays reachable and nothing reads as all taken over.
@@ -94,20 +81,19 @@ function ObjectsByDevice({ links, projectId, showDevice, testId }: { links: Drop
           <li key={i} className="space-y-1 rounded-md border border-border/60 bg-background/40 px-2.5 py-2" data-testid="dropped-object">
             <p className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-sm">
               {o.comObjNumber !== null
-                ? <>
-                    <span className="shrink-0 font-mono text-xs text-muted-foreground">{t("import.dropped.object", { number: o.comObjNumber })}</span>
-                    <span className="truncate text-foreground">{[o.comObjName, o.functionText].filter(Boolean).join(" · ")}</span>
-                  </>
+                ? <span className="shrink-0 font-mono text-xs text-muted-foreground">{t("import.dropped.object", { number: o.comObjNumber })}</span>
                 : <>
-                    <span className="shrink-0 font-mono text-xs text-muted-foreground" title={o.comObjRefId}>
-                      <RefLabel comObjRefId={o.comObjRefId} />
-                    </span>
-                    <span className="text-muted-foreground">
-                      {o.unresolved === "refused"
-                        ? t("import.dropped.objectRefused", { reason: localizeError(t, o.refusal, o.refusal) })
-                        : t(UNRESOLVED_TEXT[o.unresolved ?? "notInConfiguration"])}
-                    </span>
+                    <span className="shrink-0 font-mono text-xs text-muted-foreground">{t("import.dropped.objectFromEts")}</span>
+                    <span className="min-w-0 break-all font-mono text-xs text-muted-foreground">{o.comObjRefId}</span>
                   </>}
+              {(o.comObjName || o.functionText) && <span className="truncate text-foreground">{[o.comObjName, o.functionText].filter(Boolean).join(" · ")}</span>}
+              {o.unresolved && (
+                <span className="text-muted-foreground">
+                  {o.unresolved === "refused"
+                    ? t("import.dropped.objectRefused", { reason: localizeError(t, o.refusal, o.refusal) })
+                    : t(UNRESOLVED_TEXT[o.unresolved])}
+                </span>
+              )}
             </p>
             <div className="flex flex-wrap items-center gap-1.5">
               {o.gas.map((g, j) => g.inProject && g.address !== null

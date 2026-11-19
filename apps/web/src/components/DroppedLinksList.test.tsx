@@ -56,23 +56,27 @@ describe("the links an import did not take over", () => {
     expect(group).not.toContain("Switch");
   });
 
-  test("an object the configuration does not place is called by what its ETS ref names, never by the raw ref", () => {
-    const nameless = (comObjRefId: string, unresolved: DroppedLink["unresolved"], unrecoverable: boolean) =>
-      entry({ comObjRefId, comObjNumber: null, comObjName: null, functionText: null, unresolved, refusal: unresolved === "refused" ? "PARAM_TEST_UNSUPPORTED" : null, unrecoverable });
-    const html = renderToStaticMarkup(<DroppedLinksList links={[
-      nameless("O-7_R-7", "notInApplication", true), nameless("MD-14_M-40_MI-3_O-2-5_R-19", "moduleInstanceGone", true),
-      nameless("O-5_R-5", "noApplication", true), nameless("O-6_R-6", "refused", true), nameless("O-4", "notInConfiguration", false),
-    ]} />);
-    for (const n of [7, 5, 6, 4]) expect(html).toContain(`>Object ${n}</span>`);
-    // A module object's number in its ref is no object number: only the instance is named.
-    expect(html).toContain(">Module instance 3</span>");
-    expect(html).not.toContain(">Object 2<");
-    expect(html).not.toMatch(/>[^<]*O-\d+[-_\dR]*<\/span>/);
+  test("an object the application declares is called by its own number and texts, whatever digit its ETS ref carries", () => {
+    // Declared with Number 14 under the id O-4: the number comes from the server, never from the ref.
+    const known = entry({ comObjRefId: "O-4", comObjNumber: 14, comObjName: "Scene", functionText: "Recall", unresolved: "notInConfiguration" });
+    const refused = entry({ comObjRefId: "O-1_R-1", comObjNumber: 0, comObjName: "Switch", functionText: "On/off", unresolved: "refused", refusal: "PARAM_TEST_UNSUPPORTED", unrecoverable: true });
+    const html = renderToStaticMarkup(<DroppedLinksList links={[known, refused]} />);
+    expect(html).toContain(">Object 14</span>");
+    expect(html).toContain(">Scene · Recall</span>");
+    expect(html).toContain(">Object 0</span>");
+    expect(html).toContain("Object not shown by the device&#x27;s current configuration");
+    expect(html).not.toContain("Object from ETS");
+    expect(html).not.toContain(">Object 4<");
+    expect(html).not.toContain(">O-4<");
   });
 
-  test("a ref of an unknown shape is shown as it is", () => {
-    const html = renderToStaticMarkup(<DroppedLinksList links={[entry({ comObjRefId: "X-1", comObjNumber: null, unresolved: "notInApplication", unrecoverable: true })]} />);
-    expect(html).toContain(">X-1</span>");
+  test("an object nothing names a number for is no invented one: it is called an object from ETS, with its ref beside it", () => {
+    const nameless = (comObjRefId: string, unresolved: DroppedLink["unresolved"]) => entry({ comObjRefId, comObjNumber: null, comObjName: null, functionText: null, unresolved, unrecoverable: true });
+    const refs = ["O-7_R-7", "MD-14_M-40_MI-3_O-2-5_R-19", "X-1"];
+    const html = renderToStaticMarkup(<DroppedLinksList links={[nameless(refs[0], "notInApplication"), nameless(refs[1], "moduleInstanceGone"), nameless(refs[2], "noApplication")]} />);
+    for (const ref of refs) expect(html).toContain(`>${ref}</span>`);
+    expect(html.match(/>Object from ETS<\/span>/g)).toHaveLength(3);
+    expect(html).not.toMatch(/>Object \d+</);
   });
 
   test("an object no link reaches does not claim its other links were imported, an open one does", () => {

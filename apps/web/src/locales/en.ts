@@ -118,7 +118,7 @@ const en = {
       hint: "Each com-object with the group addresses ETS linked it to, the first being the one it sends on. Link the objects the device still has again by hand on its page.",
       open: "An object leaves this list once the device's configuration shows it, it holds the addresses ETS linked it to that the project has, and as many addresses in all as in ETS.",
       object: "Object {{number}}",
-      moduleInstance: "Module instance {{number}}",
+      objectFromEts: "Object from ETS",
       objectUnknown: "Object not shown by the device's current configuration",
       objectModuleInstanceGone: "The device's configuration has no such module instance",
       objectNotInApplication: "The device's application program has no such object",

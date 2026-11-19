@@ -52,7 +52,9 @@ export interface ProjectSummary { id: string; name: string; deviceCount: number;
 export interface Project { id: string; name: string; connectionId: string | null; groupAddressLevels: 2 | 3; devices: Device[]; groupRanges: GroupRangeNode[]; locations: SpaceNode[]; gaCount: number; secureDeviceCount: number; groupKeyCount: number; }
 export interface ImportGap { ia: string; name: string }
 // A com-object whose ETS links an import did not take over in full (server DroppedLinkView): the object's
-// number and texts are null where the device's configuration does not place it, `unresolved` saying why
+// number and texts are those of the configuration or, where it does not place the object, of the application
+// that declares it; null where neither knows them (the number also where a module instance's base is unknown),
+// `unresolved` saying why the configuration does not place the object
 // (`refusal`: the code of the configuration's refusal); `unrecoverable`: no link made in Busforge reaches
 // the object, so the entry is not counted as open work. An address is null where its value is not known
 // and only ETS's id names it; `inProject` says whether the project holds it now.

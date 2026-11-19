@@ -119,7 +119,7 @@ const de: Messages = {
       hint: "Jedes Kommunikationsobjekt mit den Gruppenadressen, die es in ETS hatte; die erste ist die, auf der es sendet. Objekte, die das Gerät noch hat, auf seiner Seite von Hand neu verknüpfen.",
       open: "Ein Objekt verlässt diese Liste, sobald die Konfiguration des Geräts es zeigt, es die Adressen aus ETS hat, die im Projekt sind, und insgesamt so viele Adressen wie in ETS.",
       object: "Objekt {{number}}",
-      moduleInstance: "Modulinstanz {{number}}",
+      objectFromEts: "Objekt aus ETS",
       objectUnknown: "Objekt nicht in der aktuellen Konfiguration des Geräts",
       objectModuleInstanceGone: "Die Konfiguration des Geräts hat diese Modulinstanz nicht",
       objectNotInApplication: "Das Applikationsprogramm des Geräts hat dieses Objekt nicht",
