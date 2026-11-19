@@ -583,6 +583,44 @@ describe("grid layouts (Rows/Columns/Cell) and Buttons", () => {
 // the test on R-B picks one of two union members. The place that shows R-A is a nested block, and
 // the test comes after it, so a document-order rule would read R-B differently in the UI walk and
 // in the image pass.
+// Inline="true" puts a block on its parent's page, where it stands in the parent's flow (the
+// OpenKNX RaumController draws every value-and-unit row as such a grid). It is no page, so its Name,
+// an identifier, never becomes a heading.
+describe("inline blocks", () => {
+  const xml = `<KNX><ApplicationProgram Id="M-TEST_A-13" DefaultLanguage="en-US"><Static>
+    <Parameters>${[1, 2, 3, 4].map((i) => `<Parameter Id="M-TEST_A-13_P-${i}" ParameterType="M-TEST_A-13_PT-1" Text="P${i}" Value="1" />`).join("")}</Parameters>
+    <ParameterRefs>${[1, 2, 3, 4].map((i) => `<ParameterRef Id="M-TEST_A-13_P-${i}_R-1" RefId="M-TEST_A-13_P-${i}" />`).join("")}</ParameterRefs>
+    <ParameterTypes><ParameterType Id="M-TEST_A-13_PT-1"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="9" /></ParameterType></ParameterTypes>
+    </Static><Dynamic><ChannelIndependentBlock>
+      <ParameterBlock Id="M-TEST_A-13_PB-1" Name="PageName" Text="Page">
+        <ParameterSeparator Id="M-TEST_A-13_PS-1" Text="General" UIHint="Headline" />
+        <ParameterBlock Id="M-TEST_A-13_PB-2" Name="X_StartupDelay" Inline="true"><ParameterRefRef RefId="M-TEST_A-13_P-1_R-1" /></ParameterBlock>
+        <ParameterRefRef RefId="M-TEST_A-13_P-2_R-1" />
+        <ParameterBlock Id="M-TEST_A-13_PB-3" Name="X_Table" Text="IO" Inline="true"><ParameterRefRef RefId="M-TEST_A-13_P-3_R-1" /></ParameterBlock>
+        <ParameterBlock Id="M-TEST_A-13_PB-4" Name="X_SubPage"><ParameterRefRef RefId="M-TEST_A-13_P-4_R-1" /></ParameterBlock>
+      </ParameterBlock>
+    </ChannelIndependentBlock></Dynamic></ApplicationProgram></KNX>`;
+  const blocks = buildDeviceConfig(parseAppConfig(xml), new Map()).blocks;
+  const byId = (n: number) => blocks.find((b) => b.id === `M-TEST_A-13_PB-${n}`)!;
+
+  test("an inline block stands where it is authored among its parent's items", () => {
+    expect(byId(1).items.map((i) => (i.kind === "param" ? i.param.name : i.kind))).toEqual(["separator", "P2"]);
+    expect(byId(2)).toMatchObject({ inline: true, at: 1, parentId: "M-TEST_A-13_PB-1", level: 1 });
+    expect(byId(3)).toMatchObject({ inline: true, at: 2 });
+  });
+
+  test("an inline block takes its Text as heading, never its Name", () => {
+    expect(byId(2).name).toBe("");
+    expect(byId(3).name).toBe("IO");
+  });
+
+  test("a block that is not inline stays a page of its own, named as before", () => {
+    expect(byId(4).inline).toBeUndefined();
+    expect(byId(4).at).toBeUndefined();
+    expect(byId(4).name).toBe("X_SubPage");
+  });
+});
+
 describe("ParameterRefs of one parameter share its value", () => {
   const xml = (extraRef = "") => `<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-TEST">
     <ApplicationPrograms><ApplicationProgram Id="M-TEST_A-40" ApplicationNumber="40" ApplicationVersion="1" MaskVersion="MV-07B0" Name="Share" DefaultLanguage="en-US">

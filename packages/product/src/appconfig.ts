@@ -115,7 +115,8 @@ export interface DynGridLine { id: string; text?: string; width?: string }
 export interface DynCell { row: number; col: number }
 
 export type DynNode =
-  | { kind: "block"; id: string; name: string; text: string; textParamRefId?: string; paramRefId?: string; access?: string; layout?: BlockLayout; rows?: DynGridLine[]; cols?: DynGridLine[]; children: DynNode[] }
+  // `inline`: ParameterBlock Inline="true", a block ETS draws inside its parent's page instead of as a page of its own.
+  | { kind: "block"; id: string; name: string; text: string; textParamRefId?: string; paramRefId?: string; access?: string; inline?: boolean; layout?: BlockLayout; rows?: DynGridLine[]; cols?: DynGridLine[]; children: DynNode[] }
   // `repeatCount` is set only for a <Repeat> (its literal Count): the from-scratch
   // instance resolver replays the children that many times to allocate per-instance.
   | { kind: "container"; id: string; name: string; text: string; textParamRefId?: string; number?: string; repeatCount?: number; children: DynNode[] }
@@ -776,6 +777,7 @@ function parseDyn(n: ONode): DynNode | null {
       return {
         kind: "block", id: a.Id ?? "", name: a.Name ?? "", text: a.Text ?? "", textParamRefId: a.TextParameterRefId,
         paramRefId: a.ParamRefId, access: a.Access,
+        inline: a.Inline === "true" || a.Inline === "1" ? true : undefined,
         layout: grid ? declared : undefined,
         rows: grid ? rows ?? undefined : undefined, // `grid` already excludes null
         cols: grid ? cols ?? undefined : undefined,

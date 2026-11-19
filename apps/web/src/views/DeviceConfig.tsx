@@ -17,6 +17,7 @@ import { SectionNav } from "@/components/SectionNav.tsx";
 import { BreakableText } from "@/components/BreakableText.tsx";
 import { scrollToSection, useStickyVar } from "@/lib/stickyChrome.ts";
 import { useScrollSpy } from "@/lib/scrollSpy.ts";
+import { flowOf, inlineChildren, keptAt } from "@/lib/blockFlow.ts";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Notice } from "@/components/ui/notice";
@@ -376,11 +377,16 @@ export function DeviceConfig() {
 
   const groupChanged = (g: { head: CfgBlock; children: CfgBlock[] }) =>
     g.head.items.some(isItemChanged) || g.children.some((c) => c.items.some(isItemChanged));
+  // A block's page has changes: its own rows or those of the inline blocks on it.
+  const pageChanged = (b: CfgBlock, inline: Map<string, CfgBlock[]>): boolean =>
+    b.items.some(isItemChanged) || (inline.get(b.id) ?? []).some((k) => pageChanged(k, inline));
 
   // Filter the config by the search term: a matching section header (group or
   // sub-block name) reveals everything under it; otherwise only the matching
   // rows (param name/value, com-object label) are kept. The group header always
-  // renders as context when any of its children survive.
+  // renders as context when any of its children survive. An inline block is part
+  // of its parent's page: a matching page reveals it, and its place moves to the
+  // parent's rows that are still shown.
   const filteredGroups = useMemo(() => {
     if (!q) return groups;
     const keep = (items: CfgItem[]) => items.filter((it) => itemMatches(it, q));
@@ -389,26 +395,37 @@ export function DeviceConfig() {
       const headMatch = norm(g.head.name).includes(q);
       const headItems = headMatch ? g.head.items : keep(g.head.items);
       const children: CfgBlock[] = [];
+      // Each shown block's own and shown items, to move its inline blocks' places; the pages that matched.
+      const shown = new Map<string, [CfgItem[], CfgItem[]]>([[g.head.id, [g.head.items, headItems]]]);
+      const matched = new Set<string>(headMatch ? [g.head.id] : []);
       // Stage a dropped level-1 block so a surviving deeper child can still show
       // its parent heading as context (kept with no items).
       let pendingParent: CfgBlock | null = null;
       for (const c of g.children) {
-        const cMatch = headMatch || norm(c.name).includes(q);
+        const cMatch = headMatch || norm(c.name).includes(q) || (!!c.inline && !!c.parentId && matched.has(c.parentId));
+        if (cMatch) matched.add(c.id);
         const items = cMatch ? c.items : keep(c.items);
         const kept = cMatch || items.length > 0;
         if (c.level === 1) {
-          if (kept) { children.push({ ...c, items }); pendingParent = null; }
+          if (kept) { children.push({ ...c, items }); shown.set(c.id, [c.items, items]); pendingParent = null; }
           else pendingParent = c;
         } else if (kept) {
-          if (pendingParent) { children.push({ ...pendingParent, items: [] }); pendingParent = null; }
+          if (pendingParent) { children.push({ ...pendingParent, items: [] }); shown.set(pendingParent.id, [pendingParent.items, []]); pendingParent = null; }
           children.push({ ...c, items });
+          shown.set(c.id, [c.items, items]);
         }
       }
+      const placed = children.map((c) => {
+        const parent = c.inline && c.at !== undefined && c.parentId ? shown.get(c.parentId) : undefined;
+        return parent ? { ...c, at: keptAt(parent[0], parent[1], c.at!) } : c;
+      });
       if (headMatch || headItems.length > 0 || children.length > 0)
-        out.push({ head: { ...g.head, items: headItems }, children });
+        out.push({ head: { ...g.head, items: headItems }, children: placed });
     }
     return out;
   }, [groups, q]);
+  // Per group, the inline blocks each of its blocks carries on its page.
+  const groupInline = useMemo(() => filteredGroups.map((g) => inlineChildren([g.head, ...g.children])), [filteredGroups]);
   const matchCount = useMemo(
     () => filteredGroups.reduce((n, g) => n + [g.head, ...g.children].reduce((m, b) => m + b.items.filter((i) => i.kind === "param" || i.kind === "comObject").length, 0), 0),
     [filteredGroups],
@@ -708,9 +725,38 @@ export function DeviceConfig() {
     );
   };
 
+  // A block's page together with the inline blocks that stand on it, each at its authored place. The
+  // rows of a Grid/Table share one geometry, so inline blocks inside one follow it.
+  const renderPage = (b: CfgBlock, inline: Map<string, CfgBlock[]>): ReactNode[] => {
+    const kids = inline.get(b.id) ?? [];
+    const parts = b.layout
+      ? [{ kind: "items" as const, items: b.items, from: 0 }, ...kids.map((block) => ({ kind: "inline" as const, block }))]
+      : flowOf(b.items, kids);
+    return parts.flatMap((p) => p.kind === "items"
+      ? (b.layout ? [renderItems(b, b.id)] : p.items.map((item, i) => renderItem(item, `${b.id}-${p.from + i}`)))
+      : [<div key={p.block.id} id={`sec-${p.block.id}`}>{inlineHeading(p.block, inline)}{renderPage(p.block, inline)}</div>]);
+  };
+  // ETS draws an inline block's Text above it; one without Text has no heading at all.
+  const inlineHeading = (b: CfgBlock, inline: Map<string, CfgBlock[]>) => b.name ? (
+    <h4 className="mt-4 mb-3 flex items-center gap-2.5 text-sm font-semibold text-muted-foreground">
+      <span className="min-w-0 shrink truncate">{b.name}</span>
+      {pageChanged(b, inline) && <span className="size-1.5 shrink-0 rounded-full bg-primary" title={t("device.changedDot")} />}
+      <span className="h-px flex-1 bg-gradient-to-r from-border/40 to-transparent" />
+    </h4>
+  ) : null;
+
   // The section index mirrors the (filtered) tree shown on the right, so it stays
   // useful while searching; show it whenever there is more than one place to jump.
-  const navCount = filteredGroups.reduce((n, g) => n + 1 + g.children.filter((c) => c.level === 1).length, 0);
+  // It lists each group head plus its direct (level-1) pages that carry a name; an
+  // inline block is part of its parent's page and has no entry.
+  // A group without a name holds the leaves of a ChannelIndependentBlock (it has no Name) or a
+  // top-level block without Text; the index needs a label for it, so it is called channel-independent.
+  const inIndex = (c: CfgBlock) => c.level === 1 && !c.inline && !!c.name;
+  const navEntries = filteredGroups.flatMap((g, gi) => [
+    { id: `sec-${g.head.id}`, label: g.head.name || t("device.channelIndependent"), changed: groupChanged(g) },
+    ...g.children.filter(inIndex).map((c) => ({ id: `sec-${c.id}`, label: c.name, sub: true, changed: pageChanged(c, groupInline[gi]) })),
+  ]);
+  const navCount = navEntries.length;
 
   return (
     <div className="space-y-4">
@@ -981,24 +1027,23 @@ export function DeviceConfig() {
           ) : (
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
           {navCount > 1 && (
-            // The index shows each group head plus its direct (level-1) blocks; deeper sub-blocks are
-            // reached by scrolling. The amber dot is reserved for "has changes".
+            // Deeper sub-blocks are reached by scrolling. The amber dot is reserved for "has changes".
             <SectionNav
               label={t("device.jumpTo")} changedTitle={t("device.changedDot")} active={activeSec} onJump={scrollToSec}
               context={device && !headerInView && <><span className="font-medium text-foreground">{device.name || t("common.unnamed")}</span> <span className="font-mono">{device.ia}</span></>}
-              entries={filteredGroups.flatMap((g) => [
-                { id: `sec-${g.head.id}`, label: g.head.name || t("device.unnamedSection"), changed: groupChanged(g) },
-                ...g.children.filter((c) => c.level === 1).map((c) => ({ id: `sec-${c.id}`, label: c.name || t("device.unnamedSection"), sub: true, changed: c.items.some(isItemChanged) })),
-              ])}
+              entries={navEntries}
             />
           )}
 
           <div ref={containerRef} className="min-w-0 flex-1 space-y-6">
-            {filteredGroups.map((g) => (
+            {filteredGroups.map((g, gi) => {
+              const inline = groupInline[gi];
+              const onPage = new Set([...inline.values()].flat().map((b) => b.id));
+              return (
               // Section heading sits ABOVE the card so each channel/group start is clear.
               <section key={g.head.id} className="space-y-2">
                 <h2 id={`sec-${g.head.id}`} ref={registerRef(`sec-${g.head.id}`)} className="flex scroll-mt-chrome items-center gap-2 px-1 text-lg font-semibold text-foreground">
-                  <span className="min-w-0 truncate">{g.head.name || t("device.unnamedSection")}</span>
+                  <span className="min-w-0 truncate">{g.head.name || t("device.channelIndependent")}</span>
                   {groupChanged(g) && <span className="size-2 shrink-0 rounded-full bg-primary" title={t("device.changedDot")} />}
                 </h2>
                 <Card className="gap-0 py-0">
@@ -1006,31 +1051,35 @@ export function DeviceConfig() {
                   {g.head.items.length === 0 && g.children.length === 0 && (
                     <p className="text-sm text-muted-foreground">{t("device.emptySection")}</p>
                   )}
-                  {renderItems(g.head, g.head.id)}
-                  {g.children.map((child: CfgBlock) => {
+                  {renderPage(g.head, inline)}
+                  {g.children.filter((c) => !onPage.has(c.id)).map((child: CfgBlock) => {
+                    // An inline block shown here lost its page to the filter: it stands as itself, without index entry.
+                    if (child.inline) return <div key={child.id} id={`sec-${child.id}`} className="pt-3 first:pt-0">{inlineHeading(child, inline)}{renderPage(child, inline)}</div>;
                     const deep = child.level >= 2; // sub-block of a sub-section: indent further, lighter heading
                     return (
                       <section
                         key={child.id} id={`sec-${child.id}`}
-                        ref={child.level === 1 ? registerRef(`sec-${child.id}`) : undefined}
+                        ref={inIndex(child) ? registerRef(`sec-${child.id}`) : undefined}
                         className={cn("scroll-mt-chrome pt-3 first:pt-0", deep && "pl-3")}
                       >
                         {/* Channel sub-heading: the label followed by a hairline that fades out,
-                            so each sub-block reads as its own section without a heavy left bar. */}
+                            so each sub-block reads as its own section without a heavy left bar.
+                            A page without a name keeps only the line. */}
                         <h4 className={cn("mb-3 flex items-center gap-2.5 font-semibold first:mt-0",
                           deep ? "mt-4 text-sm text-muted-foreground" : "mt-5 text-foreground")}>
-                          <span className="min-w-0 shrink truncate">{child.name || t("device.unnamedSection")}</span>
-                          {child.items.some(isItemChanged) && <span className="size-1.5 shrink-0 rounded-full bg-primary" title={t("device.changedDot")} />}
+                          {child.name && <span className="min-w-0 shrink truncate">{child.name}</span>}
+                          {pageChanged(child, inline) && <span className="size-1.5 shrink-0 rounded-full bg-primary" title={t("device.changedDot")} />}
                           <span className={cn("h-px flex-1 bg-gradient-to-r to-transparent", deep ? "from-border/40" : "from-border/70")} />
                         </h4>
-                        {renderItems(child, child.id)}
+                        {renderPage(child, inline)}
                       </section>
                     );
                   })}
                   </CardContent>
                 </Card>
               </section>
-            ))}
+              );
+            })}
           </div>
           </div>
           )}
