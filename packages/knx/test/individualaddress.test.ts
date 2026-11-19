@@ -159,9 +159,11 @@ describe("assigning an individual address", () => {
     // (MV-0701; d3-abb-ia-201to211.log, lines 33-71): the address write, the read that finds the device
     // there, one connection with the descriptor read, its acknowledgement, A_Restart, the close. ETS reads
     // PID_MAX_APDU_LENGTH and the serial number between the descriptor and the restart (lines 51-64), which
-    // Busforge leaves out; the closing IA_Read is Busforge's proof that the mode ended.
+    // Busforge leaves out. After the close Busforge's own proof that the mode ended: the device answers at
+    // its address again (a descriptor read on a connection of its own), then nobody answers the IA_Read.
     expect(bus.wire.slice(bus.wire.indexOf("IA_Write"))).toEqual([
-      "IA_Write", "IA_Read", `${NEW_IA} T_Connect`, `${NEW_IA} DescRead`, `${NEW_IA} T_ACK`, `${NEW_IA} Restart`, `${NEW_IA} T_Disconnect`, "IA_Read",
+      "IA_Write", "IA_Read", `${NEW_IA} T_Connect`, `${NEW_IA} DescRead`, `${NEW_IA} T_ACK`, `${NEW_IA} Restart`, `${NEW_IA} T_Disconnect`,
+      `${NEW_IA} T_Connect`, `${NEW_IA} DescRead`, `${NEW_IA} T_ACK`, `${NEW_IA} T_Disconnect`, "IA_Read",
     ]);
   }, 100_000); // the "is the target free?" probe waits out a silent address (3 tries x 1.5 s)
 
@@ -180,7 +182,8 @@ describe("assigning an individual address", () => {
     expect(bus.progModeWrites).toBe(0);
     expect(bcu1.progMode).toBe(false);
     expect(bus.wire.slice(bus.wire.indexOf("IA_Write"))).toEqual([
-      "IA_Write", "IA_Read", `${NEW_IA} T_Connect`, `${NEW_IA} DescRead`, `${NEW_IA} T_ACK`, `${NEW_IA} Restart`, `${NEW_IA} T_Disconnect`, "IA_Read",
+      "IA_Write", "IA_Read", `${NEW_IA} T_Connect`, `${NEW_IA} DescRead`, `${NEW_IA} T_ACK`, `${NEW_IA} Restart`, `${NEW_IA} T_Disconnect`,
+      `${NEW_IA} T_Connect`, `${NEW_IA} DescRead`, `${NEW_IA} T_ACK`, `${NEW_IA} T_Disconnect`, "IA_Read",
     ]);
   }, 100_000);
 
@@ -195,28 +198,45 @@ describe("assigning an individual address", () => {
     expect(res).toEqual({ previous: "1.1.255", assigned: NEW_IA, verified: true, progModeCleared: false, progModeError: "the device still answers in programming mode after the restart" });
   }, 100_000);
 
-  test("a device that closes the connection instead of handing out its descriptor gets the restart on a new one", async () => {
+  test("a device that does not come back after the restart is reported as not known to have left programming mode", async () => {
     const dev = new SimDevice("1.1.255", true);
     const bus = new SimBus([dev]);
     const orig = bus.sendCemi.bind(bus);
-    let written = false;
-    let closedOnce = false;
     bus.sendCemi = async (cemi: Buffer) => {
-      const { dst, tpdu, isGroup } = parseCemiLData(cemi);
-      if (isGroup && parseApdu(tpdu).apci === APCI.INDIVIDUAL_ADDRESS_WRITE) written = true;
-      // After the write, the device answers its first numbered request with T_Disconnect, and only that one.
-      const numbered = !isGroup && dst === iaToNum(NEW_IA) && (tpdu[0] & 0x40) !== 0;
-      dev.closes = written && numbered && !closedOnce;
-      if (dev.closes) closedOnce = true;
+      const { tpdu, isGroup } = parseCemiLData(cemi);
+      if (!isGroup && parseApdu(tpdu).apci === APCI.RESTART) { await orig(cemi); dev.deafFor = 1_000; return; } // reboots and stays silent
       return orig(cemi);
     };
 
     const res = await assignIndividualAddress(bus, NEW_IA, fast);
 
-    expect(closedOnce).toBe(true);
+    expect(res).toEqual({ previous: "1.1.255", assigned: NEW_IA, verified: true, progModeCleared: false, progModeError: `the device does not answer at ${NEW_IA} after the restart, so whether it left programming mode is not known` });
+    expect(bus.wire.filter((w) => w === "IA_Read").length).toBe(2); // the two before the restart: no probe without the device back
+  }, 100_000);
+
+  test("a device that closes the connection instead of handing out its descriptor gets the restart on a new one", async () => {
+    // After the write the device answers every numbered request with T_Disconnect until programming mode
+    // is to end, so the reachability check gets no descriptor and keeps no connection for the restart.
+    const dev = new SimDevice("1.1.255", true);
+    const bus = new SimBus([dev]);
+    const orig = bus.sendCemi.bind(bus);
+    let written = false;
+    let ending = false;
+    let endingAt = -1;
+    bus.sendCemi = async (cemi: Buffer) => {
+      const { tpdu, isGroup } = parseCemiLData(cemi);
+      if (isGroup && parseApdu(tpdu).apci === APCI.INDIVIDUAL_ADDRESS_WRITE) written = true;
+      dev.closes = written && !ending;
+      return orig(cemi);
+    };
+
+    const res = await assignIndividualAddress(bus, NEW_IA, { ...fast, onProgress: (p) => { if (p === "prog-mode-off") { ending = true; endingAt = bus.wire.length; } } });
+
+    expect(res).toEqual({ previous: "1.1.255", assigned: NEW_IA, verified: true, progModeCleared: true, progModeError: null });
     expect(bus.restarts).toBe(1);
     expect(bus.progModeWrites).toBe(0);
-    expect(res.progModeCleared).toBe(true);
+    // The restart went out on a connection opened after the reachability check had none to hand over.
+    expect(bus.wire.slice(endingAt, endingAt + 2)).toEqual([`${NEW_IA} T_Connect`, `${NEW_IA} Restart`]);
   }, 100_000);
 
   test("REFUSES when no device is in programming mode, and writes nothing", async () => {

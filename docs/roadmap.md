@@ -340,7 +340,8 @@ where they are required; raw acquisition is not a way around access control. Wha
   mode, `A_IndividualAddressSerialNumber_Read` without), Syncs to `0/0/0` and sends the serial-number
   write as a secured broadcast, under the FDSK on a reset unit
   ([knx-secure.md](knx-secure.md#individual-address-assignment)) and under its tool key otherwise, with
-  Data Secure on or off in the project (captured on the Jung 400021SE and the GVS AMMA). On the secured
+  Data Secure on or off in the project (captured on the Jung 400021SE with it on and off, on the GVS AMMA
+  with it on). On the secured
   connection that follows it switches the security mode on, writes the tool key and the sending sequence
   (PID 59) where the project has Data Secure on, reads the security mode where it is off, reads the serial
   number and ends with a secured confirmed restart ([commissioning.md](commissioning.md)).
@@ -359,6 +360,11 @@ where they are required; raw acquisition is not a way around access control. Wha
   mode off itself and writes the FDSK as the tool key; the Jung 400021SE answers that restart without error
   and restarts, and still opens under its tool key afterwards. Needs an ETS capture of such a download
   before anything is built.
+- **Busforge's secured master reset is not answered where ETS's is.** On the Jung 400021SE Busforge's
+  secured A_Restart with erase code 7 gets no answer and resets nothing, ETS's secured confirmed restart
+  with erase code 7 is answered without error and restarts the unit ([findings.md](findings.md) §19). What
+  differs between the two frames is not explained; Busforge's frame held against ETS's from its ETS6.log
+  settles it.
 - **A smoke behaviour on a fresh address Busforge secures,** to show the device acting on a
   Busforge-generated key, not only holding it.
 - **Sending:** read the interface's L_Data.con over UDP, extended frames for values longer than

@@ -78,10 +78,10 @@ const NACK_TRIES = 3;
 async function addressAnswers(tun: KnxTransport, ia: string, lineAlive: boolean): Promise<boolean> {
   return (await answerAt(tun, ia, lineAlive, false)) !== null;
 }
-// What answers at `ia`: null for nobody, else the mask from its descriptor ("" when a device is
-// there but did not hand its descriptor out). `keep`: a device that handed its descriptor out stays
-// connected and is returned for the caller to go on with and disconnect.
-type Answer = { mask: string; dev: KnxDevice | null };
+// What answers at `ia`: null for nobody, else a device (`dev` null when it is there but did not hand
+// its descriptor out). `keep`: a device that handed its descriptor out stays connected and is returned
+// for the caller to go on with and disconnect.
+type Answer = { dev: KnxDevice | null };
 async function answerAt(tun: KnxTransport, ia: string, lineAlive: boolean, keep: boolean): Promise<Answer | null> {
   for (let i = 0; ; i++) {
     try { return await answerAtOnce(tun, ia, keep); }
@@ -96,16 +96,16 @@ async function answerAtOnce(tun: KnxTransport, ia: string, keep: boolean): Promi
   let kept = false;
   try {
     await dev.connect();
-    const mask = await dev.deviceDescriptor();
+    await dev.deviceDescriptor();
     kept = keep;
-    return { mask, dev: keep ? dev : null };
+    return { dev: keep ? dev : null };
   } catch (e) {
     if (e instanceof KnxError && e.code === "DEVICE_NOT_ANSWERING") return null; // silence: absent
     // A T_Disconnect answering our request: a device is there (in another tool's connection, or
     // one that missed our T_Connect), so the address is taken.
-    if (e instanceof KnxError && e.code === "DEVICE_CLOSED_CONNECTION") return { mask: "", dev: null };
+    if (e instanceof KnxError && e.code === "DEVICE_CLOSED_CONNECTION") return { dev: null };
     // A device that acknowledged and sent another service is there too.
-    if (e instanceof KnxError && e.code === "ANSWER_SERVICE_MISMATCH") return { mask: "", dev: null };
+    if (e instanceof KnxError && e.code === "ANSWER_SERVICE_MISMATCH") return { dev: null };
     throw e; // a transport failure is not evidence of a free address
   } finally {
     if (!kept) { try { await dev.disconnect(); } catch { /* nothing was connected */ } }
@@ -207,8 +207,14 @@ export async function assignIndividualAddress(tun: KnxTransport, ia: string, opt
     await dev.disconnect();
     dev = null;
     await sleep(settleMs);
-    progModeCleared = (await readProgModeDevices(tun, probeMs)).length === 0;
-    if (!progModeCleared) progModeError = "the device still answers in programming mode after the restart";
+    // A rebooting device answers nothing, so silence to the probe proves the mode ended only once the
+    // device answers at its address again (the MDT BE-02001.02 is back about 2 s after the restart).
+    if (await answerAt(tun, ia, true, false) === null) {
+      progModeError = `the device does not answer at ${ia} after the restart, so whether it left programming mode is not known`;
+    } else {
+      progModeCleared = (await readProgModeDevices(tun, probeMs)).length === 0;
+      if (!progModeCleared) progModeError = "the device still answers in programming mode after the restart";
+    }
   } catch (e) {
     progModeError = e instanceof Error ? e.message : String(e);
   } finally {
