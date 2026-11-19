@@ -14,7 +14,9 @@ export const LSM = { LOAD: 1, LOAD_COMPLETED: 2, UNLOAD: 4 } as const;
 // LSM states read back from PID 5.
 export const STATE = { UNLOADED: 0, LOADED: 1, LOADING: 2, ERROR: 3 } as const;
 
-const ev = (e: number) => { const b = Buffer.alloc(10); b[0] = e; return b; };
+// A load event: the event octet and its additional info, 10 octets in all.
+export const LOAD_EVENT_LENGTH = 10;
+const ev = (e: number) => { const b = Buffer.alloc(LOAD_EVENT_LENGTH); b[0] = e; return b; };
 function allocPayload(size: number, fill: boolean, fillByte = 0): Buffer {
   const b = Buffer.alloc(10);
   b[0] = 0x03; b[1] = 0x0b;          // AdditionalLoadControls: allocate relative segment

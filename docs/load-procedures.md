@@ -438,9 +438,10 @@ same on the open tunnel, once per device, before the first load-state event of a
 IP one that does not answer within a second, Busforge's own KNXnet/IP server, which does not answer the
 extended search), the path limit stays: 32 bytes extended, 12 classic. A frame whose TPDU is longer than
 16 octets goes as an extended frame (control field 1 `0x3C`), as ETS sends it (`0x30`, also through
-Busforge's KNXnet/IP server to its USB interface). A device on another line than the interface, behind
-a coupler, gets standard frames only ([connections.md](connections.md#devices-behind-a-coupler)); no
-capture shows how ETS sizes its requests there. The query and the longer writes have run on no device.
+Busforge's KNXnet/IP server to its USB interface). In a plain session, a device on another line than
+the interface, behind a coupler, gets standard frames only
+([connections.md](connections.md#devices-behind-a-coupler)); no capture shows how ETS sizes its
+requests there. The query and the longer writes have run on no device.
 
 **Which bytes a System 7 parameter download writes** (`parWriteSet`, family level): its image is
 every byte a parameter's memory covers, changed or not, in every parameter segment (Auro

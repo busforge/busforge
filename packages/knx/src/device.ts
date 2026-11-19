@@ -47,6 +47,9 @@ const STANDARD_FRAME_APDU = 15;
 // A_Memory_Read and A_Memory_Write spend 3 octets besides the data: the APCI's second octet with the
 // count, and the 2-byte address.
 const CLASSIC_MEMORY_OVERHEAD = 3;
+// An A_PropertyValue_Response spends 5 octets besides its element data: the APCI's second octet, object,
+// property, and count with start.
+const PROPERTY_ANSWER_OVERHEAD = 5;
 // Element count (one octet) and start index (two) of an extended property service. Masking a value
 // out of range would address other elements, so it is refused.
 function assertElements(start: number, count: number): void {
@@ -131,7 +134,7 @@ export function transferChunks(maxApdu: number | null, secured: boolean): { clas
     ({ ...c, propRead: c.extRead - PROP_EXTRA_OVERHEAD, propWrite: c.extWrite - PROP_EXTRA_OVERHEAD });
   if (!secured) {
     return withProps({
-      classicRead: maxApdu === null ? 12 : Math.max(12, Math.min(EXT_READ_CHUNK, maxApdu - 3)),
+      classicRead: maxApdu === null ? 12 : Math.max(12, Math.min(EXT_READ_CHUNK, maxApdu - CLASSIC_MEMORY_OVERHEAD)),
       extRead: EXT_READ_CHUNK,
       extWrite: maxApdu === null ? EXT_WRITE_CHUNK : Math.min(EXT_WRITE_CHUNK, maxApdu - EXT_WRITE_OVERHEAD),
     });
@@ -146,7 +149,7 @@ export function transferChunks(maxApdu: number | null, secured: boolean): { clas
     return n - SECURE_APDU_OVERHEAD;
   };
   return withProps({
-    classicRead: fit(Math.min(EXT_READ_CHUNK, maxApdu - 3), "memory read"),
+    classicRead: fit(Math.min(EXT_READ_CHUNK, maxApdu - CLASSIC_MEMORY_OVERHEAD), "memory read"),
     extRead: fit(Math.min(EXT_READ_CHUNK, maxApdu - EXT_WRITE_OVERHEAD), "extended memory read"),
     extWrite: fit(Math.min(SECURE_WRITE_PATH_APDU, maxApdu) - EXT_WRITE_OVERHEAD, "extended memory write"),
   });
@@ -174,7 +177,7 @@ export function writeChunks(deviceMax: number | null, interfaceMax: number | nul
   const user = Math.max(1, Math.min(USER_MEMORY_MAX_COUNT, userApdu - USER_WRITE_OVERHEAD));
   if (deviceMax === null || interfaceMax === null) return { classic: 12, ext: transferChunks(deviceMax, false).extWrite, user };
   const n = Math.min(deviceMax, interfaceMax);
-  return { classic: Math.max(1, Math.min(63, n - 3)), ext: Math.max(1, Math.min(255, n - EXT_WRITE_OVERHEAD)), user };
+  return { classic: Math.max(1, Math.min(63, n - CLASSIC_MEMORY_OVERHEAD)), ext: Math.max(1, Math.min(255, n - EXT_WRITE_OVERHEAD)), user };
 }
 
 // A_Restart carries its type in the low bits of its APCI: 0 = a plain reboot, 1 = a master reset,
@@ -405,14 +408,7 @@ export class KnxDevice {
   // possibly open in the device (unclosed); a numbered frame the interface confirmed shows the link
   // works again. A control frame proves nothing: over TCP its send ends before the interface confirms.
   // `quiet`: a failure is not noted (a frame the device's T_ACK already proved delivered).
-  // A plain request longer than a standard frame, on a route through a coupler (routeChunk), is refused
-  // here, before it is sent: the coupler may drop it, and the device then closes the connection mid-write.
   private async sendCemi(cemi: Buffer, quiet = false): Promise<void> {
-    const apduLength = cemi[2 + (cemi[1] ?? 0) + 6] ?? 0;
-    if (apduLength > STANDARD_FRAME_APDU && this.routeChunk(0) === STANDARD_FRAME_APDU) {
-      throw new KnxError("COUPLER_ROUTE_LONG_FRAME",
-        `a request of ${apduLength} APDU octets to ${numToIa(this.dst)} would cross a coupler from the interface at ${numToIa(this.me)} as a long frame, which a coupler forwards only up to its own maximum APDU; refusing before it is sent`);
-    }
     const tpci = cemi[2 + (cemi[1] ?? 0) + 7] ?? 0;
     if ((tpci & 0x80) === 0 && this.numberedSinceConnect >= 0) this.numberedSinceConnect++;
     try {
@@ -623,6 +619,7 @@ export class KnxDevice {
   // is not waited for once it is there, and its absence is no error (the confirmed restart, below).
   // `reconnected`: the request is already the one asked again on a new connection (below).
   private async request(build: (seq: number) => Buffer, expectResponse: boolean, tries = Number(process.env.KNX_TRIES) || 3, afterWrap?: () => void, deviceAckSuffices = false, reconnected = false): Promise<ParsedApdu | null> {
+    this.assertFitsRoute(build(0).length - 1);
     // A caller awaiting an answer past the request (the confirmed restart) set it before; it stays.
     const awaitedBefore = this.answers;
     // The device closed this connection since its last request: a link that stalled past its 6 s
@@ -1040,16 +1037,34 @@ export class KnxDevice {
   routeCrossesCoupler(): boolean {
     return this.me === 0 || this.me >> 8 !== this.dst >> 8;
   }
-  // The data one plain request carries at most on such a route: a standard frame less the request's own
-  // octets; unbounded on a route within the line. A secured request does not fit a standard frame at all
-  // (SECURE_APDU_OVERHEAD), so a secured session keeps its own sizes there and needs couplers that pass
-  // its long frames.
+  // Whether plain requests are held to standard frames: on a route that may cross a coupler. A secured
+  // session's Sync and its memory and property requests do not fit a standard frame (SECURE_APDU_OVERHEAD),
+  // so a secured session keeps its own sizes there and needs couplers that pass its long frames.
+  standardFramesOnly(): boolean {
+    return this.secure === undefined && this.routeCrossesCoupler();
+  }
+  // The data one plain request carries at most: a standard frame less the request's own octets where
+  // standardFramesOnly, else unbounded.
   private routeChunk(overhead: number): number {
-    return this.secure === undefined && this.routeCrossesCoupler() ? STANDARD_FRAME_APDU - overhead : Infinity;
+    return this.standardFramesOnly() ? STANDARD_FRAME_APDU - overhead : Infinity;
+  }
+  // A request that cannot be split and is longer than a standard frame, where standardFramesOnly, is
+  // refused before it is sent: a coupler that does not pass it leaves the device without it, mid-download.
+  // `apduLength`: the request's cEMI length field (its TPDU less the TPCI octet).
+  assertFitsRoute(apduLength: number): void {
+    if (apduLength <= STANDARD_FRAME_APDU || !this.standardFramesOnly()) return;
+    const route = this.me === 0
+      ? "the interface does not tell its own address, so a coupler between it and the device cannot be ruled out"
+      : `the interface at ${numToIa(this.me)} is on another line than ${numToIa(this.dst)}, so the request crosses a coupler`;
+    throw new KnxError("COUPLER_ROUTE_LONG_FRAME",
+      `a request of ${apduLength} APDU octets does not fit a standard frame, and ${route}, which forwards a long frame only up to its own maximum APDU; refusing before it is sent`);
   }
   // The element data one A_PropertyValue_Response carries: the maximum APDU length less the response's
-  // APCI, object, property, count and start (5 octets); 15 where the device declares none (standard frame).
-  async propValueDataMax(): Promise<number> { return Math.min(((await this.maxApduLength()) ?? 15) - 5, this.routeChunk(5)); }
+  // APCI, object, property, count and start (PROPERTY_ANSWER_OVERHEAD); a standard frame's where the device
+  // declares none.
+  async propValueDataMax(): Promise<number> {
+    return Math.min(((await this.maxApduLength()) ?? STANDARD_FRAME_APDU) - PROPERTY_ANSWER_OVERHEAD, this.routeChunk(PROPERTY_ANSWER_OVERHEAD));
+  }
   // An optional property: the device answers a property it does not implement with element count 0
   // (and possibly an error byte), which propRead would return as if it were a value. Null here.
   async propReadIfPresent(obj: number, pid: number): Promise<Buffer | null> {
@@ -1069,13 +1084,13 @@ export class KnxDevice {
     return Math.min(transferChunks(await this.maxApduLength(), this.secure !== undefined).classicRead, this.routeChunk(CLASSIC_MEMORY_OVERHEAD));
   }
   // The extended services run at the path limits in a plain session, as they always have; a secured
-  // one also fits them to the device's maximum APDU (transferChunks). A route through a coupler holds a
-  // plain session to standard frames (routeChunk).
+  // one also fits them to the device's maximum APDU (transferChunks). The extended property services are
+  // held to standard frames here where standardFramesOnly, the memory services where they send.
   private async extChunks(): Promise<ReturnType<typeof transferChunks>> {
     const secured = this.secure !== undefined;
     const c = transferChunks(secured ? await this.maxApduLength() : null, secured);
-    const ext = this.routeChunk(EXT_WRITE_OVERHEAD), prop = this.routeChunk(EXT_WRITE_OVERHEAD + PROP_EXTRA_OVERHEAD);
-    return { classicRead: Math.min(c.classicRead, this.routeChunk(CLASSIC_MEMORY_OVERHEAD)), extRead: Math.min(c.extRead, ext), extWrite: Math.min(c.extWrite, ext), propRead: Math.min(c.propRead, prop), propWrite: Math.min(c.propWrite, prop) };
+    const prop = this.routeChunk(EXT_WRITE_OVERHEAD + PROP_EXTRA_OVERHEAD);
+    return { ...c, propRead: Math.min(c.propRead, prop), propWrite: Math.min(c.propWrite, prop) };
   }
   async memRead(addr: number, len: number, chunkBytes?: number, onProgress?: (done: number, total: number) => void, signal?: AbortSignal): Promise<Buffer> {
     // A range past the 16-bit reach of A_Memory_Read is served by A_MemoryExtended where the application

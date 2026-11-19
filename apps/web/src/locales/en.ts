@@ -296,7 +296,7 @@ const en = {
     SECURITY_MODE_UNREADABLE: "The device did not state its security mode in a form Busforge understands.",
     SECURITY_MODE_DENIED: "The device refused to show its security mode. A device in secure mode answers a request without its tool key like this.",
     SECURE_APDU_TOO_SHORT: "A secured request does not fit the frame length this device accepts, so Busforge did not send it.",
-    COUPLER_ROUTE_LONG_FRAME: "The device is on another line than the interface, behind a coupler that may not pass long telegrams. This request does not fit a standard telegram, so Busforge did not send it.",
+    COUPLER_ROUTE_LONG_FRAME: "A coupler may lie between the interface and the device (the device is on another line, or the interface does not tell its own address), and a coupler may not pass long telegrams. This request does not fit a standard telegram, so Busforge did not send it.",
     PROPERTY_RESPONSE_MISMATCH: "The device answered a property read for a different property, so Busforge does not trust the answer.",
     PARAM_BYTE_ORDER_UNSUPPORTED: "This application stores its parameters least significant byte first, and one of them is a kind (a float or an IP address, or a field that does not start on a byte) whose byte layout Busforge does not know, so it refuses to write it.",
     CONFIG_VIEW_INCOMPLETE: "This application places communication objects where Busforge cannot list them, so their group-address links could not be written. Busforge refuses to work with it rather than drop them.",

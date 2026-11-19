@@ -1,6 +1,7 @@
 import { test, expect, describe } from "bun:test";
 import { KnxDevice } from "../src/device.ts";
 import { KnxError } from "../src/errors.ts";
+import { runLoadPlan } from "../src/loadrunner.ts";
 import { apdu, parseApdu, tpAck, APCI, type KnxTransport } from "../src/index.ts";
 
 // A device declaring PID_MAX_APDU_LENGTH 254 that answers the memory services and records the cEMI
@@ -99,5 +100,18 @@ describe("a route through a coupler is held to standard frames", () => {
     expect(err).toBeInstanceOf(KnxError);
     expect((err as KnxError).code).toBe("COUPLER_ROUTE_LONG_FRAME");
     expect(tun.lengths.length).toBe(before);
+  });
+
+  test("a load plan with such a request is refused before any bus traffic", async () => {
+    const tun = new RouteTransport(TUNNEL, OTHER_LINE);
+    const dev = new KnxDevice(tun, ia(OTHER_LINE));
+    const plan = [{ op: "connect" as const }, { op: "writeMem" as const, address: 0x4000, bytes: Buffer.alloc(24) }, { op: "funcPropExt" as const, objectType: 11, instance: 1, pid: 5, data: Buffer.alloc(10) }];
+    const err = await runLoadPlan(dev, plan).then(() => null, (e: unknown) => e);
+    expect((err as KnxError).code).toBe("COUPLER_ROUTE_LONG_FRAME");
+    expect(tun.lengths).toEqual([]);
+    // On the interface's line the same plan is not refused for its length.
+    const near = new RouteTransport(TUNNEL, SAME_LINE);
+    const nearErr = await runLoadPlan(new KnxDevice(near, ia(SAME_LINE)), plan).then(() => null, (e: unknown) => e);
+    expect((nearErr as KnxError | null)?.code).not.toBe("COUPLER_ROUTE_LONG_FRAME");
   });
 });

@@ -423,11 +423,17 @@ not tell its address, every plain request goes as a standard frame (15 APDU octe
 
 The service stays the one the application asks for (a confirmed extended write stays confirmed); only
 the chunks are shorter, so the device holds the same bytes. A request that cannot be split and is
-longer than a standard frame (a long property write of a load procedure) is refused before it is sent
-(`COUPLER_ROUTE_LONG_FRAME`). A secured session is not held to standard frames: none of its requests
-fits one, so it keeps its own sizes and works only through couplers that pass its long frames. On a
-route within the line, the device's and the interface's maximum APDU size the requests as before
-([load-procedures.md](load-procedures.md)).
+longer than a standard frame (a long property write or function property command of a load procedure)
+is refused with `COUPLER_ROUTE_LONG_FRAME`; a download checks its plan for such requests before any bus
+traffic. A secured session is not held to standard frames: its Sync and its memory and property
+requests do not fit one, so it keeps its own sizes and works only through couplers that pass its long
+frames. On a route within the line, the device's and the interface's maximum APDU size the requests as
+before ([load-procedures.md](load-procedures.md)).
+
+Not covered: an answer whose length the caller chooses (a property read of many elements, such as an
+IP device's friendly name, or the property scan of a raw acquisition) is asked as it is on the line; a
+coupler that drops the long answer leaves the request unanswered. A line repeater inside a line is
+not treated as a coupler.
 
 What a coupler-aware download would need: an ETS download to a device behind a coupler that passes
 long frames, logged through the proxy with ETS's own log of the same minutes, to show whether ETS reads

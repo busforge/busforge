@@ -1,5 +1,6 @@
 import { KnxDevice, PID, OBJECT_TYPE_SECURITY } from "./device.ts";
-import { lsmEvent, lsmState, allocSegment, declareAbsSegmentMM, declareTaskSegmentMM, declareAbsSegmentProp, declareTaskSegmentProp, taskCtrl1Prop, taskCtrl1MM, securityLsmEvent, LSM, STATE } from "./flash.ts";
+import { lsmEvent, lsmState, allocSegment, declareAbsSegmentMM, declareTaskSegmentMM, declareAbsSegmentProp, declareTaskSegmentProp, taskCtrl1Prop, taskCtrl1MM, securityLsmEvent, LSM, STATE, LOAD_EVENT_LENGTH } from "./flash.ts";
+import { apdu, propertyExtHead, APCI } from "./frame.ts";
 import { KnxError } from "./errors.ts";
 import { loadedTableAddr } from "./grouptable-read.ts";
 
@@ -155,7 +156,25 @@ export function leftUnloaded(e: unknown): boolean {
   return e !== null && typeof e === "object" && (e as { leftUnloaded?: unknown }).leftUnloaded === true;
 }
 
+// The cEMI length field of a request a plan sends whole, framed as KnxDevice frames it: a property write,
+// an extended property write, a function property command (the security load events among them). Null
+// for a step whose requests KnxDevice splits, or that sends only short ones.
+function wholeRequestLength(step: LoadStep): number | null {
+  const ext = propertyExtHead(0, 0, 0).length;
+  if (step.op === "writeProp") return apdu(0, APCI.PROPERTY_WRITE, Buffer.alloc(4 + step.data.length)).length - 1;
+  if (step.op === "writePropExt") return apdu(0, APCI.PROPERTY_EXT_WRITE_CON, Buffer.alloc(ext + 3 + step.data.length)).length - 1;
+  if (step.op === "funcPropExt") return apdu(0, APCI.FUNCTION_PROPERTY_EXT_COMMAND, Buffer.alloc(ext + step.data.length)).length - 1;
+  if (step.op === "securityLsm") return apdu(0, APCI.FUNCTION_PROPERTY_EXT_COMMAND, Buffer.alloc(ext + LOAD_EVENT_LENGTH)).length - 1;
+  return null;
+}
+
 async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set<number | string>): Promise<void> {
+  // Where the device takes standard frames only (a route through a coupler), a request the plan sends
+  // whole and that does not fit one is refused before any bus traffic, not part-way through the download.
+  for (const step of plan) {
+    const n = wholeRequestLength(step);
+    if (n !== null) dev.assertFitsRoute?.(n); // optional like interfaceMaxApdu: test doubles of a device leave it out
+  }
   // Which write service the device takes is settled before the first load-state event, so a device
   // that does not answer the question is refused before anything is unloaded. A device written with
   // the confirmed extended write is never put into verify mode, and is not read back before the
