@@ -125,7 +125,7 @@ const en = {
       objectRefused: "The device's configuration cannot be shown: {{reason}}",
       error: "The list of links the import did not take over could not be loaded: {{reason}}",
       unrecoverable: "Cannot be restored",
-      unrecoverableHint: "No link made in Busforge reaches these objects. They are not counted; the project and its export keep them.",
+      unrecoverableHint: "No link made in Busforge reaches these objects now. They are not counted; the project and its export keep them.",
       gaMissing: "not in the project",
       gaMissingTitle: "ETS links an address the project does not have (ETS id {{id}})",
       reason: {

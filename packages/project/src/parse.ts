@@ -298,6 +298,10 @@ export const stripAppPrefix = (appId: string, id: string): string => (id.startsW
 // program id ("M-0083_A-0013-11-A9D6_O-0_R-10000").
 const comObjKey = (d: Pick<Device, "appProgramId">, refId: string): string => (d.appProgramId ? stripAppPrefix(d.appProgramId, refId) : refId);
 
+// The module instance a com-object key belongs to ("MD-1_M-1_MI-2" of "MD-1_M-1_MI-2_O-1_R-1"), as the
+// device's ModuleInstance ids name it; undefined for an object of the application itself.
+export const moduleInstanceOf = (comObjRefId: string): string | undefined => /^(.*_MI-\d+)_/.exec(comObjRefId)?.[1];
+
 // The group-address ids a ComObjectInstanceRef links, the sending one first. ETS 5.7 and later
 // write them in the Links attribute ("GA-1 GA-3", the first is the address the object sends on);
 // ETS 4 and ETS 5 up to 5.6 as <Connectors> holding one <Send> and any number of <Receive>
@@ -376,7 +380,7 @@ function parseDeviceLinks(scope: XmlNode, d: Device, gaIdToRaw: Map<string, numb
       continue;
     }
     if (!tokens.length) continue;
-    const instance = /^(.*_MI-\d+)_/.exec(key)?.[1];
+    const instance = moduleInstanceOf(key);
     const gaRaws = tokens.map((l) => gaIdToRaw.get(l)).filter((x): x is number => x !== undefined);
     // A link of a vanished module instance is listed there and only there.
     if (instance !== undefined && !instances.has(instance)) dropped.push({ deviceId: d.id, comObjRefId: key, reason: "moduleInstanceGone", gas: gasOf(tokens) });

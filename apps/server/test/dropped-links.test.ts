@@ -53,13 +53,13 @@ const knxproj = knxprojWith(appXml());
 // each channel's object its number. The device stores no module instances, so they follow its values. Channel 2's
 // object links an address the project does not have besides 0/0/1.
 const MA = `${M}_A-2`;
-const moduleAppXml = `<?xml version="1.0" encoding="utf-8"?>
+const moduleAppXml = (objects = `<ComObjectRefRef RefId="${MA}_MD-1_O-1_R-1"/>`) => `<?xml version="1.0" encoding="utf-8"?>
 <KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="${M}"><ApplicationPrograms>
 <ApplicationProgram Id="${MA}" ApplicationNumber="2" ApplicationVersion="1" MaskVersion="MV-07B0" Name="Channel App" DefaultLanguage="en-US">
 <Static>
 <ParameterTypes><ParameterType Id="${MA}_PT-1" Name="Channels"><TypeRestriction Base="Value" SizeInBit="8"><Enumeration Text="1" Value="1" Id="${MA}_PT-1_EN-1"/><Enumeration Text="2" Value="2" Id="${MA}_PT-1_EN-2"/></TypeRestriction></ParameterType></ParameterTypes>
-<Parameters><Parameter Id="${MA}_P-1" Name="Channels" ParameterType="${MA}_PT-1" Text="Channels" Value="2"/></Parameters>
-<ParameterRefs><ParameterRef Id="${MA}_P-1_R-1" RefId="${MA}_P-1"/></ParameterRefs>
+<Parameters><Parameter Id="${MA}_P-1" Name="Channels" ParameterType="${MA}_PT-1" Text="Channels" Value="2"/><Parameter Id="${MA}_P-2" Name="Switch" ParameterType="${MA}_PT-1" Text="Switch" Value="1"/></Parameters>
+<ParameterRefs><ParameterRef Id="${MA}_P-1_R-1" RefId="${MA}_P-1"/><ParameterRef Id="${MA}_P-2_R-1" RefId="${MA}_P-2"/></ParameterRefs>
 <ComObjectTable/><ComObjectRefs/>
 <Allocators><Allocator Id="${MA}_L-1" Name="Objects" Start="1" maxInclusive="10"/></Allocators>
 </Static>
@@ -69,19 +69,20 @@ const moduleAppXml = `<?xml version="1.0" encoding="utf-8"?>
     <ComObjects><ComObject Id="${MA}_MD-1_O-1" Number="0" Name="Switch" Text="Switch" FunctionText="On/off" ObjectSize="1 Bit" DatapointType="DPST-1-1" ReadFlag="Disabled" WriteFlag="Enabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" BaseNumber="${MA}_MD-1_A-1"/></ComObjects>
     <ComObjectRefs><ComObjectRef Id="${MA}_MD-1_O-1_R-1" RefId="${MA}_MD-1_O-1"/></ComObjectRefs>
   </Static>
-  <Dynamic><ParameterBlock Id="${MA}_MD-1_PB-1" Name="ch" Text="Channel"><ComObjectRefRef RefId="${MA}_MD-1_O-1_R-1"/></ParameterBlock></Dynamic>
+  <Dynamic><ParameterBlock Id="${MA}_MD-1_PB-1" Name="ch" Text="Channel">${objects}</ParameterBlock></Dynamic>
 </ModuleDef></ModuleDefs>
-<Dynamic><ChannelIndependentBlock><ParameterBlock Id="${MA}_PB-1" Name="Main" Text="Main"><ParameterRefRef RefId="${MA}_P-1_R-1"/></ParameterBlock></ChannelIndependentBlock>
+<Dynamic><ChannelIndependentBlock><ParameterBlock Id="${MA}_PB-1" Name="Main" Text="Main"><ParameterRefRef RefId="${MA}_P-1_R-1"/><ParameterRefRef RefId="${MA}_P-2_R-1"/></ParameterBlock></ChannelIndependentBlock>
 <choose ParamRefId="${MA}_P-1_R-1">
   <when test="1"><Module Id="${MA}_MD-1_M-1" RefId="${MA}_MD-1" Name="C"><NumericArg RefId="${MA}_MD-1_A-1" AllocatorRefId="${MA}_L-1"/></Module></when>
   <when test="2"><Repeat Id="${MA}_X-1" Name="C" Count="2"><Module Id="${MA}_MD-1_M-1" RefId="${MA}_MD-1" Name="C"><NumericArg RefId="${MA}_MD-1_A-1" AllocatorRefId="${MA}_L-1"/></Module></Repeat></when>
 </choose></Dynamic>
 </ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
 const moduleHardware = hardware.replace(`<ApplicationProgramRef RefId="${A}"/>`, `<ApplicationProgramRef RefId="${MA}"/>`);
-const moduleKnxproj = storeZip({
-  [`${M}/Hardware.xml`]: moduleHardware, [`${M}/${MA}.xml`]: moduleAppXml,
-  "P-0001/0.xml": xml0.replace(/<ComObjectInstanceRefs>[\s\S]*<\/ComObjectInstanceRefs>/, `<ComObjectInstanceRefs><ComObjectInstanceRef RefId="MD-1_M-1_MI-2_O-1_R-1" Links="GA-1 GA-9"/></ComObjectInstanceRefs>`),
+const moduleKnxprojWith = (app: string, refs = `<ComObjectInstanceRef RefId="MD-1_M-1_MI-2_O-1_R-1" Links="GA-1 GA-9"/>`) => storeZip({
+  [`${M}/Hardware.xml`]: moduleHardware, [`${M}/${MA}.xml`]: app,
+  "P-0001/0.xml": xml0.replace(/<ComObjectInstanceRefs>[\s\S]*<\/ComObjectInstanceRefs>/, `<ComObjectInstanceRefs>${refs}</ComObjectInstanceRefs>`),
 });
+const moduleKnxproj = moduleKnxprojWith(moduleAppXml());
 
 const expected = [
   {
@@ -246,6 +247,18 @@ describe("links an import does not take over, per com-object", () => {
     expect(data.droppedLinks.map((l: any) => l.comObjRefId)).toEqual(["MD-1_M-1_MI-2_O-1_R-1"]);
     await put(state, imp.id, "params", { paramRefId: `${MA}_P-1_R-1`, value: "2" });
     expect(await entry()).toEqual([["MD-1_M-1_MI-2_O-1_R-1", 2, null, false]]);
+  });
+
+  test("a module object its parameters hide stays open, one its module does not declare can never be linked again", async () => {
+    const state = freshState();
+    // The channel's object shows while P-2 is 1, not at 2; channel 2 also carries an object its module has no such ref for.
+    const hiding = moduleAppXml(`<choose ParamRefId="${MA}_P-2_R-1"><when test="1"><ComObjectRefRef RefId="${MA}_MD-1_O-1_R-1"/></when></choose>`);
+    const refs = `<ComObjectInstanceRef RefId="MD-1_M-1_MI-2_O-1_R-1" Links="GA-1 GA-9"/><ComObjectInstanceRef RefId="MD-1_M-1_MI-2_O-9_R-9" Links="GA-1 GA-9"/>`;
+    const imp = await post(state, "/api/projects/import", new File([moduleKnxprojWith(hiding, refs)], "Dropped.knxproj"));
+    const entries = async () => ((await listed(state, imp.id)) as any[]).map((l) => [l.comObjRefId, l.comObjNumber, l.unresolved, l.unrecoverable]);
+    expect(await entries()).toEqual([["MD-1_M-1_MI-2_O-1_R-1", 2, null, false], ["MD-1_M-1_MI-2_O-9_R-9", null, "notInApplication", true]]);
+    await put(state, imp.id, "params", { paramRefId: `${MA}_P-2_R-1`, value: "2" });
+    expect(await entries()).toEqual([["MD-1_M-1_MI-2_O-1_R-1", null, "notInConfiguration", false], ["MD-1_M-1_MI-2_O-9_R-9", null, "notInApplication", true]]);
   });
 
   test("a project without dropped links lists none, and an unknown project is refused", async () => {

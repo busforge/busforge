@@ -4,7 +4,7 @@ import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
 import en from "@/locales/en";
 import type { DroppedLink } from "@/api.ts";
-import { DroppedLinksList, DroppedLinksMark } from "./DroppedLinksList.tsx";
+import { DroppedLinksDetail, DroppedLinksList, DroppedLinksMark } from "./DroppedLinksList.tsx";
 
 const entry = (o: Partial<DroppedLink>): DroppedLink => ({
   deviceId: "D-1", ia: "1.1.5", deviceName: "Actuator", comObjRefId: "O-1_R-1",
@@ -30,6 +30,12 @@ describe("the links an import did not take over", () => {
     expect(html).toContain('data-tone="neutral"');
     expect(html).toContain("Links not imported");
     expect(html).not.toContain("font-mono");
+  });
+
+  test("the popover says when an object leaves the list only while one can", () => {
+    const leaves = "An object leaves this list once";
+    expect(renderToStaticMarkup(<DroppedLinksDetail links={[open, gone]} />)).toContain(leaves);
+    expect(renderToStaticMarkup(<DroppedLinksDetail links={[gone]} />)).not.toContain(leaves);
   });
 
   test("a project without entries shows no mark, a failed load a warning without a count", () => {

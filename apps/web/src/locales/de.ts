@@ -126,7 +126,7 @@ const de: Messages = {
       objectRefused: "Die Konfiguration des Geräts kann nicht angezeigt werden: {{reason}}",
       error: "Die Liste der nicht übernommenen Verknüpfungen konnte nicht geladen werden: {{reason}}",
       unrecoverable: "Lässt sich nicht wiederherstellen",
-      unrecoverableHint: "Keine Verknüpfung in Busforge erreicht diese Objekte. Sie werden nicht gezählt; Projekt und Export behalten sie.",
+      unrecoverableHint: "Keine Verknüpfung in Busforge erreicht diese Objekte derzeit. Sie werden nicht gezählt; Projekt und Export behalten sie.",
       gaMissing: "nicht im Projekt",
       gaMissingTitle: "ETS verknüpft eine Adresse, die das Projekt nicht hat (ETS-Id {{id}})",
       reason: {

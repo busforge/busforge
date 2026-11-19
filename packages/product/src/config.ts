@@ -271,6 +271,9 @@ export interface DeviceConfigBuild extends DeviceConfigView {
   unsettledChooses?: string[];
   // The Module nodes (by id) the image pass reached.
   modulesReached: Set<string>;
+  // The module instances the configuration is built from: the device's own, or those the allocators make of its
+  // values where it has none (resolveModuleInstances).
+  moduleInstances: ModuleInstance[];
 }
 
 interface Scope {
@@ -1128,7 +1131,7 @@ function buildDeviceConfigReading(
     throw new ProductError("CONFIG_VIEW_INCOMPLETE", `the configuration view does not match the active communication objects (not listed: ${unlisted.slice(0, 10).join(", ") || "none"}; listed but inactive: ${inactive.slice(0, 10).join(", ") || "none"}); their links would be lost`);
   }
 
-  const build: DeviceConfigBuild = { blocks, hasModules: app.hasModules, dca: app.dca, imageValues, rejectedRefs, imageComObjects, maxComObjectNumber, modulesReached, paramValue: (refId) => resolve(refId, TOP) };
+  const build: DeviceConfigBuild = { blocks, hasModules: app.hasModules, dca: app.dca, imageValues, rejectedRefs, imageComObjects, maxComObjectNumber, modulesReached, moduleInstances: instances, paramValue: (refId) => resolve(refId, TOP) };
   if (!moduleInstances.length) refuseUnreachedInstances(app, build, instances);
   return { build, unsettled };
 }

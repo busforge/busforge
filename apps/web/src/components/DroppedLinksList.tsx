@@ -27,8 +27,19 @@ export function DroppedLinksMark({ links, error, testId, projectId, showDevice }
     <HeaderWarning
       label={t("import.dropped.label")} title={t("import.dropped.title")} testId={testId}
       tone={open ? "warning" : "neutral"} count={open || null}
-      detail={<><p className="text-muted-foreground">{t("import.dropped.hint")} {t("import.dropped.open")}</p><DroppedLinksList links={links} projectId={projectId} showDevice={showDevice} /></>}
+      detail={<DroppedLinksDetail links={links} projectId={projectId} showDevice={showDevice} />}
     />
+  );
+}
+
+// The mark's popover: what the list is, when an object leaves it (while one can), and the list.
+export function DroppedLinksDetail({ links, projectId, showDevice }: { links: DroppedLink[]; projectId?: string; showDevice?: boolean }) {
+  const { t } = useTranslation();
+  return (
+    <>
+      <p className="text-muted-foreground">{t("import.dropped.hint")}{links.some((l) => !l.unrecoverable) && <> {t("import.dropped.open")}</>}</p>
+      <DroppedLinksList links={links} projectId={projectId} showDevice={showDevice} />
+    </>
   );
 }
 
@@ -42,24 +53,24 @@ export function DroppedLinksList({ links, projectId, showDevice = true }: { link
   const lost = links.filter((l) => l.unrecoverable);
   return (
     <div className="space-y-3" data-testid="dropped-links">
-      <ObjectsByDevice links={open} projectId={projectId} showDevice={showDevice} />
+      <ObjectsByDevice links={open} projectId={projectId} showDevice={showDevice} testId="dropped-device" />
       {lost.length > 0 && (
         <section className={open.length ? "space-y-2 border-t border-border/60 pt-3" : "space-y-2"} data-testid="dropped-unrecoverable">
           <p className="text-sm font-medium">{t("import.dropped.unrecoverable")}</p>
           <p className="text-xs text-muted-foreground">{t("import.dropped.unrecoverableHint")}</p>
-          <ObjectsByDevice links={lost} projectId={projectId} showDevice={showDevice} />
+          <ObjectsByDevice links={lost} projectId={projectId} showDevice={showDevice} testId="dropped-unrecoverable-device" />
         </section>
       )}
     </div>
   );
 }
 
-function ObjectsByDevice({ links, projectId, showDevice }: { links: DroppedLink[]; projectId?: string; showDevice: boolean }) {
+function ObjectsByDevice({ links, projectId, showDevice, testId }: { links: DroppedLink[]; projectId?: string; showDevice: boolean; testId: string }) {
   const { t } = useTranslation();
   const byDevice = new Map<string, DroppedLink[]>();
   for (const l of links) byDevice.set(l.deviceId, [...(byDevice.get(l.deviceId) ?? []), l]);
   return [...byDevice].map(([deviceId, objs]) => (
-    <section key={deviceId} className="space-y-1.5" data-testid={`dropped-device-${objs[0].ia}`}>
+    <section key={deviceId} className="space-y-1.5" data-testid={`${testId}-${objs[0].ia}`}>
       {showDevice && (projectId
         ? <Link to="/projects/$projectId/devices/$deviceId" params={{ projectId, deviceId }} className="inline-flex rounded-md outline-none transition hover:brightness-125 focus-visible:ring-[3px] focus-visible:ring-ring/50">
             <DeviceLabel name={objs[0].deviceName} ia={objs[0].ia} />

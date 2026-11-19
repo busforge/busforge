@@ -4,4 +4,4 @@ export { readZip } from "./zip.ts";
 export { KnxprojError } from "./errors.ts";
 export { decodeLoadedImage, decodeCheckSums, type LoadedImageRecord, type CheckSumRegion, type ObjectCheckSums } from "./loadedimage.ts";
 export { readKeyring, writeKeyring, KEYRING_NAMESPACE, type Keyring, type KeyringDevice, type KeyringGroup, type KeyringInterface } from "./keyring.ts";
-export { parseProject, withoutInstallationSecrets, stripAppPrefix, deviceParamValues, etsLoadedCompletely, etsNotDownloaded } from "./parse.ts";
+export { parseProject, withoutInstallationSecrets, stripAppPrefix, moduleInstanceOf, deviceParamValues, etsLoadedCompletely, etsNotDownloaded } from "./parse.ts";

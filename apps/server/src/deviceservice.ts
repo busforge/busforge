@@ -2,8 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { iaToNum, numToGa, formatGa, SENDER_ENTRY } from "@busforge/knx";
-import { extractAppPrograms, type Project, type DroppedLink, type DroppedLinkReason } from "@busforge/project";
-import { parseAppConfig, buildDeviceConfig, resolveModuleInstances, annotateCalculations, buildSecurityObject, hardwareRefusals, knxIpRefusals, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, effectiveComObjFlags, ProductError, imageWritableType, resolveParamRef, sameParamValue, type SameParamValue, takesValue, type EffectiveComObjFlags, type ComObjInstanceOverride, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
+import { extractAppPrograms, moduleInstanceOf, type Project, type DroppedLink, type DroppedLinkReason } from "@busforge/project";
+import { parseAppConfig, buildDeviceConfig, annotateCalculations, buildSecurityObject, hardwareRefusals, knxIpRefusals, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, effectiveComObjFlags, ProductError, imageWritableType, resolveParamRef, sameParamValue, type SameParamValue, takesValue, type EffectiveComObjFlags, type ComObjInstanceOverride, type AppConfig, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
 import { getAppProgram, putAppProgram, catalogBaggageNames, pictureType } from "./db/catalog.ts";
 import { getDeviceParams, getDeviceParamBase, getDeviceParamAssumed, getDeviceModules, getDeviceAppProgramId, getDeviceProductRef, getDeviceForFlash, deviceHasApplication, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps, getDeviceComObjOverrides, getDeviceComObjOverrideBase, getDeviceKnxIp } from "./db/deviceparams.ts";
 import { deviceCompatibility } from "./compatibility.ts";
@@ -638,8 +638,7 @@ export interface DroppedLinkView {
 }
 // `links`: the device's com-object links now, where the list leaves out what was linked again.
 interface DroppedLinkDevice { ia: string; name: string; app: () => AppConfig | null; params: StoredParams; modules: StoredModules; links?: Map<string, number[]> }
-// `instances`: the ids of the module instances the configuration has now: the device's stored ones, or
-// those the allocators make of its values where it stores none (as buildDeviceConfig takes them).
+// `instances`: the ids of the module instances the configuration has now (DeviceConfigBuild.moduleInstances).
 type DeviceObjects = { objs: ReturnType<typeof comObjsByKey>; instances: Set<string> } | { unresolved: "noApplication" } | { unresolved: "refused"; refusal: string };
 
 // A refused application is shown on its device's objects, never fails the list of the others.
@@ -647,9 +646,8 @@ function deviceObjects(dev: DroppedLinkDevice, lang?: string): DeviceObjects {
   try {
     const app = dev.app();
     if (!app) return { unresolved: "noApplication" };
-    const objs = comObjsByKey(app, buildDeviceConfig(app, dev.params, lang, dev.modules), lang);
-    const instances = dev.modules.length || !app.hasModules ? dev.modules : resolveModuleInstances(app, dev.params);
-    return { objs, instances: new Set(instances.map((i) => i.id)) };
+    const view = buildDeviceConfig(app, dev.params, lang, dev.modules);
+    return { objs: comObjsByKey(app, view, lang), instances: new Set(view.moduleInstances.map((i) => i.id)) };
   } catch (e) {
     if (e instanceof ProductError) return { unresolved: "refused", refusal: e.code };
     throw e;
@@ -665,12 +663,13 @@ function linkedAgain(link: DroppedLink, view: DroppedLinkView, linked: number[])
   return have.size >= new Set(link.gas.map((g) => g.etsId)).size && link.gas.every((g, i) => !view.gas[i].inProject || have.has(g.raw!));
 }
 
-// Why the configuration does not place an object: the application's own objects are all known to it
-// (comObjsByKey, hidden ones included), so one it lacks is not the application's; a module object is
-// per instance (…_MI-n_…), and one of an instance the configuration has is hidden by its parameters.
-function missingObject(comObjRefId: string, instances: Set<string>): DroppedLinkUnresolved {
-  const instance = /^(.*_MI-\d+)_/.exec(comObjRefId)?.[1];
-  if (instance === undefined) return "notInApplication";
+// Why the configuration does not place an object: comObjsByKey knows every object the application and its
+// module definitions declare (a module's by its definition's ref, MD-x_O-…, hidden ones included), so one it
+// lacks is not the application's; a module object is per instance (…_M-k_MI-n_…), and one of an instance the
+// configuration has is hidden by its parameters.
+function missingObject(comObjRefId: string, objs: Map<string, unknown>, instances: Set<string>): DroppedLinkUnresolved {
+  const instance = moduleInstanceOf(comObjRefId);
+  if (instance === undefined || !objs.has(comObjRefId.replace(/_M-\d+_MI-\d+/, ""))) return "notInApplication";
   return instances.has(instance) ? "notInConfiguration" : "moduleInstanceGone";
 }
 
@@ -684,7 +683,7 @@ function droppedLinkViews(links: DroppedLink[], deviceOf: (deviceId: string) => 
       devices.set(l.deviceId, d);
     }
     const co = "objs" in d.objects ? d.objects.objs.get(l.comObjRefId) : undefined;
-    const unresolved = co ? null : "objs" in d.objects ? missingObject(l.comObjRefId, d.objects.instances) : d.objects.unresolved;
+    const unresolved = co ? null : "objs" in d.objects ? missingObject(l.comObjRefId, d.objects.objs, d.objects.instances) : d.objects.unresolved;
     const view: DroppedLinkView = {
       deviceId: l.deviceId, ia: d.dev.ia, deviceName: d.dev.name, comObjRefId: l.comObjRefId,
       comObjNumber: co?.number ?? null, comObjName: co?.name ?? null, functionText: co?.functionText ?? null,
