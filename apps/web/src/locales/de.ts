@@ -527,6 +527,7 @@ const de: Messages = {
     summary: { tested: "Übertragung getestet", partial: "Teilweise getestet", derived: "An Schwesterprodukt getestet", otherVersion: "Mit anderer Version getestet", failed: "Auf Hardware fehlgeschlagen", untested: "Ungetestet", unsupported: "Nicht unterstützt" },
     state: { tested: "getestet", failed: "fehlgeschlagen", conflict: "widersprüchlich", derived: "abgeleitet", otherVersion: "andere Version getestet", eligible: "ungetestet", refused: "nicht unterstützt" },
     colOperation: "Vorgang", colState: "Stand", colTransfer: "Bytes gehalten", colPersistence: "Übersteht Neustart", colVia: "(API / UI)",
+    marks: "API: {{api}}, UI: {{ui}}", notApplicable: "nicht anwendbar",
     derivedFrom: "dieselbe Hardware und Applikation getestet als <v>{{product}}</v>",
     sameApp: "dieselbe Applikation getestet an <v>{{product}}</v> (andere Hardware)",
     otherVersion: "mit <v>{{app}}</v> dieser Applikation getestet, an <v>{{product}}</v>",

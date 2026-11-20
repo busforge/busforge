@@ -530,6 +530,7 @@ const en = {
     summary: { tested: "Transfer tested", partial: "Partly tested", derived: "Tested on a sibling", otherVersion: "Tested with another version", failed: "Failed on hardware", untested: "Untested", unsupported: "Not supported" },
     state: { tested: "tested", failed: "failed", conflict: "contradictory", derived: "derived", otherVersion: "other version tested", eligible: "untested", refused: "not supported" },
     colOperation: "Operation", colState: "State", colTransfer: "Bytes held", colPersistence: "Survives restart", colVia: "(API / UI)",
+    marks: "API: {{api}}, UI: {{ui}}", notApplicable: "not applicable",
     derivedFrom: "same hardware and application tested as <v>{{product}}</v>",
     sameApp: "same application tested on <v>{{product}}</v> (other hardware)",
     otherVersion: "tested with <v>{{app}}</v> of this application, on <v>{{product}}</v>",

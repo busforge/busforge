@@ -56,6 +56,14 @@ describe("the compatibility popover's table", () => {
     expect(html).toContain(`Survives restart <span class="block whitespace-nowrap">(API / UI)</span>`);
   });
 
+  test("names each pair of marks in the words the popover shows for a state, in the reader's language", async () => {
+    const mixed = { state: "conflict", cells: { api: { ...cell("conflict"), persistence: { state: "pass", basis: [] } }, ui: { ...cell("fail"), persistence: { state: "not-assessed", basis: [] } } }, firmware: [] } as unknown as OperationVerdict;
+    const labels = () => [...renderToStaticMarkup(<CompatibilityTable c={compat({ readParams: mixed, readLinks: { cells: { api: cell("pass") } } as Partial<OperationVerdict> })} />).matchAll(/aria-label="([^"]*)"/g)].map((m) => m[1]);
+    expect(labels().slice(0, 4)).toEqual(["API: contradictory, UI: failed", "API: tested, UI: untested", "API: tested, UI: untested", "API: not applicable, UI: untested"]);
+    await i18n.changeLanguage("de");
+    expect(labels().slice(0, 4)).toEqual(["API: widersprüchlich, UI: fehlgeschlagen", "API: getestet, UI: ungetestet", "API: getestet, UI: ungetestet", "API: nicht anwendbar, UI: ungetestet"]);
+  });
+
   // Markup only: that the table fits without scrolling sideways at each width is shown in a browser, not here.
   test("gives the state a place under its name for a narrow table and a column of its own for a wide one", () => {
     const html = renderToStaticMarkup(<CompatibilityTable c={compat()} />);
