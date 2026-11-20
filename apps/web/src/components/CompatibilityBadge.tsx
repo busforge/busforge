@@ -1,5 +1,5 @@
 import { CheckCircle2, CircleDashed, ExternalLink, ShieldAlert, ShieldCheck, ShieldOff, ShieldQuestion } from "lucide-react";
-import { useTranslation } from "react-i18next";
+import { Trans, useTranslation } from "react-i18next";
 import type { DeviceConfigView } from "../api.ts";
 import { useManufacturers } from "../queries.ts";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -39,38 +39,10 @@ export function CompatibilityBadge({ view, manufacturer }: { view: Pick<DeviceCo
           <Icon /> {t("compat.badge", { summary: t(`compat.summary.${summary}`) })}
         </BadgeButton>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-[26rem] max-w-[calc(100vw-2rem)] space-y-3 overflow-x-auto text-xs" data-testid="compatibility-detail">
+      <PopoverContent align="start" collisionPadding={16} className="w-[28rem] max-w-[calc(100vw-2rem)] space-y-3 overflow-x-auto text-xs" data-testid="compatibility-detail">
         <p className="text-sm font-medium">{t("compat.title")}</p>
         {summary === "tested" && <p data-testid="compatibility-tested-detail">{t("compat.testedDetail")}</p>}
-        <table className="w-full">
-          <thead className="text-muted-foreground">
-            <tr><th className="pb-1 text-left font-normal">{t("compat.colOperation")}</th><th className="pb-1 text-left font-normal">{t("compat.colState")}</th><th className="pb-1 text-center font-normal">{t("compat.colTransfer")}</th><th className="pb-1 text-center font-normal">{t("compat.colPersistence")}</th></tr>
-          </thead>
-          <tbody>
-            {OPS.map((op) => {
-              const v = c[op];
-              return (
-                <tr key={op} className="border-t border-border/60 align-top">
-                  <td className="py-1 pr-2">{t(`untested.op.${op}`)}</td>
-                  <td className="py-1 pr-2">
-                    <span className={cn("inline-flex items-center gap-1", v.state === "tested" && "text-ok", (v.state === "failed" || v.state === "conflict") && "text-destructive", v.state === "refused" && "text-muted-foreground")}>
-                      {v.state === "tested" ? <CheckCircle2 className="size-3" /> : <CircleDashed className="size-3" />} {t(`compat.state.${v.state}`)}
-                    </span>
-                    {v.derivedFrom && <div className="text-muted-foreground">{t("compat.derivedFrom", { product: orderOf(v.derivedFrom) })}</div>}
-                    {v.otherVersionTested && <div className="text-muted-foreground" data-testid="compatibility-other-version">{t("compat.otherVersion", { app: appVersionOf(v.otherVersionTested.appProgramId), product: orderOf(v.otherVersionTested.productRef) })}</div>}
-                    {v.sameAppTestedOn && <div className="text-muted-foreground">{t("compat.sameApp", { product: orderOf(v.sameAppTestedOn) })}</div>}
-                    {v.firmware.length > 0 && <div className="text-muted-foreground">{v.derivedFrom ? t("compat.firmwareOf", { fw: v.firmware.join(", "), product: orderOf(v.derivedFrom) })
-                      : v.otherVersionTested ? t("compat.firmwareOfVersion", { fw: v.firmware.join(", "), app: appVersionOf(v.otherVersionTested.appProgramId) })
-                      : t("compat.firmware", { fw: v.firmware.join(", ") })}</div>}
-                    {(v.cells.tool?.transfer.state === "fail" || v.cells.tool?.transfer.state === "conflict") && <div className="text-destructive">{t("compat.toolFailed")}</div>}
-                  </td>
-                  <td className="py-1 text-center font-mono" aria-label={`API ${v.cells.api?.transfer.state ?? "none"}, UI ${v.cells.ui?.transfer.state ?? "none"}`}>{mark(v.cells.api?.transfer.state)} / {mark(v.cells.ui?.transfer.state)}</td>
-                  <td className="py-1 text-center font-mono" aria-label={`API ${v.cells.api?.persistence.state ?? "none"}, UI ${v.cells.ui?.persistence.state ?? "none"}`}>{mark(v.cells.api?.persistence.state)} / {mark(v.cells.ui?.persistence.state)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <CompatibilityTable c={c} />
         <p className="text-muted-foreground">{t("compat.explain")}</p>
         {view?.untestedAcknowledged && <p className="text-muted-foreground">{t("compat.acknowledged")}</p>}
         {maker && (
@@ -83,5 +55,65 @@ export function CompatibilityBadge({ view, manufacturer }: { view: Pick<DeviceCo
         )}
       </PopoverContent>
     </Popover>
+  );
+}
+
+type OpView = NonNullable<DeviceConfigView["compatibility"]>[(typeof OPS)[number]];
+
+// A sentence of the state cell whose values (an order number, an application version) never break inside. The
+// values are escaped before the sentence is read as markup, so a decoded order number cannot open a tag.
+const KEEP = { v: <span className="whitespace-nowrap" /> };
+function Kept({ k, values }: { k: string; values: Record<string, string> }) {
+  return <Trans i18nKey={k} values={values} components={KEEP} tOptions={{ interpolation: { escapeValue: true } }} shouldUnescape />;
+}
+
+// What was shown for one operation: its state mark, which never breaks, and the lines that qualify it.
+function OpState({ v }: { v: OpView }) {
+  const { t } = useTranslation();
+  const fw = v.firmware.join(", ");
+  return (
+    <>
+      <span className={cn("inline-flex items-center gap-1 whitespace-nowrap", v.state === "tested" && "text-ok", (v.state === "failed" || v.state === "conflict") && "text-destructive", v.state === "refused" && "text-muted-foreground")}>
+        {v.state === "tested" ? <CheckCircle2 className="size-3" /> : <CircleDashed className="size-3" />} {t(`compat.state.${v.state}`)}
+      </span>
+      {v.derivedFrom && <div className="text-muted-foreground"><Kept k="compat.derivedFrom" values={{ product: orderOf(v.derivedFrom) }} /></div>}
+      {v.otherVersionTested && <div className="text-muted-foreground" data-testid="compatibility-other-version"><Kept k="compat.otherVersion" values={{ app: appVersionOf(v.otherVersionTested.appProgramId), product: orderOf(v.otherVersionTested.productRef) }} /></div>}
+      {v.sameAppTestedOn && <div className="text-muted-foreground"><Kept k="compat.sameApp" values={{ product: orderOf(v.sameAppTestedOn) }} /></div>}
+      {v.firmware.length > 0 && <div className="text-muted-foreground">{v.derivedFrom ? <Kept k="compat.firmwareOf" values={{ fw, product: orderOf(v.derivedFrom) }} />
+        : v.otherVersionTested ? <Kept k="compat.firmwareOfVersion" values={{ fw, app: appVersionOf(v.otherVersionTested.appProgramId) }} />
+        : t("compat.firmware", { fw })}</div>}
+      {(v.cells.tool?.transfer.state === "fail" || v.cells.tool?.transfer.state === "conflict") && <div className="text-destructive">{t("compat.toolFailed")}</div>}
+    </>
+  );
+}
+
+// The per-operation table of the popover. A head breaks between its words, the paths it covers (API / UI) on
+// a line of their own; a pair of marks never breaks. The popover is 28rem wide, which leaves the table about
+// 25.9rem; where the window cuts it below 25rem (a phone), there is no room for a column of state beside both
+// columns of marks, so each state stands under its operation instead. The state is rendered in both places
+// and CSS shows one, since a table cannot move a cell into another column.
+export function CompatibilityTable({ c }: { c: NonNullable<DeviceConfigView["compatibility"]> }) {
+  const { t } = useTranslation();
+  return (
+    <div className="@container">
+      <table className="w-full">
+        <thead className="text-muted-foreground">
+          <tr><th className="pb-1 text-left font-normal">{t("compat.colOperation")}</th><th className="hidden pb-1 text-left font-normal @min-[25rem]:table-cell">{t("compat.colState")}</th><th className="px-1 pb-1 text-center font-normal">{t("compat.colTransfer")} <span className="block whitespace-nowrap">{t("compat.colVia")}</span></th><th className="px-1 pb-1 text-center font-normal">{t("compat.colPersistence")} <span className="block whitespace-nowrap">{t("compat.colVia")}</span></th></tr>
+        </thead>
+        <tbody>
+          {OPS.map((op) => {
+            const v = c[op];
+            return (
+              <tr key={op} className="border-t border-border/60 align-top">
+                <td className="py-1 pr-2">{t(`untested.op.${op}`)}<div className="@min-[25rem]:hidden"><OpState v={v} /></div></td>
+                <td className="hidden py-1 pr-2 @min-[25rem]:table-cell"><OpState v={v} /></td>
+                <td className="px-1 py-1 text-center font-mono whitespace-nowrap" aria-label={`API ${v.cells.api?.transfer.state ?? "none"}, UI ${v.cells.ui?.transfer.state ?? "none"}`}>{mark(v.cells.api?.transfer.state)} / {mark(v.cells.ui?.transfer.state)}</td>
+                <td className="px-1 py-1 text-center font-mono whitespace-nowrap" aria-label={`API ${v.cells.api?.persistence.state ?? "none"}, UI ${v.cells.ui?.persistence.state ?? "none"}`}>{mark(v.cells.api?.persistence.state)} / {mark(v.cells.ui?.persistence.state)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
