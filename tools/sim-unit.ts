@@ -58,12 +58,17 @@ export interface SimRestart {
   transportAck?: boolean;
   // For this long after the restart no frame to it is acknowledged on layer 2.
   linkDownMs: number;
+  // From this long after the restart a frame is acknowledged again, where the captures leave a gap after
+  // `linkDownMs`: a frame in the gap is refused (and confirmed negatively), since no capture shows whether the
+  // unit acknowledges it. Absent: acknowledged from `linkDownMs` on.
+  linkUpMs?: number;
   // What the unit answers a numbered frame on the connection the restart ended, until that partner connects
   // again: T_Disconnect (KNX 3/3/4 A10), or nothing, as a unit whose stack drops such frames.
   deadConnection: "disconnect" | "nothing";
 }
 
-export interface SimUnitModel {
+// What a simulated unit holds whatever its load control.
+export interface SimUnitCoreModel {
   ia: number;
   mask: number;
   maxApdu: number;
@@ -71,19 +76,22 @@ export interface SimUnitModel {
   objects: Map<number, Map<number, SimProperty>>;
   // object index -> the descriptions the unit gave; one with PID 0 is its answer past its last property.
   descriptions: Map<number, PropertyDescription[]>;
-  // Per load-state machine: where the unit places its segment (it chose that address on every download its
-  // captures show) and the segment it holds at the start.
-  segments: Map<number, { at: number; size: number; bytes: Buffer }>;
-  // The two octets of a memory-control-block element between the size and the CRC, as the unit reports them,
-  // and the CRC it computes; absent on a unit that reports no memory-control block.
-  mcbControl?: Buffer;
-  crc?: "ccitt" | "ccitt-false";
   // A_Authorize_Request key (hex) -> the level the unit grants.
   authorize: Map<string, number>;
   restart: SimRestart;
   // How long the unit's interface took to confirm a frame on the line: positively, and negatively (no
   // layer-2 acknowledgement, after the repetitions).
   link: { ackMs: number; nakMs: number };
+}
+
+// A System B unit: its relative load control on PID 5.
+export interface SimUnitModel extends SimUnitCoreModel {
+  // Per load-state machine: where the unit places its segment (it chose that address on every download its
+  // captures show) and the segment it holds at the start.
+  segments: Map<number, { at: number; size: number; bytes: Buffer }>;
+  // The two octets of a memory-control-block element between the size and the CRC, as the unit reports them.
+  mcbControl: Buffer;
+  crc: "ccitt" | "ccitt-false";
 }
 
 // A segment's bytes, and which of them the unit is known to hold (1): a mode-0 allocation that grows a segment
@@ -119,14 +127,16 @@ export class SimUnit implements KnxTransport {
   private stopped = false;
 
   constructor(
-    protected readonly model: SimUnitModel,
+    // A unit of another load control (tools/sim-unit-0701.ts) has none of System B's segments and
+    // memory-control blocks, and takes its load events elsewhere than PID 5.
+    private readonly model: SimUnitCoreModel & Partial<Pick<SimUnitModel, "segments" | "mcbControl" | "crc">>,
     // The interface's own individual address: the source of the frames the tool sends through it.
     readonly assignedIa: number,
     private readonly opts: { log?: (line: string) => void; now?: () => number } = {},
   ) {
     this.objects = new Map([...model.objects].map(([o, props]) => [o, new Map([...props].map(([pid, p]) => [pid, { ...p, elements: p.elements?.map((e) => Buffer.from(e)) ?? null }]))]));
     if (!this.property(0, PID_DEVICE_CONTROL)?.elements?.[0]) throw new Error("a simulated unit needs the device control (object 0 PID 14) its unit answered: verify mode and the stopped application live there");
-    for (const [lsm, s] of model.segments) {
+    for (const [lsm, s] of model.segments ?? []) {
       this.segments.set(lsm, { at: s.at, size: s.size, bytes: Buffer.from(s.bytes), known: new Uint8Array(s.size).fill(1) });
       this.referenceKnown.set(lsm, true);
       this.mcbKnown.set(lsm, true);
@@ -172,6 +182,10 @@ export class SimUnit implements KnxTransport {
     if (since !== null && since < this.model.restart.linkDownMs) {
       this.note(`restarting (${since} ms): ${tpdu.toString("hex")} not acknowledged`);
       return nak("the unit is restarting and acknowledged nothing");
+    }
+    if (since !== null && this.model.restart.linkUpMs !== undefined && since < this.model.restart.linkUpMs) {
+      this.refuse(`${tpdu.toString("hex")} ${since} ms after the restart: whether the unit acknowledges a frame then is not shown`);
+      return nak("the unit's answer this soon after its restart is not shown");
     }
     await sleep(this.model.link.ackMs);
     this.restartedAt = null;
@@ -431,7 +445,7 @@ export class SimUnit implements KnxTransport {
         const mcb = this.property(obj, PID_MCB);
         if (mcb && mcb.elements !== null) {
           if (!seg || seg.known.some((k) => k === 0)) { this.refuse(`${what}: the segment of object ${obj} holds octets no write set and the unit was not shown to hold, so its CRC is not known`); return null; }
-          if (!this.model.mcbControl || !this.model.crc) { this.refuse(`${what}: the unit's memory-control block of object ${obj} was not shown`); return null; }
+          if (!this.model.mcbControl || !this.model.crc) { this.refuse(`${what}: the unit's memory-control block of object ${obj} is not modelled`); return null; }
           const crc = this.model.crc === "ccitt" ? crc16Ccitt(seg.bytes) : crc16CcittFalse(seg.bytes);
           const size = Buffer.alloc(4); size.writeUInt32BE(seg.size);
           mcb.elements = [Buffer.concat([size, this.model.mcbControl, Buffer.from([crc >> 8, crc & 0xff])])];
