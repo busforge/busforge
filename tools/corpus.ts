@@ -338,6 +338,10 @@ export const CORPUS_FILES: readonly string[] = [
   "dca-theben-dali-e64/backup-store.expected.json",
   ...IN_SERVICE_COLLECTIONS.map(inServiceCollection),
   ...DEMO_PRODUCT_FILES,
+  // The collections of the MDT BE-02001.02 and the Gira Tastsensor 3, whose product units
+  // tools/sim-unit-product.test.ts holds against them.
+  "internal/captures/cap-1004/mdt-plain.json",
+  "collections/gira-m0008-backup-2026-10-05/1.1.1-gira-m0008-collect.json",
   ...OPENKNX_RELEASES.map((r) => `${OPENKNX_DEMO_DIR}/${r.asset}`),
   `${BUSSARD_SYNTHETIC_DIR}/LICENSE`,
   `${BUSSARD_SYNTHETIC_DIR}/captures/manifest.json`,
