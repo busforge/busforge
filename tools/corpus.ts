@@ -369,7 +369,7 @@ export const ETS_RECORDS_FILE = "captures/ets-download-records.json.gz";
 
 // Directories whose files the tests walk whole. What they hold grows, so the manifest cannot name
 // the files; the directory is open to the tests as a whole.
-export const CORPUS_WALKED_DIRS: readonly string[] = ["evidence"];
+export const CORPUS_WALKED_DIRS: readonly string[] = ["evidence", "captures/ets-sweep"];
 
 const listedFiles = new Set(CORPUS_FILES);
 const listedDirs = new Set(CORPUS_FILES.flatMap((f) => {

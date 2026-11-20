@@ -521,6 +521,73 @@ The tool connects to the proxy port over KNXnet/IP TCP; the simulator's own line
 of [evidence-contract.md](evidence-contract.md) by itself: it shows what a tool sends given the
 simulator's answers, and the answers are a real unit's only as far as the table above says.
 
+### A sweep row: ETS and Busforge into the same simulated unit
+
+A sweep row holds ETS's download of one application at one configuration into a simulated unit, and
+judges Busforge's download of the same configuration into a fresh unit of the same product against
+it (`tools/ets-sweep.ts`). ETS's side is stored once, in the private corpus; Busforge's side runs
+again on every check, through `KnxIpServer`, the logging proxy and the server's own download task, so
+every change to Busforge's planner meets every stored row without ETS.
+
+```mermaid
+flowchart LR
+  E["ETS's capture<br/>into simulator A<br/>(stored)"] --> SE[final state A]
+  B["Busforge's download<br/>into a fresh simulator B<br/>(run now)"] --> SB[final state B]
+  SE --> C{compare}
+  SB --> C
+  C --> V[one verdict]
+  X["ETS's project export<br/>(LoadedImage)"] -.-> L[second check, beside the verdict]
+  B -.-> L
+```
+
+**What is compared.** Each run's requests to the unit, a transport-layer repetition taken once, and
+the unit's answers:
+
+- every segment octet either side wrote, a later write winning; a byte only one side wrote is a
+  difference, whichever side wrote it;
+- every property write, by object, PID and element, with its values in order;
+- each load-state machine's load controls (events and allocation records) in order, by property or,
+  on MV-0700/0701, by the control register at `0x0104`;
+- every function-property call; the restart form; every other service that is no read, in order;
+- the load state and table reference the unit last reported for each load-state machine.
+
+Reads (descriptions, identity, memory-control blocks, the read before a compare) are recorded and
+listed per side, not compared.
+
+**Verdicts**, exactly one per row:
+
+| Verdict | When |
+|---|---|
+| `identical` | every compared item is equal |
+| `differs` | the differences, the first first; each carries its cause once explained |
+| `refused` | Busforge refuses the download with a coded refusal where ETS downloads |
+| `busforge-only` | Busforge writes where ETS failed or the simulator refused ETS |
+| `sim-refused` | the simulator refused a request of either run (its log names it); nothing is compared |
+| `ets-failed` | ETS's log shows no completed download (no end of its load task, or the application, parameters and group addresses not recorded as loaded) |
+| `driver-failed` | ETS's log shows the download connected to anything but the simulator, or not exactly one download of the device |
+
+**The second check.** Where a row holds ETS's project export from after its download, Busforge's
+images for the row's configuration are held against ETS's own record of that download
+(`LoadedImage`, [verification.md](verification.md)), with the comparison `tools/ets-records.test.ts`
+runs over the corpus projects; its result stands beside the verdict.
+
+**A row in the corpus** is a directory `captures/ets-sweep/<application id>/<variant>/` holding
+`row.json` (the simulated unit, ETS's build, the simulator's endpoint ETS was set to, the export
+where there is one), `configuration.json` (the device's configuration ETS downloaded, which Busforge
+downloads), ETS's capture `ets.log` with the simulator's lines `ets.log.sim.txt`, `ets6.log.txt`, and
+`explained.json` (the row's verdict today and every difference with its cause). The tool writes the
+verdicts into `internal/ets-sweep/manifest.json`:
+
+```bash
+BUSFORGE_CORPUS=... bun run tools/ets-sweep.ts [<application>/<variant>]... [--keep=<dir>]
+```
+
+`tools/ets-sweep.test.ts` runs every row with the private corpus and holds its verdict and its
+differences to `explained.json`: a new difference fails, and so does an explained one that is gone.
+Without the corpus it is skipped visibly. A row is evidence on no axis of
+[evidence-contract.md](evidence-contract.md): it shows what Busforge sends next to what ETS sends,
+both given the same simulator's answers.
+
 ## Why the golden snapshot is not a correctness proof
 
 The golden file is generated from busforge's own output. It locks the output against accidental
