@@ -1,14 +1,14 @@
 import { expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { decodeCheckSums, decodeLoadedImage, loadKnxproj, appProgramId, etsLoadedCompletely, etsNotDownloaded } from "../packages/project/src/index.ts";
 import { parseAppConfig, parseLoadProcedures, type AppConfig, type LoadProcedures } from "../packages/product/src/index.ts";
 import { crc16Ccitt, crc16CcittFalse } from "../packages/knx/src/flash.ts";
 import { iaToNum } from "../packages/knx/src/index.ts";
-import { corpusPath, corpusRoot, captureText } from "./corpus.ts";
+import { corpusPath, captureText } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { parseCapture, memoryImage, etsAllocations, reportedTableReferences, deviceConfiguration, deviceRows } from "./etsdiff.ts";
 import { sha256 } from "./evidence.ts";
-import { loadedImageComparison, readEtsRecords, recordedAppXml, type DeviceRecord, type EtsRecords } from "./ets-records.ts";
+import { corpusProjects, countedMismatches, countMismatches, loadedImageComparison, readEtsRecords, recordedAppXml, tally, type DeviceRecord, type EtsRecords, type PinnedCount } from "./ets-records.ts";
 
 // ETS's own record of its last download of a device, kept in every project it saves
 // (docs/verification.md, "ETS's download record"), held against Busforge's images offline: for every
@@ -47,6 +47,11 @@ function counted(entries: string[]): string[] {
   return [...n].map(([e, k]) => `${e} (${k} project${k === 1 ? "" : "s"})`).sort();
 }
 
+// A moved count fails naming the corpus projects whose devices make it up (tools/ets-records.ts).
+function expectNoMismatch(messages: string[]): void {
+  if (messages.length) throw new Error(`\n${messages.join("\n\n")}`);
+}
+
 const UNPROTECTED = "captures/bench-ets-project-params-edited-after-download.knxproj";
 
 corpusDescribe("ETS's download record in the corpus projects", () => {
@@ -55,7 +60,7 @@ corpusDescribe("ETS's download record in the corpus projects", () => {
   const withRecord = all.filter(({ d }) => d.loadedImage);
 
   test("every corpus project is recorded as it is now, and nothing else", () => {
-    const onDisk = (readdirSync(corpusRoot()!, { recursive: true }) as string[]).filter((f) => f.endsWith(".knxproj") && !f.startsWith(".git/")).sort();
+    const onDisk = corpusProjects();
     expect(records.projects.map((p) => p.path)).toEqual(onDisk);
     for (const p of records.projects) expect([p.path, p.sha256]).toEqual([p.path, sha256(readFileSync(corpusPath(p.path)))]);
   }, TIMEOUT);
@@ -74,7 +79,7 @@ corpusDescribe("ETS's download record in the corpus projects", () => {
   test("a device carries a record exactly where its application names LdCtrlLoadImageProp and ETS downloaded it", () => {
     const off = all.filter(({ d }) => !!d.loadedImage !== (d.declaresLoadImageProp === true && d.etsLoaded.application));
     expect(off.map(({ project, d }) => `${project} ${d.ia}`)).toEqual([]);
-    expect(withRecord.length).toBe(349);
+    expectNoMismatch(countMismatches([{ what: "devices with ETS's download record", found: withRecord.length, pinned: 349, byProject: tally(withRecord.map((w) => w.project)) }]));
     expect(all.filter(({ d }) => !d.loadedImage && d.etsLoaded.application).length).toBeGreaterThan(100);
   });
 
@@ -126,25 +131,37 @@ corpusDescribe("ETS's download record in the corpus projects", () => {
       return loadedImageComparison(cfg, proc, d.ia, deviceConfiguration(cfg, d.config!), d.loadedImage!);
     };
 
-    const found: string[] = [], notCompared: string[] = [];
-    let compared = 0;
-    for (const { d } of withRecord) {
+    const found: { what: string; project: string }[] = [], notCompared: { what: string; project: string }[] = [];
+    const comparedIn: string[] = [], distinctIn: string[] = [], bytesIn = new Map<string, number>();
+    for (const { project, d } of withRecord) {
       const id = appProgramId(d.appRef);
-      if (!etsLoadedCompletely(d)) { notCompared.push(`${id} not loaded: ${etsNotDownloaded(d)!.join(", ")}`); continue; }
+      if (!etsLoadedCompletely(d)) { notCompared.push({ what: `${id} not loaded: ${etsNotDownloaded(d)!.join(", ")}`, project }); continue; }
       const key = JSON.stringify([d.ia, d.appRef, d.loadedImage, d.config]);
       let o = outcomes.get(key);
-      if (!o) { o = compare(d); outcomes.set(key, o); }
-      if ("refused" in o) { notCompared.push(`${id} refused: ${o.refused}`); continue; }
-      compared++;
+      if (!o) {
+        o = compare(d);
+        outcomes.set(key, o);
+        // A distinct device state counts for the first project that shows it.
+        if (!("refused" in o)) { distinctIn.push(project); bytesIn.set(project, (bytesIn.get(project) ?? 0) + o.bytes); }
+      }
+      if ("refused" in o) { notCompared.push({ what: `${id} refused: ${o.refused}`, project }); continue; }
+      comparedIn.push(project);
       // One entry per project and byte: a byte two projects show counts twice.
-      for (const m of o.mismatches) found.push(`${id} ${m}`);
+      for (const m of o.mismatches) found.push({ what: `${id} ${m}`, project });
     }
     const named = (k: string) => k.slice(k.indexOf(": ") + 2);
-    expect(counted(found)).toEqual(KNOWN_DEVIATIONS.map(named));
-    expect(counted(notCompared)).toEqual(NOT_COMPARED);
+    const pinnedDeviations = KNOWN_DEVIATIONS.map(named);
+    expectNoMismatch(countedMismatches(found, pinnedDeviations));
+    expect(counted(found.map((f) => f.what))).toEqual(pinnedDeviations);
+    expectNoMismatch(countedMismatches(notCompared, NOT_COMPARED));
+    expect(counted(notCompared.map((f) => f.what))).toEqual(NOT_COMPARED);
     // 334 records of 30 distinct device states, 42683 bytes ETS marks as its own.
-    const distinct = [...outcomes.values()].flatMap((o) => ("refused" in o ? [] : [o.bytes]));
-    expect([compared, distinct.length, distinct.reduce((n, b) => n + b, 0)]).toEqual([334, 30, 42683]);
+    const pinned: PinnedCount[] = [
+      { what: "compared records", found: comparedIn.length, pinned: 334, byProject: tally(comparedIn) },
+      { what: "distinct device states, each counted for the first project that shows it", found: distinctIn.length, pinned: 30, byProject: tally(distinctIn) },
+      { what: "bytes ETS marks as its own, over the distinct device states", found: [...bytesIn.values()].reduce((n, b) => n + b, 0), pinned: 42683, byProject: bytesIn },
+    ];
+    expectNoMismatch(countMismatches(pinned));
   }, TIMEOUT);
 
   // The decoder held against a download whose bytes tools/etsdiff.test.ts pins ("System B full download":
