@@ -88,9 +88,10 @@ function OpState({ v }: { v: OpView }) {
 }
 
 // The per-operation table of the popover. A head breaks between its words, the paths it covers (API / UI) on
-// a line of their own; a pair of marks never breaks. Below its full 28rem (a phone), the popover has no room
-// for a column of state beside both columns of marks, so each state stands under its operation instead. The
-// state is rendered in both places and CSS shows one, since a table cannot move a cell into another column.
+// a line of their own; a pair of marks never breaks. The popover is 28rem wide, which leaves the table about
+// 25.9rem; where the window cuts it below 25rem (a phone), there is no room for a column of state beside both
+// columns of marks, so each state stands under its operation instead. The state is rendered in both places
+// and CSS shows one, since a table cannot move a cell into another column.
 export function CompatibilityTable({ c }: { c: NonNullable<DeviceConfigView["compatibility"]> }) {
   const { t } = useTranslation();
   return (

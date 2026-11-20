@@ -56,7 +56,8 @@ describe("the compatibility popover's table", () => {
     expect(html).toContain(`Survives restart <span class="block whitespace-nowrap">(API / UI)</span>`);
   });
 
-  test("states each operation under its name where the popover is narrow, in a column of its own where it is wide", () => {
+  // Markup only: that the table fits without scrolling sideways at each width is shown in a browser, not here.
+  test("gives the state a place under its name for a narrow table and a column of its own for a wide one", () => {
     const html = renderToStaticMarkup(<CompatibilityTable c={compat()} />);
     expect(html.startsWith('<div class="@container">')).toBe(true);
     const wideOnly = (c: string[]) => c.includes("hidden") && c.some((x) => x.endsWith(":table-cell"));
