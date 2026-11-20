@@ -4,7 +4,9 @@
 //
 //   BUSFORGE_CORPUS=... bun run tools/ets-driver.ts row <unit> <variant> --order <order number> \
 //     [--simulator <this host's ip>:3701] [--project "Busforge Sweep"] [--configured] [--out <dir>] \
-//     [--stop-sim-after <frames>] [--wrong-interface <host:port>]
+//     [--stop-sim-after <frames>] [--wrong-interface <host:port>] [--sim-override <object>/<PID>=<hex>]...
+//   BUSFORGE_CORPUS=... bun run tools/ets-driver.ts same <ets.log> <ets.log> <unit>       two runs, frame by frame
+//   BUSFORGE_CORPUS=... bun run tools/ets-driver.ts rerun-identity <row dir> <unit>       the identity loop
 //   bun run tools/ets-driver.ts up | down | shot <png> | words [<png>] | xdo <args>... | type <text>
 //
 // THE ROW (runRow). On the bench host ETS runs maximised on the display, German UI, in its own project (no
@@ -24,6 +26,8 @@
 //
 // --stop-sim-after <n> stops the simulator once ETS sent it n frames (a download ETS aborts); --wrong-interface
 // selects another configured connection than the simulator's: both exist to check the verdicts on real logs.
+// --sim-override gives the simulator a wrong identity (tools/sim-unit-serve.ts --override), which ETS refuses with
+// the properties it required in ETS6.log; rerun-identity reads them (tools/sim-unit-product.ts).
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
@@ -33,6 +37,7 @@ import { catalogueXml, corpusUnlistedPath } from "./corpus.ts";
 import { captureLData, deviceConfiguration, deviceRows } from "./etsdiff.ts";
 import { etsOutcome, ROW_FILES, ROW_FORMAT, simRefusals, SWEEP_DIR, type EtsOutcome, type RowConfiguration, type RowSpec } from "./ets-sweep.ts";
 import { numToIa } from "../packages/knx/src/index.ts";
+import { productUnit, rerunIdentity } from "./sim-unit-product.ts";
 import { newSimUnit, simUnitSpec } from "./sim-units.ts";
 
 export const HOST = process.env.ETS_HOST ?? "tf@192.168.1.231";
@@ -479,16 +484,22 @@ async function selectInterface(s: Screen, endpoint: string): Promise<void> {
   await sleep(2000);
   let entry = entryIn(s.look(AT.menuRight).ws);
   if (!entry) {
-    key("Escape");
-    const backbone = (await treeRow(s, /Backbone/)) ?? fail("no backbone in the topology");
-    click(backbone.cx, backbone.cy);
-    await showProperties(s);
-    const label = await s.waitText("Verbindung", AT.properties, 10_000, "the backbone's connection");
-    click(1890, label.cy + 21);
+    // The toolbar offers the project's connection only: starred in the configured connections' dialog, whose OK
+    // also refreshes the toolbar's list.
+    const manage = findText(s.look(AT.menuRight).ws, "Konfigurierte Verbindungen")[0] ?? fail("no 'Konfigurierte Verbindungen verwalten' under the toolbar's interface");
+    click(manage.cx, manage.cy);
+    await sleep(3000);
+    let png = s.snap();
+    const box = dialogBox(png) ?? fail("the configured connections' dialog did not open");
+    const listed = rows(words(png, box)).find((r) => compact(r.text).includes(`(${endpoint}`)) ?? fail(`ETS has no configured connection to ${endpoint}: add one under 'Konfigurierte Verbindungen verwalten'`);
+    click(box.x + 250, Math.round(listed.y));
     await sleep(1500);
-    const { ws } = s.look({ x: 1575, y: label.cy, w: 345, h: 400 });
-    const option = rows(ws).find((r) => compact(r.text).includes(`(${endpoint}`)) ?? fail(`ETS has no configured connection to ${endpoint}: add one under 'Konfigurierte Verbindungen verwalten'`);
-    click(1650, Math.round(option.y));
+    const star = findText(s.look(box).ws, "Für dieses Projekt")[0] ?? fail("no 'Für dieses Projekt verwenden' for the selected connection");
+    click(star.cx, star.cy);
+    await sleep(1500);
+    png = s.snap();
+    const ok = findText(dialogButtons(png, box), "OK")[0] ?? fail("no OK in the configured connections' dialog");
+    click(ok.cx, ok.cy);
     await sleep(2000);
     open();
     await sleep(2000);
@@ -512,9 +523,9 @@ async function selectInterface(s: Screen, endpoint: string): Promise<void> {
 
 interface Sim { pid: number; out: string; stop(): Promise<string> }
 
-function startSim(unit: string, log: string, port: number, advertise: string): Promise<Sim> {
+function startSim(unit: string, log: string, port: number, advertise: string, overrides: string[] = []): Promise<Sim> {
   const out = `${log}.serve.txt`;
-  const child = spawn("bun", ["run", join(import.meta.dir, "sim-unit-serve.ts"), unit, "--tool", "ETS", "--log", log, "--port", String(port - 1), "--proxy-port", String(port), "--advertise", advertise], {
+  const child = spawn("bun", ["run", join(import.meta.dir, "sim-unit-serve.ts"), unit, "--tool", "ETS", "--log", log, "--port", String(port - 1), "--proxy-port", String(port), "--advertise", advertise, ...overrides.flatMap((o) => ["--override", o])], {
     stdio: ["ignore", "pipe", "pipe"], env: process.env,
   });
   let text = "";
@@ -542,6 +553,8 @@ const frameCount = (log: string) => existsSync(log) ? readFileSync(log, "utf8").
 export interface RowOptions {
   unit: string; variant: string; orderNumber?: string; simulator: string; project: string; configured: boolean;
   passwordEnv?: string; out?: string; stopSimAfter?: number; wrongInterface?: string;
+  // Properties the simulator answers otherwise than its unit (tools/sim-unit-serve.ts --override): a wrong identity.
+  simOverrides?: string[];
 }
 
 export interface RowRun { dir: string; outcome: EtsOutcome | { kind: "driver-failed"; why: string }; minutes: number }
@@ -564,7 +577,7 @@ export async function runRow(o: RowOptions): Promise<RowRun> {
   try {
     if (remote(`lsusb | grep -c 147b || true`).trim() !== "0") console.log("note: the KNX-USB stick is plugged into the bench host; ETS6.log decides which interface ETS used");
     await up();
-    sim = await startSim(o.unit, log, port, host);
+    sim = await startSim(o.unit, log, port, host, o.simOverrides);
     if (o.wrongInterface) {
       const [, wp] = o.wrongInterface.split(":");
       wrong = await startSim(o.unit, join(dir, "wrong-interface.log"), Number(wp), host);
@@ -740,6 +753,15 @@ async function main(): Promise<number> {
     for (const l of d.slice(0, 20)) console.log(`  ${l}`);
     return d.length ? 1 : 0;
   }
+  if (cmd === "rerun-identity") {
+    // The identity loop's rerun step (tools/sim-unit-product.ts) on a row ETS failed: the overrides to run again with.
+    const [dir, unit] = rest;
+    if (!dir || !unit) throw new Error("usage: bun run tools/ets-driver.ts rerun-identity <row dir> <unit>");
+    const r = rerunIdentity(productUnit(catalogueXml(simUnitSpec(unit).catalogue)), readFileSync(join(dir, ROW_FILES.ets6log)));
+    if ("refused" in r) { console.log(`refused: ${r.refused}`); return 1; }
+    for (const m of r.learned) console.log(`--sim-override ${m.object}/${m.pid}=${m.required.toString("hex")}    (${m.line})`);
+    return 0;
+  }
   if (cmd === "xdo") { process.stdout.write(xdo(...rest)); return 0; }
   if (cmd === "type") { typeText(rest.join(" ")); return 0; }
   if (cmd === "row") {
@@ -750,6 +772,7 @@ async function main(): Promise<number> {
       unit, variant, orderNumber: flag(rest, "order"), simulator: flag(rest, "simulator") ?? "192.168.1.105:3701",
       project: flag(rest, "project") ?? "Busforge Sweep", configured: rest.includes("--configured"), passwordEnv: flag(rest, "password-env"),
       out: flag(rest, "out"), stopSimAfter: stop === undefined ? undefined : Number(stop), wrongInterface: flag(rest, "wrong-interface"),
+      simOverrides: rest.flatMap((a, i) => (a === "--sim-override" ? [rest[i + 1]] : [])),
     });
     console.log(`${r.dir}: ${r.outcome.kind}${"why" in r.outcome ? `: ${r.outcome.why}` : ""} (${r.minutes.toFixed(1)} min)`);
     return r.outcome.kind === "completed" ? 0 : 1;

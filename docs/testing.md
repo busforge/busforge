@@ -567,14 +567,16 @@ The units simulated, and how each is held to its captures (`tools/sim-unit.test.
 
 ```bash
 BUSFORGE_CORPUS=... bun run tools/sim-unit-serve.ts <unit id> --tool ETS --log ./capture.log \
-  [--port 3700] [--proxy-port 3701] [--advertise <this host's ip>]
+  [--port 3700] [--proxy-port 3701] [--advertise <this host's ip>] [--override <object>/<PID>=<hex>]...
 ```
 
 `<unit id>` is a unit's `id` in `tools/sim-units.ts` (`meanwell-knx40e`, `theben-dali-gateway`,
 `openknx-raumcontroller`, `theben-mix2-hmg6t`, `jung-400021se`, `gvs-amma`, `abb-usu-4.2`,
 `theben-meteodata-140s`). The tool connects to the proxy
 port over KNXnet/IP TCP; the simulator's own lines go to
-`<log>.sim.txt`, and Ctrl-C prints its refusals. A download into the simulator is evidence on no axis
+`<log>.sim.txt`, and Ctrl-C prints its refusals. `--override` (System B units) makes the unit answer
+another first element for a property than its collection holds, or none (`0/78=`): a deliberately wrong
+identity, to see what ETS makes of it; the first line of `<log>.sim.txt` names it. A download into the simulator is evidence on no axis
 of [evidence-contract.md](evidence-contract.md) by itself: it shows what a tool sends given the
 simulator's answers, and the answers are a real unit's only as far as the table above says.
 
@@ -732,6 +734,19 @@ dialogs it knows are closed (ETS shows them inside its window and dims the rest)
 restarted, only the processes `up` started, by PID. Two options exist to check the verdicts on real
 logs: `--stop-sim-after <n>` stops the simulator once ETS sent it n frames (a download ETS aborts),
 `--wrong-interface <host:port>` sets ETS to another configured connection than the row's simulator.
+
+**A wrong identity.** `--sim-override <object>/<PID>=<hex>` passes `--override` to the simulator. ETS
+reads the unit's identity before it writes and refuses one that does not fit the product: the load
+task fails with "inkompatible Produktdaten", and ETS6.log names what it required, one line per
+property:
+
+```text
+WARN  Knx.Ets.Hawk.Impl.VerifyAdditionalResourcesTask - Required data mismatch at SystemProperty(0/78)[$0000]: 620100000005 instead of 620100000004
+```
+
+`bun run tools/ets-driver.ts rerun-identity <row dir> <unit>` reads those lines with the identity loop of
+`tools/sim-unit-product.ts` and prints the overrides to run the row again with, or why not (a value the
+product gives that ETS contradicts is not overwritten).
 
 ## Why the golden snapshot is not a correctness proof
 

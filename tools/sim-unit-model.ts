@@ -105,6 +105,8 @@ export function collectedUnit(collection: CollectPackage, appXml: string, refuse
   for (const [key, hex] of Object.entries(stateInCaptures?.properties ?? {})) {
     const [o, pid] = key.split("/").map(Number);
     const p = objects.get(o)?.get(pid);
+    // An empty answer: the unit answers the property's first element with none, as where it refused it.
+    if (hex === "" && p) { p.elements = null; p.countKnown = false; continue; }
     if (!p?.elements?.[0] || p.elements[0].length !== hex.length / 2) refuse(`the captures' answer ${hex} for property ${key}, which the collection does not hold in that form`);
     p!.elements![0] = Buffer.from(hex, "hex");
   }

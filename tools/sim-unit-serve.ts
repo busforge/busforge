@@ -4,7 +4,7 @@
 // tools/etsdiff.ts and tools/capture-index.ts read:
 //
 //   BUSFORGE_CORPUS=... bun run tools/sim-unit-serve.ts <unit> --tool ETS --log ./capture.log \
-//     [--port 3700] [--proxy-port 3701] [--advertise <this host's ip>]
+//     [--port 3700] [--proxy-port 3701] [--advertise <this host's ip>] [--override <object>/<PID>=<hex>]...
 //
 // The tool connects to --proxy-port over KNXnet/IP TCP (ETS: a KNXnet/IP interface at this host); --advertise
 // puts that endpoint into the search answers, as knxproxy's PROXY_ADVERTISE does. The simulator's own lines,
@@ -27,7 +27,20 @@ if (advertise !== undefined && !/^\d+\.\d+\.\d+\.\d+$/.test(advertise)) throw ne
 
 const spec = simUnitSpec(id);
 const simLog = `${log}.sim.txt`;
-const sim = newSimUnit(spec, { log: (line) => appendFileSync(simLog, `${new Date().toISOString()} ${line}\n`) });
+// --override <object>/<PID>=<hex>, repeatable: the unit answers <hex> as the property's first element in place of
+// what its collection holds (of the same length; empty: it answers the property with no element). A deliberately
+// wrong identity, to see what ETS makes of it (the identity loop, tools/sim-unit-product.ts); the
+// unit is then not the product's, and its log's first line says so.
+const overrides = args.flatMap((a, i) => (a === "--override" ? [args[i + 1] ?? ""] : [])).map((o) => {
+  const m = /^(\d{1,3}\/\d{1,3})=((?:[0-9a-fA-F]{2})*)$/.exec(o);
+  if (!m) throw new Error(`--override ${o} is not <object>/<PID>=<hex>`);
+  return [m[1], m[2].toLowerCase()] as const;
+});
+if (overrides.length && spec.memoryMapped) throw new Error(`--override is for a System B unit's properties; ${spec.id} is memory-mapped`);
+const state = "stateInCaptures" in spec.behaviour ? spec.behaviour.stateInCaptures : undefined;
+const behaviour = overrides.length ? { stateInCaptures: { properties: { ...state?.properties, ...Object.fromEntries(overrides) }, functionStates: state?.functionStates ?? {} } } : {};
+if (overrides.length) appendFileSync(simLog, `${new Date().toISOString()} overridden, not the product's identity: ${overrides.map(([k, v]) => `${k}=${v}`).join(", ")}\n`);
+const sim = newSimUnit(spec, { log: (line) => appendFileSync(simLog, `${new Date().toISOString()} ${line}\n`) }, behaviour);
 const server = new KnxIpServer({ transport: sim, maxApdu: spec.interfaceMaxApdu, port, name: `Busforge sim ${spec.id}`, log: (l) => appendFileSync(simLog, `${new Date().toISOString()} server: ${l}\n`) });
 await server.start();
 const proxy = startProxy({ port: proxyPort, bridgeHost: "127.0.0.1", bridgePort: port, log, tool, advertise: advertise ? parseEndpoint(`${advertise}:${proxyPort}`) : undefined });
