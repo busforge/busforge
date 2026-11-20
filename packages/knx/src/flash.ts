@@ -45,8 +45,8 @@ function allocPayload(size: number, fill: boolean, fillByte = 0): Buffer {
 // are the SAME as the property variant; only the transport differs. Hardware-confirmed on the
 // ABB US/U 4.2 (MV-0701): unload→load→AbsSegment→write→TaskSegment→LoadCompleted drove the
 // address-table LSM through Unloaded→Loading→Loaded and read back byte-identical.
-const MM_CTRL_ADDR = 0x0104;      // load-control register in StandardMemory
-const MM_STATUS_BASE = 46825;     // + LsmIdx -> that LSM's load-status byte
+export const MM_CTRL_ADDR = 0x0104;      // load-control register in StandardMemory
+export const MM_STATUS_BASE = 46825;     // + LsmIdx -> that LSM's load-status byte
 // A memory-mapped load control is an 11-byte payload; the trailing bytes are zero unless the
 // specific control (segment/task declaration) fills them.
 const mmCtrl = (bytes: number[]): Buffer => { const b = Buffer.alloc(11); bytes.forEach((v, i) => (b[i] = v & 0xff)); return b; };

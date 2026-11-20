@@ -97,16 +97,24 @@ export function parseTunnelFrame(hex: string): LData | null {
 
 const L_DATA_REQ = 0x11, L_DATA_IND = 0x29;
 
-export function parseCapture(text: string, deviceIa: number): Capture {
-  const cap: Capture = { writes: [], propWrites: [], propResponses: [], otherDestination: 0 };
+// The L_Data frames of a capture between `tool` and the bridge, in order: the tool's (`fromTool`) and the
+// bridge's to it, each with its line (a confirmation's line says CON-NEG where it is negative).
+export function* captureLData(text: string, tool: string): Generator<LData & { fromTool: boolean; line: string }> {
   for (const line of text.split("\n")) {
     if (!line.includes("TUNNELLING_REQ")) continue;
-    const fromEts = line.includes("ETS->BRIDGE"), toEts = line.includes("BRIDGE->ETS");
-    if (!fromEts && !toEts) continue;
+    const fromTool = line.includes(`${tool}->BRIDGE`);
+    if (!fromTool && !line.includes(`BRIDGE->${tool}`)) continue;
     const m = line.match(/\| ([0-9a-fA-F]+)\s*$/);
-    if (!m) continue;
-    const fr = parseTunnelFrame(m[1]);
-    if (!fr || fr.group || fr.tpdu.length < 2) continue;
+    const fr = m ? parseTunnelFrame(m[1]) : null;
+    if (fr) yield { ...fr, fromTool, line };
+  }
+}
+
+export function parseCapture(text: string, deviceIa: number): Capture {
+  const cap: Capture = { writes: [], propWrites: [], propResponses: [], otherDestination: 0 };
+  for (const fr of captureLData(text, "ETS")) {
+    if (fr.group || fr.tpdu.length < 2) continue;
+    const fromEts = fr.fromTool, toEts = !fr.fromTool;
     const t = fr.tpdu, apci = ((t[0] & 0x03) << 8) | t[1];
     if (fromEts && fr.code === L_DATA_REQ) {
       const mem = memWriteOf(t, apci);
@@ -123,11 +131,8 @@ export function parseCapture(text: string, deviceIa: number): Capture {
 // write ETS sent. A capture without a memory write, or with memory writes to more than one device, is refused.
 export function captureDevice(text: string): number {
   const destinations = new Set<number>();
-  for (const line of text.split("\n")) {
-    if (!line.includes("TUNNELLING_REQ") || !line.includes("ETS->BRIDGE")) continue;
-    const m = line.match(/\| ([0-9a-fA-F]+)\s*$/);
-    const fr = m ? parseTunnelFrame(m[1]) : null;
-    if (!fr || fr.group || fr.code !== L_DATA_REQ || fr.tpdu.length < 2) continue;
+  for (const fr of captureLData(text, "ETS")) {
+    if (!fr.fromTool || fr.group || fr.code !== L_DATA_REQ || fr.tpdu.length < 2) continue;
     if (memWriteOf(fr.tpdu, ((fr.tpdu[0] & 0x03) << 8) | fr.tpdu[1])) destinations.add(fr.dst);
   }
   if (destinations.size !== 1) throw new Error(`the capture's memory writes go to ${destinations.size} devices, not one`);

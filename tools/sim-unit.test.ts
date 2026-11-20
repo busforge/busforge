@@ -1,18 +1,12 @@
 import { test, expect, describe, setDefaultTimeout } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import net from "node:net";
-import { KnxIpServer, cemiLData, crc16CcittFalse, parseCemiLData, withSource, type PropertyDescription } from "../packages/knx/src/index.ts";
+import { cemiLData, crc16CcittFalse, parseCemiLData, withSource, type PropertyDescription } from "../packages/knx/src/index.ts";
 import { buildDeviceConfig, parseAppConfig, placeComObjOverrides, type ComObjInstanceOverride, type ModuleInstance } from "../packages/product/src/index.ts";
-import { downloadDeviceFull, type FlashResult, type FullDownloadCtx } from "../apps/server/src/deviceprofile.ts";
-import type { Connection } from "../apps/server/src/db/connections.ts";
 import { captureText, catalogueXml } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
-import { memWriteOf, parseTunnelFrame } from "./etsdiff.ts";
-import { startProxy } from "./knxproxy.ts";
+import { captureLData, memWriteOf, parseTunnelFrame } from "./etsdiff.ts";
+import { busforgeIntoSim, type RowConfiguration } from "./ets-sweep.ts";
 import { SimUnit, type SimProperty, type SimUnitModel } from "./sim-unit.ts";
 import { GVS_AMMA, JUNG_400021SE, MEANWELL_KNX40E, OPENKNX_RAUMCONTROLLER, THEBEN_DALI_GATEWAY, THEBEN_MIX2_HMG6T, newSimUnit, type SimUnitSpec } from "./sim-units.ts";
-import { removeTempDir, tempDir } from "./test-temp.ts";
 
 // The Busforge download below runs on the wall clock (the unit's line timing, the restart proof's 4 s window):
 // about 15 s alone; twenty times that under a loaded full check (docs/testing.md, "Timeouts of heavy tests").
@@ -218,19 +212,17 @@ describe("a simulated unit", () => {
 
 interface Frame { dir: ">>" | "<<"; tpdu: string; con?: "OK" | "NEG"; ctrl?: number; to?: number }
 // The cEMI frame of a capture line's KNXnet/IP frame.
-const cemiOf = (hex: string) => { const f = Buffer.from(hex, "hex"); return f.subarray(f[0] + f[f[0]]); };
+const cemiOf = (line: string) => { const f = Buffer.from(line.match(/\| ([0-9a-fA-F]+)\s*$/)![1], "hex"); return f.subarray(f[0] + f[f[0]]); };
 // The L_Data frames of a capture between the tool and the unit: the tool's requests with the interface's
 // confirmation, the unit's frames to the interface with their first control field.
 function frames(text: string, tool: string, device: number): Frame[] {
   const out: Frame[] = [];
   const pending: Frame[] = [];
-  for (const line of text.split("\n")) {
-    const m = line.match(/\| ([0-9a-fA-F]+)\s*$/);
-    const fr = m && line.includes("TUNNELLING_REQ") ? parseTunnelFrame(m[1]) : null;
-    if (!fr || fr.group) continue;
-    if (line.includes(`${tool}->BRIDGE`) && fr.code === 0x11 && fr.dst === device) { const f: Frame = { dir: ">>", tpdu: fr.tpdu.toString("hex") }; out.push(f); pending.push(f); }
-    else if (line.includes(`BRIDGE->${tool}`) && fr.code === 0x2e && fr.dst === device) { const f = pending.shift(); if (f) f.con = line.includes("CON-NEG") ? "NEG" : "OK"; }
-    else if (line.includes(`BRIDGE->${tool}`) && fr.code === 0x29 && fr.src === device) { const c = cemiOf(m![1]); out.push({ dir: "<<", tpdu: fr.tpdu.toString("hex"), ctrl: c[2 + c[1]], to: fr.dst }); }
+  for (const fr of captureLData(text, tool)) {
+    if (fr.group) continue;
+    if (fr.fromTool && fr.code === 0x11 && fr.dst === device) { const f: Frame = { dir: ">>", tpdu: fr.tpdu.toString("hex") }; out.push(f); pending.push(f); }
+    else if (!fr.fromTool && fr.code === 0x2e && fr.dst === device) { const f = pending.shift(); if (f) f.con = fr.line.includes("CON-NEG") ? "NEG" : "OK"; }
+    else if (!fr.fromTool && fr.code === 0x29 && fr.src === device) { const c = cemiOf(fr.line); out.push({ dir: "<<", tpdu: fr.tpdu.toString("hex"), ctrl: c[2 + c[1]], to: fr.dst }); }
   }
   return out;
 }
@@ -249,7 +241,7 @@ function etsRequests(text: string, device: number, tunnel: number): { requests: 
     const m = line.match(/\| ([0-9a-fA-F]+)\s*$/);
     const fr = m && line.includes("ETS->BRIDGE TUNNELLING_REQ") ? parseTunnelFrame(m[1]) : null;
     if (!fr || fr.group || fr.code !== 0x11 || fr.dst !== device) continue;
-    const cemi = Buffer.from(cemiOf(m![1]));
+    const cemi = Buffer.from(cemiOf(line));
     if (cemi.readUInt16BE(4) === 0) cemi.writeUInt16BE(tunnel, 4);
     requests.push({ cemi, at: Date.parse(line.split(" ")[0]) });
   }
@@ -324,87 +316,54 @@ corpusDescribe("the simulated MEAN WELL KNX-40E-1280D", () => {
   // internal/ets-sweep/spike.md); the differences of this build's frames are Busforge's own, named below.
   test("takes Busforge's full download through the KNXnet/IP server, every frame as the unit answered it", async () => {
     const fx = JSON.parse(captureText("meanwell-project.json")) as { ia: string; params: [string, string][]; links: { comObjNum: number; gaRaws: number[] }[] };
-    const sim = newSimUnit(MEANWELL_KNX40E);
-    await busforgeIntoSim(MEANWELL_KNX40E, sim, { ia: fx.ia, params: new Map(fx.params), links: fx.links }, async (result, log) => {
-      const unitDownload = frames(captureText("meanwell-busforge-fulldownload.log"), "Busforge", MEANWELL_DEVICE);
-      const simDownload = frames(log, "Busforge", MEANWELL_DEVICE);
-      expect(sim.refusals).toEqual([]);
-      // The memory-control blocks the unit reported after the capture's download; the restart without a
-      // T_Disconnect to prove it, as the unit took it.
-      expect(result).toMatchObject({ kind: "flashed", verified: true, restartUnproven: true, stamps: [1, 2, 3, 4].map((obj) => ({ obj, hex: unitDownload.find((f) => f.dir === "<<" && f.tpdu.slice(2, 10) === `d60${obj}1b10`)!.tpdu.slice(12) })) });
+    const { result, capture, sim } = await busforgeIntoSim(MEANWELL_KNX40E, fx);
+    const unitDownload = frames(captureText("meanwell-busforge-fulldownload.log"), "Busforge", MEANWELL_DEVICE);
+    const simDownload = frames(capture, "Busforge", MEANWELL_DEVICE);
+    expect(sim.refusals).toEqual([]);
+    // The memory-control blocks the unit reported after the capture's download; the restart without a
+    // T_Disconnect to prove it, as the unit took it.
+    expect(result).toMatchObject({ kind: "flashed", verified: true, restartUnproven: true, stamps: [1, 2, 3, 4].map((obj) => ({ obj, hex: unitDownload.find((f) => f.dir === "<<" && f.tpdu.slice(2, 10) === `d60${obj}1b10`)!.tpdu.slice(12) })) });
 
-      const unitPhases = phases(unitDownload), simPhases = phases(simDownload);
-      // The segments in the order written: this build writes the parameter segment before the three tables, in
-      // ETS's order (held against ETS's capture of the unit in tools/etsdiff.test.ts); the captured build wrote the
-      // tables first.
-      const writeOrder = (fs: Frame[]) => {
-        const lsms = fs.flatMap((f) => {
-          const t = Buffer.from(f.tpdu, "hex");
-          const w = f.dir === ">>" && t.length >= 2 ? memWriteOf(t, ((t[0] & 0x03) << 8) | t[1]) : null;
-          if (!w) return [];
-          return [[1, 2, 3, 4].find((lsm) => { const s = sim.segment(lsm)!; return w.addr >= s.at && w.addr < s.at + s.bytes.length; }) ?? 0];
-        });
-        return lsms.filter((l, i) => lsms[i - 1] !== l);
-      };
-      expect(writeOrder(simPhases.bracket)).toEqual([4, 3, 2, 1]);
-      expect(writeOrder(unitPhases.bracket)).toEqual([3, 2, 1, 4]);
-      // From the first unload to the A_Restart: every request, every answer and every confirmation the unit's, the
-      // parameter segment's run (object 4's two PID 7 reads and the segment's memory writes) taken before the tables'.
-      expect(simPhases.bracket).toEqual(parameterSegmentFirst(unitPhases.bracket));
-      // Before it this build also reads the association table's element form (object 2's PID 23 description).
-      const at = simPhases.open.findIndex((f) => f.dir === ">>" && f.tpdu === "43d8021700");
-      expect(simPhases.open.slice(at, at + 4)).toEqual([{ dir: ">>", tpdu: "43d8021700", con: "OK" }, { dir: "<<", tpdu: "c2", ctrl: 0xb0, to: 0x1164 }, { dir: "<<", tpdu: "43d90217031400ffff", ctrl: 0xbc, to: 0x1164 }, { dir: ">>", tpdu: "c2", con: "OK" }]);
-      expect(simPhases.open.toSpliced(at, 4)).toEqual(unitPhases.open);
-      // After the restart: probes on the dead connection, which the unit leaves without a frame (how many of
-      // them its interface confirms negatively depends on the wall clock).
-      for (const ph of [simPhases, unitPhases]) {
-        expect(ph.probes.length).toBeGreaterThan(0);
-        expect(ph.probes.every((f) => f.dir === ">>" && f.tpdu === "4300")).toBe(true);
-      }
-      // The verification on a new connection: this build proves every segment by its memory-control block
-      // (PID 27 of objects 1 to 4), the captured one read the three tables back; every request both send is
-      // answered as the unit answered it.
-      const reqs = (fs: Frame[]) => fs.filter((f) => f.dir === ">>" && f.tpdu.length > 2).map((f) => f.tpdu);
-      expect(reqs(simPhases.verify)).toEqual(["4300", "43d5011b1001", "43d5021b1001", "43d5031b1001", "43d504071001", "43d5041b1001"]);
-      expect(reqs(unitPhases.verify)).toEqual(["4300", "43d501071001", "43d500381001", "42021002", "420e1002", "43d502071001", "42021404", "421a1404", "43d503071001", "42021c06", "42301c06", "421a1c36", "43d5041b1001"]);
-      const answer = (fs: Frame[], req: string) => { const i = fs.findIndex((f) => f.dir === ">>" && f.tpdu === req); return fs.slice(i + 1).find((f) => f.dir === "<<" && f.tpdu.length > 2)?.tpdu; };
-      const shared = reqs(simPhases.verify).filter((r) => reqs(unitPhases.verify).includes(r));
-      expect(shared).toEqual(["4300", "43d5041b1001"]);
-      for (const r of shared) expect([r, answer(simPhases.verify, r)]).toEqual([r, answer(unitPhases.verify, r)]);
-    });
+    const unitPhases = phases(unitDownload), simPhases = phases(simDownload);
+    // The segments in the order written: this build writes the parameter segment before the three tables, in
+    // ETS's order (held against ETS's capture of the unit in tools/etsdiff.test.ts); the captured build wrote the
+    // tables first.
+    const writeOrder = (fs: Frame[]) => {
+      const lsms = fs.flatMap((f) => {
+        const t = Buffer.from(f.tpdu, "hex");
+        const w = f.dir === ">>" && t.length >= 2 ? memWriteOf(t, ((t[0] & 0x03) << 8) | t[1]) : null;
+        if (!w) return [];
+        return [[1, 2, 3, 4].find((lsm) => { const s = sim.segment(lsm)!; return w.addr >= s.at && w.addr < s.at + s.bytes.length; }) ?? 0];
+      });
+      return lsms.filter((l, i) => lsms[i - 1] !== l);
+    };
+    expect(writeOrder(simPhases.bracket)).toEqual([4, 3, 2, 1]);
+    expect(writeOrder(unitPhases.bracket)).toEqual([3, 2, 1, 4]);
+    // From the first unload to the A_Restart: every request, every answer and every confirmation the unit's, the
+    // parameter segment's run (object 4's two PID 7 reads and the segment's memory writes) taken before the tables'.
+    expect(simPhases.bracket).toEqual(parameterSegmentFirst(unitPhases.bracket));
+    // Before it this build also reads the association table's element form (object 2's PID 23 description).
+    const at = simPhases.open.findIndex((f) => f.dir === ">>" && f.tpdu === "43d8021700");
+    expect(simPhases.open.slice(at, at + 4)).toEqual([{ dir: ">>", tpdu: "43d8021700", con: "OK" }, { dir: "<<", tpdu: "c2", ctrl: 0xb0, to: 0x1164 }, { dir: "<<", tpdu: "43d90217031400ffff", ctrl: 0xbc, to: 0x1164 }, { dir: ">>", tpdu: "c2", con: "OK" }]);
+    expect(simPhases.open.toSpliced(at, 4)).toEqual(unitPhases.open);
+    // After the restart: probes on the dead connection, which the unit leaves without a frame (how many of
+    // them its interface confirms negatively depends on the wall clock).
+    for (const ph of [simPhases, unitPhases]) {
+      expect(ph.probes.length).toBeGreaterThan(0);
+      expect(ph.probes.every((f) => f.dir === ">>" && f.tpdu === "4300")).toBe(true);
+    }
+    // The verification on a new connection: this build proves every segment by its memory-control block
+    // (PID 27 of objects 1 to 4), the captured one read the three tables back; every request both send is
+    // answered as the unit answered it.
+    const reqs = (fs: Frame[]) => fs.filter((f) => f.dir === ">>" && f.tpdu.length > 2).map((f) => f.tpdu);
+    expect(reqs(simPhases.verify)).toEqual(["4300", "43d5011b1001", "43d5021b1001", "43d5031b1001", "43d504071001", "43d5041b1001"]);
+    expect(reqs(unitPhases.verify)).toEqual(["4300", "43d501071001", "43d500381001", "42021002", "420e1002", "43d502071001", "42021404", "421a1404", "43d503071001", "42021c06", "42301c06", "421a1c36", "43d5041b1001"]);
+    const answer = (fs: Frame[], req: string) => { const i = fs.findIndex((f) => f.dir === ">>" && f.tpdu === req); return fs.slice(i + 1).find((f) => f.dir === "<<" && f.tpdu.length > 2)?.tpdu; };
+    const shared = reqs(simPhases.verify).filter((r) => reqs(unitPhases.verify).includes(r));
+    expect(shared).toEqual(["4300", "43d5041b1001"]);
+    for (const r of shared) expect([r, answer(simPhases.verify, r)]).toEqual([r, answer(unitPhases.verify, r)]);
   });
 });
-
-type DownloadConfig = Pick<FullDownloadCtx, "params" | "links" | "moduleInstances" | "comObjectOverrides"> & { ia: string };
-
-// Busforge's full download of `config` into `sim` through the KNXnet/IP server ETS connects to and the logging
-// proxy the captures are taken with: the server's own download task. `check` gets its result (or the error it
-// ended with) and the session's capture, once the session has ended with its T_Disconnect.
-async function busforgeIntoSim(spec: SimUnitSpec, sim: SimUnit, config: DownloadConfig, check: (result: FlashResult | { error: string }, log: string) => void | Promise<void>): Promise<void> {
-  const dir = tempDir("busforge-sim-unit-");
-  const port = await freePort();
-  const server = new KnxIpServer({ transport: sim, maxApdu: spec.interfaceMaxApdu, port });
-  const log = join(dir, "capture.log");
-  const proxy = startProxy({ port: 0, bridgeHost: "127.0.0.1", bridgePort: port, log, tool: "Busforge" });
-  try {
-    await server.start();
-    await new Promise<void>((r) => proxy.listen(0, "127.0.0.1", () => r()));
-    const proxyPort = (proxy.address() as { port: number }).port;
-    const connection: Connection = { id: "sim", name: "sim", type: "ip", host: "127.0.0.1", port: proxyPort, ipTransport: "tcp", usbVendorId: null, usbProductId: null, usbSerial: null, createdAt: 0 };
-    const result = await downloadDeviceFull({ projectId: "p", deviceId: "d", appXml: catalogueXml(spec.catalogue), dataDir: dir, connection, comObjectOverrides: new Map(), dryRun: false, ...config })
-      .catch((e: unknown) => ({ error: e instanceof Error ? `${(e as { code?: string }).code ?? e.name}: ${e.message}` : String(e) }));
-    // The session ends with its T_Disconnect after the result.
-    for (let i = 0; !readFileSync(log, "utf8").includes("DISCONNECT_REQ"); i++) {
-      if (i === 100) throw new Error("the session did not end within 10 s of the download's result");
-      await new Promise((r) => setTimeout(r, 100));
-    }
-    await check(result, readFileSync(log, "utf8"));
-  } finally {
-    proxy.close();
-    await server.stop();
-    removeTempDir(dir);
-  }
-}
 
 // A download's frames in four parts: the session before the first load-state write, the bracket from it to the
 // A_Restart, the probes after it until the next T_Connect, and the verification from there. Sequence numbers
@@ -428,15 +387,6 @@ function parameterSegmentFirst(fs: Frame[]): Frame[] {
   return [...fs.slice(0, tables), ...fs.slice(parameters, programId), ...fs.slice(tables, parameters), ...fs.slice(programId)];
 }
 
-// A port for the KNXnet/IP server, which takes a port number for its UDP socket and TCP listener alike.
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const s = net.createServer();
-    s.on("error", reject);
-    s.listen(0, "127.0.0.1", () => { const a = s.address(); s.close(() => resolve(typeof a === "object" && a ? a.port : 0)); });
-  });
-}
-
 // ---- Busforge's own full download into each simulated unit ----
 
 // What Busforge's restart proof sends that the unit's captures do not show the answer to, its wall-clock times left
@@ -450,20 +400,17 @@ const refusalKind = (r: string) => [NOT_SHOWN_AFTER_RESTART, NOT_SHOWN_DEAD_CONN
 // download: the bytes ETS writes, and no other", holds Busforge's image to it): the projects' configurations of the
 // Theben and OpenKNX units, the application's defaults on the Jung and the GVS. `stamps` are the memory-control
 // blocks Busforge read back to prove the download; `refusals` what of its restart proof no capture shows.
-const DOWNLOADS: { spec: SimUnitSpec; config: () => DownloadConfig; stamps: string[]; refusals: string[] }[] = [
+const DOWNLOADS: { spec: SimUnitSpec; config: () => RowConfiguration; stamps: string[]; refusals: string[] }[] = [
   {
     spec: THEBEN_DALI_GATEWAY, config: () => {
       const fx = JSON.parse(captureText("dali-gateway-unit-fulldownload.json")) as { ia: string; params: [string, string][]; instances: ModuleInstance[]; links: { comObjNum: number; gaRaws: number[] }[]; overrides: [number, ComObjInstanceOverride][] };
-      return { ia: fx.ia, params: new Map(fx.params), links: fx.links, moduleInstances: fx.instances, comObjectOverrides: new Map(fx.overrides) };
+      return { ia: fx.ia, params: fx.params, links: fx.links, moduleInstances: fx.instances, comObjectOverrides: fx.overrides };
     },
     stamps: ["1:000000700133ee28", "2:0000011a01333261", "3:00000a8001338da7", "4:00000c5000334f75"],
     refusals: [NOT_SHOWN_AFTER_RESTART, NOT_SHOWN_DEAD_CONNECTION],
   },
   {
-    spec: OPENKNX_RAUMCONTROLLER, config: () => {
-      const fx = JSON.parse(captureText("openknx-config.json")) as { ia: string; params: [string, string][]; links: { comObjNum: number; gaRaws: number[] }[] };
-      return { ia: fx.ia, params: new Map(fx.params), links: fx.links };
-    },
+    spec: OPENKNX_RAUMCONTROLLER, config: () => JSON.parse(captureText("openknx-config.json")) as RowConfiguration,
     stamps: ["4:0000546100ff0962"],
     refusals: [NOT_SHOWN_AFTER_RESTART, NOT_SHOWN_DEAD_CONNECTION],
   },
@@ -471,19 +418,19 @@ const DOWNLOADS: { spec: SimUnitSpec; config: () => DownloadConfig; stamps: stri
     spec: THEBEN_MIX2_HMG6T, config: () => {
       const fx = JSON.parse(captureText("mix2-hmg6t-config.json")) as { ia: string; params: [string, string][]; instances: ModuleInstance[]; links: { comObjNum: number; gaRaws: number[] }[]; overrides: { comObjRefId: string; attrs: Record<string, string> }[] };
       const cfg = parseAppConfig(catalogueXml(THEBEN_MIX2_HMG6T.catalogue));
-      const params = new Map(fx.params);
-      return { ia: fx.ia, params, links: fx.links, moduleInstances: fx.instances, comObjectOverrides: placeComObjOverrides(cfg, buildDeviceConfig(cfg, params, undefined, fx.instances), fx.overrides) };
+      const overrides = placeComObjOverrides(cfg, buildDeviceConfig(cfg, new Map(fx.params), undefined, fx.instances), fx.overrides);
+      return { ia: fx.ia, params: fx.params, links: fx.links, moduleInstances: fx.instances, comObjectOverrides: [...overrides] };
     },
     stamps: ["1:0000007200331460", "2:000001260033610f", "3:000001fe0033e64b", "4:0000066a0032284d", "4:000001690032304e"],
     refusals: [],
   },
   {
-    spec: JUNG_400021SE, config: () => ({ ia: "1.1.204", params: new Map(), links: [] }),
+    spec: JUNG_400021SE, config: () => ({ ia: "1.1.204", params: [], links: [] }),
     stamps: ["1:00000002003384c0", "2:00000002003384c0", "3:00000a600033f25f", "4:00001e140033c73a", "4:000000010133dcbd"],
     refusals: [],
   },
   {
-    spec: GVS_AMMA, config: () => ({ ia: "1.1.203", params: new Map(), links: [] }),
+    spec: GVS_AMMA, config: () => ({ ia: "1.1.203", params: [], links: [] }),
     stamps: ["1:0000000200321d0f", "2:0000000200321d0f", "3:0000042a003233da", "4:00000b000032d5f7"],
     refusals: [NOT_SHOWN_AFTER_RESTART, NOT_SHOWN_DEAD_CONNECTION],
   },
@@ -492,12 +439,11 @@ const DOWNLOADS: { spec: SimUnitSpec; config: () => DownloadConfig; stamps: stri
 for (const { spec, config, stamps, refusals } of DOWNLOADS) {
   corpusDescribe(`Busforge's full download into the simulated ${spec.name}`, () => {
     test("is taken and verified; what its restart proof meets that no capture shows is refused", async () => {
-      const sim = newSimUnit(spec);
-      await busforgeIntoSim(spec, sim, config(), (result) => {
-        expect(result).toMatchObject({ kind: "flashed", verified: true });
-        expect("stamps" in result ? result.stamps?.map((s) => `${s.obj}:${s.hex}`) : result).toEqual(stamps);
-        expect([...new Set(sim.refusals.map(refusalKind))].sort()).toEqual([...refusals].sort());
-      });
+      const run = await busforgeIntoSim(spec, config());
+      expect({ refused: run.refused, error: run.error }).toEqual({ refused: null, error: null });
+      expect(run.result).toMatchObject({ kind: "flashed", verified: true });
+      expect(run.result?.kind === "flashed" ? run.result.stamps?.map((s) => `${s.obj}:${s.hex}`) : run.result).toEqual(stamps);
+      expect([...new Set(run.refusals.map(refusalKind))].sort()).toEqual([...refusals].sort());
     });
   });
 }
