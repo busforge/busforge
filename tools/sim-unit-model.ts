@@ -9,14 +9,17 @@ import type { SimProperty, SimUnitModel } from "./sim-unit.ts";
 
 // What the collection cannot show and the unit's captures do: how it takes a restart and an authorization, how
 // long its interface took to confirm a frame, its device control after an unload, its description answers by
-// PID, what its application changes in its memory after a restart, its answers to writes of properties whose
-// read it refused, and, for a unit whose memory-control blocks held no element when it was collected, what they report
+// PID, what its application changes in its memory after a restart, the property writes only they show answered,
+// whether it takes A_MemoryExtended_Write, and, for a unit whose memory-control blocks held no element when it was collected, what they report
 // once a load completes (`mcb`, the two octets between size and CRC as hex, and the CRC's convention).
 // `stateInCaptures`: for a unit collected in a later state than its captures found it, the answers its captures
 // show where they differ from the collection: a property's first element (`<object>/<PID>` -> hex) and a
 // function-property state (the `functionStates` key -> hex); each must be one the collection holds.
-export type UnitBehaviour = Pick<SimUnitModel, "restart" | "authorize" | "link" | "unloadStopsApplication" | "descriptionIndex" | "clearsAfterRestart" | "refusedReadWrites">
-  & { mcb?: { control: string; crc: SimUnitModel["crc"] }; stateInCaptures?: { properties: Record<string, string>; functionStates: Record<string, string> } };
+export type UnitBehaviour = Pick<SimUnitModel, "restart" | "authorize" | "link" | "unloadStopsApplication" | "descriptionIndex" | "clearsAfterRestart" | "shownWrites" | "memoryExtendedWrite">
+  & {
+    mcb?: { control: string; crc: SimUnitModel["crc"] };
+    stateInCaptures?: { properties: Record<string, string>; functionStates: Record<string, string> };
+  };
 
 // The fields of a record's target the model reads.
 type Target = { object?: number; pid?: number; start?: number; count?: number; address?: number; type?: number };
@@ -59,7 +62,9 @@ export function simUnitModel(collection: CollectPackage, appXml: string, behavio
     }
     if (r.space === "function-property" && r.outcome === "bytes" && r.bytes) {
       const t = r.target as { objectType?: number; instance?: number; pid?: number };
-      // tools/collect.ts reads the security mode with the data 00 00 (packages/product/src/collect.ts).
+      // tools/collect.ts reads the security mode with the data 00 00 (packages/product/src/collect.ts); another
+      // function-property read's data the record does not hold.
+      if (r.step !== "security-mode") continue;
       functionStates.set(`${t.objectType}/${t.instance}/${t.pid} 0000`, Buffer.from(r.bytes, "hex"));
       continue;
     }

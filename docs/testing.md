@@ -509,7 +509,10 @@ blocks (one per segment, or the blocks written while loading, each with its CRC)
 the confirmed restart. Everything else it refuses: a line in its log and in `refusals`, and no answer, so
 the tool's own timeout ends a run where an invented byte would have let it go on. A behaviour the unit's
 captures do not show is refused the same way: a frame in a time after a restart no capture shows the line
-in, a frame on the connection a restart ended, the device control after an unload.
+in, a frame on the connection a restart ended, the device control after an unload, a property write or a
+memory service its captures and collection do not show. One exception is chosen, not shown: the MEAN WELL's
+line, down 0.38 s and up 0.65 s after its restart, is taken back at 0.5 s, where Busforge's restart proof
+probes, so its download test does not hang on the scheduler.
 
 The units it simulates, and how each is held to its captures (`tools/sim-unit.test.ts`, with the
 private corpus):

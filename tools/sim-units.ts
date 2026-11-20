@@ -21,6 +21,12 @@ export interface SimUnitSpec {
   behaviour: UnitBehaviour;
 }
 
+// Busforge's bench bridge at 1.1.100 (a KNX-USB stick), which the Jung's and the GVS's captures ran through
+// announcing a maximum APDU of 40: it confirmed their frames longer than that negatively within 2 to 4 ms,
+// without sending them (the simulator confirms them after the unit's `link.nakMs`: timing only). It reports the
+// type of a long frame, which the house's KNXnet/IP interface does not.
+export const BENCH_BRIDGE = { ia: 0x1164, maxApdu: 40 } as const;
+
 // The MEAN WELL KNX-40E-1280D power supply (M-0162_A-0004-11-F245, MV-07B0), from the collection before ETS's
 // downloads (captures/meanwell-unit-collect-vor.json). Its behaviour from the captures of ETS's six downloads
 // (captures/meanwell-ets-*.log) and Busforge's full download (captures/meanwell-busforge-fulldownload.log),
@@ -41,16 +47,17 @@ export const MEANWELL_KNX40E: SimUnitSpec = {
   name: "MEAN WELL KNX-40E-1280D",
   collection: "meanwell-unit-collect-vor.json",
   catalogue: "M-0162_A-0004-11-F245.xml.gz",
-  interfaceIa: 0x1164,
-  interfaceMaxApdu: 40,
+  interfaceIa: BENCH_BRIDGE.ia,
+  interfaceMaxApdu: BENCH_BRIDGE.maxApdu,
   behaviour: {
     restart: { basic: { acknowledged: false, tAck: "never" }, line: [{ atMs: 0, up: false }, { atMs: 499, up: false }, { atMs: 500, up: true }], deadConnection: "nothing", confirmedRestartSeconds: null },
     authorize: new Map([["ffffffff", 0]]),
     link: { ackMs: 20, nakMs: 75 },
     unloadStopsApplication: true,
+    memoryExtendedWrite: false,
     descriptionIndex: "property",
     clearsAfterRestart: [],
-    refusedReadWrites: new Map(),
+    shownWrites: new Map(),
   },
 };
 
@@ -72,6 +79,7 @@ const HOUSE_INTERFACE = { maxApdu: 210, link: { ackMs: 16, nakMs: 63 } } as cons
 // - its device control (PID 14) reads 0 after the application is unloaded (-partial-params, -partial-revert,
 //   -fulldownload-real), not 1;
 // - a description read by PID is answered with the request's index (object 2's PID 23 at index 0; its own is 3);
+// - ETS's unload writes its programming mode (object 0 PID 54) 00, echoed;
 // - its memory-control blocks report 01 33 between size and CRC for the three tables, 00 33 for the application.
 export const THEBEN_DALI_GATEWAY: SimUnitSpec = {
   id: "theben-dali-gateway",
@@ -85,9 +93,10 @@ export const THEBEN_DALI_GATEWAY: SimUnitSpec = {
     authorize: new Map([["ffffffff", 0]]),
     link: HOUSE_INTERFACE.link,
     unloadStopsApplication: false,
+    memoryExtendedWrite: false,
     descriptionIndex: "request",
     clearsAfterRestart: [],
-    refusedReadWrites: new Map(),
+    shownWrites: new Map([["0/54 00", Buffer.from([0x00])]]),
   },
 };
 
@@ -98,6 +107,7 @@ export const THEBEN_DALI_GATEWAY: SimUnitSpec = {
 // - A_Restart: acknowledged on layer 2, no T_Ack (every capture); a T_Disconnect 2864 to 2992 ms after it
 //   confirmed positively; nothing on the connection it ended;
 // - the free key (FFFFFFFF) grants access level 0;
+// - memory is written with A_MemoryExtended_Write, answered with return code 0;
 // - a description read by PID is answered with the property's own index (object 2's PID 23 at index 1);
 // - its memory-control blocks held no element when it was collected; after the application's load completed
 //   it reports size, 00 FF and the CRC-16/CCITT over the segment with the 16 zero bits appended (object 4's
@@ -117,9 +127,10 @@ export const OPENKNX_RAUMCONTROLLER: SimUnitSpec = {
     authorize: new Map([["ffffffff", 0]]),
     link: HOUSE_INTERFACE.link,
     unloadStopsApplication: null,
+    memoryExtendedWrite: true,
     descriptionIndex: "property",
     clearsAfterRestart: [],
-    refusedReadWrites: new Map([["5/5 04000000000000000000", Buffer.alloc(0)]]),
+    shownWrites: new Map([["5/5 04000000000000000000", Buffer.alloc(0)]]),
     mcb: { control: "00ff", crc: "ccitt" },
   },
 };
@@ -149,16 +160,13 @@ export const THEBEN_MIX2_HMG6T: SimUnitSpec = {
     authorize: new Map([["ffffffff", 0]]),
     link: HOUSE_INTERFACE.link,
     unloadStopsApplication: null,
+    memoryExtendedWrite: true,
     descriptionIndex: "property",
     clearsAfterRestart: [{ lsm: 4, offset: 39, clear: 0x80 }],
-    refusedReadWrites: new Map(),
+    shownWrites: new Map(),
   },
 };
 
-// Busforge's bench bridge at 1.1.100 (a KNX-USB stick), which the Jung's and the GVS's captures ran through
-// announcing a maximum APDU of 40: it confirmed their frames longer than that negatively within 2 to 4 ms,
-// without sending them.
-const BENCH_BRIDGE = { ia: 0x1164, maxApdu: 40 } as const;
 
 // The Jung 400021SE (M-0004_A-7072-21-99A7-O000A, MV-07B0). Its only collection was taken after the unit was
 // switched to Data Secure, in a later configuration (captures/jung-400021se-unit-collect-secure.json); its ETS
@@ -189,9 +197,10 @@ export const JUNG_400021SE: SimUnitSpec = {
     authorize: new Map([["ffffffff", 0]]),
     link: { ackMs: 21, nakMs: 68 },
     unloadStopsApplication: null,
+    memoryExtendedWrite: true,
     descriptionIndex: "property",
     clearsAfterRestart: [{ lsm: 4, offset: 7700, clear: 0x01 }],
-    refusedReadWrites: new Map(),
+    shownWrites: new Map(),
     stateInCaptures: { properties: { "4/5": "03" }, functionStates: { "17/1/51 0000": "0000" } },
   },
 };
@@ -222,9 +231,10 @@ export const GVS_AMMA: SimUnitSpec = {
     authorize: new Map([["ffffffff", 0]]),
     link: { ackMs: 20, nakMs: 74 },
     unloadStopsApplication: null,
+    memoryExtendedWrite: true,
     descriptionIndex: "property",
     clearsAfterRestart: [],
-    refusedReadWrites: new Map([["4/67 01", Buffer.from([0x01])]]),
+    shownWrites: new Map([["4/67 01", Buffer.from([0x01])]]),
     stateInCaptures: { properties: {}, functionStates: { "17/1/51 0000": "0000" } },
   },
 };

@@ -6,7 +6,7 @@ import { corpusDescribe } from "./corpus-test.ts";
 import { captureLData, memWriteOf, parseTunnelFrame } from "./etsdiff.ts";
 import { busforgeIntoSim, type RowConfiguration } from "./ets-sweep.ts";
 import { SimUnit, type SimProperty, type SimUnitModel } from "./sim-unit.ts";
-import { GVS_AMMA, JUNG_400021SE, MEANWELL_KNX40E, OPENKNX_RAUMCONTROLLER, THEBEN_DALI_GATEWAY, THEBEN_MIX2_HMG6T, newSimUnit, type SimUnitSpec } from "./sim-units.ts";
+import { BENCH_BRIDGE, GVS_AMMA, JUNG_400021SE, MEANWELL_KNX40E, OPENKNX_RAUMCONTROLLER, THEBEN_DALI_GATEWAY, THEBEN_MIX2_HMG6T, newSimUnit, type SimUnitSpec } from "./sim-units.ts";
 
 // The Busforge download below runs on the wall clock (the unit's line timing, the restart proof's 4 s window):
 // about 15 s alone; twenty times that under a loaded full check (docs/testing.md, "Timeouts of heavy tests").
@@ -35,7 +35,7 @@ function unit(over: Partial<SimUnitModel> = {}, opts: ConstructorParameters<type
     crc: "ccitt-false",
     authorize: new Map([["ffffffff", 0]]),
     restart: { basic: { acknowledged: true, tAck: "always" }, line: [{ atMs: 0, up: true }], deadConnection: "disconnect", confirmedRestartSeconds: null }, link: { ackMs: 0, nakMs: 0 },
-    unloadStopsApplication: true, descriptionIndex: "property", clearsAfterRestart: [], refusedReadWrites: new Map(), memoryExtendedRead: false,
+    unloadStopsApplication: true, descriptionIndex: "property", clearsAfterRestart: [], shownWrites: new Map(), memoryExtendedRead: false, memoryExtendedWrite: false,
     ...over,
   };
   const sim = new SimUnit(model, TOOL, opts);
@@ -151,8 +151,8 @@ describe("a simulated unit", () => {
     let clock = 0;
     const { sim, send, line } = unit({ restart: { basic: null, line: [{ atMs: 20, up: false }, { atMs: 40, up: false }, { atMs: 100, up: true }], deadConnection: null, confirmedRestartSeconds: 1 } }, { now: () => clock });
     await send("80");
-    // A basic restart is refused where it is not shown.
-    expect(await send("4380")).toEqual(["c2"]);
+    // A basic restart is refused where it is not shown, without a T_Ack.
+    expect(await send("4380")).toEqual([]);
     expect(await send("4781")).toEqual(["c6"]);
     expect(await send("4b810100")).toEqual(["ca", "43a1000001"]);
     clock = 1000;
@@ -178,7 +178,7 @@ describe("a simulated unit", () => {
         [4, new Map([[5, p("01")], [7, p("00014000")], [27, p("000000030033aaaa", "000000010133bbbb")]])],
       ]),
       segments: new Map([[4, { at: 0x14000, size: 4, bytes: Buffer.from("01020304", "hex"), mcbControl: null }]]),
-      unloadStopsApplication: null,
+      unloadStopsApplication: null, memoryExtendedWrite: true,
     });
     await send("80");
     const req = numbered(send);
@@ -254,9 +254,8 @@ function etsRequests(text: string, device: number, tunnel: number): { requests: 
   return { requests: requests.slice(0, n) as { cemi: Buffer; at: number; con: "OK" | "NEG" }[], unconfirmed: requests.length - n, unit };
 }
 
-// The frame type of a long frame is the interface's to report: Busforge's bench bridge at 1.1.100 reports the
-// extended frames a unit sends, the house's KNXnet/IP interface a standard one; the priority is the unit's on both.
-const BENCH_BRIDGE_IA = 0x1164;
+// The frame type of a long frame is the interface's to report: Busforge's bench bridge reports the extended frames a
+// unit sends, the house's KNXnet/IP interface a standard one; the priority is the unit's on both.
 
 // Each unit's ETS captures in the order they ran on it, from the state its collection shows (with what its
 // captures show different, sim-units.ts), and the requests at their ends the interface confirmed after the
@@ -294,7 +293,7 @@ for (const { spec, captures, unconfirmed = {} } of CALIBRATIONS) {
           await new Promise((res) => setTimeout(res, 2));
           simFrames.push(...answered);
         }
-        const viaBridge = unit.find((f) => f.dir === "<<")!.to === BENCH_BRIDGE_IA;
+        const viaBridge = unit.find((f) => f.dir === "<<")!.to === BENCH_BRIDGE.ia;
         const shown = (ctrl: number, tpdu: string) => `${viaBridge ? ctrl : ctrl & 0x0c} ${tpdu}`;
         const unitFrames = unit.filter((f) => f.dir === "<<").map((f) => shown(f.ctrl!, f.tpdu));
         expect([capture, unitFrames.length > 0]).toEqual([capture, true]);

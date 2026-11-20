@@ -42,10 +42,8 @@ const APPLICATION_LSM = 4;
 // A_Restart_Response (KNX 3/3/7): the restart type in the APCI's low bit.
 const A_RESTART_RESPONSE = 0x3a0;
 const PRIORITY_BITS = 0x0c, STANDARD_FRAME = 0x80, STANDARD_TPDU_MAX = 16;
-// The reach of the memory services the unit answers: A_Memory_Read/Write a 16-bit address,
-// A_MemoryExtended_Write a 24-bit one.
-const MEMORY_END = 0x1000000;
-const PID_PROGRAMMING_MODE = 54;
+// The reach of the memory services: A_Memory_Read/Write a 16-bit address, A_MemoryExtended_Read/Write a 24-bit one.
+const MEMORY_END = 0x10000, MEMORY_EXT_END = 0x1000000;
 // KNX 3/3/4: a transport connection that carries nothing for 6 s is closed by the device.
 const CONNECTION_TIMEOUT_MS = 6_000;
 // KNX 3/3/4: a numbered frame is acknowledged within 3 s.
@@ -111,9 +109,12 @@ export interface SimUnitModel {
   clearsAfterRestart: { lsm: number; offset: number; clear: number }[];
   // Whether the unit answered A_MemoryExtended_Read when it was collected (the collection holds memory it read so).
   memoryExtendedRead: boolean;
-  // A write of a property whose read the unit refused (`<object>/<PID> <value hex>`) -> the element its captures
-  // show it answered with; an empty one where it answered without elements.
-  refusedReadWrites: Map<string, Buffer>;
+  // Whether its captures show it answer A_MemoryExtended_Write; a segment past 64 KB is allocated only then.
+  memoryExtendedWrite: boolean;
+  // Property writes whose answer only the unit's captures show (`<object>/<PID> <value hex>`) -> the element it
+  // answered with, an empty one where it answered without elements: a write of a property whose read it refused,
+  // and of its programming mode (object 0 PID 54).
+  shownWrites: Map<string, Buffer>;
   // How long the unit's interface took to confirm a frame on the line: positively, and negatively (no
   // layer-2 acknowledgement, after the repetitions).
   link: { ackMs: number; nakMs: number };
@@ -274,7 +275,7 @@ export class SimUnit implements KnxTransport {
     if (isBasicRestart(tpdu)) {
       const basic = this.model.restart.basic;
       const why = basic ? this.restartRefusal() : "how the unit takes a basic restart is not shown";
-      if (why || !basic) { this.emit(src, tpAck(seq)); this.refuse(`A_Restart: ${why}`); return; }
+      if (why || !basic) { this.refuse(`A_Restart: ${why}`); return; }
       const { tAck } = basic;
       if (tAck === "always" || (tAck === "unless-application-loaded" && !this.applicationLoaded)) this.emit(src, tpAck(seq));
       this.restart(src);
@@ -446,13 +447,16 @@ export class SimUnit implements KnxTransport {
     this.restartedAt = this.now();
     this.applicationLoaded = false;
     this.deviceControlUnknown = false;
-    // The memory-control block reports the CRC over the segment as it then holds it.
+    // Only a loaded application clears them; the memory-control block reports the CRC over the segment as it
+    // then holds it.
     for (const { lsm, offset, clear } of this.model.clearsAfterRestart) {
       const seg = this.segments.get(lsm);
-      if (!seg || offset >= seg.size) continue;
+      if (!seg || offset >= seg.size || this.state(lsm) !== STATE.LOADED) continue;
       seg.bytes[offset] &= ~clear;
       const mcb = this.property(lsm, PID_MCB);
-      if (mcb?.elements && this.mcbKnown.get(lsm)) mcb.elements = this.mcbElements(seg, mcb.elements.map((e) => e.subarray(0, 6)))!;
+      const elements = mcb?.elements && this.mcbKnown.get(lsm) ? this.mcbElements(seg, mcb.elements.map((e) => e.subarray(0, 6))) : null;
+      if (elements) mcb!.elements = elements;
+      else if (mcb?.elements) { this.mcbKnown.set(lsm, false); this.refuse(`restart: the memory-control block of object ${lsm} does not cover the octet its application clears`); }
     }
     // Its device control after the restart: the collections taken after a download read it 0.
     this.property(0, PID_DEVICE_CONTROL)!.elements = [Buffer.from([0])];
@@ -504,18 +508,26 @@ export class SimUnit implements KnxTransport {
     const echo = (v: Buffer) => reply(APCI.PROPERTY_RESPONSE, Buffer.concat([Buffer.from([obj, pid, 0x10, 0x01]), v]));
     if (prop.elements === null) {
       // A property whose read the unit refused answers only the writes its captures show.
-      const answer = this.model.refusedReadWrites.get(`${obj}/${pid} ${value.toString("hex")}`);
+      const answer = this.model.shownWrites.get(`${obj}/${pid} ${value.toString("hex")}`);
       if (answer === undefined) { this.refuse(`${what}: a write of a property whose read the unit refused, its answer not shown`); return; }
       reply(APCI.PROPERTY_RESPONSE, Buffer.concat([Buffer.from([obj, pid, answer.length ? 0x10 : 0x00, 0x01]), answer]));
       return;
     }
-    if (pid === PID_LOAD_STATE) { const state = this.loadEvent(obj, value, what); if (state !== null) echo(Buffer.from([state])); return; }
-    if (obj === 0 && (pid === PID_DEVICE_CONTROL || pid === PID_PROGRAMMING_MODE) && value.length === 1) {
-      if (pid === PID_DEVICE_CONTROL) this.deviceControlUnknown = false;
+    if (pid === PID_LOAD_STATE) {
+      const state = this.loadEvent(obj, value, what);
+      if (state === null) return;
+      if (obj === APPLICATION_LSM) this.applicationLoaded = true;
+      echo(Buffer.from([state]));
+      return;
+    }
+    if (obj === 0 && pid === PID_DEVICE_CONTROL && value.length === 1) {
+      this.deviceControlUnknown = false;
       prop.elements = [Buffer.from(value)];
       echo(value);
       return;
     }
+    const shown = this.model.shownWrites.get(`${obj}/${pid} ${value.toString("hex")}`);
+    if (shown && shown.length === value.length) { prop.elements = [Buffer.from(value)]; echo(shown); return; }
     if (obj === APPLICATION_LSM && pid === PID_PROGRAM_ID && value.length === prop.elements[0]?.length) {
       if (this.state(obj) !== STATE.LOADING) { this.refuse(`${what} while the application is not loading`); return; }
       prop.elements = [Buffer.from(value)];
@@ -561,7 +573,6 @@ export class SimUnit implements KnxTransport {
     const prop = this.property(obj, PID_LOAD_STATE)!;
     const state = this.state(obj);
     const set = (s: number) => { prop.elements = [Buffer.from([s])]; return s; };
-    if (obj === APPLICATION_LSM) this.applicationLoaded = true;
     switch (value[0]) {
       case EVENT.UNLOAD:
         this.mcbWritten.delete(obj);
@@ -609,13 +620,13 @@ export class SimUnit implements KnxTransport {
     const other = [...this.segments].find(([lsm, s]) => lsm !== obj && seg.at < s.at + s.size && s.at < seg.at + size);
     if (other) { this.refuse(`${what}: ${size} bytes at 0x${seg.at.toString(16)} reach into the segment of object ${other[0]}; where the unit places them then is not known`); return false; }
     if (mode !== 0 && mode !== 1) { this.refuse(`${what}: allocation mode ${mode}`); return false; }
-    if (size === 0 || seg.at + size > MEMORY_END) { this.refuse(`${what}: ${size} bytes at 0x${seg.at.toString(16)} do not fit the unit's memory services`); return false; }
+    if (size === 0 || seg.at + size > (this.model.memoryExtendedWrite ? MEMORY_EXT_END : MEMORY_END)) { this.refuse(`${what}: ${size} bytes at 0x${seg.at.toString(16)} do not fit the unit's memory services`); return false; }
     const bytes = Buffer.alloc(size, fill), known = new Uint8Array(size).fill(mode);
     if (mode === 0) { seg.bytes.copy(bytes, 0, 0, Math.min(size, seg.size)); known.set(seg.known.subarray(0, Math.min(size, seg.size))); }
     Object.assign(seg, { size, bytes, known });
     this.referenceKnown.set(obj, true);
     const ref = this.property(obj, PID_TABLE_REFERENCE);
-    if (ref?.elements) { const at = Buffer.alloc(4); at.writeUInt32BE(seg.at); ref.elements = [at]; }
+    if (ref?.elements) ref.elements = [u32(seg.at)];
     return true;
   }
 
@@ -644,6 +655,7 @@ export class SimUnit implements KnxTransport {
   private memoryWrite(n: number, addr: number, data: Buffer, reply: Reply): void {
     const what = `A_Memory_Write ${n} at 0x${addr.toString(16)}`;
     if (n === 0 || data.length !== n) { this.refuse(`${what}: ${data.length} octets of data`); return; }
+    if (this.deviceControlUnknown) { this.refuse(`${what}: whether the unit echoes it is not known, its device control after the application's unload not shown`); return; }
     const hit = this.writeSegment(addr, data, what);
     if (!hit) return;
     const off = addr - hit.at;
@@ -678,6 +690,7 @@ export class SimUnit implements KnxTransport {
   // or without verify mode, as the units' captures show.
   private memoryExtWrite(n: number, addr: number, data: Buffer, reply: Reply): void {
     const what = `A_MemoryExtended_Write ${n} at 0x${addr.toString(16)}`;
+    if (!this.model.memoryExtendedWrite) { this.refuse(`${what}: no capture of the unit shows its answer to it`); return; }
     if (n === 0 || data.length !== n) { this.refuse(`${what}: ${data.length} octets of data`); return; }
     if (!this.writeSegment(addr, data, what)) return;
     reply(APCI.MEMORY_EXT_WRITE_RESP, Buffer.from([0x00, addr >> 16, (addr >> 8) & 0xff, addr & 0xff]));
