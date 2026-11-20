@@ -77,6 +77,8 @@ function CommandInput({
   )
 }
 
+// The options scroll by themselves under the search field. `Command` paints `bg-popover` over the
+// popover's own edge shadows, so the list carries them; their covers are drawn in that same colour.
 function CommandList({
   className,
   ...props
@@ -85,7 +87,7 @@ function CommandList({
     <CommandPrimitive.List
       data-slot="command-list"
       className={cn(
-        "max-h-[300px] scroll-py-1 overflow-x-hidden overflow-y-auto",
+        "max-h-[300px] scroll-py-1 scroll-shadow-y overflow-x-hidden overflow-y-auto",
         className
       )}
       {...props}
