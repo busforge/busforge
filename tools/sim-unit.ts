@@ -22,8 +22,9 @@
 //   load completed, each refused out of order; the table reference (PID 7) and the memory-control block
 //   (PID 27: as written while loading, or the whole segment; the CRC over each block as the unit computes it)
 //   that follow from them;
-// - memory inside the allocated segments: A_Memory_Write, echoed by A_Memory_Response in verify mode (PID 14
-//   bit 2), and A_MemoryExtended_Write, answered with A_MemoryExtended_WriteResponse;
+// - memory inside the allocated segments: A_Memory_Read and A_Memory_Write, a write echoed by A_Memory_Response
+//   in verify mode (PID 14 bit 2), A_MemoryExtended_Write, answered with A_MemoryExtended_WriteResponse, and
+//   A_MemoryExtended_Read where the unit answered it when collected;
 // - the basic restart and the confirmed restart (a master reset with erase code 1), and the line after them,
 //   as the unit's captures show them.
 // Every frame it sends carries the request's priority (system priority on a transport-layer control frame)
@@ -45,8 +46,6 @@ const PRIORITY_BITS = 0x0c, STANDARD_FRAME = 0x80, STANDARD_TPDU_MAX = 16;
 // A_MemoryExtended_Write a 24-bit one.
 const MEMORY_END = 0x1000000;
 const PID_PROGRAMMING_MODE = 54;
-// PDT_GENERIC_01 to PDT_GENERIC_10: elements of 1 to 10 octets.
-const PDT_GENERIC_01 = 0x11, PDT_GENERIC_10 = 0x1a;
 // KNX 3/3/4: a transport connection that carries nothing for 6 s is closed by the device.
 const CONNECTION_TIMEOUT_MS = 6_000;
 // KNX 3/3/4: a numbered frame is acknowledged within 3 s.
@@ -110,6 +109,11 @@ export interface SimUnitModel {
   // Bits the unit's application clears in a segment of its own after a restart (`clear` the bit mask at
   // `offset` from the segment's start).
   clearsAfterRestart: { lsm: number; offset: number; clear: number }[];
+  // Whether the unit answered A_MemoryExtended_Read when it was collected (the collection holds memory it read so).
+  memoryExtendedRead: boolean;
+  // A write of a property whose read the unit refused (`<object>/<PID> <value hex>`) -> the element its captures
+  // show it answered with; an empty one where it answered without elements.
+  refusedReadWrites: Map<string, Buffer>;
   // How long the unit's interface took to confirm a frame on the line: positively, and negatively (no
   // layer-2 acknowledgement, after the repetitions).
   link: { ackMs: number; nakMs: number };
@@ -410,6 +414,7 @@ export class SimUnit implements KnxTransport {
         reply(APCI.FUNCTION_PROPERTY_EXT_STATE_RESPONSE, Buffer.concat([d.subarray(0, 5), Buffer.from([0x00]), result]));
         return;
       }
+      case APCI.MEMORY_EXT_READ: shape(4); this.memoryExtRead(d[0], d.readUIntBE(1, 3), reply); return;
       case APCI.MEMORY_EXT_WRITE: shape(4); this.memoryExtWrite(d[0], d.readUIntBE(1, 3), d.subarray(4), reply); return;
     }
     this.refuse(`${connected ? "" : "connectionless "}APDU ${tpdu.toString("hex")}: service 0x${raw.toString(16)} is not modelled`);
@@ -498,13 +503,10 @@ export class SimUnit implements KnxTransport {
     if (count !== 1 || start !== 1) { this.refuse(`${what} of ${count} elements from ${start}: only a write of the first element is modelled`); return; }
     const echo = (v: Buffer) => reply(APCI.PROPERTY_RESPONSE, Buffer.concat([Buffer.from([obj, pid, 0x10, 0x01]), v]));
     if (prop.elements === null) {
-      // A property whose read the unit refused: one it did not describe takes a write as the read, answered
-      // without elements (the OpenKNX RaumController's object 5); one it described as writable with generic
-      // elements echoes a write of one element (the GVS AMMA's 4/67).
-      const d = this.model.descriptions.get(obj)?.find((x) => x.pid === pid);
-      if (!d) { reply(APCI.PROPERTY_RESPONSE, Buffer.from([obj, pid, 0x00, 0x01])); return; }
-      if (d.writable && d.pdt >= PDT_GENERIC_01 && d.pdt <= PDT_GENERIC_10 && value.length === d.pdt - PDT_GENERIC_01 + 1) { echo(value); return; }
-      this.refuse(`${what}: a write of a property whose read the unit refused, described as ${d.writable ? "writable" : "read-only"} with PDT 0x${d.pdt.toString(16)}`);
+      // A property whose read the unit refused answers only the writes its captures show.
+      const answer = this.model.refusedReadWrites.get(`${obj}/${pid} ${value.toString("hex")}`);
+      if (answer === undefined) { this.refuse(`${what}: a write of a property whose read the unit refused, its answer not shown`); return; }
+      reply(APCI.PROPERTY_RESPONSE, Buffer.concat([Buffer.from([obj, pid, answer.length ? 0x10 : 0x00, 0x01]), answer]));
       return;
     }
     if (pid === PID_LOAD_STATE) { const state = this.loadEvent(obj, value, what); if (state !== null) echo(Buffer.from([state])); return; }
@@ -626,10 +628,17 @@ export class SimUnit implements KnxTransport {
   private memoryRead(n: number, addr: number, reply: Reply): void {
     const what = `A_Memory_Read ${n} at 0x${addr.toString(16)}`;
     if (n === 0) { this.refuse(`${what}: a read of no octet`); return; }
+    const bytes = this.knownBytes(addr, n);
+    if (!bytes) { this.refuse(`${what}: outside the memory the unit is known to hold`); return; }
+    reply(APCI.MEMORY_RESPONSE, Buffer.concat([Buffer.from([addr >> 8, addr & 0xff]), bytes]), n);
+  }
+
+  // The octets [addr, addr + n) of a segment where the unit is known to hold them, or null.
+  private knownBytes(addr: number, n: number): Buffer | null {
     const hit = this.segmentAt(addr, n);
     const off = hit ? addr - hit[1].at : 0;
-    if (!hit || this.referenceKnown.get(hit[0]) === false || hit[1].known.subarray(off, off + n).some((k) => k === 0)) { this.refuse(`${what}: outside the memory the unit is known to hold`); return; }
-    reply(APCI.MEMORY_RESPONSE, Buffer.concat([Buffer.from([addr >> 8, addr & 0xff]), hit[1].bytes.subarray(off, off + n)]), n);
+    if (!hit || this.referenceKnown.get(hit[0]) === false || hit[1].known.subarray(off, off + n).some((k) => k === 0)) return null;
+    return Buffer.from(hit[1].bytes.subarray(off, off + n));
   }
 
   private memoryWrite(n: number, addr: number, data: Buffer, reply: Reply): void {
@@ -653,6 +662,16 @@ export class SimUnit implements KnxTransport {
     data.copy(hit[1].bytes, off);
     hit[1].known.fill(1, off, off + data.length);
     return hit[1];
+  }
+
+  // A_MemoryExtended_Read, answered with A_MemoryExtended_ReadResponse: return code 0, the address and the octets,
+  // where the unit answered it when collected and holds them.
+  private memoryExtRead(n: number, addr: number, reply: Reply): void {
+    const what = `A_MemoryExtended_Read ${n} at 0x${addr.toString(16)}`;
+    if (!this.model.memoryExtendedRead) { this.refuse(`${what}: the unit was not read with it`); return; }
+    const bytes = n === 0 ? null : this.knownBytes(addr, n);
+    if (!bytes) { this.refuse(`${what}: outside the memory the unit is known to hold`); return; }
+    reply(APCI.MEMORY_EXT_READ_RESP, Buffer.concat([Buffer.from([0x00, addr >> 16, (addr >> 8) & 0xff, addr & 0xff]), bytes]));
   }
 
   // A_MemoryExtended_Write, answered with A_MemoryExtended_WriteResponse: return code 0 and the address, with

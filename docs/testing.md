@@ -503,8 +503,8 @@ only collection of a unit was taken in a later state than its captures found it 
 captures show different are taken from them, each named.
 
 It models the transport layer of one connection, the interface's APDU limit, the descriptor,
-authorization, property, function-property and memory services (`A_Memory_Write` and
-`A_MemoryExtended_Write`), the load-state machines with their table references and the memory-control
+authorization, property, function-property and memory services (`A_Memory_Read`/`_Write`,
+`A_MemoryExtended_Write`, and `A_MemoryExtended_Read` where the unit answered it when collected), the load-state machines with their table references and the memory-control
 blocks (one per segment, or the blocks written while loading, each with its CRC), verify mode, the basic and
 the confirmed restart. Everything else it refuses: a line in its log and in `refusals`, and no answer, so
 the tool's own timeout ends a run where an invented byte would have let it go on. A behaviour the unit's

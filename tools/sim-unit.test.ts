@@ -35,7 +35,7 @@ function unit(over: Partial<SimUnitModel> = {}, opts: ConstructorParameters<type
     crc: "ccitt-false",
     authorize: new Map([["ffffffff", 0]]),
     restart: { basic: { acknowledged: true, tAck: "always" }, line: [{ atMs: 0, up: true }], deadConnection: "disconnect", confirmedRestartSeconds: null }, link: { ackMs: 0, nakMs: 0 },
-    unloadStopsApplication: true, descriptionIndex: "property", clearsAfterRestart: [],
+    unloadStopsApplication: true, descriptionIndex: "property", clearsAfterRestart: [], refusedReadWrites: new Map(), memoryExtendedRead: false,
     ...over,
   };
   const sim = new SimUnit(model, TOOL, opts);
@@ -399,7 +399,8 @@ const refusalKind = (r: string) => [NOT_SHOWN_AFTER_RESTART, NOT_SHOWN_DEAD_CONN
 // The configuration ETS downloaded in each unit's full-download capture (tools/etsdiff.test.ts, "System B full
 // download: the bytes ETS writes, and no other", holds Busforge's image to it): the projects' configurations of the
 // Theben and OpenKNX units, the application's defaults on the Jung and the GVS. `stamps` are the memory-control
-// blocks Busforge read back to prove the download; `refusals` what of its restart proof no capture shows.
+// blocks of the download's closing reads before the restart (its record, as ETS's LdCtrlLoadImageProp reads them);
+// `refusals` what of its restart proof no capture shows.
 const DOWNLOADS: { spec: SimUnitSpec; config: () => RowConfiguration; stamps: string[]; refusals: string[] }[] = [
   {
     spec: THEBEN_DALI_GATEWAY, config: () => {

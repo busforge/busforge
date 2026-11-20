@@ -50,6 +50,7 @@ export const MEANWELL_KNX40E: SimUnitSpec = {
     unloadStopsApplication: true,
     descriptionIndex: "property",
     clearsAfterRestart: [],
+    refusedReadWrites: new Map(),
   },
 };
 
@@ -86,6 +87,7 @@ export const THEBEN_DALI_GATEWAY: SimUnitSpec = {
     unloadStopsApplication: false,
     descriptionIndex: "request",
     clearsAfterRestart: [],
+    refusedReadWrites: new Map(),
   },
 };
 
@@ -100,8 +102,8 @@ export const THEBEN_DALI_GATEWAY: SimUnitSpec = {
 // - its memory-control blocks held no element when it was collected; after the application's load completed
 //   it reports size, 00 FF and the CRC-16/CCITT over the segment with the 16 zero bits appended (object 4's
 //   PID 27 in -fulldownload);
-// - a write of object 5's load state, which it did not describe and whose read it refused, is answered without
-//   elements;
+// - the unload of object 5's load state, which it did not describe and whose read it refused, is answered
+//   without elements;
 // - what its device control reads after the application is unloaded none of them shows.
 export const OPENKNX_RAUMCONTROLLER: SimUnitSpec = {
   id: "openknx-raumcontroller",
@@ -117,6 +119,7 @@ export const OPENKNX_RAUMCONTROLLER: SimUnitSpec = {
     unloadStopsApplication: null,
     descriptionIndex: "property",
     clearsAfterRestart: [],
+    refusedReadWrites: new Map([["5/5 04000000000000000000", Buffer.alloc(0)]]),
     mcb: { control: "00ff", crc: "ccitt" },
   },
 };
@@ -148,6 +151,7 @@ export const THEBEN_MIX2_HMG6T: SimUnitSpec = {
     unloadStopsApplication: null,
     descriptionIndex: "property",
     clearsAfterRestart: [{ lsm: 4, offset: 39, clear: 0x80 }],
+    refusedReadWrites: new Map(),
   },
 };
 
@@ -168,6 +172,9 @@ const BENCH_BRIDGE = { ia: 0x1164, maxApdu: 40 } as const;
 //   64-octet writes);
 // - the free key (FFFFFFFF) grants access level 0;
 // - the bridge confirmed a frame 21 ms after the request at the earliest, negatively after 68 to 69 ms;
+// - after its restart it clears the one-byte second block of the application segment (octet 7700), which every
+//   ETS download writes 01: the block's CRC at the start of ETS's next download
+//   (captures/jung-400021se-ets-partial-links.log) is over 00;
 // - a description read by PID is answered with the property's own index (object 2's PID 23 at index 3);
 // - what its device control reads after the application is unloaded it does not show.
 export const JUNG_400021SE: SimUnitSpec = {
@@ -183,7 +190,8 @@ export const JUNG_400021SE: SimUnitSpec = {
     link: { ackMs: 21, nakMs: 68 },
     unloadStopsApplication: null,
     descriptionIndex: "property",
-    clearsAfterRestart: [],
+    clearsAfterRestart: [{ lsm: 4, offset: 7700, clear: 0x01 }],
+    refusedReadWrites: new Map(),
     stateInCaptures: { properties: { "4/5": "03" }, functionStates: { "17/1/51 0000": "0000" } },
   },
 };
@@ -200,7 +208,7 @@ export const JUNG_400021SE: SimUnitSpec = {
 // - the free key (FFFFFFFF) grants access level 0;
 // - the bridge confirmed a frame 20 ms after the request at the earliest, negatively after 71 to 77 ms;
 // - a description read by PID is answered with the property's own index (object 2's PID 23 at index 3);
-// - a write of 01 to object 4's PID 67, which it described as writable and whose read it refused, is echoed;
+// - a write of 01 to object 4's PID 67, whose read it refused, is echoed;
 // - what its device control reads after the application is unloaded it does not show.
 export const GVS_AMMA: SimUnitSpec = {
   id: "gvs-amma",
@@ -216,6 +224,7 @@ export const GVS_AMMA: SimUnitSpec = {
     unloadStopsApplication: null,
     descriptionIndex: "property",
     clearsAfterRestart: [],
+    refusedReadWrites: new Map([["4/67 01", Buffer.from([0x01])]]),
     stateInCaptures: { properties: {}, functionStates: { "17/1/51 0000": "0000" } },
   },
 };
