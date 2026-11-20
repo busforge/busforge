@@ -74,7 +74,7 @@ corpusDescribe("ETS's download record in the corpus projects", () => {
   test("a device carries a record exactly where its application names LdCtrlLoadImageProp and ETS downloaded it", () => {
     const off = all.filter(({ d }) => !!d.loadedImage !== (d.declaresLoadImageProp === true && d.etsLoaded.application));
     expect(off.map(({ project, d }) => `${project} ${d.ia}`)).toEqual([]);
-    expect(withRecord.length).toBe(344);
+    expect(withRecord.length).toBe(349);
     expect(all.filter(({ d }) => !d.loadedImage && d.etsLoaded.application).length).toBeGreaterThan(100);
   });
 
@@ -142,9 +142,9 @@ corpusDescribe("ETS's download record in the corpus projects", () => {
     const named = (k: string) => k.slice(k.indexOf(": ") + 2);
     expect(counted(found)).toEqual(KNOWN_DEVIATIONS.map(named));
     expect(counted(notCompared)).toEqual(NOT_COMPARED);
-    // 329 records of 29 distinct device states, 42397 bytes ETS marks as its own.
+    // 334 records of 30 distinct device states, 42683 bytes ETS marks as its own.
     const distinct = [...outcomes.values()].flatMap((o) => ("refused" in o ? [] : [o.bytes]));
-    expect([compared, distinct.length, distinct.reduce((n, b) => n + b, 0)]).toEqual([329, 29, 42397]);
+    expect([compared, distinct.length, distinct.reduce((n, b) => n + b, 0)]).toEqual([334, 30, 42683]);
   }, TIMEOUT);
 
   // The decoder held against a download whose bytes tools/etsdiff.test.ts pins ("System B full download":
