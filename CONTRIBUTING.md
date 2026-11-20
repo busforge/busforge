@@ -22,7 +22,7 @@ For a larger change, open an issue before you write it, so we can agree on the a
 
    ```bash
    bun install
-   bun run check   # typecheck + lint + tests + build, every workspace
+   bun run check   # image build context + typecheck + lint + tests + build, every workspace
    ```
 
    Some tests need a private corpus of manufacturer data and are skipped without it; the check's
