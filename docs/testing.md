@@ -493,16 +493,25 @@ were not read.
 `tools/sim-unit.ts` is one System B unit (MV-07B0) on the `KnxTransport` seam, which
 `KnxIpServer` puts on the network like the USB stick behind the bridge: ETS or Busforge download
 into it over KNXnet/IP as into a real unit, and `tools/knxproxy.ts` in front logs the run as a
-capture. It is built from a read-only collection of a real unit of the product (identity, every
-property and description the unit answered, where it placed its segments and what they held) and
-checked against the product's application program (mask, declared property compares); what only the
-unit's captures show (how it takes a restart, the authorization key it accepts, how long its line
-took to confirm a frame) is written next to it in `tools/sim-units.ts`, with the captures named.
+capture. `tools/sim-unit-0705.ts` is the property-mapped System 7 unit (MV-0705) on the same
+transport and property core. Each is built from a read-only collection of a real unit of the product
+(identity, every property and description the unit answered, where it placed its segments and what
+they held) and checked against the product's application program (mask, declared property compares,
+the segments it declares against the memory-control blocks the unit reports); what only the unit's
+captures show (how it takes a restart, the authorization key it accepts, its programming mode, the
+largest APDU it takes where it reports none, how long its line took to confirm a frame) is written
+next to it in `tools/sim-units.ts`, with the captures named.
 
 It models the transport layer of one connection, the descriptor, authorization, property and memory
-services, the load-state machines with their table references and the memory-control-block CRC, verify mode and
-the restart. Everything else it refuses: a line in its log and in `refusals`, and no answer, so the
-tool's own timeout ends a run where an invented byte would have let it go on.
+services, the address reads by broadcast (in programming mode, by serial number), the load-state
+machines with their table references and the memory-control-block CRC, verify mode and the restart.
+On System B the machines take relative segments; on MV-0705 absolute and stack segments at the
+address the request names and the task segment that carries the program id, over one memory at
+fixed addresses whose bytes an unload keeps, and the load states readable as memory. Everything else
+it refuses: a line in its log and in `refusals`, and no answer, so the tool's own timeout ends a run
+where an invented byte would have let it go on. That includes the time after a restart and the
+frames on the connection it ended where the unit's captures show neither, and a read of a segment
+while it is loading.
 
 The units it simulates, and how each is held to its captures (`tools/sim-unit.test.ts`, with the
 private corpus):
@@ -510,13 +519,15 @@ private corpus):
 | Unit | ETS's downloads replayed | Busforge's full download |
 |---|---|---|
 | MEAN WELL KNX-40E-1280D power supply | Every request of ETS's six captured downloads (a link, a parameter, the revert, the full download, a parameter that shows an object, on and off), in order into one unit: every frame the simulator answers (its control field too, where the interface reports the frame type) and every confirmation on the line equal the unit's | Through `KnxIpServer` and the proxy, with the server's download task: taken without a refusal and verified; the bracket from the first unload to the restart equals the capture of the same download into the unit in every frame both ways (each TPDU without its sequence number, the unit's control field, every confirmation on the line) but for the order of the segments, which this build writes parameter segment first as ETS's capture of the unit shows and the captured run wrote last (so the run in this order is the simulator's, not the unit's); the session before it and the verification after it differ by Busforge's own changes since that capture, which the test names |
+| MDT BE-02001.02 binary input (MV-0705) | Every request of ETS's three captured full downloads (a unit in programming mode at the application's defaults, one link, a later configuration), in order into one unit, and the restart of Busforge's address assignment: every frame the simulator answers and every confirmation on the line equal the unit's but for one answer, to a request the capture of the third download does not hold; the unit's start-up group telegrams after a restart are not simulated | Through `KnxIpServer` and the proxy, at defaults into a fresh unit: refused. Busforge writes without verify mode and reads each write back while the segment is loading; no capture shows the unit answer a read then (ETS writes in verify mode), so the simulator refuses the first read-back and the download ends without an answer |
+| Gira Tastsensor 3 Komfort 3fach (MV-0705) | Every request of ETS's captured full download, its partial form on a unit holding the application (the stamps read before and after, the tables rewritten, the application loaded again without an unload): every frame the simulator answers and every confirmation on the line equal the unit's | The configuration ETS downloaded, the same way into a fresh unit: refused at the first read-back of a write into a loading segment, as above |
 
 ```bash
-BUSFORGE_CORPUS=... bun run tools/sim-unit-serve.ts meanwell-knx40e --tool ETS --log ./capture.log \
+BUSFORGE_CORPUS=... bun run tools/sim-unit-serve.ts <unit> --tool ETS --log ./capture.log \
   [--port 3700] [--proxy-port 3701] [--advertise <this host's ip>]
 ```
 
-The tool connects to the proxy port over KNXnet/IP TCP; the simulator's own lines go to
+`<unit>` is `meanwell-knx40e`, `mdt-be02001` or `gira-ts3`. The tool connects to the proxy port over KNXnet/IP TCP; the simulator's own lines go to
 `<log>.sim.txt`, and Ctrl-C prints its refusals. A download into the simulator is evidence on no axis
 of [evidence-contract.md](evidence-contract.md) by itself: it shows what a tool sends given the
 simulator's answers, and the answers are a real unit's only as far as the table above says.

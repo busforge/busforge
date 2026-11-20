@@ -3,30 +3,34 @@
 // not: the unit's serial, order info, hardware type (object 0 PID 78), descriptions, where it places its
 // segments and what they hold. The product is checked against it: its mask and its declared property compares
 // must agree with what the unit answered, or the model is refused rather than a unit built that no real one is.
-import { crc16Ccitt, crc16CcittFalse, iaToNum, type PropertyDescription } from "../packages/knx/src/index.ts";
+import { crc16Ccitt, crc16CcittFalse, declaredPropMatches, iaToNum, type PropertyDescription } from "../packages/knx/src/index.ts";
 import { parseAppConfig, parseLoadProcedures, declaredPropChecks, type CollectPackage } from "../packages/product/src/index.ts";
 import type { SimProperty, SimUnitModel } from "./sim-unit.ts";
 
-// What the collection cannot show and the unit's captures do: how it takes a restart and an authorization, and
-// how long its interface took to confirm a frame.
-export type UnitBehaviour = Pick<SimUnitModel, "restart" | "authorize" | "link">;
+// What the collection cannot show and the unit's captures do: how it takes a restart and an authorization, how
+// long its interface took to confirm a frame, the address services it answers, and its maximum APDU where it
+// refuses PID 56 and its captures show what it takes.
+export type UnitBehaviour = Pick<SimUnitModel, "restart" | "authorize" | "link" | "programmingMode" | "serialNumberResponseTail"> & { maxApdu?: number };
 
 // The fields of a record's target the model reads.
 type Target = { object?: number; pid?: number; start?: number; count?: number; address?: number; type?: number };
 const LSMS = [1, 2, 3, 4];
 const PID_DEVICE_CONTROL = 14;
 
-export function simUnitModel(collection: CollectPackage, appXml: string, behaviour: UnitBehaviour): SimUnitModel {
+const refuse = (why: string): never => { throw new Error(`no simulated unit: ${why}`); };
+
+// What every simulated unit takes from its collection: the descriptor, the properties element by element and
+// their descriptions, checked against the application for the mask modelled (its mask, its declared property
+// compares, the device control the unit answered).
+export function collectedUnit(collection: CollectPackage, appXml: string, modelled: string) {
   const cfg = parseAppConfig(appXml);
-  const refuse = (why: string): never => { throw new Error(`no simulated unit: ${why}`); };
   if (cfg.mask !== collection.mask) refuse(`the application is for ${cfg.mask}, the collected unit is ${collection.mask}`);
-  if (cfg.mask !== "MV-07B0") refuse(`only System B (MV-07B0) is modelled, not ${cfg.mask}`);
+  if (cfg.mask !== modelled) refuse(`this model is for ${modelled}, not ${cfg.mask}`);
   const records = collection.records.map((r) => ({ ...r, target: r.target as Target }));
   const descriptor = records.find((r) => r.space === "descriptor" && r.outcome === "bytes" && (r.target.type ?? 0) === 0);
   if (!descriptor?.bytes) refuse("the collection holds no device descriptor 0");
   const mask = Buffer.from(descriptor!.bytes!, "hex").readUInt16BE(0);
   if (`MV-${mask.toString(16).padStart(4, "0").toUpperCase()}` !== cfg.mask) refuse(`the unit answered descriptor ${descriptor!.bytes}, the application is for ${cfg.mask}`);
-  if (collection.maxApdu === null) refuse("the collection holds no maximum APDU length");
 
   const objects = new Map<number, Map<number, SimProperty>>();
   const prop = (o: number, pid: number) => {
@@ -80,12 +84,21 @@ export function simUnitModel(collection: CollectPackage, appXml: string, behavio
   for (const op of ["full", "par"] as const) for (const c of declaredPropChecks(proc, op)) {
     const v = objects.get(c.obj)?.get(c.pid)?.elements?.[0];
     if (!v) refuse(`the application compares property ${c.obj}/${c.pid}, which the collection did not read`);
-    const masked = (b: Buffer) => Buffer.from(b.map((x, i) => x & (c.mask?.[i] ?? 0xff)));
-    if (v!.length !== c.expect.length || !masked(v!).equals(masked(c.expect))) refuse(`the application expects ${c.expect.toString("hex")} in property ${c.obj}/${c.pid}, the unit holds ${v!.toString("hex")}`);
+    if (!declaredPropMatches(v!, c.expect, c.mask)) refuse(`the application expects ${c.expect.toString("hex")} in property ${c.obj}/${c.pid}, the unit holds ${v!.toString("hex")}`);
   }
 
   if (!objects.get(0)?.get(PID_DEVICE_CONTROL)?.elements?.[0]) refuse("the collection did not read the device control (object 0 PID 14)");
+  return { records, mask, objects, descriptions };
+}
 
+// The unit's maximum APDU: the collection's, or the behaviour's where the unit refused PID 56.
+export function unitMaxApdu(collection: CollectPackage, behaviour: UnitBehaviour): number {
+  if (collection.maxApdu !== null && behaviour.maxApdu !== undefined) refuse("the collection holds the unit's maximum APDU, which the behaviour names again");
+  return collection.maxApdu ?? behaviour.maxApdu ?? refuse("the collection holds no maximum APDU length and the behaviour names none");
+}
+
+export function simUnitModel(collection: CollectPackage, appXml: string, behaviour: UnitBehaviour): SimUnitModel {
+  const { records, mask, objects, descriptions } = collectedUnit(collection, appXml, "MV-07B0");
   const memory = records.filter((r) => r.space === "memory" && r.outcome === "bytes" && r.target.address !== undefined && r.bytes);
   const segments = new Map<number, { at: number; size: number; bytes: Buffer }>();
   let mcbControl: Buffer | null = null;
@@ -110,7 +123,7 @@ export function simUnitModel(collection: CollectPackage, appXml: string, behavio
   }
   if (mcbControl === null || crc === null) refuse("the collection holds no segment with its memory-control block");
   return {
-    ia: iaToNum(collection.ia), mask, maxApdu: collection.maxApdu!, objects, descriptions, segments, mcbControl: mcbControl!, crc: crc!,
     ...behaviour,
+    ia: iaToNum(collection.ia), mask, maxApdu: unitMaxApdu(collection, behaviour), objects, descriptions, segments, mcbControl: mcbControl!, crc: crc!,
   };
 }

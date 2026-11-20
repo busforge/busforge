@@ -264,15 +264,19 @@ export function planSystemBGaFlash(tables: { addr: Buffer; assoc: Buffer; comObj
 export async function compareDeclaredProp(dev: KnxDevice, obj: number, pid: number, expect: Buffer, mask?: Buffer): Promise<{ ok: boolean; got: Buffer | null }> {
   const got = await dev.propReadIfPresent(obj, pid);
   if (got === null) return { ok: false, got };
-  // With a mask, only the bytes the mask selects must match (ABB's app-id check masks out the
-  // manufacturer + version and compares only the application number). Without one, the read must
-  // equal the declared value (a shorter read is accepted only if the missing tail is all zero).
-  const ok = mask
+  return { ok: declaredPropMatches(got, expect, mask), got };
+}
+
+// Whether a property's value passes an LdCtrlCompareProp. With a mask, only the bytes the mask selects
+// must match (ABB's app-id check masks out the manufacturer + version and compares only the application
+// number). Without one, the value must equal the declared one (a shorter value is accepted only if the
+// missing tail is all zero).
+export function declaredPropMatches(got: Buffer, expect: Buffer, mask?: Buffer): boolean {
+  return mask
     ? got.length >= Math.min(mask.length, expect.length) &&
       Array.from({ length: Math.min(mask.length, expect.length) }).every((_, i) => (got[i] & mask[i]) === (expect[i] & mask[i]))
     : got.equals(expect) ||
       (got.length < expect.length && got.equals(expect.subarray(0, got.length)) && expect.subarray(got.length).every((b) => b === 0));
-  return { ok, got };
 }
 
 // The bytes of a segment allocated with fill (LdCtrlRelSegment Mode 1) that a full download writes,

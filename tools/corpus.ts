@@ -307,6 +307,11 @@ export const CORPUS_FILES: readonly string[] = [
     "theluxa-p300-ets6log-partial-params.txt",
     "theluxa-p300-ets6log-partial-revert.txt",
   ].map((f) => `captures/${f}`),
+  // The collections tools/sim-units.ts builds its System 7 units from.
+  "internal/captures/cap-1004/mdt-plain.json",
+  "collections/gira-m0008-backup-2026-10-05/1.1.1-gira-m0008-collect.json",
+  // Busforge's address assignment of the MDT BE-02001.02, whose restart tools/sim-unit.test.ts replays.
+  "internal/captures/restart-end-2026-11-19/a2-mdt-ia-66to56.log",
   "dca-theben-dali-e64/backup-store.dat",
   "dca-theben-dali-e64/backup-store.expected.json",
   ...IN_SERVICE_COLLECTIONS.map(inServiceCollection),

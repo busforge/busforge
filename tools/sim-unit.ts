@@ -1,7 +1,8 @@
 // A simulated System B unit (MV-07B0) on the KnxTransport seam: one device on an otherwise empty line,
 // built from what a real unit of the product answered (a read-only collection, tools/collect.ts) and checked
 // against the product's application program. KnxIpServer puts it on the network, so ETS or Busforge download
-// into it over KNXnet/IP exactly as into a unit behind the bench bridge.
+// into it over KNXnet/IP exactly as into a unit behind the bench bridge. tools/sim-unit-0705.ts builds the
+// property-mapped System 7 unit (MV-0705) on its transport and property core.
 //
 // It is strict, like packages/product/test/collected-unit.ts: what it does not model it refuses, with a
 // reason in its log and in `refusals`, and sends nothing in answer, so the tool's own timeout ends the run
@@ -13,6 +14,8 @@
 //   transport rules packages/knx/src/device.ts follows), and frames on the connection a restart ended as the
 //   unit's captures show;
 // - connectionless A_DeviceDescriptor_Read and A_PropertyValue_Read;
+// - the broadcast A_IndividualAddress_Read in programming mode (which the restart ends) and
+//   A_IndividualAddressSerialNumber_Read, as far as the unit's captures show them;
 // - A_Authorize_Request with the keys whose answer the unit's captures show;
 // - the interface objects and properties the unit answered, element by element, and its property
 //   descriptions, those of the index past its last property included; a property the unit refused is answered
@@ -29,12 +32,12 @@ import {
   type KnxTransport, type PropertyDescription,
 } from "../packages/knx/src/index.ts";
 
-const PID_LOAD_STATE = 5, PID_TABLE_REFERENCE = 7, PID_PROGRAM_ID = 13, PID_DEVICE_CONTROL = 14, PID_MCB = 27;
+const PID_LOAD_STATE = 5, PID_TABLE_REFERENCE = 7, PID_SERIAL = 11, PID_PROGRAM_ID = 13, PID_DEVICE_CONTROL = 14, PID_MCB = 27;
 const STATE = { UNLOADED: 0, LOADED: 1, LOADING: 2 } as const;
 const EVENT = { LOAD: 1, LOAD_COMPLETED: 2, ADDITIONAL: 3, UNLOAD: 4 } as const;
 const VERIFY_MODE = 0x04, APPLICATION_STOPPED = 0x01;
 const APPLICATION_LSM = 4;
-const PRIORITY_BITS = 0x0c, STANDARD_FRAME = 0x80, STANDARD_TPDU_MAX = 16;
+const PRIORITY_BITS = 0x0c, STANDARD_FRAME = 0x80, STANDARD_TPDU_MAX = 16, GROUP_ADDRESS = 0x80;
 // The reach of the memory services the unit answers (A_Memory_Read/Write, a 16-bit address).
 const MEMORY_END = 0x10000;
 // KNX 3/3/4: a transport connection that carries nothing for 6 s is closed by the device.
@@ -52,13 +55,18 @@ export interface SimProperty {
 
 // How the unit takes a basic A_Restart, from its captures.
 export interface SimRestart {
-  // The unit acknowledges the restart frame itself, on layer 2 and with T_Ack.
-  acknowledged: boolean;
+  // The unit acknowledges the restart frame itself: on layer 2 and with T_Ack (true), on layer 2 only
+  // ("layer2"), or not at all (false).
+  acknowledged: boolean | "layer2";
   // For this long after the restart no frame to it is acknowledged on layer 2.
   linkDownMs: number;
+  // From linkDownMs until this long after the restart its captures show no frame to it: one then is refused.
+  // Absent: it acknowledges every frame from linkDownMs on.
+  linkUpMs?: number;
   // What the unit answers a numbered frame on the connection the restart ended, until that partner connects
-  // again: T_Disconnect (KNX 3/3/4 A10), or nothing, as a unit whose stack drops such frames.
-  deadConnection: "disconnect" | "nothing";
+  // again: T_Disconnect (KNX 3/3/4 A10), nothing, as a unit whose stack drops such frames, or "unknown" where
+  // its captures show neither, and the frame is refused.
+  deadConnection: "disconnect" | "nothing" | "unknown";
 }
 
 export interface SimUnitModel {
@@ -72,22 +80,31 @@ export interface SimUnitModel {
   // Per load-state machine: where the unit places its segment (it chose that address on every download its
   // captures show) and the segment it holds at the start.
   segments: Map<number, { at: number; size: number; bytes: Buffer }>;
-  // The two octets of a memory-control-block element between the size and the CRC, as the unit reports them.
-  mcbControl: Buffer;
-  crc: "ccitt" | "ccitt-false";
+  // The two octets of a memory-control-block element between the size and the CRC, as the unit reports them;
+  // null where they are not one constant of the unit.
+  mcbControl: Buffer | null;
+  // The CRC convention of its memory-control blocks; null where the unit reports none.
+  crc: "ccitt" | "ccitt-false" | null;
   // A_Authorize_Request key (hex) -> the level the unit grants.
   authorize: Map<string, number>;
   restart: SimRestart;
   // How long the unit's interface took to confirm a frame on the line: positively, and negatively (no
   // layer-2 acknowledgement, after the repetitions).
   link: { ackMs: number; nakMs: number };
+  // Whether the unit is in programming mode at the start, where its captures show it (it answers a broadcast
+  // A_IndividualAddress_Read, or leaves it unanswered); its restart ends it. Absent: not known, and the read
+  // is refused.
+  programmingMode?: boolean;
+  // The four octets after the serial number in its A_IndividualAddressSerialNumber_Response, as its captures
+  // show them. Absent: the read is refused.
+  serialNumberResponseTail?: Buffer;
 }
 
 // A segment's bytes, and which of them the unit is known to hold (1): a mode-0 allocation that grows a segment
 // leaves its new octets unknown until they are written.
 interface Segment { at: number; size: number; bytes: Buffer; known: Uint8Array }
 interface Connection { partner: number; recv: number; send: number; pendingAck: ReturnType<typeof setTimeout> | null; idle: ReturnType<typeof setTimeout> | null }
-type Reply = (apci: number, data: Buffer, low?: number) => void;
+export type Reply = (apci: number, data: Buffer, low?: number) => void;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -101,8 +118,8 @@ export class SimUnit implements KnxTransport {
   private readonly segments = new Map<number, Segment>();
   // Per object, whether its table reference and memory-control block are known (false after an unload until
   // the allocation and the load completed that follow it set them).
-  private readonly referenceKnown = new Map<number, boolean>();
-  private readonly mcbKnown = new Map<number, boolean>();
+  protected readonly referenceKnown = new Map<number, boolean>();
+  protected readonly mcbKnown = new Map<number, boolean>();
   private conn: Connection | null = null;
   private restartedAt: number | null = null;
   // The partner of the connection the last restart ended, until it connects again.
@@ -114,6 +131,7 @@ export class SimUnit implements KnxTransport {
   private line: Promise<void> = Promise.resolve();
   // Set by disconnect(): no frame is taken and none sent until connect().
   private stopped = false;
+  private programmingMode: boolean | undefined;
 
   constructor(
     private readonly model: SimUnitModel,
@@ -121,6 +139,7 @@ export class SimUnit implements KnxTransport {
     readonly assignedIa: number,
     private readonly opts: { log?: (line: string) => void; now?: () => number } = {},
   ) {
+    this.programmingMode = model.programmingMode;
     this.objects = new Map([...model.objects].map(([o, props]) => [o, new Map([...props].map(([pid, p]) => [pid, { ...p, elements: p.elements?.map((e) => Buffer.from(e)) ?? null }]))]));
     if (!this.property(0, PID_DEVICE_CONTROL)?.elements?.[0]) throw new Error("a simulated unit needs the device control (object 0 PID 14) its unit answered: verify mode and the stopped application live there");
     for (const [lsm, s] of model.segments) {
@@ -135,7 +154,7 @@ export class SimUnit implements KnxTransport {
 
   private now(): number { return this.opts.now?.() ?? Date.now(); }
   private note(line: string): void { this.lines.push(line); this.opts.log?.(line); }
-  private refuse(what: string): void { const r = `sim-refused ${what}`; this.refusals.push(r); this.note(r); }
+  protected refuse(what: string): void { const r = `sim-refused ${what}`; this.refusals.push(r); this.note(r); }
 
   async connect(): Promise<void> { this.stopped = false; }
   async disconnect(): Promise<void> { this.stopped = true; this.close(); await this.line; }
@@ -160,23 +179,28 @@ export class SimUnit implements KnxTransport {
     if (this.stopped) throw new Error("the simulated unit is disconnected");
     if (cemi[0] !== CEMI.LDATA_REQ) { this.refuse(`cEMI message code 0x${cemi[0].toString(16)}`); return; }
     const { src, dst, tpdu, isGroup } = parseCemiLData(cemi);
-    if (isGroup) { this.refuse(`a ${dst === 0 ? "broadcast" : "group"} telegram ${tpdu.toString("hex")} from ${numToIa(src)}: no group or broadcast service is modelled`); return; }
-    if (dst !== this.model.ia) {
+    if (isGroup && (dst !== 0 || !isAddressBroadcast(tpdu))) { this.refuse(`a ${dst === 0 ? "broadcast" : "group"} telegram ${tpdu.toString("hex")} from ${numToIa(src)}: no group service is modelled, and of the broadcasts only the address reads`); return; }
+    if (!isGroup && dst !== this.model.ia) {
       this.note(`no device at ${numToIa(dst)}: ${tpdu.toString("hex")} not acknowledged`);
       return nak(`no device at ${numToIa(dst)} acknowledged the frame`);
     }
     const since = this.restartedAt === null ? null : this.now() - this.restartedAt;
     if (since !== null && since < this.model.restart.linkDownMs) {
+      if (isGroup) { this.refuse(`broadcast ${tpdu.toString("hex")} from ${numToIa(src)} while the unit restarts (${since} ms): whether it answers is not known`); return; }
       this.note(`restarting (${since} ms): ${tpdu.toString("hex")} not acknowledged`);
       return nak("the unit is restarting and acknowledged nothing");
+    }
+    if (since !== null && this.model.restart.linkUpMs !== undefined && since < this.model.restart.linkUpMs) {
+      this.refuse(`${tpdu.toString("hex")} from ${numToIa(src)} ${since} ms after the restart: whether the unit takes a frame then is not shown`);
+      return;
     }
     await sleep(this.model.link.ackMs);
     this.restartedAt = null;
     this.priority = cemi[2 + cemi[1]] & PRIORITY_BITS;
     this.restartedNow = false;
-    try { this.onFrame(src, tpdu); }
+    try { if (isGroup) this.onBroadcast(src, tpdu); else this.onFrame(src, tpdu); }
     catch (e) { this.refuse(`${tpdu.toString("hex")} from ${numToIa(src)}: ${e instanceof Error ? e.message : String(e)}`); }
-    if (this.restartedNow && !this.model.restart.acknowledged) {
+    if (this.restartedNow && this.model.restart.acknowledged === false) {
       await sleep(this.model.link.nakMs - this.model.link.ackMs);
       throw new Error("the unit restarted without acknowledging the restart");
     }
@@ -198,6 +222,7 @@ export class SimUnit implements KnxTransport {
     const c = this.conn;
     if (!c || c.partner !== src) {
       if (this.deadPartner === src && this.model.restart.deadConnection === "nothing") { this.note(`numbered frame ${tpdu.toString("hex")} from ${numToIa(src)} on the connection the restart ended: dropped`); return; }
+      if (this.deadPartner === src && this.model.restart.deadConnection === "unknown") { this.refuse(`numbered frame ${tpdu.toString("hex")} from ${numToIa(src)} on the connection the restart ended: the unit's answer is not shown`); return; }
       this.note(`numbered frame ${tpdu.toString("hex")} from ${numToIa(src)} without a connection: T_Disconnect`);
       this.emit(src, tpDisconnect());
       return;
@@ -211,7 +236,7 @@ export class SimUnit implements KnxTransport {
       const why = this.restartRefusal();
       if (why) { this.emit(src, tpAck(seq)); this.refuse(`A_Restart: ${why}`); return; }
       // A unit that restarts at once acknowledges the restart neither on layer 2 nor with T_Ack.
-      if (this.model.restart.acknowledged) this.emit(src, tpAck(seq));
+      if (this.model.restart.acknowledged === true) this.emit(src, tpAck(seq));
       this.restart(src);
       return;
     }
@@ -284,15 +309,35 @@ export class SimUnit implements KnxTransport {
   }
 
   // A frame from the unit, delivered after the interface's confirmation of the request that caused it.
-  private emit(to: number, tpdu: Buffer): void {
+  private emit(to: number, tpdu: Buffer, broadcast = false): void {
     const cemi = withMessageCode(cemiLData(this.model.ia, to, tpdu), CEMI.LDATA_IND);
     const ctrl = 2 + cemi[1];
     const priority = tpdu.length === 1 ? 0 : this.priority;
     cemi[ctrl] = (cemi[ctrl] & ~(PRIORITY_BITS | STANDARD_FRAME)) | priority | (tpdu.length > STANDARD_TPDU_MAX ? 0 : STANDARD_FRAME);
-    setTimeout(() => { if (this.stopped) return; this.onRawCemi?.(cemi); this.onCemi?.(this.model.ia, to, tpdu, false); }, 0);
+    if (broadcast) cemi[ctrl + 1] |= GROUP_ADDRESS;
+    setTimeout(() => { if (this.stopped) return; this.onRawCemi?.(cemi); this.onCemi?.(this.model.ia, to, tpdu, broadcast); }, 0);
   }
 
   // ---- application layer ----
+
+  // A_IndividualAddress_Read, answered in programming mode and left unanswered outside it, and
+  // A_IndividualAddressSerialNumber_Read, answered where the serial number is the unit's.
+  private onBroadcast(src: number, tpdu: Buffer): void {
+    const apci = ((tpdu[0] & 0x03) << 8) | tpdu[1];
+    const what = `${apci === APCI.INDIVIDUAL_ADDRESS_READ ? "A_IndividualAddress_Read" : "A_IndividualAddressSerialNumber_Read"} ${tpdu.toString("hex")} from ${numToIa(src)}`;
+    if (apci === APCI.INDIVIDUAL_ADDRESS_READ) {
+      if (this.programmingMode === undefined) { this.refuse(`${what}: whether the unit is in programming mode is not known`); return; }
+      if (!this.programmingMode) { this.note(`${what} outside programming mode: no answer`); return; }
+      this.emit(0, Buffer.from([0x01, APCI.INDIVIDUAL_ADDRESS_RESPONSE & 0xff]), true);
+      return;
+    }
+    const serial = this.property(0, PID_SERIAL)?.elements?.[0];
+    if (!serial) { this.refuse(`${what}: the unit's serial number was not read`); return; }
+    if (!serial.equals(tpdu.subarray(2))) { this.note(`${what}: another unit's serial number, no answer`); return; }
+    const tail = this.model.serialNumberResponseTail;
+    if (!tail) { this.refuse(`${what}: the octets after the serial number in the unit's answer are not known`); return; }
+    this.emit(0, Buffer.concat([Buffer.from([APCI.IA_SERIAL_RESPONSE >> 8, APCI.IA_SERIAL_RESPONSE & 0xff]), serial, tail]), true);
+  }
 
   private onConnectionless(src: number, tpdu: Buffer): void {
     const apci = ((tpdu[0] & 0x03) << 8) | tpdu[1];
@@ -339,6 +384,8 @@ export class SimUnit implements KnxTransport {
 
   private restart(partner: number): void {
     this.close();
+    // A restart ends programming mode.
+    this.programmingMode = false;
     this.deadPartner = partner;
     this.restartedAt = this.now();
     this.restartedNow = true;
@@ -347,7 +394,7 @@ export class SimUnit implements KnxTransport {
     this.note("restart");
   }
 
-  private property(obj: number, pid: number): SimProperty | null {
+  protected property(obj: number, pid: number): SimProperty | null {
     return this.objects.get(obj)?.get(pid) ?? null;
   }
 
@@ -381,7 +428,7 @@ export class SimUnit implements KnxTransport {
     reply(APCI.PROPERTY_DESCRIPTION_RESPONSE, Buffer.from([obj, d.pid, d.propertyIndex, (d.writable ? 0x80 : 0) | d.pdt, (d.maxElements >> 8) & 0x0f, d.maxElements & 0xff, (d.readLevel << 4) | d.writeLevel]));
   }
 
-  private propertyWrite(obj: number, pid: number, count: number, start: number, value: Buffer, reply: Reply): void {
+  protected propertyWrite(obj: number, pid: number, count: number, start: number, value: Buffer, reply: Reply): void {
     const prop = this.property(obj, pid);
     const what = `A_PropertyValue_Write ${obj}/${pid} ${value.toString("hex")}`;
     if (!prop || prop.elements === null) { this.refuse(`${what}: the unit holds no such property`); return; }
@@ -398,12 +445,12 @@ export class SimUnit implements KnxTransport {
     this.refuse(`${what}: no write of this property is modelled`);
   }
 
-  private state(obj: number): number {
+  protected state(obj: number): number {
     return this.property(obj, PID_LOAD_STATE)?.elements?.[0]?.[0] ?? STATE.UNLOADED;
   }
 
   // One load-state event; the state the unit answers, or null where it is refused.
-  private loadEvent(obj: number, value: Buffer, what: string): number | null {
+  protected loadEvent(obj: number, value: Buffer, what: string): number | null {
     const prop = this.property(obj, PID_LOAD_STATE)!;
     const state = this.state(obj);
     const set = (s: number) => { prop.elements = [Buffer.from([s])]; return s; };
@@ -427,6 +474,7 @@ export class SimUnit implements KnxTransport {
         const seg = this.segments.get(obj);
         const mcb = this.property(obj, PID_MCB);
         if (mcb && mcb.elements !== null) {
+          if (!this.model.crc || !this.model.mcbControl) { this.refuse(`${what}: how the unit computes the memory-control block of object ${obj} is not known`); return null; }
           if (!seg || seg.known.some((k) => k === 0)) { this.refuse(`${what}: the segment of object ${obj} holds octets no write set and the unit was not shown to hold, so its CRC is not known`); return null; }
           const crc = this.model.crc === "ccitt" ? crc16Ccitt(seg.bytes) : crc16CcittFalse(seg.bytes);
           const size = Buffer.alloc(4); size.writeUInt32BE(seg.size);
@@ -466,7 +514,7 @@ export class SimUnit implements KnxTransport {
     return null;
   }
 
-  private memoryRead(n: number, addr: number, reply: Reply): void {
+  protected memoryRead(n: number, addr: number, reply: Reply): void {
     const what = `A_Memory_Read ${n} at 0x${addr.toString(16)}`;
     if (n === 0) { this.refuse(`${what}: a read of no octet`); return; }
     const hit = this.segmentAt(addr, n);
@@ -475,7 +523,7 @@ export class SimUnit implements KnxTransport {
     reply(APCI.MEMORY_RESPONSE, Buffer.concat([Buffer.from([addr >> 8, addr & 0xff]), hit[1].bytes.subarray(off, off + n)]), n);
   }
 
-  private memoryWrite(n: number, addr: number, data: Buffer, reply: Reply): void {
+  protected memoryWrite(n: number, addr: number, data: Buffer, reply: Reply): void {
     const what = `A_Memory_Write ${n} at 0x${addr.toString(16)}`;
     if (n === 0 || data.length !== n) { this.refuse(`${what}: ${data.length} octets of data`); return; }
     const hit = this.segmentAt(addr, n);
@@ -489,6 +537,13 @@ export class SimUnit implements KnxTransport {
     // In verify mode the unit answers each write with the bytes it then holds there.
     if (control & VERIFY_MODE) reply(APCI.MEMORY_RESPONSE, Buffer.concat([Buffer.from([addr >> 8, addr & 0xff]), hit[1].bytes.subarray(off, off + n)]), n);
   }
+}
+
+// The broadcasts the unit takes: A_IndividualAddress_Read and A_IndividualAddressSerialNumber_Read.
+function isAddressBroadcast(tpdu: Buffer): boolean {
+  if (tpdu.length < 2 || (tpdu[0] & 0xfc) !== 0) return false;
+  const apci = ((tpdu[0] & 0x03) << 8) | tpdu[1];
+  return (apci === APCI.INDIVIDUAL_ADDRESS_READ && tpdu.length === 2) || (apci === APCI.IA_SERIAL_READ && tpdu.length === 8);
 }
 
 // A basic A_Restart (no restart type, no data), numbered.

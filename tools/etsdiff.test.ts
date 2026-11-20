@@ -6,6 +6,7 @@ import { iaToNum, numToIa, gaToNum, LSM, planSecurityObjectLoad, GROUP_KEY_ENTRY
 import { parseAppConfig, classify, parseLoadProcedures, relParamFillByte, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, differingFF, leaveUnreadUnchanged, buildDeviceConfig, buildComObjectTable, buildGroupTables, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosing, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, withInstanceOverrides, fullDownloadImageCoverage, planSystem1Download, MV0012_DEFAULT_LOAD, absoluteBuildInstances, checkedStamps, buildSecurityObject, writtenGroupKeys, relativeParWriteSet, relativeComObjWriteSet, constantParams, differingConstants, comObjectTableChanges, decodeParameterImage, fullDownloadImageDigest, type KnxIpDevice, type ModuleInstance, type ComObjInstanceOverride, type ImageStamp } from "../packages/product/src/index.ts";
 import { catalogueDir, catalogueXml, captureText, capturePath, listCatalogue } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
+import { giraM0008Configuration } from "./gira-m0008-config.ts";
 import { tempDir } from "./test-temp.ts";
 import { CollectedUnit, asDevice, type Collection } from "../packages/product/test/collected-unit.ts";
 import { parseCapture, parseTunnelFrame, memoryImage, etsAllocations, reportedTableReferences, compareSegments, parseGaAnyForm, inferBase, captureDevice } from "./etsdiff.ts";
@@ -1247,41 +1248,9 @@ corpusDescribe("Gira Tastsensor 3 Komfort (M-0008) against ETS", () => {
   const xml = catalogueXml("M-0008_A-10D7-11-2783-O000A.xml.gz");
   const cfg = parseAppConfig(xml);
   const proc = parseLoadProcedures(xml);
-  const ia = deviceOf("gira-m0008-ets-partial-revert.log"), IA = numToIa(ia);
-  const revert = memoryImage(parseCapture(captureText("gira-m0008-ets-partial-revert.log"), ia).writes);
-
   // The configuration ETS downloaded in the revert (the project's), read from its bytes.
-  const baseline = (() => {
-    const at = (a: number) => revert.get(a)!;
-    const count = at(0x4000);
-    // ETS leaves the address table's own individual address (bytes 1-2) to the device.
-    const addr = Buffer.from(Array.from({ length: 1 + 2 * count }, (_, i) => (i === 1 ? ia >> 8 : i === 2 ? ia & 0xff : at(0x4000 + i))));
-    const assocAt = 0x4000 + addr.length;
-    const assoc = Buffer.from(Array.from({ length: 1 + 2 * at(assocAt) }, (_, i) => at(assocAt + i)));
-    const model = toAppModel(cfg, { includeUnions: true });
-    const decoded = new Map<string, string>();
-    for (const seg of cfg.absoluteSegments) {
-      if (seg.data.length === 0) continue;
-      const img = Buffer.from(seg.data);
-      for (let i = 0; i < seg.size; i++) { const v = revert.get(seg.address + i); if (v !== undefined) img[i] = v; }
-      for (const [r, v] of decodeAbsoluteImage(model, seg.id, img)) decoded.set(r, v);
-    }
-    // The function of each rocker has no memory location, so no image shows it; the project
-    // sets both to "Dimmen" (2), whose objects 18 and 20 ETS links to the dimming addresses. On top of
-    // them, the device's configuration as Busforge's read-back finds it (profiles.ts
-    // deviceRelevantRefs): the decoded value of every parameter active under it, until the active set
-    // settles.
-    const project = new Map([["M-0008_A-10D7-11-2783-O000A_P-224_R-224", "2"], ["M-0008_A-10D7-11-2783-O000A_P-2194_R-2194", "2"]]);
-    let params = new Map(project);
-    for (let i = 0; ; i++) {
-      const active = new Set(buildDeviceConfig(cfg, params).imageValues.keys());
-      const next = new Map([...project, ...[...decoded].filter(([r]) => active.has(r))]);
-      if (next.size === params.size && [...next].every(([r, v]) => params.get(r) === v)) break;
-      if (i > 16) throw new Error("the configuration read from the revert never settled");
-      params = next;
-    }
-    return { links: decodeGroupTablesMv0705(addr, assoc), params, addr, assoc };
-  })();
+  const baseline = giraM0008Configuration(cfg);
+  const { ia, revert } = baseline, IA = numToIa(ia);
   const full = (params: Map<string, string>, links: { comObjNum: number; gaRaws: number[] }[]) =>
     classify(cfg).planFullDownload(cfg.mask, { ia: IA, params, links, proc, unitHoldsApplication: true });
 
