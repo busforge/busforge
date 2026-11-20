@@ -110,12 +110,24 @@ Most corpus projects are password-protected, and the check holds no password. Wh
 the configuration the project stores, never a key) is kept in
 `captures/ets-download-records.json.gz`, written by `tools/ets-records.ts` with the password from the
 environment. The test fails when a corpus project is added, removed or changed without that file
-following it; run the tool on each added or changed project (every run also drops the entries of projects
-no longer in the corpus):
+following it. `--missing` records every project the file lacks, in the whole corpus or under the
+directories named (relative to the corpus root), and leaves the entries the file holds as they are; naming projects records those again
+(a changed project). Every run also drops the entries of projects no longer in the corpus. A project
+that cannot be recorded (no password opens it, or the import leaves devices out) is named, with every
+other one that cannot, and nothing is written. `--dry-run` lists what a run would record and drop,
+opens nothing and writes nothing.
 
 ```bash
+# the passwords, one per line, never on disk; every protected project is tried with each
+KNXPROJ_PASSWORDS="$(first-password-source)"$'\n'"$(second-password-source)" bun run tools/ets-records.ts --missing [<corpus directory>...]
 KNXPROJ_PASSWORD=... bun run tools/ets-records.ts <corpus-relative project.knxproj>...
+bun run tools/ets-records.ts --missing --dry-run
 ```
+
+The pinned counts of `tools/ets-records.test.ts` (devices with a record, compared records, distinct
+device states, bytes, and the named deviations and uncompared devices) move with the projects. A
+count that differs fails naming the corpus projects whose devices make up the found count, each with
+its share, so the pinned number is moved knowingly and not to whatever the run found.
 
 ### The passwords of the protected archives
 
