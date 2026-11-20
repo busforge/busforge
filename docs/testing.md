@@ -400,8 +400,11 @@ writes to ETS's.
 ### The capture index
 
 "Does a capture show X" is answered by a lookup, not by a hex search through the corpus. With the
-corpus exported, `tools/capture-index.ts` reads every file under `captures/`, `internal/captures/`
-and `collections/` and writes the index into the corpus:
+corpus exported, `tools/capture-index.ts` reads every file under the corpus directories that hold
+telegram logs or collections (`INDEX_DIRS` in the tool: the captures, the collections and the internal
+capture, sweep, compatibility and release-readiness runs) and writes the index into the corpus. The
+directories are named, not found by a walk over the whole corpus; a corpus test fails on a telegram log
+outside them, and a directory that starts holding logs is added to the list:
 
 ```bash
 BUSFORGE_CORPUS=<corpus> KNXPROJ_PASSWORDS=<one per line> CAPTURE_KEYS=<name>=<32 hex>,... bun run tools/capture-index.ts
@@ -424,6 +427,21 @@ often it went each way, the object/PID pairs touched (`<object index>/<PID>`, `t
 for the extended services, `if ...` for the interface's own objects), the group addresses, the
 secured telegrams with the service inside each, ETS's download actions, the requests the interface
 confirmed negatively and the lines that did not decode.
+
+Two fields answer "what ran before this capture":
+
+- **First and last timestamp** of the file's telegram lines (connection management, heartbeats,
+  confirmations and ETS's download actions do not count), as the file writes them: UTC for a proxy log
+  or pcap capture, the ETS machine's local time for ETS's own log, a time of day without a date for a
+  group monitor. Compare them within a format; an ETS log and a proxy log of the same download differ by
+  the zone's offset.
+- **Writes per unit**: how many memory writes (`A_Memory_Write`, `A_MemoryExtended_Write`,
+  `A_MemoryBit_Write`, `A_UserMemory_Write`, `A_UserMemoryBit_Write`) and property writes
+  (`A_PropertyValue_Write`, `A_PropertyExtValue_WriteCon`, `A_PropertyExtValue_WriteUnCon`) the tool sent
+  to each destination address, those inside opened secured telegrams included. A request the interface
+  confirmed negatively counts like in the service table. Where both show the inner service, the proxy
+  decode and ETS's own log of the same download give the same counts per unit; ETS's log shows a secured
+  telegram's inner service as encrypted in some captures, and a proxy log shows it only where a key opens it.
 
 Two things it does not take on trust:
 
