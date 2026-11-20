@@ -1,12 +1,15 @@
 import { describe, expect, test, setDefaultTimeout } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { appProgramId, loadKnxproj, readAppProgram } from "../packages/project/src/index.ts";
 import { parseAppConfig } from "../packages/product/src/index.ts";
 import { iaToNum } from "../packages/knx/src/index.ts";
 import { captureText, corpusPath } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { capturedOnLoadedUnit, deviceConfiguration, deviceRows, parseCapture } from "./etsdiff.ts";
-import { compareRuns, etsOutcome, judge, listRows, loadedImageCheck, readRow, runRow, runState, simRefusals, type RowConfiguration } from "./ets-sweep.ts";
+import { compareRuns, etsOutcome, judge, listRows, loadedImageCheck, readRow, ROW_FILES, runRow, runState, simRefusals, SWEEP_DIR, type EtsOutcome, type RowConfiguration, type RowSpec } from "./ets-sweep.ts";
+import { dialogueDifferences } from "./ets-driver.ts";
+import { mismatchLines } from "./sim-unit-product.ts";
 
 // Each row runs Busforge's download into a simulated unit on the wall clock (tools/sim-unit.test.ts: about
 // 15 s alone, twenty times that under a loaded full check).
@@ -229,4 +232,28 @@ corpusDescribe("the ETS sweep rows", () => {
     expect(loadedImageCheck(bytes, appXml, conf, held)).toEqual({ state: "equal", bytes: 3882 });
     expect(loadedImageCheck(bytes, appXml, { ...conf, ia: "15.15.250" }, held)).toEqual({ state: "not compared", why: "the export holds no device 15.15.250" });
   });
+});
+
+// A row's driver checks (`checks/<name>/` in the row, tools/ets-driver.ts): ETS's runs the driver was made to repeat
+// or to fail (the simulator stopped mid-download, another interface, a wrong identity), each with the outcome its
+// real ETS6.log must give (expected.json), the dialogue a repeat must share with the row's, and the mismatch lines
+// ETS logged where it refused the identity.
+interface CheckExpectation { outcome: EtsOutcome; dialogueAsRow?: boolean; mismatches?: [string, string, string][] }
+corpusDescribe("the driver's checks of a row against ETS's real logs", () => {
+  for (const id of listRows()) {
+    const dir = corpusPath(`${SWEEP_DIR}/${id}/checks`);
+    if (!existsSync(dir)) continue;
+    for (const name of readdirSync(dir).sort()) {
+      test(`${id}, ${name}: ETS6.log gives the expected outcome`, () => {
+        const row = readRow(id);
+        const at = (f: string) => join(dir, name, f);
+        const want = JSON.parse(readFileSync(at("expected.json"), "utf8")) as CheckExpectation;
+        const check = JSON.parse(readFileSync(at(ROW_FILES.row), "utf8")) as RowSpec;
+        const log = readFileSync(at(ROW_FILES.ets6log));
+        expect(etsOutcome(log.toString("latin1"), row.conf.ia, check.simulator)).toEqual(want.outcome);
+        if (want.dialogueAsRow) expect(dialogueDifferences(readFileSync(join(row.dir, ROW_FILES.ets), "utf8"), readFileSync(at(ROW_FILES.ets), "utf8"), iaToNum(row.conf.ia))).toEqual([]);
+        expect(mismatchLines(log).map((m) => [`${m.object}/${m.pid}`, m.device.toString("hex"), m.required.toString("hex")])).toEqual(want.mismatches ?? []);
+      });
+    }
+  }
 });

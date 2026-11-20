@@ -155,11 +155,11 @@ export function rows(ws: Word[], tolerance = 5): { y: number; words: Word[]; tex
 
 const inside = (r: Region) => (w: Region) => w.x >= r.x && w.y >= r.y && w.x + w.w <= r.x + r.w && w.y + w.h <= r.y + r.h;
 
-// How strongly a box holds ETS's green check mark: a green stroke pulls the red minimum down (0.22 measured)
-// where the menu's white keeps it near 1.
+// How green the greenest pixel of a box is: green over both red and blue (ETS's check mark 0.36 measured; grey
+// text, the blue panel icons and the yellow interface icons stay at or near 0).
 function greenness(png: string, r: Region): number {
-  const out = execFileSync("magick", [png, "-crop", `${r.w}x${r.h}+${r.x}+${r.y}`, "+repage", "-format", "%[fx:minima.r]", "info:"], { encoding: "utf8" });
-  return 1 - Number(out.trim());
+  const out = execFileSync("magick", [png, "-crop", `${r.w}x${r.h}+${r.x}+${r.y}`, "+repage", "-fx", "min(g-r,g-b)", "-format", "%[fx:maxima]", "info:"], { encoding: "utf8" });
+  return Number(out.trim());
 }
 
 // ---- a failure the driver names ----
@@ -486,7 +486,7 @@ async function selectInterface(s: Screen, endpoint: string): Promise<void> {
   if (!entry) {
     // The toolbar offers the project's connection only: starred in the configured connections' dialog, whose OK
     // also refreshes the toolbar's list.
-    const manage = findText(s.look(AT.menuRight).ws, "Konfigurierte Verbindungen")[0] ?? fail("no 'Konfigurierte Verbindungen verwalten' under the toolbar's interface");
+    const manage = findText(s.look(AT.menuRight).ws, "Konfigurierte")[0] ?? fail("no 'Konfigurierte Verbindungen verwalten' under the toolbar's interface");
     click(manage.cx, manage.cy);
     await sleep(3000);
     let png = s.snap();
@@ -494,9 +494,15 @@ async function selectInterface(s: Screen, endpoint: string): Promise<void> {
     const listed = rows(words(png, box)).find((r) => compact(r.text).includes(`(${endpoint}`)) ?? fail(`ETS has no configured connection to ${endpoint}: add one under 'Konfigurierte Verbindungen verwalten'`);
     click(box.x + 250, Math.round(listed.y));
     await sleep(1500);
-    const star = findText(s.look(box).ws, "Für dieses Projekt")[0] ?? fail("no 'Für dieses Projekt verwenden' for the selected connection");
-    click(star.cx, star.cy);
-    await sleep(1500);
+    // The project's connection carries a yellow star left of its row (blue minimum 0.19 measured, 0.95 without);
+    // the button toggles it, so it is pressed only where the star is missing.
+    const starred = (png: string) => Number(execFileSync("magick", [png, "-crop", `18x16+${box.x + 55}+${Math.round(listed.y) - 8}`, "+repage", "-format", "%[fx:minima.b]", "info:"], { encoding: "utf8" }).trim()) < 0.6;
+    if (!starred(s.snap())) {
+      const star = findText(s.look(box).ws, "dieses Projekt")[0] ?? fail("no 'Für dieses Projekt verwenden' for the selected connection");
+      click(star.cx, star.cy);
+      await sleep(1500);
+      if (!starred(s.snap())) fail(`the connection to ${endpoint} did not become the project's`);
+    }
     png = s.snap();
     const ok = findText(dialogButtons(png, box), "OK")[0] ?? fail("no OK in the configured connections' dialog");
     click(ok.cx, ok.cy);
@@ -512,11 +518,12 @@ async function selectInterface(s: Screen, endpoint: string): Promise<void> {
   const look = s.look(AT.menuRight);
   entry = entryIn(look.ws) ?? fail(`the toolbar's interface list lost the connection to ${endpoint}`);
   const auto = findText(look.ws, "Automatisch").find(inside(AT.menuRight));
-  // The menu's check marks stand in one column at its left edge.
-  const mark = (y: number) => greenness(look.png, { x: 1612, y: Math.round(y) - 9, w: 30, h: 18 });
+  // The menu is aligned right, so its check marks move with its width: a row's mark is looked for in the band
+  // left of the connection's name.
+  const mark = (y: number) => greenness(look.png, { x: 1540, y: Math.round(y) - 9, w: 160, h: 18 });
   key("Escape");
-  if (mark(entry.y) < 0.3) fail(`the interface's check mark is not on the connection to ${endpoint}`);
-  if (auto && mark(auto.cy) >= 0.3) fail("the interface's check mark is still on 'Automatisch'");
+  if (mark(entry.y) < 0.2) fail(`the interface's check mark is not on the connection to ${endpoint}`);
+  if (auto && mark(auto.cy) >= 0.2) fail("the interface's check mark is still on 'Automatisch'");
 }
 
 // ---- the simulator on this machine ----
@@ -645,9 +652,11 @@ function dialogBox(png: string): Region | null {
   return m ? { w: +m[1], h: +m[2], x: +m[3], y: +m[4] } : null;
 }
 
-// The buttons in a dialog's bottom bar.
+// The buttons in a dialog's bottom bar, which ETS aligns right: read as one line, without the dialog's frames
+// and lists to its left (sparse OCR loses the light grey buttons, a wider strip reads the frames as text).
 function dialogButtons(png: string, box: Region): Word[] {
-  return words(png, { x: box.x, y: box.y + box.h - 45, w: box.w, h: 45 }, { scale: 3, psm: 6 });
+  const w = Math.min(box.w, 420);
+  return words(png, { x: box.x + box.w - w, y: box.y + box.h - 40, w, h: 40 }, { scale: 2, psm: 7 });
 }
 
 // Dialogs ETS shows inside its window, closed by the buttons the driver knows, else by Escape; one still

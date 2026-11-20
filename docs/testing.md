@@ -688,8 +688,10 @@ runs over the corpus projects; its result stands beside the verdict.
 `row.json` (the simulated unit, ETS's build, the simulator's endpoint ETS was set to, the export
 where there is one), `configuration.json` (the device's configuration ETS downloaded, which Busforge
 downloads), ETS's capture `ets.log` with the simulator's lines `ets.log.sim.txt`, `ets6.log.txt`, and
-`explained.json` (the row's verdict today and every difference with its cause). The tool writes the
-verdicts into `internal/ets-sweep/manifest.json`:
+`explained.json` (the row's verdict today and every difference with its cause). A row may also hold
+`checks/<name>/`: runs of the driver below that repeat the row or were made to fail, each with the outcome
+its ETS6.log must give (`expected.json`), which `tools/ets-sweep.test.ts` holds it to; they are no rows
+of their own. The tool writes the verdicts into `internal/ets-sweep/manifest.json`:
 
 ```bash
 BUSFORGE_CORPUS=... bun run tools/ets-sweep.ts [<application>/<variant>]... [--keep=<dir>]
