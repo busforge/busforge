@@ -553,10 +553,13 @@ ETS's downloads of both show.
 
 A page parameter that a choose tests heads a reached `ParameterBlock` (its `ParamRefId`) on every product
 the captures show (`TypeNone`, no value: Gira Tastsensor 3, Theben Meteodata 140 S, ABB US/U 4.2), and
-ETS takes those chooses' default branches. So a memoryless parameter heading a reached block counts as
-placed for the default branch; the ABB US/U 4.2 heads its channel pages with numeric ones too, and no
-capture shows one of those in a configuration where it decides. It decides nothing else; the value its
-ParameterRef resolves to is the one §9 gives.
+ETS takes those chooses' default branches. A numeric parameter without memory heading such a block is
+taken the same way: the ABB US/U 4.2 heads its counter page with one (`P-404`, "A-Counter", 11 bit, no
+ParameterRefRef places it), and with channel A a counter whose additional options and differential counter
+are on, ETS's download writes what the only, default branch of the choose on it places (com-objects 2, 4
+and 5, the differential counter's overrun value). Busforge's image of that configuration is every byte of
+ETS's. So a memoryless parameter heading a reached block counts as placed for the default branch, whatever
+its type. It decides nothing else; the value its ParameterRef resolves to is the one §9 gives.
 
 Unions overlay several parameters on the same bytes; only the member an active branch places is
 meaningful. On the GVS AMMA a choose tests a union member that no active branch places. Evaluated

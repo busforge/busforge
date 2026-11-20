@@ -117,9 +117,11 @@ export const CORPUS_FILES: readonly string[] = [
   ].map((f) => `catalogue/${f}`),
   ...[
     "abb-usu-4.2-collect-scan.log",
+    "abb-usu-4.2-ets-counter-download.log",
     "abb-usu-4.2-ets-fulldownload-defaults.log",
     "abb-usu-4.2-ets-fulldownload-loaded.log",
     "abb-usu-4.2-ets-partial-links.log",
+    "abb-usu-4.2-ets6log-counter-download.txt",
     "abb-usu-4.2-ets6log-fulldownload-loaded.txt",
     "auro-m0081-ets-fulldownload.log",
     "auro-m0081-ets-partial-heatalarm-off.log",
