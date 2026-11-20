@@ -1,5 +1,7 @@
 import { test, expect, describe, beforeAll } from "bun:test";
+import { act, useState } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { mount } from "@/test/render";
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
 import en from "@/locales/en";
@@ -29,5 +31,52 @@ describe("a number parameter ETS draws as a checkbox", () => {
   test("a read-only parameter shows a disabled box", () => {
     expect(input(render("1", true))).toContain(' disabled=""');
     expect(input(render("1"))).not.toContain(' disabled=""');
+  });
+
+  // The device page writes the value and keeps the project's value when the server refuses the write (409).
+  function Page({ initial, accept, writes }: { initial: string; accept: boolean; writes: string[] }) {
+    const [value, setValue] = useState(initial);
+    const [saving, setSaving] = useState(false);
+    const write = async (next: string) => {
+      writes.push(next);
+      setSaving(true);
+      try {
+        await Promise.resolve(); // the request
+        if (!accept) throw Object.assign(new Error("refused"), { status: 409 });
+        setValue(next);
+      } catch {
+        // the page shows a toast; the value stays
+      } finally {
+        setSaving(false);
+      }
+    };
+    return <ParamCheckbox value={value} label="Read" disabled={saving} onChange={(v) => void write(v)} testId="param-1" />;
+  }
+  const box = (container: HTMLElement) => container.querySelector<HTMLInputElement>('[data-testid="param-1"]')!;
+
+  test("a value outside the type stays neither ticked nor unticked when the write of a click is refused", async () => {
+    const writes: string[] = [];
+    const view = mount(<Page initial="2" accept={false} writes={writes} />);
+    expect(box(view.container).indeterminate).toBe(true);
+    await act(async () => box(view.container).click());
+    expect(writes).toEqual(["1"]);
+    expect(box(view.container).checked).toBe(false);
+    expect(box(view.container).indeterminate).toBe(true);
+    expect(view.container.querySelector('[data-testid="param-1-outside"]')).not.toBeNull();
+    view.unmount();
+  });
+
+  test("a click whose write is taken sets 1, then 0, and no longer names a value outside the type", async () => {
+    const writes: string[] = [];
+    const view = mount(<Page initial="2" accept writes={writes} />);
+    await act(async () => box(view.container).click());
+    expect(box(view.container).checked).toBe(true);
+    expect(box(view.container).indeterminate).toBe(false);
+    expect(view.container.querySelector('[data-testid="param-1-outside"]')).toBeNull();
+    await act(async () => box(view.container).click());
+    expect(box(view.container).checked).toBe(false);
+    expect(box(view.container).indeterminate).toBe(false);
+    expect(writes).toEqual(["1", "0"]);
+    view.unmount();
   });
 });
