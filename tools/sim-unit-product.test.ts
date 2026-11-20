@@ -104,13 +104,9 @@ corpusDescribe("the identity loop's rerun step", () => {
   });
 });
 
-// The ten units of stage 1, each with the collection it is simulated from. The MV-0705 units' entries in
-// tools/sim-units.ts come with their own simulator; until then their collection is named here.
-const UNITS: { id: string; collection: string; catalogue: string; stateInCaptures?: StateInCaptures }[] = [
-  ...SIM_UNITS.map((s) => ({ id: s.id, collection: s.collection, catalogue: s.catalogue, stateInCaptures: s.memoryMapped ? undefined : s.behaviour.stateInCaptures })),
-  { id: "mdt-be02001", collection: "internal/captures/cap-1004/mdt-plain.json", catalogue: "M-0083_A-00B6-32-9642.xml.gz" },
-  { id: "gira-ts3", collection: "collections/gira-m0008-backup-2026-10-05/1.1.1-gira-m0008-collect.json", catalogue: "M-0008_A-10D7-11-2783-O000A.xml.gz" },
-];
+// The ten units of stage 1, each with the collection it is simulated from.
+const UNITS: { id: string; collection: string; catalogue: string; stateInCaptures?: StateInCaptures }[] =
+  SIM_UNITS.map((s) => ({ id: s.id, collection: s.collection, catalogue: s.catalogue, stateInCaptures: s.memoryMapped || s.propertyMapped ? undefined : s.behaviour.stateInCaptures }));
 
 // What a unit from the product alone gets wrong against the unit from its collection, every difference: the
 // manufacturer is right on all ten (on the Jung, the Gira and the DALI-Gateway too, whose applications were made
