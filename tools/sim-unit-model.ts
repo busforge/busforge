@@ -3,13 +3,13 @@
 // not: the unit's serial, order info, hardware type (object 0 PID 78), descriptions, where it places its
 // segments and what they hold. The product is checked against it: its mask and its declared property compares
 // must agree with what the unit answered, or the model is refused rather than a unit built that no real one is.
-import { crc16Ccitt, crc16CcittFalse, declaredPropMatches, iaToNum, type PropertyDescription } from "../packages/knx/src/index.ts";
+import { declaredPropMatches, iaToNum, PID, type PropertyDescription } from "../packages/knx/src/index.ts";
 import { parseAppConfig, parseLoadProcedures, declaredPropChecks, type CollectPackage } from "../packages/product/src/index.ts";
-import { PID_DEVICE_CONTROL, type SimProperty, type SimUnitCoreModel, type SimUnitModel } from "./sim-unit.ts";
+import { crcConventionOf, type SimProperty, type SimUnitCoreModel, type SimUnitModel } from "./sim-unit.ts";
 
 // What the collection cannot show and the unit's captures do: how it takes a restart and an authorization, how
 // long its interface took to confirm a frame, the address services it answers, its maximum APDU where it
-// refuses PID 56 and its captures show what it takes, and (a System 7 unit) whether it answers a memory read
+// refuses PID 56 and its captures show what it takes, and (an MV-0705 unit) whether it answers a memory read
 // into a segment that is loading.
 export type UnitBehaviour = Pick<SimUnitCoreModel, "restart" | "authorize" | "link" | "programmingMode" | "serialNumberResponseTail"> & { maxApdu?: number; readsWhileLoading?: boolean };
 
@@ -84,7 +84,7 @@ export function collectedUnit(collection: CollectPackage, appXml: string, refuse
     if (!declaredPropMatches(v!, c.expect, c.mask)) refuse(`the application expects ${c.expect.toString("hex")} in property ${c.obj}/${c.pid}, the unit holds ${v!.toString("hex")}`);
   }
 
-  if (!objects.get(0)?.get(PID_DEVICE_CONTROL)?.elements?.[0]) refuse("the collection did not read the device control (object 0 PID 14)");
+  if (!objects.get(0)?.get(PID.DEVICE_CONTROL)?.elements?.[0]) refuse("the collection did not read the device control (object 0 PID 14)");
   return { mask, objects, descriptions, records };
 }
 
@@ -97,6 +97,7 @@ export function unitMaxApdu(collection: CollectPackage, behaviour: UnitBehaviour
 export function simUnitModel(collection: CollectPackage, appXml: string, behaviour: UnitBehaviour): SimUnitModel {
   const refuse = (why: string): never => { throw new Error(`no simulated unit: ${why}`); };
   if (collection.mask !== "MV-07B0") refuse(`only System B (MV-07B0) is modelled here, not ${collection.mask}`);
+  if (behaviour.readsWhileLoading !== undefined) refuse("a System B unit's reads while loading are its segments' rule, not the behaviour's");
   const { mask, objects, descriptions, records } = collectedUnit(collection, appXml, refuse);
 
   const memory = records.filter((r) => r.space === "memory" && r.outcome === "bytes" && r.target.address !== undefined && r.bytes);
@@ -115,7 +116,7 @@ export function simUnitModel(collection: CollectPackage, appXml: string, behavio
     if (mcbControl && !mcbControl.equals(control)) refuse(`the memory-control blocks report ${mcbControl.toString("hex")} and ${control.toString("hex")} between size and CRC`);
     mcbControl = Buffer.from(control);
     const reported = mcb[0].readUInt16BE(6);
-    const conv = reported === crc16CcittFalse(bytes) ? "ccitt-false" : reported === crc16Ccitt(bytes) ? "ccitt" : null;
+    const conv = crcConventionOf(reported, bytes);
     if (conv === null) refuse(`the memory-control block of object ${lsm} reports CRC ${reported.toString(16)}, which neither convention gives over the segment collected`);
     if (crc && crc !== conv) refuse(`the memory-control blocks take both CRC conventions`);
     crc = conv;

@@ -19,7 +19,8 @@ export interface ReplayStep {
 
 // The cEMI frame of a capture line's KNXnet/IP frame.
 const cemiOfLine = (line: string) => { const f = Buffer.from(line.match(/\| ([0-9a-fA-F]+)\s*$/)![1], "hex"); return f.subarray(f[0] + f[f[0]]); };
-const frameOf = (cemi: Buffer, tpdu: Buffer) => `${cemi[2 + cemi[1]].toString(16).padStart(2, "0")} ${tpdu.toString("hex")}`;
+// A broadcast (the address type in the second control field) is marked as one.
+const frameOf = (cemi: Buffer, tpdu: Buffer) => `${cemi[2 + cemi[1]].toString(16).padStart(2, "0")} ${cemi[3 + cemi[1]] & 0x80 ? "broadcast " : ""}${tpdu.toString("hex")}`;
 
 // A step holds the frames the unit sent between its request and the next one; an answer that comes after the
 // tool's next request (a T_Disconnect sent while the unit still answers) lands one step later than the

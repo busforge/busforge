@@ -21,7 +21,7 @@ async function replay(sim: SimUnit, spec: SimUnitSpec, text: string, tool: strin
   return replayCapture(sim, text, { tool, device: sim.deviceIa, interfaceIa: spec.interfaceIa, clock: set, from, broadcasts: true });
 }
 
-// Every byte a capture's tool wrote the unit at `device` that the simulated unit does not hold after its replay.
+// Every byte a capture's tool wrote the unit that the simulated unit does not hold after its replay.
 function notHeld(sim: SimUnit, text: string): string[] {
   if (!(sim instanceof SimUnit0705)) throw new Error("not a System 7 unit");
   return [...memoryImage(parseCapture(text, sim.deviceIa).writes)].filter(([a, b]) => sim.memory(a, 1)?.[0] !== b).map(([a]) => a.toString(16));
@@ -40,7 +40,7 @@ corpusDescribe("the simulated MDT BE-02001.02", () => {
       const steps = await replay(sim, MDT_BE02001, text, "ETS", (ms) => { clock = ms; });
       // The b7 capture skips the bridge's frames 6 to 15 of the session before the download: it holds the unit's
       // answer to ETS's A_IndividualAddressSerialNumber_Read, but not the request.
-      const answer = "b0 03dd008380a0253100000000";
+      const answer = "b0 broadcast 03dd008380a0253100000000";
       const held = kind === "b7" ? steps.map((s) => ({ ...s, unit: s.unit.filter((f) => f !== answer) })) : steps;
       expect([kind, steps.flatMap((s) => s.unit).length - held.flatMap((s) => s.unit).length]).toEqual([kind, kind === "b7" ? 1 : 0]);
       expect([kind, steps.length > 100, replayDifferences(held)]).toEqual([kind, true, []]);
@@ -61,7 +61,7 @@ corpusDescribe("the simulated MDT BE-02001.02", () => {
     expect(replayDifferences(steps)).toEqual([]);
     // The T_Disconnect right after the restart is the one frame not acknowledged; the address read before the
     // restart is answered, the one after it not.
-    expect(steps.filter((s) => s.unitCon === "NEG" || s.request === "0100").map((s) => `${s.request} ${s.unitCon} ${s.unit.join(",")}`)).toEqual(["0100 OK bc 0140", "81 NEG ", "0100 OK "]);
+    expect(steps.filter((s) => s.unitCon === "NEG" || s.request === "0100").map((s) => `${s.request} ${s.unitCon} ${s.unit.join(",")}`)).toEqual(["0100 OK bc broadcast 0140", "81 NEG ", "0100 OK "]);
     expect(sim.refusals).toEqual([]);
   });
 

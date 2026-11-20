@@ -22,32 +22,34 @@
 // - the unload of the application (object 3) sets the device control's application-stopped bit, as on System B
 //   the unload of object 4;
 // - no program id is written as a property: it comes with the task segment, into object 3 PID 13.
-import { crc16CcittFalse, crc16Ccitt, iaToNum, APCI, MM_STATUS_BASE } from "../packages/knx/src/index.ts";
+import { iaToNum, APCI, MM_STATUS_BASE, PID, STATE } from "../packages/knx/src/index.ts";
 import { flattenSteps, parseLoadProcedures, type CollectPackage } from "../packages/product/src/index.ts";
-import { SimUnit, mcbCrc, APPLICATION_STOPPED, EVENT, MEMORY_END, PID_DEVICE_CONTROL, PID_LOAD_STATE, PID_MCB, PID_PROGRAM_ID, PID_TABLE_REFERENCE, STATE, type Reply, type SimUnitCoreModel } from "./sim-unit.ts";
+import { SimUnit, crcConventionOf, mcbCrc, APPLICATION_STOPPED, MEMORY_END, type Reply, type SimUnitCoreModel } from "./sim-unit.ts";
 import { collectedUnit, unitMaxApdu, type Target, type UnitBehaviour } from "./sim-unit-model.ts";
 
 const refuse = (why: string): never => { throw new Error(`no simulated unit: ${why}`); };
 
+const PID_LOAD_STATE = PID.LOAD_STATE_CONTROL, PID_TABLE_REFERENCE = PID.TABLE_REFERENCE, PID_PROGRAM_ID = PID.PROGRAM_ID, PID_DEVICE_CONTROL = PID.DEVICE_CONTROL, PID_MCB = PID.MCB_TABLE;
+const EVENT = { LOAD: 1, LOAD_COMPLETED: 2, ADDITIONAL: 3, UNLOAD: 4 } as const;
 const SEGMENT = { DATA: 0x00, STACK: 0x01, TASK: 0x02 } as const;
 const LSMS = [1, 2, 3], APPLICATION_LSM = 3;
 const MEMORY_TYPE = { RAM: 2, EEPROM: 3 } as const;
 // The segment flag of a segment the unit reports in its memory-control block.
 const MCB_FLAG = 0x80;
 
-export interface Sim0705Segment { at: number; size: number; access: number; memoryType: number; flags: number }
+export interface SimUnit0705Segment { at: number; size: number; access: number; memoryType: number; flags: number }
 
-export interface Sim0705Model extends SimUnitCoreModel {
+export interface SimUnit0705Model extends SimUnitCoreModel {
   // The unit's memory, by address, and which octets of it are known (1).
   memory: { bytes: Buffer; known: Uint8Array };
   // Per load-state machine the segments the unit holds, in the order allocated.
-  held: Map<number, Sim0705Segment[]>;
+  held: Map<number, SimUnit0705Segment[]>;
   // The CRC convention of its memory-control blocks; null where the unit reports none.
   crcConvention: "ccitt" | "ccitt-false" | null;
   readsWhileLoading: boolean;
 }
 
-export function sim0705Model(collection: CollectPackage, appXml: string, behaviour: UnitBehaviour): Sim0705Model {
+export function simUnit0705Model(collection: CollectPackage, appXml: string, behaviour: UnitBehaviour): SimUnit0705Model {
   if (collection.mask !== "MV-0705") refuse(`this model is for MV-0705, not ${collection.mask}`);
   const { records, mask, objects, descriptions } = collectedUnit(collection, appXml, refuse);
   const steps = flattenSteps(parseLoadProcedures(appXml), "full");
@@ -71,10 +73,10 @@ export function sim0705Model(collection: CollectPackage, appXml: string, behavio
 
   // Where the unit holds its segments: those its application declares, or where it reports its own in the
   // memory-control block (a table ETS allocated at its own size), there.
-  const declared = (lsm: number): Sim0705Segment[] => steps
+  const declared = (lsm: number): SimUnit0705Segment[] => steps
     .filter((s) => s.verb === "LdCtrlAbsSegment" && Number(s.attrs.LsmIdx) === lsm)
     .map((s) => ({ at: Number(s.attrs.Address), size: Number(s.attrs.Size), access: Number(s.attrs.Access), memoryType: Number(s.attrs.MemType), flags: Number(s.attrs.SegFlags ?? 0) }));
-  const held = new Map<number, Sim0705Segment[]>();
+  const held = new Map<number, SimUnit0705Segment[]>();
   let crc: "ccitt" | "ccitt-false" | null = null;
   for (const lsm of LSMS) {
     const st = state(lsm);
@@ -95,7 +97,7 @@ export function sim0705Model(collection: CollectPackage, appXml: string, behavio
       segs.filter((s) => s.flags & MCB_FLAG).forEach((s, i) => {
         if (!known.subarray(s.at, s.at + s.size).every((k) => k === 1)) refuse(`the collection did not read the segment of object ${lsm} at 0x${s.at.toString(16)}, whose CRC the unit reports`);
         const seg = bytes.subarray(s.at, s.at + s.size), reportedCrc = mcb[i].readUInt16BE(6);
-        const conv = reportedCrc === crc16CcittFalse(seg) ? "ccitt-false" : reportedCrc === crc16Ccitt(seg) ? "ccitt" : refuse(`the memory-control block of object ${lsm} reports CRC ${reportedCrc.toString(16)} over the segment at 0x${s.at.toString(16)}, which neither convention gives`);
+        const conv = crcConventionOf(reportedCrc, seg) ?? refuse(`the memory-control block of object ${lsm} reports CRC ${reportedCrc.toString(16)} over the segment at 0x${s.at.toString(16)}, which neither convention gives`);
         if (crc && crc !== conv) refuse("the memory-control blocks take both CRC conventions");
         crc = conv;
       });
@@ -115,14 +117,14 @@ export class SimUnit0705 extends SimUnit {
   private readonly known: Uint8Array;
   // The octets written since the load of the machine holding them (1).
   private readonly fresh = new Uint8Array(MEMORY_END);
-  private readonly held = new Map<number, Sim0705Segment[]>();
+  private readonly held = new Map<number, SimUnit0705Segment[]>();
   // The address each machine's task segment named since its unload.
   private readonly taskAt = new Map<number, number>();
   // The machines unloaded in this session: their load completed needs a segment and a task segment declared
   // since, as every capture declares them.
   private readonly unloaded = new Set<number>();
 
-  constructor(private readonly unit: Sim0705Model, assignedIa: number, opts: ConstructorParameters<typeof SimUnit>[2] = {}) {
+  constructor(private readonly unit: SimUnit0705Model, assignedIa: number, opts: ConstructorParameters<typeof SimUnit>[2] = {}) {
     super(unit, assignedIa, opts);
     this.bytes = Buffer.from(unit.memory.bytes);
     this.known = Uint8Array.from(unit.memory.known);
@@ -174,7 +176,7 @@ export class SimUnit0705 extends SimUnit {
     const segs = this.held.get(obj)!;
     if (value[1] === SEGMENT.DATA || value[1] === SEGMENT.STACK) {
       if (value.length !== 10 || value[9] !== 0) { this.refuse(`${what}: a segment allocation of another form`); return false; }
-      const s: Sim0705Segment = { at: value.readUInt16BE(2), size: value.readUInt16BE(4), access: value[6], memoryType: value[7], flags: value[8] };
+      const s: SimUnit0705Segment = { at: value.readUInt16BE(2), size: value.readUInt16BE(4), access: value[6], memoryType: value[7], flags: value[8] };
       if (s.size === 0 || s.at + s.size > MEMORY_END) { this.refuse(`${what}: ${s.size} octets at 0x${s.at.toString(16)}`); return false; }
       if (s.memoryType !== MEMORY_TYPE.RAM && s.memoryType !== MEMORY_TYPE.EEPROM) { this.refuse(`${what}: memory type ${s.memoryType}`); return false; }
       if (value[1] === SEGMENT.STACK && s.memoryType !== MEMORY_TYPE.RAM) { this.refuse(`${what}: a stack segment outside RAM`); return false; }
@@ -227,7 +229,7 @@ export class SimUnit0705 extends SimUnit {
   }
 
   // The machine and segment holding [addr, addr + n), or null.
-  private heldAt(addr: number, n: number): [number, Sim0705Segment] | null {
+  private heldAt(addr: number, n: number): [number, SimUnit0705Segment] | null {
     for (const [lsm, l] of this.held) for (const s of l) if (addr >= s.at && addr + n <= s.at + s.size) return [lsm, s];
     return null;
   }

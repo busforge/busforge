@@ -33,9 +33,9 @@ import {
   type KnxTransport, type PropertyDescription,
 } from "../packages/knx/src/index.ts";
 
-export const PID_LOAD_STATE = 5, PID_TABLE_REFERENCE = 7, PID_PROGRAM_ID = 13, PID_DEVICE_CONTROL = 14, PID_MCB = 27;
-export const STATE = { UNLOADED: 0, LOADED: 1, LOADING: 2 } as const;
-export const EVENT = { LOAD: 1, LOAD_COMPLETED: 2, ADDITIONAL: 3, UNLOAD: 4 } as const;
+const PID_LOAD_STATE = 5, PID_TABLE_REFERENCE = 7, PID_PROGRAM_ID = 13, PID_DEVICE_CONTROL = 14, PID_MCB = 27;
+const STATE = { UNLOADED: 0, LOADED: 1, LOADING: 2 } as const;
+const EVENT = { LOAD: 1, LOAD_COMPLETED: 2, ADDITIONAL: 3, UNLOAD: 4 } as const;
 export const APPLICATION_STOPPED = 0x01;
 const VERIFY_MODE = 0x04, PID_SERIAL = 11;
 const APPLICATION_LSM = 4;
@@ -61,8 +61,7 @@ export interface SimRestart {
   acknowledged: boolean;
   transportAck?: boolean;
   // For this long after the restart no frame to it is acknowledged on layer 2. The restart's time is when the
-  // line took it, its request's plus the line's confirmation delay (`link.ackMs`); the captures give these
-  // windows from the request.
+  // line took it: on a replay's clock its request's, on the wall clock `link.ackMs` later.
   linkDownMs: number;
   // From this long after the restart a frame is acknowledged again, where the captures leave a gap after
   // `linkDownMs`: a frame in the gap is refused (and confirmed negatively), since no capture shows whether the
@@ -142,8 +141,8 @@ export class SimUnit implements KnxTransport {
   private programmingMode: boolean | undefined;
 
   constructor(
-    // A unit of another load control (tools/sim-unit-0701.ts) has none of System B's segments and
-    // memory-control blocks, and takes its load events elsewhere than PID 5.
+    // A unit of another load control (tools/sim-unit-0701.ts, tools/sim-unit-0705.ts) has none of System B's
+    // relative segments and its memory-control block convention.
     private readonly model: SimUnitCoreModel & Partial<Pick<SimUnitModel, "segments" | "mcbControl" | "crc">>,
     // The interface's own individual address: the source of the frames the tool sends through it.
     readonly assignedIa: number,
@@ -196,7 +195,7 @@ export class SimUnit implements KnxTransport {
     }
     const since = this.restartedAt === null ? null : this.now() - this.restartedAt;
     if (since !== null && since < this.model.restart.linkDownMs) {
-      if (isGroup) { this.refuse(`broadcast ${tpdu.toString("hex")} from ${numToIa(src)} while the unit restarts (${since} ms): whether it answers is not known`); return; }
+      if (isGroup) { this.refuse(`broadcast ${tpdu.toString("hex")} from ${numToIa(src)} while the unit restarts (${since} ms): whether it answers is not known`); return nak("whether the restarting unit answers a broadcast is not shown"); }
       this.note(`restarting (${since} ms): ${tpdu.toString("hex")} not acknowledged`);
       return nak("the unit is restarting and acknowledged nothing");
     }
@@ -554,6 +553,9 @@ export class SimUnit implements KnxTransport {
 
 // The CRC of a memory-control-block element over the segment's bytes.
 export const mcbCrc = (conv: "ccitt" | "ccitt-false", b: Buffer): number => conv === "ccitt" ? crc16Ccitt(b) : crc16CcittFalse(b);
+// The convention that gives the CRC a unit reported over a segment's bytes, or null where neither does.
+export const crcConventionOf = (reported: number, b: Buffer): "ccitt" | "ccitt-false" | null =>
+  reported === crc16CcittFalse(b) ? "ccitt-false" : reported === crc16Ccitt(b) ? "ccitt" : null;
 
 // The broadcasts the unit takes: A_IndividualAddress_Read and A_IndividualAddressSerialNumber_Read.
 function isAddressBroadcast(tpdu: Buffer): boolean {

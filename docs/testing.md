@@ -496,14 +496,17 @@ into it over KNXnet/IP as into a real unit, and `tools/knxproxy.ts` in front log
 capture. It is built from a read-only collection of a real unit of the product (identity, every
 property and description the unit answered, where it placed its segments and what they held) and
 checked against the product's application program (mask, declared property compares); what only the
-unit's captures show (how it takes a restart, the authorization key it accepts, how long its line
-took to confirm a frame) is written next to it in `tools/sim-units.ts`, with the captures named.
+unit's captures show (how it takes a restart, the authorization key it accepts, its programming mode
+and the rest of its answer to a serial-number read, the largest APDU it takes where it reports none,
+whether it answers a read while a segment loads, how long its line took to confirm a frame) is written
+next to it in `tools/sim-units.ts`, with the captures named.
 
 It models the transport layer of one connection, the descriptor, authorization, property and memory
 services, the address reads by broadcast (in programming mode, which the restart ends, and by serial
 number, as far as a unit's captures show them), the load-state machines with their table references and
-the memory-control-block CRC, verify mode and the restart. Everything else it refuses: a line in its log and in `refusals`, and no answer, so the
-tool's own timeout ends a run where an invented byte would have let it go on.
+the memory-control-block CRC, verify mode and the restart. Everything else it refuses: a line in its
+log and in `refusals`, and no answer, so the tool's own timeout ends a run where an invented byte would
+have let it go on.
 
 `tools/sim-unit-0701.ts` is a memory-mapped System 7 unit (MV-0701) on the same transport core: its
 load-state machines take their controls as 11-octet memory writes to `0x0104` and report their states at
