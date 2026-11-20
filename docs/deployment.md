@@ -49,7 +49,10 @@ image then holds:
 The web source, the web app's own dependencies and the development toolchain (TypeScript, Vite,
 oxlint, Playwright) stay in the build stage. A context that bypasses `.dockerignore` (a tar piped
 into `docker build -`, which Docker sends as-is) is refused: the build stops if it finds tests,
-fixtures, captures, project or key files, a database or a `master.key` in the context.
+fixtures, captures, project or key files, a database or a `master.key` in the context. `bun run check`
+applies the same check without Docker (`tools/image-context.ts` reads the rule from the `Dockerfile` and
+the allowlist from `.dockerignore`), so a `.dockerignore` that lets such a file through fails there,
+with the list of files, before an image is built.
 
 ### Release build
 
