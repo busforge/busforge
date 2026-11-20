@@ -1,4 +1,4 @@
-import { test, expect, describe, beforeAll, afterAll } from "bun:test";
+import { test, expect, describe, beforeAll, afterEach } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
@@ -15,36 +15,43 @@ const compat = (over: Partial<Record<MatrixOperation, Partial<OperationVerdict>>
   return Object.fromEntries(ops.map((op) => [op, { ...tested, ...over[op] }])) as Compat;
 };
 const KEPT = '<span class="whitespace-nowrap">';
+const classesOf = (html: string, tag: string) => [...html.matchAll(new RegExp(`<${tag} class="([^"]*)"`, "g"))].map((m) => m[1]!.split(" "));
 
 describe("the compatibility popover's table", () => {
   beforeAll(() => i18n.use(initReactI18next).init({ resources: { en: { translation: en }, de: { translation: de } }, lng: "en", interpolation: { escapeValue: false } }));
-  afterAll(() => i18n.changeLanguage("en"));
+  afterEach(() => i18n.changeLanguage("en"));
 
   test("keeps a firmware revision with its word, and an order number or application version whole", () => {
     const html = renderToStaticMarkup(<CompatibilityTable c={compat({
       readLinks: { state: "derived", derivedFrom: "M-0083_H-0000_P-BE.2D02001.2E03", firmware: ["12"] },
       readParams: { state: "otherVersion", otherVersionTested: { productRef: "M-0083_H-0000_P-BE.2D02001.2E02", appProgramId: "M-0083_A-00B6-31-1234" }, firmware: ["0", "1"] },
+      fullDownload: { sameAppTestedOn: "M-0083_H-0000_P-BE.2D06001.2E02" },
     })} />);
-    expect(html).toContain(`${KEPT}firmware 0</span>`);
-    expect(html).toContain(`${KEPT}firmware 12</span> (of ${KEPT}BE-02001.03</span>)`);
-    expect(html).toContain(`${KEPT}firmware 0, 1</span> (with ${KEPT}00B6-31-1234</span>)`);
+    expect(html).toContain("firmware 0<");
+    expect(html).toContain(`firmware 12 (of ${KEPT}BE-02001.03</span>)`);
+    expect(html).toContain(`firmware 0, 1 (with ${KEPT}00B6-31-1234</span>)`);
     expect(html).toContain(`same hardware and application tested as ${KEPT}BE-02001.03</span>`);
     expect(html).toContain(`tested with ${KEPT}00B6-31-1234</span> of this application, on ${KEPT}BE-02001.02</span>`);
+    expect(html).toContain(`same application tested on ${KEPT}BE-06001.02</span> (other hardware)`);
   });
 
   test("does so in German too", async () => {
     await i18n.changeLanguage("de");
     const html = renderToStaticMarkup(<CompatibilityTable c={compat({ readLinks: { state: "derived", derivedFrom: "M-0083_H-0000_P-BE.2D02001.2E03", firmware: ["12"] } })} />);
-    expect(html).toContain(`${KEPT}Firmware 0</span>`);
-    expect(html).toContain(`${KEPT}Firmware 12</span> (von ${KEPT}BE-02001.03</span>)`);
+    expect(html).toContain("Firmware 0<");
+    expect(html).toContain(`Firmware 12 (von ${KEPT}BE-02001.03</span>)`);
     expect(html).toContain(`Bytes gehalten <span class="block whitespace-nowrap">(API / UI)</span>`);
-    await i18n.changeLanguage("en");
+  });
+
+  test("shows an order number that decodes to markup as text", () => {
+    const html = renderToStaticMarkup(<CompatibilityTable c={compat({ readLinks: { state: "derived", derivedFrom: "M-0083_H-0000_P-A.3Cb.3EB", firmware: [] } })} />);
+    expect(html).toContain(`tested as ${KEPT}A&lt;b&gt;B</span>`);
   });
 
   test("never breaks a state mark or a pair of marks, and breaks a head only before what it covers", () => {
     const html = renderToStaticMarkup(<CompatibilityTable c={compat()} />);
-    expect(html).toMatch(/<span class="inline-flex items-center gap-1 whitespace-nowrap text-ok">.*?tested<\/span>/);
-    expect(html.match(/<td class="[^"]*font-mono whitespace-nowrap"/g)).toHaveLength(12);
+    expect(html).toMatch(/<span class="[^"]*\bwhitespace-nowrap\b[^"]*">.*?tested<\/span>/);
+    expect(classesOf(html, "td").filter((c) => c.includes("font-mono") && c.includes("whitespace-nowrap"))).toHaveLength(12);
     expect(html).toContain(`Bytes held <span class="block whitespace-nowrap">(API / UI)</span>`);
     expect(html).toContain(`Survives restart <span class="block whitespace-nowrap">(API / UI)</span>`);
   });
@@ -52,8 +59,9 @@ describe("the compatibility popover's table", () => {
   test("states each operation under its name where the popover is narrow, in a column of its own where it is wide", () => {
     const html = renderToStaticMarkup(<CompatibilityTable c={compat()} />);
     expect(html.startsWith('<div class="@container">')).toBe(true);
-    expect(html).toContain('<th class="hidden pb-1 text-left font-normal @min-[22rem]:table-cell">State</th>');
-    expect(html.match(/<td class="py-1 pr-2">Read parameters<div class="@min-\[22rem\]:hidden"><span class="inline-flex/g)).toHaveLength(1);
-    expect(html.match(/<td class="hidden py-1 pr-2 @min-\[22rem\]:table-cell"><span class="inline-flex/g)).toHaveLength(6);
+    const wideOnly = (c: string[]) => c.includes("hidden") && c.some((x) => x.endsWith(":table-cell"));
+    expect(classesOf(html, "th").filter(wideOnly)).toHaveLength(1);
+    expect(classesOf(html, "td").filter(wideOnly)).toHaveLength(6);
+    expect(classesOf(html, "div").filter((c) => c.some((x) => x.startsWith("@min-") && x.endsWith(":hidden")))).toHaveLength(6);
   });
 });
