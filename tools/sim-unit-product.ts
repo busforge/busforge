@@ -2,11 +2,11 @@
 // real unit (decision 0004 §1, "Identity"), and the identity loop: ETS refuses a unit whose identity does not fit the
 // product ("inkompatible Produktdaten") and names in its ETS6.log what it required, the sweep runs again with that.
 //
-// Every value carries its source: the product (the application program's mask, its manufacturer, what its
+// The mask is the application's; every property value carries its source: the product (its manufacturer, what its
 // LdCtrlCompareProp steps expect, bit by bit where a compare masks) or an ETS6.log line. Nothing else is taken:
 // what neither gives (the serial, the order info, the version, the device control, descriptions, where the unit
 // places its segments) the product unit does not hold, and `productAgainstUnit` lists it against a collected unit.
-import { parseAppConfig, parseLoadProcedures, declaredPropChecks } from "../packages/product/src/index.ts";
+import { assessParStep, declaredPropChecks, flattenSteps, maskInfo, parseAppConfig } from "../packages/product/src/index.ts";
 import type { collectedUnit } from "./sim-unit-model.ts";
 
 export type IdentitySource = { from: "product"; what: string } | { from: "ets6log"; line: string };
@@ -26,17 +26,18 @@ const PID_MANUFACTURER = 12;
 // Load-procedure steps that would decide the identity and are not modelled: a memory compare, and a choice
 // between steps by the parameters.
 const UNMODELLED_IDENTITY_STEPS = ["LdCtrlCompareMem", "choose"];
+const COMPARE_ATTRIBUTES = ["ObjIdx", "PropId", "StartElement", "InlineData", "Mask", "AppliesTo"];
 
 const hex = (b: Buffer) => b.toString("hex");
 const keyOf = (object: number, pid: number) => `${object}/${pid}`;
 
 // `value` given as far as `known` says, put over what `into` already holds; refused where a known bit differs.
-function merge(into: IdentityValue | undefined, value: Buffer, known: Buffer, source: IdentitySource, offset: number, refuse: (why: string) => never): IdentityValue {
-  const length = Math.max(into?.bytes.length ?? 0, offset + value.length);
+function merge(into: IdentityValue | undefined, value: Buffer, known: Buffer, source: IdentitySource, refuse: (why: string) => never): IdentityValue {
+  const length = Math.max(into?.bytes.length ?? 0, value.length);
   const bytes = Buffer.alloc(length), mask = Buffer.alloc(length);
   into?.bytes.copy(bytes); into?.known.copy(mask);
   for (let i = 0; i < value.length; i++) {
-    const at = offset + i, both = mask[at] & known[i];
+    const at = i, both = mask[at] & known[i];
     if ((bytes[at] & both) !== (value[i] & both)) refuse(`octet ${at} is ${bytes[at].toString(16).padStart(2, "0")} under mask ${both.toString(16).padStart(2, "0")} by ${describe(into!.sources)}, ${describe([source])} gives ${value[i].toString(16).padStart(2, "0")}`);
     bytes[at] = (bytes[at] & ~known[i]) | (value[i] & known[i]);
     mask[at] |= known[i];
@@ -51,16 +52,26 @@ const describe = (sources: IdentitySource[]) => sources.map((s) => s.from === "p
 export function productUnit(appXml: string): ProductUnit {
   const refuse = (why: string): never => { throw new Error(`no product unit: ${why}`); };
   const cfg = parseAppConfig(appXml);
-  const mask = /^MV-([0-9A-F]{4})$/.exec(cfg.mask);
-  if (!mask) refuse(`the application's mask ${cfg.mask} is not MV-xxxx`);
-  const proc = parseLoadProcedures(appXml);
+  // Only System B and System 7 keep their identity in a device object's properties (a BCU1 has none).
+  const mask = maskInfo(cfg.mask);
+  if (mask.family !== "system-b" && mask.family !== "system-7") refuse(`the application's mask ${cfg.mask} is of family ${mask.family}, whose identity is not modelled`);
+  const proc = cfg.loadProcedures;
   const unmodelled = UNMODELLED_IDENTITY_STEPS.filter((v) => proc.verbs.includes(v));
   if (unmodelled.length) refuse(`its load procedure holds ${unmodelled.join(", ")}, whose expectation is not modelled`);
+  // A compare is taken as declaredPropChecks reads it only where that is all it says: on the first element, and
+  // with a mask that is one (declaredPropChecks compares every octet where it is not, which gives no known bit).
+  for (const s of [...flattenSteps(proc, "full"), ...flattenSteps(proc, "par")].filter((s) => s.verb === "LdCtrlCompareProp")) {
+    const how = assessParStep(s, "relative");
+    if (how.kind === "blocked") refuse(how.detail);
+    if (s.attrs.Mask !== undefined && !/^([0-9A-Fa-f]{2})+$/.test(s.attrs.Mask)) refuse(`an LdCtrlCompareProp masks with ${JSON.stringify(s.attrs.Mask)}, which is no mask`);
+    const other = Object.keys(s.attrs).filter((k) => !COMPARE_ATTRIBUTES.includes(k));
+    if (other.length) refuse(`an LdCtrlCompareProp declares ${other.join(", ")}, which is not modelled`);
+  }
 
   const properties = new Map<string, IdentityValue>();
   const set = (object: number, pid: number, value: Buffer, known: Buffer, source: IdentitySource) => {
     const key = keyOf(object, pid);
-    properties.set(key, merge(properties.get(key), value, known, source, 0, (why) => refuse(`property ${key}: ${why}`)));
+    properties.set(key, merge(properties.get(key), value, known, source, (why) => refuse(`property ${key}: ${why}`)));
   };
   // The manufacturer the application is registered under. An application made for another (OriginalManufacturer)
   // names it besides; the unit answers its own all the same on the Jung 400021SE, the Gira Tastsensor 3 and the
@@ -77,18 +88,19 @@ export function productUnit(appXml: string): ProductUnit {
     if (properties.get(keyOf(c.obj, c.pid))?.sources.some((s) => s.from === "product" && s.what === what)) continue;
     set(c.obj, c.pid, c.expect, known, { from: "product", what });
   }
-  return { application: cfg.id, mask: parseInt(mask![1], 16), properties };
+  return { application: cfg.id, mask: mask.hex, properties };
 }
 
-// One `Required data mismatch` line of ETS6.log: at a system property's octet `offset`, the unit answered `device`,
-// ETS required `required`.
-export interface Mismatch { line: string; time: string | null; object: number; pid: number; offset: number; device: Buffer; required: Buffer }
+// One `Required data mismatch` line of ETS6.log: the unit answered `device` in a system property, ETS required
+// `required`.
+export interface Mismatch { line: string; object: number; pid: number; device: Buffer; required: Buffer }
 
+// No ETS6.log of ours holds such a line yet. Read is only the form decision 0004 §1 quotes, as bussard's sweep reads
+// it: `Required data mismatch at SystemProperty(<object>/<PID>)[$0000]: <device> instead of <required>`, the values
+// as contiguous hex, the device's possibly empty. Another index than $0000, a range, or spaced octets are refused
+// until a recorded line shows what they mean.
 const MISMATCH_MARK = "Required data mismatch";
-const HEX_OCTETS = "((?:[0-9A-Fa-f]{2} ?)*)";
-const MISMATCH = new RegExp(
-  `^(?:(\\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d:\\d\\d(?:,\\d+)?) .*)?${MISMATCH_MARK} at SystemProperty\\((\\d+)/(\\d+)\\)\\[\\$([0-9A-Fa-f]+)(?:-\\$([0-9A-Fa-f]+))?\\]: ?${HEX_OCTETS}\\s*instead of\\s+${HEX_OCTETS}\\s*$`,
-);
+const MISMATCH = new RegExp(`${MISMATCH_MARK} at SystemProperty\\((\\d{1,3})/(\\d{1,3})\\)\\[\\$0000\\]: ((?:[0-9A-Fa-f]{2})*) instead of ((?:[0-9A-Fa-f]{2})+)$`);
 
 // The mismatch lines of an ETS6.log excerpt (Latin-1 as ETS writes it, or text). A line that names a mismatch and
 // does not read as one is refused: a mismatch skipped would rerun the row with the identity it failed on.
@@ -100,11 +112,10 @@ export function mismatchLines(log: Buffer | string): Mismatch[] {
     const line = raw.trim();
     const m = MISMATCH.exec(line);
     if (!m) throw new Error(`an ETS6.log line names a mismatch this parser does not read: ${line}`);
-    const octets = (s: string) => Buffer.from(s.replace(/ /g, ""), "hex");
-    const offset = parseInt(m[4], 16), required = octets(m[7]);
-    if (required.length === 0) throw new Error(`an ETS6.log mismatch requires no value: ${line}`);
-    if (m[5] !== undefined && parseInt(m[5], 16) - offset + 1 !== required.length) throw new Error(`an ETS6.log mismatch's range is not the length of its required value: ${line}`);
-    out.push({ line, time: m[1] ?? null, object: Number(m[2]), pid: Number(m[3]), offset, device: octets(m[6]), required });
+    // The property services address an interface object and a property by one octet each.
+    const object = Number(m[1]), pid = Number(m[2]);
+    if (object > 0xff || pid > 0xff) throw new Error(`an ETS6.log mismatch names a property no property service addresses: ${line}`);
+    out.push({ line, object, pid, device: Buffer.from(m[3], "hex"), required: Buffer.from(m[4], "hex") });
   }
   return out;
 }
@@ -115,30 +126,27 @@ export type Rerun = { identity: ProductUnit; learned: Mismatch[] } | { refused: 
 // of that run, the identity to run again with, every value ETS required put in with its line as the source; or the
 // reason not to run again. Refused: a run whose log names no mismatch (its failure is not the identity), a mismatch
 // whose `device` is not what `unit` answers (the log is of another identity), one that requires what `unit` already
-// answers (a rerun would fail the same), one that contradicts the product or another line, and one past octets
-// nothing gives.
+// answers (a rerun would fail the same), and one that contradicts the product or another line.
 export function rerunIdentity(unit: ProductUnit, log: Buffer | string): Rerun {
   let mismatches: Mismatch[];
   try { mismatches = mismatchLines(log); } catch (e) { return { refused: (e as Error).message }; }
   if (mismatches.length === 0) return { refused: "the run's ETS6.log names no required data: its failure is not the identity" };
+  // Every line is checked against the identity the run had before any is put in.
+  for (const m of mismatches) {
+    const key = keyOf(m.object, m.pid);
+    // A value not given in full the unit cannot answer (no bit is invented): ETS then saw nothing.
+    const had = unit.properties.get(key);
+    const answers = had !== undefined && had.known.every((k) => k === 0xff) ? had.bytes : null;
+    if (answers === null ? m.device.length > 0 : !answers.equals(m.device)) return { refused: `ETS saw ${hex(m.device) || "nothing"} in ${key}, which this identity does not answer: the log is of another run (${m.line})` };
+    if (answers?.subarray(0, m.required.length).equals(m.required)) return { refused: `ETS requires ${hex(m.required)} in ${key}, which this identity already answers: a rerun fails the same (${m.line})` };
+  }
   const properties = new Map(unit.properties);
   const learned: Mismatch[] = [];
   for (const m of mismatches) {
     const key = keyOf(m.object, m.pid);
-    if (learned.some((l) => keyOf(l.object, l.pid) === key && l.offset === m.offset && l.required.equals(m.required))) continue;
-    // A value not given in full the unit cannot answer (no bit is invented): ETS then saw nothing, as it does
-    // past the end of a value given in full.
-    const had = unit.properties.get(key);
-    const full = (at: number, n: number) => had !== undefined && at + n <= had.bytes.length && had.known.subarray(at, at + n).every((k) => k === 0xff);
-    const saw = m.device.length === 0
-      ? had === undefined || !full(0, had.bytes.length) || had.bytes.length <= m.offset
-      : full(m.offset, m.device.length) && had!.bytes.subarray(m.offset, m.offset + m.device.length).equals(m.device);
-    if (!saw) return { refused: `ETS saw ${hex(m.device) || "nothing"} in ${key} from octet ${m.offset}, which this identity does not answer there: the log is of another run (${m.line})` };
-    if (full(m.offset, m.required.length) && had!.bytes.subarray(m.offset, m.offset + m.required.length).equals(m.required)) return { refused: `ETS requires ${hex(m.required)} in ${key}, which this identity already answers: a rerun fails the same (${m.line})` };
-    const before = properties.get(key);
-    if (m.offset > 0 && (!before || before.bytes.length < m.offset || before.known.subarray(0, m.offset).some((k) => k !== 0xff))) return { refused: `ETS requires ${key} from octet ${m.offset}; the octets before it neither the product nor the log give (${m.line})` };
+    if (learned.some((l) => keyOf(l.object, l.pid) === key && l.required.equals(m.required))) continue;
     try {
-      properties.set(key, merge(before, m.required, Buffer.alloc(m.required.length, 0xff), { from: "ets6log", line: m.line }, m.offset, (why) => { throw new Error(why); }));
+      properties.set(key, merge(properties.get(key), m.required, Buffer.alloc(m.required.length, 0xff), { from: "ets6log", line: m.line }, (why) => { throw new Error(why); }));
     } catch (e) { return { refused: `ETS requires ${hex(m.required)} in ${key}: ${(e as Error).message}` }; }
     learned.push(m);
   }

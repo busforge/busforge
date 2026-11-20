@@ -14,28 +14,32 @@ setDefaultTimeout(140_000);
 
 // No ETS6.log in the corpus holds a `Required data mismatch` line: every ETS download there went into a real unit
 // of the product, whose identity fits. The lines below are of the form decision 0004 §1 quotes from ETS
-// ("Required data mismatch at SystemProperty(0/78)[$0000]: <device> instead of <required>"), with the values
-// as hex octets; the parser is to be checked against the first real line a sweep row records.
+// ("Required data mismatch at SystemProperty(0/78)[$0000]: <device> instead of <required>"), the values as
+// contiguous hex; the parser is to be checked against the first real line a sweep row records.
 const at = (rest: string) => `2026-11-20 10:00:00,000 [12] WARN  Knx.Ets.Hawk.LoadDeviceTask - Required data mismatch at ${rest}`;
 
 describe("ETS's Required data mismatch lines", () => {
-  test("are read from a Latin-1 ETS6.log, with the octet the required value starts at", () => {
+  test("are read from a Latin-1 ETS6.log", () => {
     const log = Buffer.from([
-      "2026-11-20 09:59:59,000 [12] INFO  Knx.Ets.Hawk.LoadDeviceTask - Gerät 1.1.1: inkompatible Produktdaten",
+      "2026-11-20 09:59:59,000 [12] INFO  Knx.Ets.Hawk.LoadDeviceTask - Ger\u00e4t 1.1.1: inkompatible Produktdaten",
       at("SystemProperty(0/78)[$0000]:  instead of 620100000004"),
-      at("SystemProperty(0/15)[$0002-$0003]: 00 00 instead of 4E 58"),
+      at("SystemProperty(0/15)[$0000]: 0000 instead of 4E58"),
       "",
     ].join("\r\n"), "latin1");
-    expect(mismatchLines(log).map((m) => [m.time, m.object, m.pid, m.offset, m.device.toString("hex"), m.required.toString("hex")])).toEqual([
-      ["2026-11-20 10:00:00,000", 0, 78, 0, "", "620100000004"],
-      ["2026-11-20 10:00:00,000", 0, 15, 2, "0000", "4e58"],
+    expect(mismatchLines(log).map((m) => [m.object, m.pid, m.device.toString("hex"), m.required.toString("hex")])).toEqual([
+      [0, 78, "", "620100000004"],
+      [0, 15, "0000", "4e58"],
     ]);
   });
 
   test("a line that names a mismatch and does not read as one is refused, not skipped", () => {
     expect(() => mismatchLines(at("Memory(0x4000)[$0000]: 00 instead of 01"))).toThrow("does not read");
-    expect(() => mismatchLines(at("SystemProperty(0/78)[$0000-$0001]: instead of 620100"))).toThrow("range is not the length");
     expect(() => mismatchLines(at("SystemProperty(0/78)[$0000]: 00 instead of 6"))).toThrow("does not read");
+    expect(() => mismatchLines(at("SystemProperty(256/78)[$0000]:  instead of 01"))).toThrow("no property service addresses");
+    // What no recorded line shows the meaning of: another index, a range, spaced octets.
+    expect(() => mismatchLines(at("SystemProperty(0/78)[$0002]:  instead of 01"))).toThrow("does not read");
+    expect(() => mismatchLines(at("SystemProperty(0/78)[$0000-$0001]:  instead of 6201"))).toThrow("does not read");
+    expect(() => mismatchLines(at("SystemProperty(0/78)[$0000]:  instead of 62 01"))).toThrow("does not read");
   });
 });
 
@@ -57,6 +61,19 @@ corpusDescribe("a unit from its product alone", () => {
     // A masked compare gives only the bits it compares.
     expect(given(productUnit(app(ABB)), "3/13")).toEqual({ bytes: "0000a00100", known: "0000ffff00", sources: ["LdCtrlCompareProp 3/13 0000a00100 mask 0000ffff00"] });
   });
+
+  test("refuses a compare it would read as more than it says", () => {
+    const withCompare = (attrs: string) => app(MEANWELL).replace("</LoadProcedure>", `<LdCtrlCompareProp ObjIdx="0" PropId="78" ${attrs} /></LoadProcedure>`);
+    expect(() => productUnit(withCompare('StartElement="2" InlineData="1234"'))).toThrow("element addressing");
+    expect(() => productUnit(withCompare('InlineData="1234" Mask="gg"'))).toThrow("which is no mask");
+    expect(() => productUnit(withCompare('InlineData="1234" Count="2"'))).toThrow("declares Count");
+    // A compare that contradicts the application's manufacturer.
+    expect(() => productUnit(app(MEANWELL).replace("</LoadProcedure>", '<LdCtrlCompareProp ObjIdx="0" PropId="12" InlineData="0048" /></LoadProcedure>'))).toThrow("property 0/12: octet 0 is 01");
+    expect(() => productUnit(app(MEANWELL).replace("</LoadProcedure>", '<LdCtrlCompareMem Address="16384" InlineData="00" /></LoadProcedure>'))).toThrow("holds LdCtrlCompareMem");
+    // A BCU1 keeps its identity in memory, not in a device object.
+    expect(() => productUnit(app("M-0083_A-0138-21-F18E-O0072.xml.gz"))).toThrow("of family system-1");
+    expect(given(productUnit(withCompare('InlineData="1234" Mask="ff"')), "0/78")).toEqual({ bytes: "1200", known: "ff00", sources: ["LdCtrlCompareProp 0/78 1234 mask ff"] });
+  });
 });
 
 corpusDescribe("the identity loop's rerun step", () => {
@@ -68,9 +85,6 @@ corpusDescribe("the identity loop's rerun step", () => {
     const r = ok(rerunIdentity(meanwell(), `${line}\n`));
     expect(given(r.identity, "0/78")).toEqual({ bytes: "620100000004", known: "ffffffffffff", sources: [line] });
     expect(r.learned.map((m) => m.line)).toEqual([line]);
-    // Past the end of a value given in full ETS saw nothing; the octets it then requires extend it.
-    const more = ok(rerunIdentity(r.identity, at("SystemProperty(0/78)[$0006]:  instead of 0000")));
-    expect(given(more.identity, "0/78")!.bytes).toBe("6201000000040000");
   });
 
   test("refuses a run whose log names no mismatch, or one it cannot read", () => {
@@ -78,14 +92,15 @@ corpusDescribe("the identity loop's rerun step", () => {
     expect((rerunIdentity(meanwell(), at("SystemProperty(0/78)[$0000]: 00 instead of 6")) as { refused: string }).refused).toContain("does not read");
   });
 
-  test("refuses a mismatch against the product, between two lines, past octets nothing gives, or of another run", () => {
+  test("refuses a mismatch against the product, between two lines, or of another run", () => {
     const refused = (u: ProductUnit, ...lines: string[]) => (rerunIdentity(u, lines.join("\n")) as { refused?: string }).refused;
     // The DALI-Gateway's application gives 0/78 in full.
     expect(refused(productUnit(app(DALI)), at("SystemProperty(0/78)[$0000]: 00907092910000000000 instead of 009070929101"))).toContain("octet 5 is 00");
     expect(refused(meanwell(), at("SystemProperty(0/78)[$0000]:  instead of 620100000004"), at("SystemProperty(0/78)[$0000]:  instead of 620100000005"))).toContain("octet 5 is 04");
-    expect(refused(meanwell(), at("SystemProperty(0/15)[$0002]:  instead of 4E58"))).toContain("the octets before it neither the product nor the log give");
-    expect(refused(meanwell(), at("SystemProperty(0/12)[$0000]: 0048 instead of 0162"))).toContain("which this identity does not answer there");
+    expect(refused(meanwell(), at("SystemProperty(0/12)[$0000]: 0048 instead of 0162"))).toContain("which this identity does not answer");
     expect(refused(meanwell(), at("SystemProperty(0/12)[$0000]: 0162 instead of 0162"))).toContain("which this identity already answers");
+    // Each line is checked against the run's identity, also one whose required value an earlier line already gave.
+    expect(refused(meanwell(), at("SystemProperty(0/15)[$0000]:  instead of 0102"), at("SystemProperty(0/15)[$0000]: ff instead of 0102"))).toContain("which this identity does not answer");
   });
 });
 

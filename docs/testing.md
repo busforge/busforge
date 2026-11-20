@@ -581,11 +581,13 @@ simulator's answers, and the answers are a real unit's only as far as the table 
 ### A unit's identity from its product alone
 
 A catalogue row of the sweep has no collection of a real unit. `tools/sim-unit-product.ts` takes from the
-application program alone what it says of the unit's identity, each value with its source: the mask
-(descriptor 0), the manufacturer the application is registered under (object 0 PID 12), and what each
-`LdCtrlCompareProp` expects, bit by bit where the compare masks. An application whose identity rests on a
-step that is not modelled (`LdCtrlCompareMem`, a `choose` in its load procedure) is refused. Nothing else
-is taken.
+application program alone what it says of the unit's identity: the mask (descriptor 0), and, each with its
+source, the manufacturer the application is registered under (object 0 PID 12) and what each
+`LdCtrlCompareProp` expects, bit by bit where the compare masks. Refused: a mask whose identity is not
+held in a device object's properties (only System B and System 7 are taken), and an application whose
+identity rests on what is not modelled (`LdCtrlCompareMem`, a `choose` in its load procedure, a compare
+on another element than the first, with a malformed mask or with further attributes). Nothing else is
+taken.
 
 When ETS finds the unit's identity unfit for the product, it refuses the download and logs in
 `ETS6.log` what it required:
@@ -597,9 +599,10 @@ Required data mismatch at SystemProperty(0/78)[$0000]: <device> instead of <requ
 `rerunIdentity(unit, log)` reads those lines (Latin-1, as ETS writes them) from a failed row's log and
 returns the identity to run the row again with, each required value put in with its line as its
 source, or the reason not to: no such line (the failure is not the identity), a line it cannot read, a
-value the product or another line contradicts, octets before the required ones nothing gives, a line
-whose device value is not what the unit answers (the log of another run), or a value the unit already
-answers (a rerun would fail the same).
+value the product or another line contradicts, a line whose device value is not what the unit answers
+(the log of another run), or a value the unit already answers (a rerun would fail the same). Only the
+form above is read, the values as contiguous hex; another index than `$0000`, a range or spaced octets
+are refused until a recorded line shows what they mean.
 
 `tools/sim-unit-product.test.ts` holds the product unit of each of the ten simulated units against
 the unit built from its collection and lists every difference. The manufacturer is right on all ten,
