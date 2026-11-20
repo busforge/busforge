@@ -269,8 +269,9 @@ export async function compareDeclaredProp(dev: KnxDevice, obj: number, pid: numb
 
 // Whether a property's value passes an LdCtrlCompareProp. With a mask, only the bytes the mask selects
 // must match (ABB's app-id check masks out the manufacturer + version and compares only the application
-// number). Without one, the value must equal the declared one (a shorter value is accepted only if the
-// missing tail is all zero).
+// number). Without one, the value must equal the declared one; a shorter value is accepted only if the
+// missing tail is all zero (the Theben DALI-Gateway answers 6 octets of the 10 its hardware check
+// declares, and ETS downloads into it).
 export function declaredPropMatches(got: Buffer, expect: Buffer, mask?: Buffer): boolean {
   return mask
     ? got.length >= Math.min(mask.length, expect.length) &&

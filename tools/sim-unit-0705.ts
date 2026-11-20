@@ -25,7 +25,7 @@
 import { iaToNum, APCI, MM_STATUS_BASE, PID, STATE } from "../packages/knx/src/index.ts";
 import { flattenSteps, parseLoadProcedures, type CollectPackage } from "../packages/product/src/index.ts";
 import { SimUnit, crcConventionOf, mcbCrc, APPLICATION_STOPPED, MEMORY_END, type Reply, type SimUnitCoreModel } from "./sim-unit.ts";
-import { collectedUnit, unitMaxApdu, type Target, type UnitBehaviour } from "./sim-unit-model.ts";
+import { collectedUnit, type Target, type UnitBehaviour } from "./sim-unit-model.ts";
 
 const refuse = (why: string): never => { throw new Error(`no simulated unit: ${why}`); };
 
@@ -39,6 +39,15 @@ const MCB_FLAG = 0x80;
 
 export interface SimUnit0705Segment { at: number; size: number; access: number; memoryType: number; flags: number }
 
+// What only a property-mapped System 7 unit's captures show besides its UnitBehaviour.
+export interface PropertyMappedBehaviour {
+  // The longest APDU it takes and gives, where it refuses PID 56.
+  maxApdu: number;
+  // Whether it answers a memory read into a segment that is loading (with the bytes written there since its
+  // load), or refuses it, as no capture shows it answer.
+  readsWhileLoading: boolean;
+}
+
 export interface SimUnit0705Model extends SimUnitCoreModel {
   // The unit's memory, by address, and which octets of it are known (1).
   memory: { bytes: Buffer; known: Uint8Array };
@@ -46,12 +55,13 @@ export interface SimUnit0705Model extends SimUnitCoreModel {
   held: Map<number, SimUnit0705Segment[]>;
   // The CRC convention of its memory-control blocks; null where the unit reports none.
   crcConvention: "ccitt" | "ccitt-false" | null;
-  readsWhileLoading: boolean;
+  propertyMapped: PropertyMappedBehaviour;
 }
 
-export function simUnit0705Model(collection: CollectPackage, appXml: string, behaviour: UnitBehaviour): SimUnit0705Model {
+export function simUnit0705Model(collection: CollectPackage, appXml: string, behaviour: UnitBehaviour, pm: PropertyMappedBehaviour): SimUnit0705Model {
   if (collection.mask !== "MV-0705") refuse(`this model is for MV-0705, not ${collection.mask}`);
-  const { records, mask, objects, descriptions } = collectedUnit(collection, appXml, refuse);
+  const { records, mask, objects, descriptions, functionStates, memoryExtendedRead } = collectedUnit(collection, appXml, refuse);
+  if (collection.maxApdu !== null && collection.maxApdu !== pm.maxApdu) refuse(`the unit reports a maximum APDU of ${collection.maxApdu}, the spec ${pm.maxApdu}`);
   const steps = flattenSteps(parseLoadProcedures(appXml), "full");
 
   const bytes = Buffer.alloc(MEMORY_END), known = new Uint8Array(MEMORY_END);
@@ -107,8 +117,8 @@ export function simUnit0705Model(collection: CollectPackage, appXml: string, beh
   }
   return {
     ...behaviour,
-    ia: iaToNum(collection.ia), mask, maxApdu: unitMaxApdu(collection, behaviour, refuse), objects, descriptions,
-    crcConvention: crc, memory: { bytes, known }, held, readsWhileLoading: behaviour.readsWhileLoading ?? false,
+    ia: iaToNum(collection.ia), mask, maxApdu: pm.maxApdu, objects, descriptions, functionStates, memoryExtendedRead,
+    crcConvention: crc, memory: { bytes, known }, held, propertyMapped: pm,
   };
 }
 
@@ -247,7 +257,7 @@ export class SimUnit0705 extends SimUnit {
     const hit = this.heldAt(addr, n);
     const data = this.memory(addr, n);
     const state = hit ? this.state(hit[0]) : null;
-    const freshlyWritten = this.unit.readsWhileLoading && this.fresh.subarray(addr, addr + n).every((f) => f === 1);
+    const freshlyWritten = this.unit.propertyMapped.readsWhileLoading && this.fresh.subarray(addr, addr + n).every((f) => f === 1);
     if (hit && state !== STATE.LOADED && !(state === STATE.LOADING && freshlyWritten)) { this.refuse(`${what}: into the segment of object ${hit[0]} while it is in load state ${this.state(hit[0])}, where no capture shows the unit answer a read of these octets`); return; }
     if (!hit || !data) { this.refuse(`${what}: outside the memory the unit is known to hold in its segments`); return; }
     reply(APCI.MEMORY_RESPONSE, Buffer.concat([head, data]), n);

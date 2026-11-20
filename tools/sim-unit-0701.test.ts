@@ -31,7 +31,7 @@ const write = (at: number, data: string) => `02${hex(0x80 | (data.length / 2), 1
 function unit(over: { mm?: Partial<SimUnit0701Model["memoryMapped"]>; deviceControl?: string; restart?: SimUnit0701Model["restart"] } = {}) {
   let clock = 0;
   const model: SimUnit0701Model = {
-    ia: DEV, mask: 0x0701, maxApdu: 15,
+    ia: DEV, mask: 0x0701, maxApdu: 15, programmingMode: null, serialNumberResponseTail: null,
     objects: new Map([[0, new Map([[14, p(over.deviceControl ?? "00")]])], [1, new Map([[5, p("01")], [7, p("4000")]])], [3, new Map([[5, p("01")], [13, p(PROGRAM)]])]]),
     descriptions: new Map(),
     memory: new Map([[0x4000, 0x02], [0x4001, 0x11], [0x4002, 0x0a], [0x4003, 0x09], [0x4800, 0x00]]),
@@ -39,7 +39,8 @@ function unit(over: { mm?: Partial<SimUnit0701Model["memoryMapped"]>; deviceCont
     appSegments: new Map([[1, [{ at: 0x4000, size: 4, memType: 3 }]], [3, [{ at: 0x4800, size: 1, memType: 3 }, { at: 0x1c00, size: 2, memType: 2 }]]]),
     programId: Buffer.from(PROGRAM, "hex"),
     memoryMapped: { maxApdu: 15, additional: ["absolute-segment", "task-segment"], peiType: 0, tableReferenceFollows: true, addressTableCountOnDeclaration: 0x01, clearedByRestart: new Map([[0x4800, 0x00]]), ...over.mm },
-    authorize: new Map(), restart: over.restart ?? { acknowledged: true, linkDownMs: 0, deadConnection: "nothing" }, link: { ackMs: 0, nakMs: 0 },
+    authorize: new Map(), restart: over.restart ?? { basic: { acknowledged: true, tAck: "always" }, line: [{ atMs: 0, up: true }], deadConnection: "nothing", confirmedRestartSeconds: null }, link: { ackMs: 0, nakMs: 0 },
+    functionStates: new Map(), memoryExtendedRead: false, memoryExtendedWrite: false, descriptionIndex: null, shownWrites: new Map(),
   };
   const sim = new SimUnit0701(model, TOOL, { now: () => clock });
   const frames: string[] = [];
@@ -159,7 +160,7 @@ describe("a simulated memory-mapped System 7 unit", () => {
   });
 
   test("after the restart: a frame in the gap its captures leave is refused and not acknowledged, one past it acknowledged", async () => {
-    const { sim, req, send, connect, at } = unit({ restart: { acknowledged: true, linkDownMs: 40, linkUpMs: 1000, deadConnection: "nothing" } });
+    const { sim, req, send, connect, at } = unit({ restart: { basic: { acknowledged: true, tAck: "always" }, line: [{ atMs: 0, up: false }, { atMs: 39, up: false }, { atMs: 1000, up: true }], deadConnection: "nothing", confirmedRestartSeconds: null } });
     await connect();
     await req("0380");
     const con = (ms: number) => { at(ms); return send(Buffer.from([0x80])).then(() => "OK", () => "NEG"); };
