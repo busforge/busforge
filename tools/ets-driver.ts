@@ -241,7 +241,7 @@ interface Owned { name: string; pid: number; start: string }
 // The processes a state file names that still run as the ones started (same PID, same start time).
 function owned(file: string): Owned[] {
   const out = remote(`${START}; f=${q(`${host().state}/${file}`)}; [ -r "$f" ] || exit 0
-while read -r n p t; do [ -n "$t" ] && [ "$(st "$p")" = "$t" ] && echo "$n $p $t"; done < "$f"`);
+while read -r n p t; do [ -n "$t" ] && [ "$(st "$p")" = "$t" ] && echo "$n $p $t"; done < "$f"; true`);
   return out.split("\n").filter(Boolean).map((l) => { const [name, pid, start] = l.split(" "); return { name, pid: Number(pid), start }; });
 }
 
