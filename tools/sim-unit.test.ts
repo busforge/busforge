@@ -149,6 +149,22 @@ describe("a simulated unit", () => {
     expect(await sim.sendCemi(other).then(() => "acknowledged", () => "not acknowledged")).toBe("not acknowledged");
   });
 
+  test("times a confirmed restart's line from the T_Ack's arrival, however late the unit takes it", async () => {
+    let clock = 0;
+    const { sim, send, line } = unit({ restart: { basic: null, line: [{ atMs: 20, up: false }, { atMs: 40, up: true }], deadConnection: null, confirmedRestartSeconds: 1 }, link: { ackMs: 30, nakMs: 60 } }, { now: () => clock });
+    await send("80");
+    expect(await send("43810100")).toEqual(["c2", "43a1000001"]);
+    clock = 1000;
+    // The unit takes the T_Ack link.ackMs later; the clock has run on by 40 ms meanwhile.
+    const ack = send("c2");
+    setTimeout(() => { clock = 1040; }, 10);
+    expect(await ack).toEqual([]);
+    // 45 ms after the T_Ack arrived (35 ms after the unit took it): the line is up.
+    clock = 1045;
+    expect((await line("80"))[0]).toBe("OK");
+    expect(sim.refusals).toEqual([]);
+  });
+
   test("answers a confirmed restart and restarts once the answer is acknowledged; its line after it as shown, refused where nothing is shown", async () => {
     let clock = 0;
     const { sim, send, line } = unit({ restart: { basic: null, line: [{ atMs: 20, up: false }, { atMs: 40, up: false }, { atMs: 100, up: true }], deadConnection: null, confirmedRestartSeconds: 1 } }, { now: () => clock });

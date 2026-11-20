@@ -49,6 +49,16 @@ export const passwords = (): string[] => {
   return given;
 };
 export const codeOf = (e: unknown) => (e as { code?: string }).code;
+
+// `open` run without a password, then with each of KNXPROJ_PASSWORDS: what the first opening gives, or null where
+// none opens it. A failure that is no question of the password is thrown.
+export function openWithPasswords<T>(open: (password: string | undefined) => T): T | null {
+  for (const password of [undefined, ...passwords()]) {
+    try { return open(password); }
+    catch (e) { if (!NEEDS_PASSWORD.has(codeOf(e) ?? "") && !NOT_THIS_PASSWORD.has(codeOf(e) ?? "")) throw e; }
+  }
+  return null;
+}
 export const describeFailure = (e: unknown) => `${codeOf(e) ?? "ERROR"}: ${(e as Error).message ?? String(e)}`;
 
 // Opens `file` the way Busforge does, with `password` for the one layer that has one. A project's 0.xml

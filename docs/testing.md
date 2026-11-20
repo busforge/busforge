@@ -763,7 +763,8 @@ One row, step by step:
    is cancelled (the device stays plain). The device then gets the unit's address. `--configured` skips
    this step and downloads the device the project holds at that address as it is configured there: line 1.1's device list is
    filtered by ETS's search to the address (a project with many devices shows more than the tree's
-   panel), its one row selected and the address read back from the properties.
+   panel), its one row selected and the address read back from the properties; the search is emptied
+   again after the download.
 3. **The interface set explicitly** to the configured connection at the simulator's endpoint, in the
    toolbar (where the toolbar does not offer it, it is made the project's connection first), and its
    check mark read back. "Automatisch" would let ETS pick an interface itself.
@@ -775,8 +776,9 @@ One row, step by step:
    simulator's capture `ets.log` with `ets.log.sim.txt` and its output `ets.log.serve.txt`,
    `ets6.log.txt` from the row's start, `export.knxproj`. Where the project holds the unit's application
    under another build's id (same manufacturer, number and version, another content hash: the OpenKNX
-   release ETS took in), the row is written only if that build parses as the unit's; its ids are then
-   written as the unit's and the project's named in `row.json` (`exportApplication`).
+   release ETS took in), the row is written only if that build parses as the unit's; its parameter and
+   module ids are then written as the unit's (the `appRef` keeps the export's build) and the project's
+   build named in `row.json` (`exportApplication`).
 
 The row is written to `--out`, by default under the system's temporary directory
 (`ets-sweep-rows/<application id>/<variant>/`), never straight into the corpus: `tools/ets-sweep.test.ts`

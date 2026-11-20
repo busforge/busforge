@@ -41,16 +41,15 @@ import { join } from "node:path";
 import net from "node:net";
 import { gunzipSync } from "node:zlib";
 import { APCI, KnxIpServer, MM_CTRL_ADDR, MM_STATUS_BASE, PID, iaToNum } from "../packages/knx/src/index.ts";
-import { appProgramId, etsLoadedCompletely, etsNotDownloaded, loadKnxproj } from "../packages/project/src/index.ts";
-import { readXml0 } from "../packages/project/src/knxproj.ts";
+import { appProgramId, etsLoadedCompletely, etsNotDownloaded, loadKnxproj, type Project } from "../packages/project/src/index.ts";
 import { isMemoryMappedLsm, parseAppConfig, parseLoadProcedures, ProductError, type ComObjectLink, type ComObjInstanceOverride, type FlashResult, type ModuleInstance } from "../packages/product/src/index.ts";
 import { downloadDeviceFull } from "../apps/server/src/deviceprofile.ts";
 import type { Connection } from "../apps/server/src/db/connections.ts";
 import { ApiError } from "../apps/server/src/errors.ts";
 import { apciName } from "./capture-index.ts";
 import { catalogueXml, corpusPath, corpusUnlistedPath } from "./corpus.ts";
-import { codeOf, NEEDS_PASSWORD, NOT_THIS_PASSWORD, passwords, PASSWORDS_ENV } from "./corpus-archives.ts";
-import { captureLData, capturedOnLoadedUnit, memWriteOf, parseCapture } from "./etsdiff.ts";
+import { openWithPasswords, passwords, PASSWORDS_ENV } from "./corpus-archives.ts";
+import { captureLData, capturedOnLoadedUnit, dialogueDifferences, memWriteOf, parseCapture } from "./etsdiff.ts";
 import { loadedImageComparison } from "./ets-records.ts";
 import { gitRevision } from "./evidence.ts";
 import { startProxy } from "./knxproxy.ts";
@@ -82,7 +81,8 @@ export interface RowSpec {
   // dialogueDifferences), every position that differs explained in explained.json's `calibration`.
   calibration?: string;
   // The application id the export gives the device where it is another build of the unit's (same manufacturer,
-  // number and version) that parses as the unit's: configuration.json names the unit's ids (tools/ets-driver.ts).
+  // number and version) that parses as the unit's: configuration.json names the unit's parameter and module ids,
+  // its appRef the export's build (tools/ets-driver.ts).
   exportApplication?: string;
 }
 
@@ -290,7 +290,7 @@ const list = (xs: string[] | undefined) => xs === undefined || xs.length === 0 ?
 const shown = (v: string | number | undefined) => v === undefined ? "not shown" : String(v);
 
 // Every difference of Busforge's run from ETS's, the first first: memory, property writes, load controls,
-// function-property calls, load states and table references at the end, the restart, other services.
+// function-property commands, load states and table references at the end, the restart, other services.
 export function compareRuns(ets: RunState, busforge: RunState): string[] {
   for (const [who, st] of [["ETS", ets], ["Busforge", busforge]] as const) {
     if (st.unplaced.length) throw new Error(`${who}'s run cannot be compared: ${st.unplaced.join("; ")}`);
@@ -461,9 +461,9 @@ export type LoadedImageCheck =
 
 // Busforge's images for `conf` against ETS's LoadedImage of the device at conf.ia in the project export.
 // `unitHoldsApplication`: whether the unit held the application when ETS downloaded (etsdiff.ts
-// capturedOnLoadedUnit), which decides the form of the download the images are planned for.
-export function loadedImageCheck(exportBytes: Buffer, appXml: string, conf: RowConfiguration, unitHoldsApplication: boolean, password?: string, exportApplication?: string): LoadedImageCheck {
-  const proj = loadKnxproj(exportBytes, password, "export");
+// capturedOnLoadedUnit), which decides the form of the download the images are planned for. `exportApplication`:
+// the build of the unit's application the export names (RowSpec).
+export function loadedImageCheck(proj: Project, appXml: string, conf: RowConfiguration, unitHoldsApplication: boolean, exportApplication?: string): LoadedImageCheck {
   const d = proj.devices.find((x) => x.ia === conf.ia);
   if (!d) return { state: "not compared", why: `the export holds no device ${conf.ia}` };
   const cfg = parseAppConfig(appXml);
@@ -517,6 +517,9 @@ export interface RowResult {
   loadedImage: LoadedImageCheck;
   // The requests the unit did not take, per run (recorded, not compared).
   notTaken: { ets: string[]; busforge: string[] };
+  // Where the row is calibrated: each position ETS's dialogue with the simulator differs from its dialogue with
+  // the real unit, with the cause explained.json gives it (null where none).
+  calibration: { capture: string; differences: { difference: string; cause: string | null }[] } | null;
   busforge: BusforgeRun & { sim: SimUnit };
 }
 
@@ -539,23 +542,19 @@ export async function runRow(row: Row): Promise<RowResult> {
     if (exportFile === undefined) return { state: "no export" };
     const b = readFileSync(join(row.dir, exportFile));
     const bytes = exportFile.endsWith(".gz") ? gunzipSync(b) : b;
-    const password = exportPassword(bytes);
-    if (password === null) return { state: "not compared", why: `the export is password-protected and none of the ${passwords().length} password(s) in ${PASSWORDS_ENV} opens it` };
-    return loadedImageCheck(bytes, catalogueXml(row.unit.catalogue), row.conf, capturedOnLoadedUnit(parseCapture(etsText, sim.deviceIa)), password, row.spec.exportApplication);
+    const proj = openWithPasswords((password) => loadKnxproj(bytes, password, "export"));
+    if (proj === null) return { state: "not compared", why: `the export is password-protected and none of the ${passwords().length} password(s) in ${PASSWORDS_ENV} opens it` };
+    return loadedImageCheck(proj, catalogueXml(row.unit.catalogue), row.conf, capturedOnLoadedUnit(parseCapture(etsText, sim.deviceIa)), row.spec.exportApplication);
   })();
+  const calibration = row.spec.calibration === undefined ? null : {
+    capture: row.spec.calibration,
+    differences: dialogueDifferences(readFileSync(corpusPath(row.spec.calibration), "utf8"), etsText, sim.deviceIa)
+      .map((d) => ({ difference: d, cause: row.explained.calibration?.find((e) => e.difference === d)?.cause ?? null })),
+  };
   return {
-    verdict, loadedImage, busforge, notTaken: { ets: etsRun.notTaken, busforge: bfRun.notTaken },
+    verdict, loadedImage, busforge, calibration, notTaken: { ets: etsRun.notTaken, busforge: bfRun.notTaken },
     reads: { onlyEts: [...etsRun.reads].filter((r) => !bfRun.reads.has(r)).sort(), onlyBusforge: [...bfRun.reads].filter((r) => !etsRun.reads.has(r)).sort() },
   };
-}
-
-// What opens a project export: no password, one of KNXPROJ_PASSWORDS, or null where none does.
-function exportPassword(bytes: Buffer): string | undefined | null {
-  for (const p of [undefined, ...passwords()]) {
-    try { readXml0(bytes, p); return p; }
-    catch (e) { if (!NEEDS_PASSWORD.has(codeOf(e) ?? "") && !NOT_THIS_PASSWORD.has(codeOf(e) ?? "")) throw e; }
-  }
-  return null;
 }
 
 // The differences of a verdict, with the cause explained.json gives each; null where none is given.
@@ -577,8 +576,7 @@ export interface ManifestRow {
   reads: RowResult["reads"];
   notTaken: RowResult["notTaken"];
   loadedImage: LoadedImageCheck;
-  // The real unit's capture the row is calibrated by, and the positions ETS's dialogues differ in, explained.
-  calibration: { capture: string; differences: { difference: string; cause: string }[] } | null;
+  calibration: RowResult["calibration"];
   files: string[];
 }
 export interface Manifest { format: typeof MANIFEST_FORMAT; busforgeRevision: string | null; rows: ManifestRow[] }
@@ -598,7 +596,7 @@ export function manifestRow(row: Row, r: RowResult): ManifestRow {
     application: row.application, variant: row.variant, unit: row.unit.id, product: row.unit.name, mask: cfg.mask,
     manufacturer: row.application.split("_")[0], etsBuild: row.spec.etsBuild, verdict: v.verdict, first, cause, differences: diffs,
     reads: r.reads, notTaken: r.notTaken, loadedImage: r.loadedImage,
-    calibration: row.spec.calibration === undefined ? null : { capture: row.spec.calibration, differences: row.explained.calibration ?? [] },
+    calibration: r.calibration,
     files: readdirSync(row.dir).sort().map((f) => `${SWEEP_DIR}/${row.id}/${f}`),
   };
 }

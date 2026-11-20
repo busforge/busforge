@@ -233,12 +233,12 @@ corpusDescribe("the ETS sweep rows", () => {
   }
 
   // A calibrated row: ETS's dialogue with the simulated unit against its dialogue with the real unit at the same
-  // configuration, position by position; every position that differs is explained.
+  // configuration, position by position; every position that differs is explained. An uncalibrated row explains none.
   for (const id of rows) {
-    const row = readRow(id);
-    if (row.spec.calibration === undefined) continue;
     test(`${id}: ETS's frames into the simulated unit equal its frames into the real unit but for the explained positions`, () => {
-      const real = readFileSync(corpusPath(row.spec.calibration!), "utf8");
+      const row = readRow(id);
+      if (row.spec.calibration === undefined) { expect(row.explained.calibration).toBeUndefined(); return; }
+      const real = readFileSync(corpusPath(row.spec.calibration), "utf8");
       const found = dialogueDifferences(real, readFileSync(join(row.dir, ROW_FILES.ets), "utf8"), iaToNum(row.conf.ia));
       expect(found).toEqual((row.explained.calibration ?? []).map((d) => d.difference));
       expect((row.explained.calibration ?? []).every((d) => d.cause.trim().length > 0)).toBe(true);
@@ -256,8 +256,8 @@ corpusDescribe("the ETS sweep rows", () => {
     const conf: RowConfiguration = { ia: amma.ia, params: [...c.params], links: c.links, moduleInstances: c.instances, comObjectOverrides: [...c.comObjectOverrides] };
     // Whether the unit held the application, from the capture of that download.
     const held = capturedOnLoadedUnit(parseCapture(captureText("gvs-amma-ets-fulldownload-defaults.log"), iaToNum(amma.ia)));
-    expect(loadedImageCheck(bytes, appXml, conf, held)).toEqual({ state: "equal", bytes: 3882 });
-    expect(loadedImageCheck(bytes, appXml, { ...conf, ia: "15.15.250" }, held)).toEqual({ state: "not compared", why: "the export holds no device 15.15.250" });
+    expect(loadedImageCheck(project, appXml, conf, held)).toEqual({ state: "equal", bytes: 3882 });
+    expect(loadedImageCheck(project, appXml, { ...conf, ia: "15.15.250" }, held)).toEqual({ state: "not compared", why: "the export holds no device 15.15.250" });
   });
 });
 

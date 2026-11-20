@@ -373,8 +373,9 @@ async function showTopology(s: Screen): Promise<void> {
 
 // Tree rows as OCR reads them: icons come out as stray characters before the text ("{1.1.20 KNX-…"), and the
 // project has one TP line, the only "Linie" row that is neither the backbone, the main line nor a search folder.
-// OCR loses a dot of an address now and then ("1.151" for 1.1.51 in a selected row): the dots are optional.
-const iaRow = (ia: string) => new RegExp(`(?<![\\d.])${ia.replace(/\./g, "\\.?")}(?![\\d.])`);
+// OCR loses a dot of an address now and then ("1.151" for 1.1.51 in a selected row): the dots are optional, so the
+// address is looked for only in a row's first word with a dot (a device's name may hold "1.12").
+const iaRow = (ia: string) => new RegExp(`^[^.]*?(?<![\\d.])${ia.replace(/\./g, "\\.?")}(?![\\d.])`);
 const ANY_DEVICE = /(?<![\d.])1\.1\.\d+(?![\d.])/;
 const LINE_11 = /^(?!.*(Backbone|Haupt|Keiner|Programmieren)).*Linie\s*$/;
 
@@ -433,6 +434,13 @@ async function selectByAddress(s: Screen, ia: string): Promise<void> {
   const [area, line, device] = ia.split(".");
   // OCR loses the dot of the line field now and then ("11" for 1.1).
   if (!values.some((v) => v.replaceAll(".", "") === `${area}${line}`) || !values.includes(device)) fail(`the selected device is not ${ia} (its address fields read ${values.join(" ")})`);
+}
+
+// ETS's search of the device list emptied again, so that a later row of the project lists every device.
+async function clearSearch(): Promise<void> {
+  click(AT.gridSearch[0], AT.gridSearch[1]);
+  key("ctrl+a", "BackSpace");
+  await sleep(1500);
 }
 
 // Every device of line 1.1 deleted; the deletion's confirmation, where ETS asks, given.
@@ -546,24 +554,27 @@ async function insertProduct(s: Screen, orderNumber: string, applicationId: stri
   if (!findText(ws, "1.1 TP Linie").length) fail("the catalogue's insert target is not line 1.1");
   const add = findText(ws, "Hinzuf").at(-1) ?? fail("no 'Hinzufügen' under the catalogue");
   click(add.cx, add.cy);
+  let importing = false;
   for (let i = 0; i < 30; i++) {
     await sleep(2000);
     // A product that can run Data Secure makes ETS ask for a project password; cancelling inserts it plain.
     const png = s.snap(), box = dialogBox(png);
     if (box) {
-      const text = words(png, box).map((w) => w.text).join(" ");
+      const ws = words(png, box);
       // ETS imports the product's data first, behind a progress dialog.
-      if (findText(words(png, box), "Importiere Daten").length) continue;
-      if (!findText(words(png, box), "Projektpasswort setzen").length) fail(`ETS shows a dialog after the insert: ${text.slice(0, 160)}`);
+      importing = findText(ws, "Importiere Daten").length > 0;
+      if (importing) continue;
+      if (!findText(ws, "Projektpasswort setzen").length) fail(`ETS shows a dialog after the insert: ${ws.map((w) => w.text).join(" ").slice(0, 160)}`);
       const cancel = findText(dialogButtons(png, box), "Abbrechen")[0] ?? fail("no Abbrechen under ETS's project password dialog");
       click(cancel.cx, cancel.cy);
       continue;
     }
+    importing = false;
     const devices = await lineDevices(s);
     if (devices.length > 1) fail(`line 1.1 holds ${devices.length} devices after the insert`);
     if (devices.length === 1) return;
   }
-  fail("the product did not appear in line 1.1");
+  fail(importing ? "ETS's import of the product's data did not end within 60 s" : "the product did not appear in line 1.1");
 }
 
 // The device's address set in the properties panel (line 1.1 only).
@@ -720,8 +731,15 @@ function writeRow(dir: string, o: RowOptions, applicationId: string, ia: string,
   const spec: RowSpec = { format: ROW_FORMAT, unit: o.unit, etsBuild: ETS_BUILD, simulator: o.simulator, export: "export.knxproj", ...(exported === applicationId ? {} : { exportApplication: exported }) };
   writeFileSync(join(dir, ROW_FILES.row), JSON.stringify(spec, null, 2) + "\n");
   const c = deviceConfiguration(parseAppConfig(xml), deviceRows(proj, d.id));
-  const conf: RowConfiguration = { ia, appRef: d.appRef, params: [...c.params], links: c.links, moduleInstances: c.instances, comObjectOverrides: [...c.comObjectOverrides] };
-  writeFileSync(join(dir, ROW_FILES.configuration), JSON.stringify(conf, null, 1).replaceAll(exported, applicationId) + "\n");
+  // The unit's ids for the project's build: the parameters' and module instances' ids begin with the
+  // application id and "_" (links and com-object overrides name objects by number); values stay as they are.
+  const id = (v: string) => v.startsWith(`${exported}_`) ? `${applicationId}${v.slice(exported.length)}` : v;
+  const conf: RowConfiguration = {
+    ia, appRef: d.appRef, params: [...c.params].map(([ref, value]) => [id(ref), value]), links: c.links,
+    moduleInstances: c.instances.map((m) => ({ id: id(m.id), refId: id(m.refId), args: m.args.map((a) => ({ refId: id(a.refId), value: a.value })) })),
+    comObjectOverrides: [...c.comObjectOverrides],
+  };
+  writeFileSync(join(dir, ROW_FILES.configuration), JSON.stringify(conf, null, 1) + "\n");
 }
 
 // ---- the simulator on this machine ----
@@ -833,6 +851,7 @@ async function runRow(o: RowOptions): Promise<RowRun> {
     etsLogSince(since, join(dir, ROW_FILES.ets6log));
     outcome = etsOutcome(readFileSync(join(dir, ROW_FILES.ets6log), "latin1"), ia, o.simulator);
     if (outcome.kind !== "completed") { shot(join(dir, "failure.png")); await closeDialogs(s); }
+    if (o.configured) await clearSearch();
     step("export");
     const password = o.passwordEnv === undefined ? undefined : process.env[o.passwordEnv];
     await exportProject(s, o.project, dir, password);

@@ -242,7 +242,8 @@ export class SimUnit implements KnxTransport {
       return nak(`no device at ${numToIa(dst)} acknowledged the frame`);
     }
     this.expireIdle();
-    const since = this.restartedAt === null ? null : this.now() - this.restartedAt;
+    const arrivedAt = this.now();
+    const since = this.restartedAt === null ? null : arrivedAt - this.restartedAt;
     if (since !== null) {
       const line = this.model.restart.line;
       const before = line.findLast((p) => p.atMs <= since), after = line.find((p) => p.atMs >= since);
@@ -264,7 +265,7 @@ export class SimUnit implements KnxTransport {
     await sleep(this.model.link.ackMs);
     this.priority = cemi[2 + cemi[1]] & PRIORITY_BITS;
     this.restartedNow = false;
-    try { if (isGroup) this.onBroadcast(src, tpdu); else this.onFrame(src, tpdu); }
+    try { if (isGroup) this.onBroadcast(src, tpdu); else this.onFrame(src, tpdu, arrivedAt); }
     catch (e) { this.refuse(`${tpdu.toString("hex")} from ${numToIa(src)}: ${e instanceof Error ? e.message : String(e)}`); }
     if (this.restartedNow && !this.model.restart.basic?.acknowledged) {
       await sleep(this.model.link.nakMs - this.model.link.ackMs);
@@ -274,11 +275,12 @@ export class SimUnit implements KnxTransport {
 
   // ---- transport layer ----
 
-  private onFrame(src: number, tpdu: Buffer): void {
+  // `arrivedAt`: when the frame reached the unit, before it took it (`link.ackMs` and the scheduler later).
+  private onFrame(src: number, tpdu: Buffer, arrivedAt: number): void {
     const tpci = tpdu[0];
     if (tpdu.length === 1 && (tpci & 0xc3) === 0x80) { this.onConnect(src); return; }
     if (tpdu.length === 1 && (tpci & 0xc3) === 0x81) { this.onDisconnect(src); return; }
-    if (tpdu.length === 1 && (tpci & 0xc3) === 0xc2) { this.onAck(src, (tpci >> 2) & 0x0f); return; }
+    if (tpdu.length === 1 && (tpci & 0xc3) === 0xc2) { this.onAck(src, (tpci >> 2) & 0x0f, arrivedAt); return; }
     if (tpdu.length === 1 && (tpci & 0xc3) === 0xc3) { this.refuse(`T_Nak ${(tpci >> 2) & 0x0f} from ${numToIa(src)}: no frame of the unit is repeated`); return; }
     if (tpdu.length < 2) { this.refuse(`TPDU ${tpdu.toString("hex")} from ${numToIa(src)}`); return; }
     if (tpdu.length - 1 > this.model.maxApdu) { this.refuse(`an APDU of ${tpdu.length - 1} octets from ${numToIa(src)}, beyond the unit's maximum of ${this.model.maxApdu}`); return; }
@@ -327,7 +329,7 @@ export class SimUnit implements KnxTransport {
     this.note(`disconnected by ${numToIa(src)}`);
   }
 
-  private onAck(src: number, seq: number): void {
+  private onAck(src: number, seq: number, arrivedAt: number): void {
     const c = this.conn;
     if (!c || c.partner !== src || !c.pendingAck) { this.refuse(`T_Ack ${seq} from ${numToIa(src)} for no answer of the unit`); return; }
     if (seq !== c.send) { this.refuse(`T_Ack ${seq} where the unit's answer ${c.send} waits for one`); return; }
@@ -338,8 +340,8 @@ export class SimUnit implements KnxTransport {
     if (c.restartOnAck) {
       this.restart(src);
       // A confirmed restart's line is timed from the T_Ack's arrival, as its captures show it (ETS's T_Disconnect
-      // so many ms after its T_Ack), not `link.ackMs` later when the unit takes the frame.
-      this.restartedAt = this.now() - this.model.link.ackMs;
+      // so many ms after its T_Ack), not from when the unit took the frame.
+      this.restartedAt = arrivedAt;
     }
   }
 
