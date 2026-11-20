@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join, relative } from "node:path";
 import { gzipSync } from "node:zlib";
 import { gaToNum, iaToNum } from "../packages/knx/src/index.ts";
 import { secureEncode } from "../packages/knx/src/secure.ts";
@@ -8,7 +8,7 @@ import { writeKeyring } from "../packages/project/src/keyring.ts";
 import { storeZip } from "../packages/project/test/ziputil.ts";
 import { addKeys, corpusKeys, emptyKeys, parseKeyList, type SecureKeys } from "./secure-capture.ts";
 import {
-  apciName, BUSSARD_ROWS, buildIndex, INDEX_FORMAT, documentedKeyringPasswords, indexFile, propertyAnswerRows, propertyAnswersUnseen, renderPropertyAnswers, indexText, INDEX_JSON, INDEX_MD, labelDisagrees, PCAP_CLIENT, renderMarkdown, type CaptureIndex, type IndexedFile, type KeySources,
+  apciName, BUSSARD_ROWS, buildIndex, INDEX_DIRS, INDEX_FORMAT, WRITE_SERVICES, documentedKeyringPasswords, indexFile, propertyAnswerRows, propertyAnswersUnseen, renderPropertyAnswers, indexText, INDEX_JSON, INDEX_MD, labelDisagrees, PCAP_CLIENT, renderMarkdown, type CaptureIndex, type IndexedFile, type KeySources,
   type NotIndexed,
 } from "./capture-index.ts";
 import { BUSSARD_SYNTHETIC_DIR, captureText, corpusPath, corpusRoot } from "./corpus.ts";
@@ -89,6 +89,35 @@ describe("proxy logs", () => {
     expect(f.secure).toEqual({ telegrams: 1, shown: 0, inside: { "S-A_Data (not opened)": { sent: 1, received: 0 } }, openedWith: [] });
     expect(f.telegrams).toBe(9); // the confirmation repeats the request and is not counted
     expect(f.undecoded.count).toBe(0);
+  });
+
+  test("records the first and last telegram's time and the memory and property writes sent to each unit", () => {
+    const at = (t: string, line: string) => line.replace("2000-01-01T00:00:00.000Z", `2026-01-01T${t}Z`);
+    const u7 = iaToNum("1.1.7"), u8 = iaToNum("1.1.8");
+    const text = [
+      "2026-01-01T09:00:00.000Z --- ETS connected, bridge up ---", // the proxy's own note carries no telegram
+      at("10:00:00.500", proxyLine("ETS->BRIDGE", [0x06, 0x10, 0x02, 0x07, 0x00, 0x10, 0x01, 0x00, 0x08, 0x01, 0, 0, 0, 0, 0, 0])), // CONNECTIONSTATE_REQ: not a telegram, outside the span
+      at("10:00:01.000", tunnel("ETS->BRIDGE", REQ, "0.0.0", u7, [0x80])),
+      at("10:00:02.000", tunnel("ETS->BRIDGE", REQ, "0.0.0", u7, [0x4a, 0x82, 0x40, 0x00, 0x01, 0x02])), // A_Memory_Write
+      at("10:00:03.000", tunnel("BRIDGE->ETS", CON, "1.1.100", u7, [0x4a, 0x82, 0x40, 0x00, 0x01, 0x02])), // its confirmation
+      at("10:00:04.000", tunnel("ETS->BRIDGE", REQ, "0.0.0", u7, [0x4e, 0x82, 0x40, 0x02, 0x01, 0x02])), // another one
+      at("10:00:05.000", tunnel("ETS->BRIDGE", REQ, "0.0.0", u7, [0x41, 0xfb, 0x02, 0x00, 0x40, 0x04, 0xaa, 0xbb])), // A_MemoryExtended_Write
+      at("10:00:06.000", tunnel("ETS->BRIDGE", REQ, "0.0.0", u7, [0x47, 0xd7, 0x00, 0x36, 0x10, 0x01, 0x00])), // A_PropertyValue_Write
+      at("10:00:07.000", tunnel("ETS->BRIDGE", REQ, "0.0.0", u8, [0x41, 0xce, 0x00, 0x11, 0x00, 0x10, 0x33, 0x01, 0x00, 0x01, 0x00])), // A_PropertyExtValue_WriteCon
+      at("10:00:08.000", tunnel("ETS->BRIDGE", REQ, "1.1.254", 0x0a01, [0x00, 0x81], 0xbc, true)), // a group write: no unit
+      at("10:00:09.000", tunnel("BRIDGE->ETS", IND, "1.1.9", iaToNum("1.1.100"), [0x4a, 0x82, 0x40, 0x00, 0x01, 0x02])), // a unit's write to the tool: received
+      "=== second run",
+    ].join("\n");
+    const f = indexed(indexText("x.log", text));
+    expect(f.undecoded.count).toBe(0);
+    expect(f.span).toEqual({ first: "2026-01-01T10:00:01.000Z", last: "2026-01-01T10:00:09.000Z" });
+    expect(f.writes).toEqual({ "1.1.7": { memory: 3, property: 1 }, "1.1.8": { memory: 0, property: 1 } });
+    // the writes are the sent write services, none lost to a service name and none counted twice
+    const sentWrites = Object.entries(f.services).filter(([n]) => n in WRITE_SERVICES).reduce((n, [, c]) => n + c.sent, 0);
+    expect(sentWrites).toBe(5);
+    const md = renderMarkdown({ format: INDEX_FORMAT, dirs: ["captures"], keys: NO_KEYS, files: [f], notIndexed: [] });
+    expect(md).toContain("| 2026-01-01T10:00:01.000Z | 2026-01-01T10:00:09.000Z |");
+    expect(md).toContain("| 1.1.7: 3 memory, 1 property; 1.1.8: 1 property |");
   });
 
   test("tells a Busforge run from the label the proxy gave it", () => {
@@ -277,6 +306,18 @@ describe("secured telegrams of a proxy log", () => {
     expect(md).toContain("| 8 (6 shown) |");
   });
 
+  test("counts the writes inside an opened telegram for the unit it was sent to, and none under a key nobody gave", () => {
+    const toUnit = (key: Buffer, n: number, plaintext: number[]) =>
+      tunnel("ETS->BRIDGE", REQ, "1.1.100", iaToNum("1.1.7"), secured({ key, src: "1.1.100", dst: iaToNum("1.1.7"), scf: 0x90, seq: seq(n), tpci: 0x43, plaintext: Buffer.from(plaintext) }));
+    const f = indexed(indexText("x.log", [
+      toUnit(TOOL_KEY, 1, [0x03, 0xd7, 0x00, 0x38, 0x10, 0x01, 0x00]), // A_PropertyValue_Write
+      toUnit(TOOL_KEY, 2, [0x02, 0x82, 0x40, 0x00, 0x01, 0x02]), // A_Memory_Write
+      toUnit(OTHER_KEY, 3, [0x02, 0x82, 0x40, 0x00, 0x01, 0x02]), // nobody gave the key: its service is not shown
+    ].join("\n"), keys()));
+    expect(f.undecoded.count).toBe(0);
+    expect(f.writes).toEqual({ "1.1.7": { memory: 1, property: 1 } });
+  });
+
   test("without keys, counts each by what its frame shows in clear", () => {
     const f = indexed(indexText("x.log", text));
     expect(f.secure.shown).toBe(0);
@@ -341,7 +382,7 @@ describe("the keys of the corpus", () => {
   test("come from its keyrings and projects with the passwords given, plus the environment's; one none opens is named", () => {
     const root = tempDir("capture-index-");
     try {
-      for (const d of ["captures", "internal/captures", "collections"]) mkdirSync(join(root, d), { recursive: true });
+      for (const d of INDEX_DIRS) mkdirSync(join(root, d), { recursive: true });
       const keyring = (toolKey: Buffer, password: string) =>
         writeKeyring({ created: "2026-01-01T00:00:00", devices: [{ individualAddress: "1.1.7", toolKey }], groups: [] }, password);
       writeFileSync(join(root, "internal/captures/bench.knxkeys"), keyring(TOOL_KEY, "right"));
@@ -378,7 +419,7 @@ describe("the keys of the corpus", () => {
   test("a project gives the tool key of a device without a serial and names the keys it did not give: IP Secure, a key that is not 16 bytes", () => {
     const root = tempDir("capture-index-");
     try {
-      for (const d of ["captures", "internal/captures", "collections"]) mkdirSync(join(root, d), { recursive: true });
+      for (const d of INDEX_DIRS) mkdirSync(join(root, d), { recursive: true });
       // Synthetic keys: DI-1 has no serial and a device authentication code; GA 1 carries 15 bytes.
       const xml = readFileSync(join(import.meta.dir, "../packages/project/test/fixtures/sample-0.xml"), "utf8")
         .replace('Hardware2ProgramRefId="M-0048_H-1_HP-1">', 'Hardware2ProgramRefId="M-0048_H-1_HP-1"><Security ToolKey="AAECAwQFBgcICQoLDA0ODw==" DeviceAuthenticationCode="code" />')
@@ -408,7 +449,7 @@ describe("the corpus walk", () => {
   test("reads a gzipped log, leaves out the index's own files and lists the rest in path order", () => {
     const root = tempDir("capture-index-");
     try {
-      for (const d of ["captures", "internal/captures", "collections/b"]) mkdirSync(join(root, d), { recursive: true });
+      for (const d of [...INDEX_DIRS, "collections/b"]) mkdirSync(join(root, d), { recursive: true });
       const log = tunnel("Busforge->BRIDGE", REQ, "1.1.254", iaToNum("1.1.7"), [0x80], 0xbc);
       writeFileSync(join(root, "internal/captures/run.log.gz"), gzipSync(log));
       writeFileSync(join(root, "captures/a.log"), log);
@@ -470,6 +511,25 @@ describe("ETS 6 logs", () => {
     expect(f.undecoded.count).toBe(0);
   });
 
+  test("records ETS's local first and last telegram time and the writes it sent to each unit, inside a secured telegram too", () => {
+    const line = (time: string, rest: string) => `2026-10-07 ${time} [29] INFO  Falcon.KnxStack.LL - [#1 0] ${rest}`;
+    const text = [
+      "2026-10-07 12:00:00,001 [8] INFO  Knx.Ets.ObjectModel.Persistence - persist project took 1s", // not a telegram line
+      "2026-10-07 12:06:14,886 [1] INFO  Knx.Ets.ViewModel.OnlineOperations.Download.DownloadManager - StartLoadDevice(Partial) 1.1.18 Some unit",
+      line("12:06:15,473", "Send Memory_Write_req -> 1.1.18 (hc=6, S=1) Address=0x4000 Data=01"),
+      line("12:06:15,500", "Send Sec_req -> 1.1.18 (hc=6) SAI=A+C SeqNr=1  InnerTelegram=PropertyValue_Write_req -> 1.1.18 (hc=6, S=2) ObjectIndex=3 PID=5 NumberOfElements=1 StartIndex=1 Data=01"),
+      line("12:06:15,600", "Send Sec_req -> 1.1.19 (hc=6) SAI=A+C SeqNr=2  InnerTelegram=MemoryExtended_Write_req -> 1.1.19 (hc=6, S=3) Address=0x4000 Data=01"),
+      line("12:06:15,700", "Send GroupValue_Write_req -> 1/2/3 (hc=6) Value=01"), // to a group address
+      line("12:06:15,800", "Received Memory_Write_ind <- 1.1.18 (hc=6) Address=0x4000 Data=01"), // from a unit
+      line("12:06:15,900", "Send Memory_Write_req -> 1.1.18 (hc=6, S=4) Address=0x4001 Data=02"),
+      "2026-10-07 12:06:16,100 [8] INFO  Knx.Ets.ObjectModel.Persistence - persist project took 1s",
+    ].join("\r\n");
+    const f = indexed(indexText("x.txt", text));
+    expect(f.undecoded.count).toBe(0);
+    expect(f.span).toEqual({ first: "2026-10-07 12:06:15,473", last: "2026-10-07 12:06:15,900" }); // the download action line before it is no telegram
+    expect(f.writes).toEqual({ "1.1.18": { memory: 2, property: 1 }, "1.1.19": { memory: 1, property: 0 } });
+  });
+
   test("names a secured telegram ETS logged encrypted, and a secured broadcast by its destination", () => {
     const text = [
       `${at}Falcon.KnxStack.LL - [#1 0] Received Sec_ind <- 1.1.203 (hc=6) SyncRes Encrypted:93DD58C5ABA4B824B89A0EED08517755284E126ECD16A4`,
@@ -527,6 +587,9 @@ describe("group monitors", () => {
     expect(f.notOnBus).toBe(1);
     expect(f.groupAddresses).toBe(7);
     expect(f.undecoded).toEqual({ count: 4, lines: [5, 10, 11, 12] });
+    // a listener writes to no unit; its times are the first and last telegram line's, in file order, notes left out
+    expect(f.span).toEqual({ first: "2026-01-01T00:00:01.000Z", last: "00:00:02" });
+    expect(f.writes).toEqual({});
   });
 });
 
@@ -567,9 +630,28 @@ corpusDescribe("the proxy decode against ETS's own log of the same download", ()
       expect(a.framesBuiltAs).toBe("ETS");
       expect(Object.keys(sent(a)).length).toBeGreaterThan(3);
       expect(sent(a)).toEqual(sent(b));
+      // the writes per unit agree too, from two decoders of the same download
+      expect(Object.keys(a.writes).length).toBeGreaterThan(0);
+      expect(a.writes).toEqual(b.writes);
+      expect(a.span).not.toBeNull();
+      expect(b.span).not.toBeNull();
       expect(a.devices.filter((d) => d.descriptor0.length)).toEqual(b.devices.filter((d) => d.descriptor0.length));
     });
   }
+});
+
+// The corpus grows by directories a session names after its own work: a telegram log that lies outside INDEX_DIRS
+// is a capture the index does not see.
+corpusDescribe("the directories of the index", () => {
+  corpusTest("hold every telegram log of the corpus", () => {
+    const root = corpusRoot()!;
+    const outside = readdirSync(root, { recursive: true, withFileTypes: true })
+      .filter((e) => e.isFile())
+      .map((e) => relative(root, join(e.parentPath, e.name)))
+      .filter((f) => !f.split("/").includes(".git") && !INDEX_DIRS.some((d) => f.startsWith(`${d}/`)))
+      .filter((f) => !("reason" in indexFile(root, f)));
+    expect(outside).toEqual([]);
+  });
 });
 
 // bussard's synthetic secure captures (MIT, Tom Bocklisch) come with the keyring of their project, under the public
