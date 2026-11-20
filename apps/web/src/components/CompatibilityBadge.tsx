@@ -20,14 +20,27 @@ const SUMMARY_TONE: Record<Summary, "ok" | "info" | "danger" | "warning" | "neut
 };
 const SUMMARY_ICON = { tested: ShieldCheck, partial: ShieldCheck, derived: ShieldQuestion, otherVersion: ShieldQuestion, failed: ShieldAlert, untested: ShieldQuestion, unsupported: ShieldOff } as const;
 
-const mark = (s: string | undefined) => (s === "pass" ? "✓" : s === "fail" ? "✗" : s === "conflict" ? "!" : s === "not-applicable" ? "n/a" : "–");
-// The words a mark stands for, the ones the popover uses for a state.
-const markWord = (s: string | undefined) => (s === "pass" ? "compat.state.tested" : s === "fail" ? "compat.state.failed" : s === "conflict" ? "compat.state.conflict" : s === "not-applicable" ? "compat.notApplicable" : "compat.state.eligible");
+// A cell's state as its mark and the words it stands for, the ones the popover uses for a state; a cell
+// not assessed or not shown at all is untested.
+const MARKS: Record<string, readonly [mark: string, words: string]> = {
+  pass: ["✓", "compat.state.tested"],
+  fail: ["✗", "compat.state.failed"],
+  conflict: ["!", "compat.state.conflict"],
+  "not-applicable": ["n/a", "compat.notApplicable"],
+};
+const UNTESTED = ["–", "compat.state.eligible"] as const;
+const markOf = (s: string | undefined) => (s !== undefined && MARKS[s]) || UNTESTED;
 
-// The marks of one axis through the API and the UI, read out in words.
+// The marks of one axis through the API and the UI; a screen reader hears them in words.
 function MarkPair({ api, ui }: { api: string | undefined; ui: string | undefined }) {
   const { t } = useTranslation();
-  return <td className="px-1 py-1 text-center font-mono whitespace-nowrap" aria-label={t("compat.marks", { api: t(markWord(api)), ui: t(markWord(ui)) })}>{mark(api)} / {mark(ui)}</td>;
+  const [a, u] = [markOf(api), markOf(ui)];
+  return (
+    <td className="px-1 py-1 text-center font-mono whitespace-nowrap">
+      <span aria-hidden>{a[0]} / {u[0]}</span>
+      <span className="sr-only">{t("compat.marks", { api: t(a[1]), ui: t(u[1]) })}</span>
+    </td>
+  );
 }
 
 // What was shown on hardware for this device's Product, per operation, from the evidence the

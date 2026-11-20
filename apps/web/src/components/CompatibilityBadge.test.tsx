@@ -58,7 +58,7 @@ describe("the compatibility popover's table", () => {
 
   test("names each pair of marks in the words the popover shows for a state, in the reader's language", async () => {
     const mixed = { state: "conflict", cells: { api: { ...cell("conflict"), persistence: { state: "pass", basis: [] } }, ui: { ...cell("fail"), persistence: { state: "not-assessed", basis: [] } } }, firmware: [] } as unknown as OperationVerdict;
-    const labels = () => [...renderToStaticMarkup(<CompatibilityTable c={compat({ readParams: mixed, readLinks: { cells: { api: cell("pass") } } as Partial<OperationVerdict> })} />).matchAll(/aria-label="([^"]*)"/g)].map((m) => m[1]);
+    const labels = () => [...renderToStaticMarkup(<CompatibilityTable c={compat({ readParams: mixed, readLinks: { cells: { api: cell("pass") } } as Partial<OperationVerdict> })} />).matchAll(/<td class="[^"]*"><span aria-hidden="true">[^<]*<\/span><span class="sr-only">([^<]*)<\/span><\/td>/g)].map((m) => m[1]);
     expect(labels().slice(0, 4)).toEqual(["API: contradictory, UI: failed", "API: tested, UI: untested", "API: tested, UI: untested", "API: not applicable, UI: untested"]);
     await i18n.changeLanguage("de");
     expect(labels().slice(0, 4)).toEqual(["API: widersprüchlich, UI: fehlgeschlagen", "API: getestet, UI: ungetestet", "API: getestet, UI: ungetestet", "API: nicht anwendbar, UI: ungetestet"]);

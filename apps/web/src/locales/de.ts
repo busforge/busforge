@@ -535,7 +535,7 @@ const de: Messages = {
     firmwareOf: "Firmware\u00a0{{fw}} (von <v>{{product}}</v>)",
     firmwareOfVersion: "Firmware\u00a0{{fw}} (mit <v>{{app}}</v>)",
     toolFailed: "eine Tool-Prüfung (Readback-Tool oder ETS-Vergleich) ist an diesem Produkt fehlgeschlagen",
-    explain: "Getestet heißt: Das Gerät hielt genau die Bytes, die Busforge geschrieben hat, über die API und über die Oberfläche, an diesem Produkt. Ob die Bytes denen von ETS entsprechen oder das Gerät danach handelt, ist damit nicht gezeigt. Vorgänge, die Busforge für dieses Gerät nicht unterstützt, zählen in der Zusammenfassung nicht; n/a: nicht anwendbar.",
+    explain: "Getestet heißt: Das Gerät hielt genau die Bytes, die Busforge geschrieben hat, über die API und über die Oberfläche, an diesem Produkt. Ob die Bytes denen von ETS entsprechen oder das Gerät danach handelt, ist damit nicht gezeigt. Vorgänge, die Busforge für dieses Gerät nicht unterstützt, zählen in der Zusammenfassung nicht; n/a: $t(compat.notApplicable).",
     acknowledged: "Du hast in diesem Projekt bestätigt, dass ungetestete Vorgänge dieses Produkts geschrieben werden dürfen.",
   },
   // Der Hinweis vor dem Schreiben eines Produkts, das nicht auf Hardware getestet ist (Kompatibilitätsmatrix).

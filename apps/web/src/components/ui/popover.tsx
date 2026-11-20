@@ -15,9 +15,11 @@ function PopoverTrigger({
   return <PopoverPrimitive.Trigger data-slot="popover-trigger" {...props} />
 }
 
-// Every popover keeps 16 px off each window edge: it is never wider than the window less that gap on
-// both sides, and where its trigger sits near an edge it moves (or shrinks its available height) to
-// keep the gap rather than touch the edge. The two values are one rule: 2rem is twice the padding.
+// Every popover keeps 16 px off each window edge: where its trigger sits near an edge it moves to keep
+// the gap, and it is never wider than the window less the gap on both sides (Radix's available width
+// is the window's less the collision padding). A min width wins over that cap in CSS, so a caller's
+// min width is min(its width, the available width); a caller whose content can be taller than the
+// window caps its height with --radix-popover-content-available-height.
 function PopoverContent({
   className,
   align = "center",
@@ -33,7 +35,7 @@ function PopoverContent({
         sideOffset={sideOffset}
         collisionPadding={collisionPadding}
         className={cn(
-          "z-50 w-72 max-w-[calc(100vw-2rem)] origin-(--radix-popover-content-transform-origin) rounded-md border bg-popover p-4 text-popover-foreground shadow-md outline-hidden data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95",
+          "z-50 w-72 max-w-(--radix-popover-content-available-width) origin-(--radix-popover-content-transform-origin) rounded-md border bg-popover p-4 text-popover-foreground shadow-md outline-hidden data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95",
           className
         )}
         {...props}

@@ -538,7 +538,7 @@ const en = {
     firmwareOf: "firmware\u00a0{{fw}} (of <v>{{product}}</v>)",
     firmwareOfVersion: "firmware\u00a0{{fw}} (with <v>{{app}}</v>)",
     toolFailed: "a tool check (read-back tool or ETS comparison) failed on this product",
-    explain: "Tested means the device held exactly the bytes Busforge wrote, through the API and the UI, on this product. It does not prove the bytes match ETS or that the device acts on them. Operations Busforge does not support for this device are left out of the summary; n/a: not applicable.",
+    explain: "Tested means the device held exactly the bytes Busforge wrote, through the API and the UI, on this product. It does not prove the bytes match ETS or that the device acts on them. Operations Busforge does not support for this device are left out of the summary; n/a: $t(compat.notApplicable).",
     acknowledged: "You acknowledged in this project that untested operations of this product may be written.",
   },
   // The notice before writing a Product not tested on hardware (compatibility matrix).
