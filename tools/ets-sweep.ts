@@ -325,11 +325,16 @@ export function etsOutcome(ets6log: string, ia: string, endpoint: string): EtsOu
   const starts = lines.flatMap((l, i) => (l.includes(`StartLoadDevice(Application) ${ia} `) ? [i] : []));
   if (starts.length !== 1) return { kind: "driver-failed", why: `ETS6.log holds ${starts.length} application downloads of ${ia}, not one` };
   const end = lines.findIndex((l, i) => i > starts[0] && l.includes(`LoadDeviceTask - End LoadApplicationProgram ${ia} `));
-  const window = lines.slice(starts[0], end < 0 ? undefined : end + 1);
+  // A load task that fails ends without that line: ETS logs the task's exception instead (a WARN or ERROR line
+  // of its LoadDeviceTask) and goes on reconnecting to the interface afterwards.
+  const failed = end >= 0 ? -1 : lines.findIndex((l, i) => i > starts[0] && /\s(WARN|ERROR)\s+Knx\.Ets\.Hawk\.LoadDeviceTask - /.test(l));
+  const last = end >= 0 ? end : failed;
+  const window = lines.slice(starts[0], last < 0 ? undefined : last + 1);
   const connects = window.flatMap((l) => [...l.matchAll(/ - Connect\(([^)]*)\)/g)].map((c) => c[1]));
   const elsewhere = connects.filter((c) => c !== endpoint);
   if (connects.length === 0) return { kind: "driver-failed", why: "ETS6.log shows no connection of the download" };
   if (elsewhere.length) return { kind: "driver-failed", why: `the download connected to ${[...new Set(elsewhere)].join(", ")}, not only to the simulator at ${endpoint}` };
+  if (failed >= 0) return { kind: "ets-failed", why: `ETS's load task failed: ${lines[failed].replace(/^.*?LoadDeviceTask - /, "").split(" ---> ")[0].trim()}` };
   if (end < 0) return { kind: "ets-failed", why: "ETS6.log shows no end of the download's load task" };
   // ETS also writes the project's earlier programming state when its load task begins; only the state it
   // records after the last load-procedure step it executed is this download's.
@@ -501,7 +506,7 @@ export async function runRow(row: Row): Promise<RowResult> {
   const busforge = await busforgeIntoSim(row.unit, row.conf);
   const bfRun = runState(busforge.capture, "Busforge", sim.deviceIa, mask);
   const verdict = judge(
-    { outcome: etsOutcome(read(ROW_FILES.ets6log), row.conf.ia, row.spec.simulator), refusals: simRefusals(read(ROW_FILES.etsSim)) },
+    { outcome: etsOutcome(readFileSync(join(row.dir, ROW_FILES.ets6log), "latin1"), row.conf.ia, row.spec.simulator), refusals: simRefusals(read(ROW_FILES.etsSim)) },
     { refusals: busforge.refusals, refused: busforge.refused, writes: bfRun.writes },
     () => compareRuns(etsRun, bfRun),
   );

@@ -157,6 +157,24 @@ describe("a sweep row's verdict", () => {
     expect(etsOutcome(`${LOG("10.0.0.5:3701")}\n${LOG("10.0.0.5:3701")}`, "1.1.20", "10.0.0.5:3701").kind).toBe("driver-failed");
   });
 
+  test("ETS's side from ETS6.log: a load task that failed ends at its exception, and ETS's reconnects after it are not the download's", () => {
+    // As ETS 6.4.1 logs a download whose interface went away mid-way (the simulator stopped), shortened.
+    const failed = [
+      "2026-01-01 08:00:01,000 [1] INFO  Knx.Ets.ViewModel.OnlineOperations.Download.DownloadManager - StartLoadDevice(Application) 1.1.20 Unit",
+      "2026-01-01 08:00:02,000 [5] INFO  Falcon.KnxIp.TCP - Connect(10.0.0.5:3701)",
+      "2026-01-01 08:00:03,000 [1] INFO  Knx.Ets.Hawk.LoadDeviceTask - Begin LoadApplicationProgram 1.1.20 (LoadApplicationProgram)",
+      "2026-01-01 08:00:04,000 [1] INFO  Knx.Ets.Sdk.DataProvider.ProjectData - UpdateProgramingState: Adr=True, Cfg=False, App=False, Par=False, Grp=False",
+      "2026-01-01 08:00:05,000 [5] WARN  Falcon.KnxIp.TCP - tcp:10.0.0.5:3701 SocketException in ReadCompleted, exiting: Unable to read data from the transport connection: Connection reset by peer.",
+      "2026-01-01 08:00:20,000 [40] WARN  Falcon.Device - [co 1.1.20 LoadApplicationProgram] Error on try#1... retrying: Verbindungsqualität mit 1.1.20 ist zu schlecht für eine stabile Verbindung",
+      "2026-01-01 08:00:30,000 [44] WARN  Knx.Ets.Hawk.LoadDeviceTask - Knx.Ets.Hawk.DeviceManagementException: Verbindungsqualität mit 1.1.20 ist zu schlecht für eine stabile Verbindung ---> Knx.Falcon.CommunicationException: Verbindungsqualität mit 1.1.20 ist zu schlecht für eine stabile Verbindung",
+      "2026-01-01 08:00:30,001 [1] ERROR Knx.Ets.ViewModel.OnlineOperations.Download.HawkPendingOperation - Error during executing OnStateChanged method of object Knx.Ets.Hawk.LoadDeviceTask",
+      "2026-01-01 08:00:45,000 [20] INFO  Falcon.KnxIp.TCP - Connect(192.168.1.1:3671)",
+    ].join("\n");
+    expect(etsOutcome(failed, "1.1.20", "10.0.0.5:3701")).toEqual({ kind: "ets-failed", why: "ETS's load task failed: Knx.Ets.Hawk.DeviceManagementException: Verbindungsqualität mit 1.1.20 ist zu schlecht für eine stabile Verbindung" });
+    // A connection elsewhere during the failed task still makes the row the driver's failure.
+    expect(etsOutcome(failed.replace("Connect(10.0.0.5:3701)", "Connect(10.0.0.5:3711)"), "1.1.20", "10.0.0.5:3701").kind).toBe("driver-failed");
+  });
+
   test("the simulator's refusals among its lines", () => {
     expect(simRefusals("2026-01-01T00:00:00.000Z connected to 1.1.100\n2026-01-01T00:00:01.000Z sim-refused A_Memory_Write 1 at 0x4000: outside an allocated segment\n")).toEqual(["sim-refused A_Memory_Write 1 at 0x4000: outside an allocated segment"]);
   });

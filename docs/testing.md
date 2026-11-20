@@ -603,7 +603,7 @@ unit did not take are recorded and listed per side, not compared.
 | `refused` | Busforge refuses the download with a coded refusal (its planner's or its server's) where ETS downloads; any other error of its download fails the run instead |
 | `busforge-only` | Busforge writes where ETS failed or the simulator refused ETS |
 | `sim-refused` | the simulator refused a request of either run (its log names it); nothing is compared |
-| `ets-failed` | ETS's log shows no completed download: no end of its load task, no load-procedure step executed, or the programming state it records after the last step not all loaded (address, configuration, application, parameters, group addresses) |
+| `ets-failed` | ETS's log shows no completed download: its load task failed (ETS logs the task's exception in place of its end; the verdict quotes it), no end of its load task, no load-procedure step executed, or the programming state it records after the last step not all loaded (address, configuration, application, parameters, group addresses) |
 | `driver-failed` | ETS's log shows not exactly one download of the device, or the download connected to nothing or to anything but the simulator |
 
 **The second check.** Where a row holds ETS's project export from after its download, Busforge's
@@ -627,6 +627,58 @@ differences to `explained.json`: a new difference fails, and so does an explaine
 Without the corpus it is skipped visibly. A row is evidence on no axis of
 [evidence-contract.md](evidence-contract.md): it shows what Busforge sends next to what ETS sends,
 both given the same simulator's answers.
+
+### ETS's side of a row: the driver
+
+`tools/ets-driver.ts` takes ETS's side of a row in one command. ETS 6 runs under Wine on a bench host's
+X display, maximised, German UI; the driver runs on the machine with the private corpus, drives ETS
+over ssh with `xdotool`, reads the screen by OCR (`tesseract`, screenshots taken at full resolution
+and enlarged only for reading) and serves the simulated unit itself (`tools/sim-unit-serve.ts`).
+
+```mermaid
+flowchart LR
+  D[driver] -- ssh, xdotool --> E[ETS on the bench host]
+  E -- KNXnet/IP TCP --> S["simulated unit<br/>(sim-unit-serve)"]
+  D --> S
+  E -. ETS6.log, export .-> D
+  S -. capture .-> D
+  D --> R[row directory]
+```
+
+```bash
+BUSFORGE_CORPUS=... bun run tools/ets-driver.ts up        # display, VNC and ETS, each PID recorded
+BUSFORGE_CORPUS=... bun run tools/ets-driver.ts row <unit> <variant> --order <order number> \
+  [--simulator <this host's ip>:3701] [--project "Busforge Sweep"] [--configured] [--out <dir>]
+BUSFORGE_CORPUS=... bun run tools/ets-driver.ts same <ets.log> <ets.log> <unit>   # two runs, frame by frame
+bun run tools/ets-driver.ts down                          # closes what `up` started, by PID
+```
+
+One row, step by step:
+
+1. **The project.** ETS's own sweep project (no password) is brought to the front by its window
+   title; another open project is refused, not closed.
+2. **Line 1.1 emptied** and the product **inserted from the online catalogue** by its order number.
+   Each catalogue row found is selected and its application read back from ETS's properties panel
+   (device type, program version, fingerprint, which together are the application id). The row whose
+   application is the unit's is inserted; two rows under the order number and the unit's version are
+   refused. The device then gets the unit's address. `--configured` skips this step and downloads the
+   device the project holds at that address as it is configured there.
+3. **The interface set explicitly** to the configured connection at the simulator's endpoint, in the
+   toolbar (where the toolbar does not offer it, it is made the project's connection first), and its
+   check mark read back. "Automatisch" would let ETS pick an interface itself.
+4. **The application download** by its shortcut; the driver waits for ETS6.log's end of the load
+   task, or the task's exception where it failed.
+5. **The export** of the project (no password) and the row written: `row.json`,
+   `configuration.json` (the device's configuration as the export holds it), the simulator's capture,
+   `ets6.log.txt` from the row's start, `export.knxproj`.
+
+Every row is judged by ETS6.log (`etsOutcome` above): a download that connected to anything but the
+simulator is `driver-failed`, whatever ETS made of it. A row the driver cannot finish keeps
+`failure.png` (full resolution), the ETS6.log tail and the simulator's log beside `driver-failed.txt`;
+dialogs it knows are closed (ETS shows them inside its window and dims the rest), else ETS is
+restarted, only the processes `up` started, by PID. Two options exist to check the verdicts on real
+logs: `--stop-sim-after <n>` stops the simulator once ETS sent it n frames (a download ETS aborts),
+`--wrong-interface <host:port>` sets ETS to another configured connection than the row's simulator.
 
 ## Why the golden snapshot is not a correctness proof
 
