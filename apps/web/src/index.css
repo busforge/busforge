@@ -138,8 +138,8 @@
 }
 
 /* A vertically scrolling surface that shows a shadow on each edge with more content behind it (the two cover
-   gradients scroll with the content and hide the fixed shadows once the end is reached). The surface keeps
-   its own background colour, which the covers use: set `--scroll-shadow-bg` where it is not the popover's. */
+   gradients scroll with the content and hide the fixed shadows once the end is reached). The covers are
+   drawn in the colour behind the content, the popover's by default: set `--scroll-shadow-bg` where it is another. */
 @utility scroll-shadow-y {
   background-image:
     linear-gradient(var(--scroll-shadow-bg, var(--popover)) 30%, transparent),
