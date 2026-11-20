@@ -1,14 +1,14 @@
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { decodeCheckSums, decodeLoadedImage, loadKnxproj, appProgramId, etsLoadedCompletely, etsNotDownloaded } from "../packages/project/src/index.ts";
-import { classify, parseAppConfig, parseLoadProcedures, ProductError, type AppConfig, type LoadProcedures } from "../packages/product/src/index.ts";
+import { parseAppConfig, parseLoadProcedures, type AppConfig, type LoadProcedures } from "../packages/product/src/index.ts";
 import { crc16Ccitt, crc16CcittFalse } from "../packages/knx/src/flash.ts";
 import { iaToNum } from "../packages/knx/src/index.ts";
 import { corpusPath, corpusRoot, captureText } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { parseCapture, memoryImage, etsAllocations, reportedTableReferences, deviceConfiguration, deviceRows } from "./etsdiff.ts";
 import { sha256 } from "./evidence.ts";
-import { readEtsRecords, recordedAppXml, type DeviceRecord, type EtsRecords } from "./ets-records.ts";
+import { loadedImageComparison, readEtsRecords, recordedAppXml, type DeviceRecord, type EtsRecords } from "./ets-records.ts";
 
 // ETS's own record of its last download of a device, kept in every project it saves
 // (docs/verification.md, "ETS's download record"), held against Busforge's images offline: for every
@@ -47,7 +47,6 @@ function counted(entries: string[]): string[] {
   return [...n].map(([e, k]) => `${e} (${k} project${k === 1 ? "" : "s"})`).sort();
 }
 
-const hex = (n: number | undefined) => n === undefined ? "--" : n.toString(16).padStart(2, "0");
 const UNPROTECTED = "captures/bench-ets-project-params-edited-after-download.knxproj";
 
 corpusDescribe("ETS's download record in the corpus projects", () => {
@@ -124,37 +123,7 @@ corpusDescribe("ETS's download record in the corpus projects", () => {
     const outcomes = new Map<string, ReturnType<typeof compare>>();
     const compare = (d: DeviceRecord) => {
       const { cfg, proc } = app(d.appRef);
-      const { params, instances, links, comObjectOverrides } = deviceConfiguration(cfg, d.config!);
-      const profile = classify(cfg);
-      let segments;
-      try {
-        // A unit ETS downloaded holds the application. On System 7, ETS's download of such a unit leaves
-        // the application loaded and writes the bytes the parameters cover (docs/load-procedures.md,
-        // "Which bytes ETS writes"); on System B the partial form needs the unit's memory, and the full
-        // form's images hold the same bytes.
-        segments = profile.planFullDownload(cfg.mask, {
-          ia: d.ia, params, links, moduleInstances: instances, proc, comObjectOverrides,
-          unitHoldsApplication: proc.preferPartialIfLoaded && profile.family === "system-7",
-        }).segments;
-      } catch (e) {
-        if (e instanceof ProductError) return { refused: e.code };
-        throw e;
-      }
-      const absolute = new Map<number, number>();
-      for (const s of segments) if (s.address !== null) s.image.forEach((b, i) => absolute.set(s.address! + i, b));
-      const mismatches: string[] = [];
-      let bytes = 0;
-      for (const r of decodeLoadedImage(d.loadedImage!)) {
-        const image = r.location === "relative" ? segments.find((s) => s.address === null && s.lsm === r.object)?.image : undefined;
-        r.data.forEach((ets, i) => {
-          if (r.mask[i] !== 0xff) return;
-          bytes++;
-          const at = r.start + i;
-          const ours = r.location === "absolute" ? absolute.get(at) : image?.[at];
-          if (ours !== ets) mismatches.push(`object ${r.object} at ${at}: Busforge ${hex(ours)}, ETS ${hex(ets)}`);
-        });
-      }
-      return { bytes, mismatches };
+      return loadedImageComparison(cfg, proc, d.ia, deviceConfiguration(cfg, d.config!), d.loadedImage!);
     };
 
     const found: string[] = [], notCompared: string[] = [];
