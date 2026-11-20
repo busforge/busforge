@@ -177,6 +177,24 @@ bare `mkdtemp` or `mkdtempSync` import in a test file (`.oxlintrc.json`). A test
 rather than a directory puts it in a `tempDir` too. To see what a run leaves behind, point `TMPDIR` at
 an empty directory for it and list that directory afterwards.
 
+### A test as GitHub Actions runs it
+
+CI runs the check in the image `oven/bun:1.3`, whose PID 1 is `tail -f /dev/null`: no `ps`, and no
+init that reaps an orphan, so an ended orphan stays a zombie that `kill -0` still finds. A test that
+starts or watches processes runs there as in CI like this: on a copy of the files git tracks or would
+track (the container installs its own `node_modules`; `COPYFILE_DISABLE` keeps macOS `tar` from adding
+`._*` files, which `bun test` would load as tests), with `CI=true`, and from the test's workspace, so
+that workspace's `bunfig.toml` applies:
+
+```bash
+docker rm -f bf-ci 2>/dev/null
+docker run -d --name bf-ci -e CI=true -w /repo oven/bun:1.3 tail -f /dev/null
+git ls-files -co --exclude-standard -z | COPYFILE_DISABLE=1 tar --no-xattrs --null -T - -cf - | docker exec -i bf-ci tar -xf - -C /repo
+docker exec bf-ci bun install --frozen-lockfile
+docker exec -w /repo/tools bf-ci bun test ui-instance.test.ts
+docker rm -f bf-ci
+```
+
 ### The demo project
 
 Screenshots and rehearsals show the manufacturer demo, *Musterhaus Sonnenweg*; the open demo,
