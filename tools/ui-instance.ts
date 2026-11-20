@@ -19,6 +19,7 @@ import { constants as osConstants, tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { corpusPath, corpusRoot, DEMO_PRODUCT_FILES, OPENKNX_DEMO_DIR } from "./corpus.ts";
 import { apiCall, buildDemoProject, MANUFACTURER_DEMO, OPEN_DEMO, openKnxProductDbs, type DemoApi, type ProductDb } from "./demo-project.ts";
+import { liveStat, PROC, processLives, signalZero } from "./process-state.ts";
 import { droppedLinksDemo } from "./ui-demo-projects.ts";
 
 const ROOT = resolve(import.meta.dir, "..");
@@ -134,37 +135,12 @@ interface Instance {
   project: { id: string; name: string } | null;
 }
 
-// Linux has /proc; macOS has `ps` and no /proc. The CI container has no `ps`, and nothing in it reaps
-// an orphan, so an ended process there stays a zombie until the container ends: it counts as ended.
-const PROC = existsSync("/proc/self/stat");
-
-// State, process group and start time from /proc/<pid>/stat; the fields after the command name,
-// which may hold spaces, start behind its closing parenthesis.
-// Null when there is no such process; a file that is there but cannot be read is refused.
-function procStat(pid: number): { state: string; pgrp: number; start: string } | null {
-  let text: string;
-  try {
-    text = readFileSync(`/proc/${pid}/stat`, "utf8");
-  } catch (e) {
-    if (["ENOENT", "ESRCH"].includes((e as NodeJS.ErrnoException).code ?? "")) return null;
-    throw e;
-  }
-  const f = text.slice(text.lastIndexOf(")") + 2).split(" ");
-  return { state: f[0], pgrp: Number(f[2]), start: f[19] };
-}
-
-const signalZero = (pid: number): boolean => {
-  try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; }
-};
-
 // The start time of a living process, or null when there is none of that id. On macOS from `ps`, in
 // one locale and zone, so a stop from another shell reads the same string. A living process whose
 // start time cannot be read is refused: that tells neither whether it is the one started nor not.
+// Linux reads /proc, since the CI container has no `ps`.
 function startTime(pid: number): string | null {
-  if (PROC) {
-    const st = procStat(pid);
-    return st === null || st.state === "Z" ? null : st.start;
-  }
+  if (PROC) return liveStat(pid)?.start ?? null;
   if (!signalZero(pid)) return null;
   const t = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(pid)], { env: { ...process.env, LC_ALL: "C", TZ: "UTC" } }).stdout.toString().trim();
   if (t !== "") return t;
@@ -177,8 +153,7 @@ export function groupHasMembers(pgid: number): boolean {
   if (!PROC) return signalZero(-pgid);
   return readdirSync("/proc").some((n) => {
     if (!/^\d+$/.test(n)) return false;
-    const st = procStat(Number(n));
-    return st !== null && st.pgrp === pgid && st.state !== "Z";
+    return liveStat(Number(n))?.pgrp === pgid;
   });
 }
 
@@ -486,7 +461,7 @@ async function watch(owner: number, dir: string): Promise<void> {
   while (ownerStarted === undefined) { await Bun.sleep(1000); ownerStarted = ownerStart(); }
   // `ps` is a process of its own on macOS, so the start time is compared once a second only.
   const ownerLives = (tick: number) => {
-    if (tick % 10 !== 0) return signalZero(owner);
+    if (tick % 10 !== 0) { try { return processLives(owner); } catch { return true; } }
     const t = ownerStart();
     return t === undefined || t === ownerStarted;
   };
