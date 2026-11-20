@@ -568,7 +568,7 @@ function RoomSelect({ targets, value, deviceIa, busy, onChange }: {
   return (
     <Popover open={open} onOpenChange={(o) => { setOpen(o); if (!o) setActive(false); }}>
       <PopoverTrigger asChild>{trigger}</PopoverTrigger>
-      <PopoverContent className="w-72 p-0" align="end">
+      <PopoverContent className="flex w-72 flex-col p-0" align="end">
         <Command>
           <CommandInput placeholder={t("devices.roomSearchPlaceholder")} />
           <CommandList>
@@ -610,7 +610,7 @@ function BuildingCombobox({ buildings, value, onChange }: {
           <ChevronsUpDown className="size-3.5 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-[var(--radix-popover-trigger-width)] min-w-[min(16rem,var(--radix-popover-content-available-width))] p-0" align="start">
+      <PopoverContent className="flex w-[var(--radix-popover-trigger-width)] min-w-[min(16rem,var(--radix-popover-content-available-width))] flex-col p-0" align="start">
         <Command>
           <CommandInput placeholder={t("devices.buildingSearchPlaceholder")} />
           <CommandList>

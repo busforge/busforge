@@ -20,8 +20,9 @@ function PopoverTrigger({
 // left on its side (Radix's available width and height are the window's less the collision padding).
 // Content taller than that scrolls inside, with a shadow on each edge that has more behind it. A min
 // width wins over the width cap in CSS, so a caller's min width is min(its width, the available width).
-// A caller may set a lower max height. One with a fixed head over a long list makes the content a flex
-// column and the list `min-h-0` with its own scroll, so the list shrinks and the head stays in view.
+// A caller's own max height replaces the cap, so a lower one is min(its height, the available height).
+// One with a fixed head over a long list (a search field over its options too) makes the content a flex
+// column whose list scrolls by itself, so the list shrinks and the head stays in view.
 function PopoverContent({
   className,
   align = "center",
@@ -46,17 +47,28 @@ function PopoverContent({
   )
 }
 
-// The side of its trigger with more room in the window, taken when `open` turns true: `ref` goes on the
-// trigger, `side` on the content. For a popover whose content loads after it opens: Radix picks the side
-// by the content's height at that moment, and the height being capped to the room on that side, the
-// grown content still fits there and keeps the side, however little room it has.
+// The side of its trigger with more room in the window, taken when `open` turns true and again after
+// each scroll and resize while open (a page that scrolls to the trigger after opening it moves it):
+// `ref` goes on the trigger, `side` on the content. For a popover whose content loads after it opens:
+// Radix picks the side by the content's height at that moment, and the height being capped to the room
+// on that side, the grown content still fits there and keeps the side, however little room it has.
 function useRoomierSide(open: boolean) {
   const ref = React.useRef<HTMLButtonElement>(null)
   const [side, setSide] = React.useState<"top" | "bottom">("bottom")
   React.useLayoutEffect(() => {
-    if (!open || !ref.current) return
-    const r = ref.current.getBoundingClientRect()
-    setSide(r.top > window.innerHeight - r.bottom ? "top" : "bottom")
+    if (!open) return
+    const measure = () => {
+      if (!ref.current) return
+      const r = ref.current.getBoundingClientRect()
+      setSide(r.top > window.innerHeight - r.bottom ? "top" : "bottom")
+    }
+    measure()
+    document.addEventListener("scrollend", measure, true)
+    window.addEventListener("resize", measure)
+    return () => {
+      document.removeEventListener("scrollend", measure, true)
+      window.removeEventListener("resize", measure)
+    }
   }, [open])
   return { ref, side }
 }

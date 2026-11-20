@@ -276,7 +276,7 @@ function TargetPicker({ options, value, onChange, testId }: {
           {label}
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-[var(--radix-popover-trigger-width)] min-w-[min(20rem,var(--radix-popover-content-available-width))] p-0" align="end">
+      <PopoverContent className="flex w-[var(--radix-popover-trigger-width)] min-w-[min(20rem,var(--radix-popover-content-available-width))] flex-col p-0" align="end">
         <Command>
           <CommandInput placeholder={t("replace.targetSearchPlaceholder")} />
           <CommandList>

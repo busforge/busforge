@@ -46,7 +46,7 @@ export function GaCombobox({ options, value, onChange, testId, placeholder, defa
           {label}
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-[var(--radix-popover-trigger-width)] min-w-[min(18rem,var(--radix-popover-content-available-width))] p-0" align="end">
+      <PopoverContent className="flex w-[var(--radix-popover-trigger-width)] min-w-[min(18rem,var(--radix-popover-content-available-width))] flex-col p-0" align="end">
         <Command>
           <CommandInput placeholder={t("ga.searchPlaceholder")} />
           <CommandList>

@@ -76,7 +76,7 @@ export function SnapshotPanel({ projectId }: { projectId: string }) {
             </Button>
           </div>
 
-          <div className="mt-3 max-h-80 min-h-0 scroll-shadow-y space-y-1 overflow-y-auto">
+          <div className="mt-3 max-h-80 scroll-shadow-y space-y-1 overflow-y-auto">
             {snapshots.length === 0 ? (
               <div className="px-1 py-2 text-xs text-muted-foreground" data-testid="snapshot-empty">{t("snapshot.empty")}</div>
             ) : (

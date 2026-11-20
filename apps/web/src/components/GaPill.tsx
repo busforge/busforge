@@ -75,7 +75,7 @@ export function GaPill({ projectId, raw, name, address, fallback, columns, class
           </div>
         </div>
 
-        <div className="max-h-80 min-h-0 scroll-shadow-y overflow-y-auto p-3">
+        <div className="max-h-80 scroll-shadow-y overflow-y-auto p-3">
           {isLoading ? (
             <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin" /> {t("gaDevices.loading")}

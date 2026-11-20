@@ -61,7 +61,7 @@ function LinksPanel({ projectId, deviceId, number, label, gaRaws, options, level
           <span className="truncate" title={label}>{label}</span>
         </div>
       </div>
-      <div className="max-h-96 min-h-0 scroll-shadow-y space-y-3 overflow-y-auto p-3">
+      <div className="max-h-96 scroll-shadow-y space-y-3 overflow-y-auto p-3">
         {gaRaws.map((raw, i) => {
           const q = results[i];
           const o = byRaw.get(raw);
