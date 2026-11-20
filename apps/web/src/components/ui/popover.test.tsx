@@ -7,7 +7,6 @@ import { useRoomierSide } from "./popover.tsx";
 // window is 600 px high; a trigger at `top` is 20 px high.
 const happyDOM = (globalThis as unknown as { happyDOM: { setViewport(v: { height: number }): void } }).happyDOM;
 let top = 0;
-const initialHeight = window.innerHeight;
 
 function Trigger({ open }: { open: boolean }) {
   const { ref, side } = useRoomierSide(open);
@@ -22,20 +21,15 @@ describe("a popover whose content loads after it opens", () => {
     happyDOM.setViewport({ height: 600 });
     rect = spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(() => new DOMRect(0, top, 100, 20));
   });
-  afterEach(() => {
-    rect.mockRestore();
-    happyDOM.setViewport({ height: initialHeight });
-  });
+  afterEach(() => rect.mockRestore());
 
   test("opens on the side of its trigger with more room", () => {
     top = 450;
     const low = mount(<Trigger open />);
     expect(side(low.container)).toBe("top");
-    low.unmount();
     top = 100;
     const high = mount(<Trigger open />);
     expect(side(high.container)).toBe("bottom");
-    high.unmount();
   });
 
   test("takes the roomier side again when a scroll ends while it is open, also a scroll inside the page", () => {
@@ -49,8 +43,6 @@ describe("a popover whose content loads after it opens", () => {
     top = 100;
     scrollEnd(document);
     expect(side(view.container)).toBe("bottom");
-    pane.remove();
-    view.unmount();
   });
 
   test("takes the roomier side again when the window is resized while it is open", () => {
@@ -59,7 +51,6 @@ describe("a popover whose content loads after it opens", () => {
     expect(side(view.container)).toBe("bottom");
     act(() => happyDOM.setViewport({ height: 400 }));
     expect(side(view.container)).toBe("top");
-    view.unmount();
   });
 
   test("measures nothing while closed, and measures again when it opens", () => {
@@ -75,6 +66,5 @@ describe("a popover whose content loads after it opens", () => {
     expect(side(view.container)).toBe("top");
     view.rerender(<Trigger open />);
     expect(side(view.container)).toBe("bottom");
-    view.unmount();
   });
 });

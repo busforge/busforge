@@ -192,7 +192,6 @@ describe("a checkbox", () => {
       expect(box(view.container).indeterminate).toBe(true);
       view.rerender(<Checkbox checked={false} onChange={() => {}} />);
       expect(box(view.container).indeterminate).toBe(false);
-      view.unmount();
     });
 
     test("stays mixed and unticked after a click its owner does not take", () => {
@@ -202,7 +201,6 @@ describe("a checkbox", () => {
       expect(seen).toEqual([true]);
       expect(box(view.container).checked).toBe(false);
       expect(box(view.container).indeterminate).toBe(true);
-      view.unmount();
     });
 
     test("leaves the mixed state once its owner takes the click", () => {
@@ -214,7 +212,6 @@ describe("a checkbox", () => {
       act(() => box(view.container).click());
       expect(box(view.container).checked).toBe(true);
       expect(box(view.container).indeterminate).toBe(false);
-      view.unmount();
     });
   });
 });

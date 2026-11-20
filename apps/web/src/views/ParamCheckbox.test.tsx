@@ -33,7 +33,8 @@ describe("a number parameter ETS draws as a checkbox", () => {
     expect(input(render("1"))).not.toContain(' disabled=""');
   });
 
-  // The device page writes the value and keeps the project's value when the server refuses the write (409).
+  // A stand-in for the device page: it renders again while the write is under way and when it ends, and keeps the
+  // project's value when the server refuses the write (409).
   function Page({ initial, accept, writes }: { initial: string; accept: boolean; writes: string[] }) {
     const [value, setValue] = useState(initial);
     const [saving, setSaving] = useState(false);
@@ -50,9 +51,14 @@ describe("a number parameter ETS draws as a checkbox", () => {
         setSaving(false);
       }
     };
-    return <ParamCheckbox value={value} label="Read" disabled={saving} onChange={(v) => void write(v)} testId="param-1" />;
+    return (
+      <div data-saving={saving}>
+        <ParamCheckbox value={value} label="Read" onChange={(v) => void write(v)} testId="param-1" />
+      </div>
+    );
   }
   const box = (container: HTMLElement) => container.querySelector<HTMLInputElement>('[data-testid="param-1"]')!;
+  const saving = (container: HTMLElement) => container.querySelector<HTMLElement>("[data-saving]")!.dataset.saving;
 
   test("a value outside the type stays neither ticked nor unticked when the write of a click is refused", async () => {
     const writes: string[] = [];
@@ -60,16 +66,17 @@ describe("a number parameter ETS draws as a checkbox", () => {
     expect(box(view.container).indeterminate).toBe(true);
     await act(async () => box(view.container).click());
     expect(writes).toEqual(["1"]);
+    expect(saving(view.container)).toBe("false");
     expect(box(view.container).checked).toBe(false);
     expect(box(view.container).indeterminate).toBe(true);
     expect(view.container.querySelector('[data-testid="param-1-outside"]')).not.toBeNull();
-    view.unmount();
   });
 
   test("a click whose write is taken sets 1, then 0, and no longer names a value outside the type", async () => {
     const writes: string[] = [];
     const view = mount(<Page initial="2" accept writes={writes} />);
     await act(async () => box(view.container).click());
+    expect(saving(view.container)).toBe("false");
     expect(box(view.container).checked).toBe(true);
     expect(box(view.container).indeterminate).toBe(false);
     expect(view.container.querySelector('[data-testid="param-1-outside"]')).toBeNull();
@@ -77,6 +84,5 @@ describe("a number parameter ETS draws as a checkbox", () => {
     expect(box(view.container).checked).toBe(false);
     expect(box(view.container).indeterminate).toBe(false);
     expect(writes).toEqual(["1", "0"]);
-    view.unmount();
   });
 });

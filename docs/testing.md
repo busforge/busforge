@@ -196,11 +196,19 @@ network.
 
 ## Web tests in a DOM
 
-Every test in `apps/web` runs with a [happy-dom](https://github.com/capricorn86/happy-dom) document:
-`apps/web/bunfig.toml` preloads `src/test/dom.ts`, which makes a happy-dom window the test process's
-`window`, `document` and DOM classes. A test that only needs markup renders with
-`renderToStaticMarkup` as before. A test that needs effects, refs, clicks or events mounts the
-component with `mount` from `src/test/render.tsx` and drives it inside React's `act`:
+Every test in `apps/web` runs with a [happy-dom](https://github.com/capricorn86/happy-dom) document
+when `bun test` runs in `apps/web` (as `bun run check` does; from the repository root the preload is
+not found). `apps/web/bunfig.toml` preloads `src/test/dom.ts`, which makes a happy-dom window the
+test process's `window`, `document`, DOM classes, `localStorage` and `navigator`. Bun keeps its own
+`fetch`, `Request`, `Response`, `Headers`, `WebSocket`, `URL`, abort signals and timers, so the API
+client tests and the tests that wait run on the same globals as without a DOM. happy-dom's error
+capture is off, so an exception in an event listener fails the test instead of being logged. After
+each test the preload unmounts what the test mounted (also after a failed assertion), empties the
+body and the storage, and sets the window back to 1024 x 768.
+
+A test that only needs markup renders with `renderToStaticMarkup` as before. A test that needs
+effects, refs, clicks or events mounts the component with `mount` from `src/test/render.tsx` and
+drives it inside React's `act`:
 
 ```tsx
 import { act } from "react";
@@ -209,20 +217,21 @@ import { mount } from "@/test/render";
 const view = mount(<Checkbox checked={false} indeterminate onChange={() => {}} />);
 act(() => view.container.querySelector("input")!.click());
 expect(view.container.querySelector("input")!.indeterminate).toBe(true);
-view.unmount();
 ```
 
 The DOM covers the whole web suite rather than single files because `bun test` shares one module
 cache between test files, and libraries decide when they load whether a DOM exists (Radix's layout
 effect, React DOM's feature checks). A DOM installed by one file would come too late for whatever an
-earlier file loaded. The preload adds about 60 ms and 26 MiB to a web test run of about 0.35 s.
+earlier file loaded. The preload adds about 55 ms and 27 MiB of peak memory to a web test run of
+about 0.33 s.
 
-happy-dom computes **no layout**. Every size, position and scroll offset is 0 unless the test sets it,
-and stylesheets and Tailwind classes have no effect. A test can therefore check logic that reads a
-size (the side `useRoomierSide` picks, with the trigger's rectangle and the window height set by the
-test, `src/components/ui/popover.test.tsx`), but not the layout itself. Whether a popover stays inside
-the window, a list scrolls inside it, an edge shadow shows, or a row fits at 390 px is measured in a
-real browser, on an isolated instance, and stays out of the gate.
+happy-dom computes **no layout**. Every element's box, offset and scroll size is 0 unless the test sets
+it, and the window is 1024 x 768 until the test resizes it. The app's stylesheet is not loaded, so a
+Tailwind class styles nothing. A test can therefore check logic that reads a size (the side
+`useRoomierSide` picks, with the trigger's rectangle and the window height set by the test,
+`src/components/ui/popover.test.tsx`), but not the layout itself. Whether a popover stays inside the
+window, a list scrolls inside it, an edge shadow shows, or a row fits at 390 px is measured in a real
+browser, on an isolated instance, and stays out of the gate.
 
 ## When a change needs a hardware run
 
