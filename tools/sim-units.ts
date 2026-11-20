@@ -126,7 +126,9 @@ export const THEBEN_METEODATA_140S: SimUnitSpec = {
 // - it refuses PID 56, and takes the 15-octet APDUs ETS sends it ("assuming 15", the same logs);
 // - A_Restart: acknowledged on layer 2, without T_Ack, in every capture; a frame 42 ms after the restart request
 //   not acknowledged, one 1.04 s after it acknowledged (the assignment), between them none shown; what it
-//   answers a numbered frame on the connection the restart ended is not shown;
+//   answers a numbered frame on the connection the restart ended is not shown. The simulator counts from when
+//   its line took the restart, `link.ackMs` after the request: the gap ends 20 ms earlier on that clock, and the
+//   frame a tool sends once the restart is confirmed stays within the first window, as in every capture;
 // - in programming mode at the first full download (it answers ETS's A_IndividualAddress_Read), and out of it
 //   after a restart (no answer in the second, nor after the assignment's restart); its
 //   A_IndividualAddressSerialNumber_Response carries four zero octets after the serial (the second);
@@ -141,7 +143,7 @@ export const MDT_BE02001: SimUnitSpec = {
   interfaceIa: 0x1164,
   interfaceMaxApdu: 40,
   behaviour: {
-    restart: { acknowledged: true, transportAck: false, linkDownMs: 43, linkUpMs: 1043, deadConnection: "unknown" },
+    restart: { acknowledged: true, transportAck: false, linkDownMs: 43, linkUpMs: 1023, deadConnection: "unknown" },
     authorize: new Map([["ffffffff", 0]]),
     link: { ackMs: 20, nakMs: 70 },
     programmingMode: true,
@@ -161,7 +163,8 @@ export const MDT_BE02001: SimUnitSpec = {
 // - A_Restart: acknowledged on layer 2, without T_Ack; a frame 41 or 42 ms after the restart request not
 //   acknowledged, one 312 to 315 ms after it acknowledged, between them none shown; numbered frames on the
 //   connection the restart ended acknowledged and left without an answer (the probes of Busforge's full
-//   download and of its four flashes in collections/gira-m0008-busforge-flashes-2026-10-07);
+//   download and of its four flashes in collections/gira-m0008-busforge-flashes-2026-10-07). On the
+//   simulator's clock, from when its line took the restart, the gap ends 20 ms earlier, as for the MDT above;
 // - the free key grants access level 0;
 // - the interface confirmed a frame 18 to 40 ms after the request, negatively about 70 ms after it (Busforge's
 //   first probe), 75 ms on the MEAN WELL above (its two maxtemp downloads).
@@ -173,7 +176,7 @@ export const GIRA_TS3: SimUnitSpec = {
   interfaceIa: 0x11fe,
   interfaceMaxApdu: 210,
   behaviour: {
-    restart: { acknowledged: true, transportAck: false, linkDownMs: 43, linkUpMs: 312, deadConnection: "nothing" },
+    restart: { acknowledged: true, transportAck: false, linkDownMs: 43, linkUpMs: 292, deadConnection: "nothing" },
     authorize: new Map([["ffffffff", 0]]),
     link: { ackMs: 20, nakMs: 70 },
     maxApdu: 15,

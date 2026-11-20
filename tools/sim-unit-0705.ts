@@ -118,6 +118,9 @@ export class SimUnit0705 extends SimUnit {
   private readonly held = new Map<number, Sim0705Segment[]>();
   // The address each machine's task segment named since its unload.
   private readonly taskAt = new Map<number, number>();
+  // The machines unloaded in this session: their load completed needs a segment and a task segment declared
+  // since, as every capture declares them.
+  private readonly unloaded = new Set<number>();
 
   constructor(private readonly unit: Sim0705Model, assignedIa: number, opts: ConstructorParameters<typeof SimUnit>[2] = {}) {
     super(unit, assignedIa, opts);
@@ -145,6 +148,7 @@ export class SimUnit0705 extends SimUnit {
       case EVENT.UNLOAD:
         this.held.set(obj, []);
         this.taskAt.delete(obj);
+        this.unloaded.add(obj);
         if (this.property(obj, PID_TABLE_REFERENCE)?.elements) this.referenceKnown.set(obj, false);
         if (this.property(obj, PID_MCB)?.elements) this.mcbKnown.set(obj, false);
         // The unit reports its application stopped after the application is unloaded: the MDT BE-02001.02's
@@ -196,6 +200,7 @@ export class SimUnit0705 extends SimUnit {
 
   private complete(obj: number, what: string): boolean {
     const segs = this.held.get(obj)!;
+    if (this.unloaded.has(obj) && (segs.length === 0 || !this.taskAt.has(obj))) { this.refuse(`${what}: load completed after an unload without a segment and a task segment declared, which no capture shows`); return false; }
     const mcb = this.property(obj, PID_MCB);
     if (mcb?.elements) {
       const crc = this.unit.crcConvention;

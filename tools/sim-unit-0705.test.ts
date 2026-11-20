@@ -1,5 +1,6 @@
 import { test, expect, setDefaultTimeout } from "bun:test";
 import { readFileSync } from "node:fs";
+import { cemiLData, withSource } from "../packages/knx/src/index.ts";
 import { parseAppConfig } from "../packages/product/src/index.ts";
 import { captureText, catalogueXml, corpusPath } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
@@ -62,6 +63,14 @@ corpusDescribe("the simulated MDT BE-02001.02", () => {
     // restart is answered, the one after it not.
     expect(steps.filter((s) => s.unitCon === "NEG" || s.request === "0100").map((s) => `${s.request} ${s.unitCon} ${s.unit.join(",")}`)).toEqual(["0100 OK bc 0140", "81 NEG ", "0100 OK "]);
     expect(sim.refusals).toEqual([]);
+  });
+
+  test("refuses load completed after an unload without the segment and task segment every capture declares", async () => {
+    const sim = newSimUnit(MDT_BE02001, {}, { link: { ackMs: 0, nakMs: 0 } });
+    const send = (tpdu: string) => sim.sendCemi(withSource(cemiLData(0, sim.deviceIa, Buffer.from(tpdu, "hex")), MDT_BE02001.interfaceIa));
+    // T_Connect, then unload, load and load completed of object 1, each answer acknowledged.
+    for (const t of ["80", "43d70105100104000000000000000000", "c2", "47d70105100101000000000000000000", "c6", "4bd70105100102000000000000000000"]) await send(t);
+    expect(sim.refusals).toEqual(["sim-refused A_PropertyValue_Write 1/5 02000000000000000000: load completed after an unload without a segment and a task segment declared, which no capture shows"]);
   });
 
   test("Busforge's full download of the defaults into a fresh unit: refused where Busforge reads back a write into a segment that is loading, which no capture of the unit shows", async () => {
