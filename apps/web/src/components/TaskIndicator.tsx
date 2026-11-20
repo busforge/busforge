@@ -87,7 +87,7 @@ export function TaskIndicator({ projectId }: { projectId: string }) {
           {queued > 0 && <Badge tone="primary" size="sm" mono>+{queued}</Badge>}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" sideOffset={8} className="max-h-[var(--radix-popover-content-available-height)] w-96 overflow-y-auto p-3">
+      <PopoverContent align="end" sideOffset={8} className="w-96 p-3">
         <ConnectionPanel projectId={projectId} status={status} />
         <div className="mb-1.5 mt-3 border-t border-border/60 px-1 pt-2.5 text-xs font-semibold text-muted-foreground">{t("task.title")}</div>
         {tasks.length === 0 ? (

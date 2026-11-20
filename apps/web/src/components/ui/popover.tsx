@@ -16,10 +16,12 @@ function PopoverTrigger({
 }
 
 // Every popover keeps 16 px off each window edge: where its trigger sits near an edge it moves to keep
-// the gap, and it is never wider than the window less the gap on both sides (Radix's available width
-// is the window's less the collision padding). A min width wins over that cap in CSS, so a caller's
-// min width is min(its width, the available width). The height is the caller's: one whose content can
-// be taller than the window caps it with --radix-popover-content-available-height and scrolls inside.
+// the gap, and it is never wider than the window less the gap on both sides, nor taller than the room
+// left on its side (Radix's available width and height are the window's less the collision padding).
+// Content taller than that scrolls inside, with a shadow on each edge that has more behind it. A min
+// width wins over the width cap in CSS, so a caller's min width is min(its width, the available width).
+// A caller may set a lower max height. One with a fixed head over a long list makes the content a flex
+// column and the list `min-h-0` with its own scroll, so the list shrinks and the head stays in view.
 function PopoverContent({
   className,
   align = "center",
@@ -35,13 +37,28 @@ function PopoverContent({
         sideOffset={sideOffset}
         collisionPadding={collisionPadding}
         className={cn(
-          "z-50 w-72 max-w-(--radix-popover-content-available-width) origin-(--radix-popover-content-transform-origin) rounded-md border bg-popover p-4 text-popover-foreground shadow-md outline-hidden data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95",
+          "z-50 max-h-(--radix-popover-content-available-height) w-72 max-w-(--radix-popover-content-available-width) scroll-shadow-y overflow-y-auto origin-(--radix-popover-content-transform-origin) rounded-md border bg-popover p-4 text-popover-foreground shadow-md outline-hidden data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95",
           className
         )}
         {...props}
       />
     </PopoverPrimitive.Portal>
   )
+}
+
+// The side of its trigger with more room in the window, taken when `open` turns true: `ref` goes on the
+// trigger, `side` on the content. For a popover whose content loads after it opens: Radix picks the side
+// by the content's height at that moment, and the height being capped to the room on that side, the
+// grown content still fits there and keeps the side, however little room it has.
+function useRoomierSide(open: boolean) {
+  const ref = React.useRef<HTMLButtonElement>(null)
+  const [side, setSide] = React.useState<"top" | "bottom">("bottom")
+  React.useLayoutEffect(() => {
+    if (!open || !ref.current) return
+    const r = ref.current.getBoundingClientRect()
+    setSide(r.top > window.innerHeight - r.bottom ? "top" : "bottom")
+  }, [open])
+  return { ref, side }
 }
 
 function PopoverAnchor({
@@ -91,4 +108,5 @@ export {
   PopoverHeader,
   PopoverTitle,
   PopoverDescription,
+  useRoomierSide,
 }

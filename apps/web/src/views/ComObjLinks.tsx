@@ -6,7 +6,7 @@ import { ComObjRow } from "@/components/GaPill.tsx";
 import { GaLabel } from "@/components/GaLabel.tsx";
 import { Badge } from "@/components/ui/badge";
 import { IconButton } from "@/components/ui/icon-button";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Popover, PopoverContent, PopoverTrigger, useRoomierSide } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { errMsg } from "@/lib/apiError";
 import { linkedObjects } from "@/lib/linkedObjects.ts";
@@ -32,14 +32,15 @@ interface Props {
 // browser's back button returns to the open list.
 export function ComObjLinks(props: Props) {
   const { t } = useTranslation();
+  const placement = useRoomierSide(props.open);
   return (
     <Popover open={props.open} onOpenChange={props.onOpenChange}>
-      <PopoverTrigger asChild>
+      <PopoverTrigger asChild ref={placement.ref}>
         <IconButton variant="outline" size="icon-sm" className="size-7 shrink-0 text-muted-foreground" label={t("linkedObjects.open")} data-testid={`links-${props.number}`}>
           <Waypoints className="size-3.5" />
         </IconButton>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-[26rem] p-0" data-testid={`links-${props.number}-panel`}>
+      <PopoverContent align="end" side={placement.side} className="flex w-[26rem] flex-col p-0" data-testid={`links-${props.number}-panel`}>
         <LinksPanel {...props} />
       </PopoverContent>
     </Popover>
@@ -60,7 +61,7 @@ function LinksPanel({ projectId, deviceId, number, label, gaRaws, options, level
           <span className="truncate" title={label}>{label}</span>
         </div>
       </div>
-      <div className="max-h-96 space-y-3 overflow-y-auto p-3">
+      <div className="max-h-96 min-h-0 scroll-shadow-y space-y-3 overflow-y-auto p-3">
         {gaRaws.map((raw, i) => {
           const q = results[i];
           const o = byRaw.get(raw);

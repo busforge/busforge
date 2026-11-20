@@ -18,7 +18,7 @@ export function HeaderWarning({ label, title, items = [], detail, count = items.
           {count !== null && <span className="font-mono opacity-80">{count}</span>}
         </BadgeButton>
       </PopoverTrigger>
-      <PopoverContent align="start" className="max-h-[min(36rem,var(--radix-popover-content-available-height))] w-[28rem] scroll-shadow-y space-y-2 overflow-y-auto text-xs" data-testid={`${testId}-detail`}>
+      <PopoverContent align="start" className="max-h-[min(36rem,var(--radix-popover-content-available-height))] w-[28rem] space-y-2 text-xs" data-testid={`${testId}-detail`}>
         <p className="text-sm font-medium">{title}</p>
         {detail ?? (
           <ul className="list-disc space-y-1 pl-5 text-muted-foreground">

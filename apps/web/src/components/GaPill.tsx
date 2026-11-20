@@ -7,7 +7,7 @@ import { useGaDevices, useGaSenders } from "../queries.ts";
 import { GaLabel } from "@/components/GaLabel.tsx";
 import { DeviceLabel } from "@/components/DeviceLabel.tsx";
 import { DptBadge } from "@/components/DptBadge.tsx";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Popover, PopoverContent, PopoverTrigger, useRoomierSide } from "@/components/ui/popover";
 import { errMsg } from "@/lib/apiError";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -39,18 +39,19 @@ export function GaPill({ projectId, raw, name, address, fallback, columns, class
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const { data, isLoading, error } = useGaDevices(projectId, raw, open);
+  const placement = useRoomierSide(open);
 
   // Breadcrumb of the address's place in the group hierarchy (range path + name).
   const crumbs = [...(data?.path ?? []), data?.name || name].filter(Boolean) as string[];
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
+      <PopoverTrigger asChild ref={placement.ref}>
         <button type="button" className={cn("min-w-0 max-w-full cursor-pointer rounded-md text-left outline-none transition-[filter] hover:brightness-125 focus-visible:ring-[3px] focus-visible:ring-ring/50", className)}>
           <GaLabel name={name} address={address} fallback={fallback} columns={columns} className="min-w-0" />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-80 p-0">
+      <PopoverContent align="start" side={placement.side} className="flex w-80 flex-col p-0">
         <div className="border-b px-4 py-3">
           <div className="flex items-start gap-2">
             <div className="min-w-0 flex-1 truncate text-sm font-medium" title={crumbs.join(" / ")}>
@@ -74,7 +75,7 @@ export function GaPill({ projectId, raw, name, address, fallback, columns, class
           </div>
         </div>
 
-        <div className="max-h-80 overflow-y-auto p-3">
+        <div className="max-h-80 min-h-0 scroll-shadow-y overflow-y-auto p-3">
           {isLoading ? (
             <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin" /> {t("gaDevices.loading")}
