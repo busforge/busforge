@@ -14,7 +14,8 @@ const VIEWPORT = { width: 1024, height: 768 };
 
 // Bun's own network globals stay, with the bodies, streams, URL and abort signals they take, and its timers,
 // so a test of the API client and a test that waits run on what they ran on before. A body from happy-dom's
-// FormData or Blob would not serialise in Bun's Request.
+// FormData or Blob would not serialise in Bun's Request; happy-dom's FileReader and DataTransfer in turn refuse
+// Bun's Blob and File with a TypeError.
 const keep = new Set<PropertyKey>([
   "constructor", "undefined", "NaN", "Infinity", "global", "globalThis",
   "fetch", "Request", "Response", "Headers", "WebSocket", "FormData", "Blob", "File", "ReadableStream", "WritableStream",
