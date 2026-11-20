@@ -168,7 +168,7 @@ export class SimUnit0705 extends SimUnit {
   private additional(obj: number, value: Buffer, what: string): boolean {
     const segs = this.held.get(obj)!;
     if (value[1] === SEGMENT.DATA || value[1] === SEGMENT.STACK) {
-      if (value.length < 9 || value.subarray(9).some((b) => b !== 0)) { this.refuse(`${what}: a segment allocation of another form`); return false; }
+      if (value.length !== 10 || value[9] !== 0) { this.refuse(`${what}: a segment allocation of another form`); return false; }
       const s: Sim0705Segment = { at: value.readUInt16BE(2), size: value.readUInt16BE(4), access: value[6], memoryType: value[7], flags: value[8] };
       if (s.size === 0 || s.at + s.size > MEMORY_END) { this.refuse(`${what}: ${s.size} octets at 0x${s.at.toString(16)}`); return false; }
       if (s.memoryType !== MEMORY_TYPE.RAM && s.memoryType !== MEMORY_TYPE.EEPROM) { this.refuse(`${what}: memory type ${s.memoryType}`); return false; }

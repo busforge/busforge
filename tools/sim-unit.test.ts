@@ -152,7 +152,7 @@ describe("a simulated unit", () => {
     clock = 39;
     expect(await sim.sendCemi(withSource(cemiLData(0, DEV, Buffer.from("81", "hex")), TOOL)).then(() => "OK", () => "NEG")).toBe("NEG");
     clock = 999;
-    expect(await send("80")).toEqual([]);
+    expect(await sim.sendCemi(withSource(cemiLData(0, DEV, Buffer.from("80", "hex")), TOOL)).then(() => "OK", () => "NEG")).toBe("NEG");
     clock = 1000;
     expect(await send("4700")).toEqual([]);
     broadcasts.length = 0;

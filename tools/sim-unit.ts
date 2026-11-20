@@ -60,7 +60,8 @@ export interface SimRestart {
   acknowledged: boolean | "layer2";
   // For this long after the restart no frame to it is acknowledged on layer 2.
   linkDownMs: number;
-  // From linkDownMs until this long after the restart its captures show no frame to it: one then is refused.
+  // From linkDownMs until this long after the restart its captures show no frame to it: one then is refused
+  // and not confirmed as taken.
   // Absent: it acknowledges every frame from linkDownMs on.
   linkUpMs?: number;
   // What the unit answers a numbered frame on the connection the restart ended, until that partner connects
@@ -190,9 +191,10 @@ export class SimUnit implements KnxTransport {
       this.note(`restarting (${since} ms): ${tpdu.toString("hex")} not acknowledged`);
       return nak("the unit is restarting and acknowledged nothing");
     }
+    // Neither confirmation is shown then; the frame is not confirmed as taken.
     if (since !== null && this.model.restart.linkUpMs !== undefined && since < this.model.restart.linkUpMs) {
       this.refuse(`${tpdu.toString("hex")} from ${numToIa(src)} ${since} ms after the restart: whether the unit takes a frame then is not shown`);
-      return;
+      throw new Error("whether the unit takes a frame this soon after its restart is not shown");
     }
     await sleep(this.model.link.ackMs);
     this.restartedAt = null;
