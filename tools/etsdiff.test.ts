@@ -9,7 +9,7 @@ import { corpusDescribe } from "./corpus-test.ts";
 import { giraM0008Configuration } from "./gira-m0008-config.ts";
 import { tempDir } from "./test-temp.ts";
 import { CollectedUnit, asDevice, type Collection } from "../packages/product/test/collected-unit.ts";
-import { parseCapture, parseTunnelFrame, memoryImage, etsAllocations, reportedTableReferences, compareSegments, parseGaAnyForm, inferBase, captureDevice } from "./etsdiff.ts";
+import { configurationOfImage, parseCapture, parseTunnelFrame, memoryImage, etsAllocations, reportedTableReferences, compareSegments, parseGaAnyForm, inferBase, captureDevice } from "./etsdiff.ts";
 
 // Timeouts measured with the corpus (docs/testing.md, "Timeouts of heavy tests"): tests here take up to 3.6 s with the
 // file alone (load 5-27) and up to 3.6 s with every workspace's tests in parallel (load 5-8). A full check on a busy
@@ -1147,26 +1147,7 @@ corpusDescribe("ABB US/U 4.2 (M-0002_A-A001-13-63C2) full download on a loaded u
     const defaults = memoryImage(parseCapture(captureText("abb-usu-4.2-ets-fulldownload-defaults.log"), ia).writes);
     const held = heldBeforeWrite(LINKS, ia, new Map([...template, ...defaults]));
     const after = new Map([...held, ...wire]);
-    const model = toAppModel(cfg, { includeUnions: true });
-    // The value of every parameter active under the configuration, until the active set settles.
-    const configOf = (mem: Map<number, number>) => {
-      const decoded = new Map<string, string>();
-      for (const sg of cfg.absoluteSegments) {
-        if (sg.data.length === 0) continue;
-        const img = Buffer.from(sg.data);
-        for (let i = 0; i < sg.size; i++) { const v = mem.get(sg.address + i); if (v !== undefined) img[i] = v; }
-        for (const [r, v] of decodeAbsoluteImage(model, sg.id, img)) decoded.set(r, v);
-      }
-      let params = new Map<string, string>();
-      for (let i = 0; ; i++) {
-        const active = new Set(buildDeviceConfig(cfg, params).imageValues.keys());
-        const next = new Map([...decoded].filter(([r]) => active.has(r)));
-        if (next.size === params.size && [...next].every(([r, v]) => params.get(r) === v)) return params;
-        if (i > 16) throw new Error("the configuration read from the capture never settled");
-        params = next;
-      }
-    };
-    const params = configOf(after), baseParams = configOf(held);
+    const params = configurationOfImage(cfg, after), baseParams = configurationOfImage(cfg, held);
     expect([...params].filter(([r, v]) => baseParams.get(r) !== v)).toEqual([["M-0002_A-A001-13-63C2_UP-341_R-559", "450"], ["M-0002_A-A001-13-63C2_UP-342_R-558", "450"]]);
     const bytes = (id: string | undefined) => {
       const sg = cfg.absoluteSegments.find((x) => x.id === id)!;

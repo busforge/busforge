@@ -396,6 +396,9 @@ export class SimUnit implements KnxTransport {
     // A restart ends a programming mode the unit's captures show.
     if (this.programmingMode !== undefined) this.programmingMode = false;
     this.deadPartner = partner;
+    // The restart windows start here: on the wall clock `link.ackMs` (about 20 ms) after the tool's request, from
+    // which the specs give them, so they run that much later live than in the captures; on a replay's clock, which
+    // stands still during the confirmation, at the request.
     this.restartedAt = this.now();
     this.restartedNow = true;
     // Its device control after the restart: the collections taken after a download read it 0.

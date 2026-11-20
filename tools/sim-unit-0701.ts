@@ -82,6 +82,8 @@ export function simUnit0701Model(collection: CollectPackage, appXml: string, beh
   if (collection.mask !== "MV-0701") refuse(`only the memory-mapped System 7 mask MV-0701 is modelled here, not ${collection.mask}`);
   const { mask, objects, descriptions, records } = collectedUnit(collection, appXml, refuse);
   if (collection.maxApdu !== null && collection.maxApdu !== mm.maxApdu) refuse(`the unit reports a maximum APDU of ${collection.maxApdu}, the spec ${mm.maxApdu}`);
+  if (behaviour.maxApdu !== undefined && behaviour.maxApdu !== mm.maxApdu) refuse(`the behaviour names a maximum APDU of ${behaviour.maxApdu}, the memory-mapped spec ${mm.maxApdu}`);
+  if (behaviour.readsWhileLoading !== undefined) refuse("a memory-mapped unit's reads are its memory's rule, not the behaviour's");
   const programId = objects.get(APPLICATION_OBJECT)?.get(PID_PROGRAM_ID)?.elements?.[0];
   if (!programId) refuse("the collection did not read the program id (object 3 PID 13)");
 
@@ -110,7 +112,7 @@ export function simUnit0701Model(collection: CollectPackage, appXml: string, beh
     if (lsm === undefined || at === undefined || size === undefined || type === undefined) refuse(`the application declares an absolute segment without its machine, address, size or memory type`);
     (appSegments.get(lsm!) ?? appSegments.set(lsm!, []).get(lsm!)!).push({ at: at!, size: size!, memType: type! });
   }
-  return { ia: iaToNum(collection.ia), mask, maxApdu: mm.maxApdu, objects, descriptions, memory, states, appSegments, programId: Buffer.from(programId!), memoryMapped: mm, ...behaviour };
+  return { ...behaviour, ia: iaToNum(collection.ia), mask, maxApdu: mm.maxApdu, objects, descriptions, memory, states, appSegments, programId: Buffer.from(programId!), memoryMapped: mm };
 }
 
 interface Machine {

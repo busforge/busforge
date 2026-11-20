@@ -1,5 +1,6 @@
 import { test, expect, setDefaultTimeout } from "bun:test";
 import { readFileSync } from "node:fs";
+import { gunzipSync } from "node:zlib";
 import { cemiLData, withSource } from "../packages/knx/src/index.ts";
 import { parseAppConfig } from "../packages/product/src/index.ts";
 import { captureText, catalogueXml, corpusPath } from "./corpus.ts";
@@ -9,7 +10,7 @@ import { busforgeIntoSim } from "./ets-sweep.ts";
 import { giraM0008Configuration } from "./gira-m0008-config.ts";
 import type { SimUnit } from "./sim-unit.ts";
 import { SimUnit0705 } from "./sim-unit-0705.ts";
-import { replayCapture, replayDifferences, type ReplayStep } from "./sim-unit-replay.ts";
+import { confirmationDifferences, framePairs, replayCapture, replayDifferences, type ReplayStep } from "./sim-unit-replay.ts";
 import { GIRA_TS3, MDT_BE02001, newSimUnit, type SimUnitSpec } from "./sim-units.ts";
 
 // Busforge's downloads below run on the wall clock (the units' line timing, the restart windows): about 25 s
@@ -73,10 +74,33 @@ corpusDescribe("the simulated MDT BE-02001.02", () => {
     expect(sim.refusals).toEqual(["sim-refused A_PropertyValue_Write 1/5 02000000000000000000: load completed after an unload without a segment and a task segment declared, which no capture shows"]);
   });
 
-  test("Busforge's full download of the defaults into a fresh unit: refused where Busforge reads back a write into a segment that is loading, which no capture of the unit shows", async () => {
+  // Busforge's two full downloads of its smoke runs (the proxy names the tool ETS): its read-backs while a segment
+  // loads, its probes after each restart, its verification. No collection was taken right before them; the
+  // unit's starts from the one taken four days earlier, and the unit then held another configuration (a link,
+  // two parameters). Busforge's backup reads before its first load-state event read that configuration, and only
+  // they differ. The capture holds no confirmation of some T_Acks and T_Disconnects.
+  test("answers every request of Busforge's two captured full downloads as the unit did but for the reads of the configuration it held before them", async () => {
+    for (const run of ["api", "ui"]) {
+      let clock = 0;
+      const sim = newSimUnit(MDT_BE02001, { now: () => clock }, { link: { ackMs: 0, nakMs: 0 } });
+      const text = gunzipSync(readFileSync(corpusPath(`internal/house-compat/hc13/runs-2026-10-08/bench-proxy/mdt-be02001-${run}-r2.log.gz`))).toString("utf8");
+      const steps = await replay(sim, MDT_BE02001, text, "ETS", (ms) => { clock = ms; });
+      const firstEvent = steps.findIndex((s) => /^..d7..05/.test(s.request));
+      const isMemoryRead = (tpdu: string) => { const t = Buffer.from(tpdu, "hex"); return ((((t[0] & 0x03) << 8) | t[1]) & 0x3f0) === 0x200; };
+      // The unconfirmed requests are T_Acks and T_Disconnects; every other confirmation is the unit's.
+      expect([run, steps.filter((s) => s.unitCon === undefined && !/^(81|[c-f][26ae])$/.test(s.request))]).toEqual([run, []]);
+      expect([run, confirmationDifferences(steps.filter((s) => s.unitCon !== undefined))]).toEqual([run, []]);
+      // Every differing frame answers a memory read before the first load-state event.
+      const differing = framePairs(steps).filter((f) => f.unit !== f.sim);
+      expect([run, differing.length > 0, differing.filter((f) => f.unitStep !== f.simStep || f.unitStep >= firstEvent || !isMemoryRead(steps[f.unitStep].request))]).toEqual([run, true, []]);
+      expect([run, sim.refusals]).toEqual([run, []]);
+    }
+  });
+
+  test("takes Busforge's full download of the defaults into a fresh unit, verified", async () => {
     const run = await busforgeIntoSim(MDT_BE02001, { ia: "1.1.56", params: [], links: [] });
-    expect([run.result, run.refused, run.error]).toEqual([null, null, "no reliable response (device not answering)"]);
-    expect(run.refusals).toEqual(["sim-refused A_Memory_Read 1 at 0x4000: into the segment of object 1 while it is in load state 2, where no capture shows the unit answer a read of these octets"]);
+    expect([run.refused, run.error, run.refusals]).toEqual([null, null, []]);
+    expect(run.result).toMatchObject({ kind: "flashed", verified: true });
   });
 });
 

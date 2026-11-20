@@ -17,6 +17,9 @@ export interface ReplayStep {
   simCon: "OK" | "NEG";
 }
 
+// KNXnet/IP tunnelling: the interface confirms a request within 3 s or not at all.
+const CONFIRMATION_TIMEOUT_MS = 3_000;
+
 // The cEMI frame of a capture line's KNXnet/IP frame.
 const cemiOfLine = (line: string) => { const f = Buffer.from(line.match(/\| ([0-9a-fA-F]+)\s*$/)![1], "hex"); return f.subarray(f[0] + f[f[0]]); };
 // A broadcast (the address type in the second control field) is marked as one.
@@ -28,7 +31,8 @@ const frameOf = (cemi: Buffer, tpdu: Buffer) => `${cemi[2 + cemi[1]].toString(16
 // it (`ETS`, `Busforge`); a request from 0.0.0 goes from `interfaceIa`, as the bridge sends it. `clock` is set to
 // each request's time before it is sent. With `broadcasts`, the tool's broadcasts (the address reads) and the
 // unit's are replayed with the rest; group telegrams never are. A confirmation goes to the oldest request with its
-// TPDU; a request whose confirmation the capture lacks keeps none. `from` (ms since the epoch) starts the replay
+// TPDU sent within the interface's confirmation timeout before it; a request whose confirmation the capture lacks
+// keeps none. `from` (ms since the epoch) starts the replay
 // later in the capture.
 export async function replayCapture(sim: SimUnit, text: string, opts: { tool: string; device: number; interfaceIa: number; clock: (ms: number) => void; from?: number; broadcasts?: boolean }): Promise<ReplayStep[]> {
   const steps: (ReplayStep & { cemi: Buffer })[] = [];
@@ -44,7 +48,7 @@ export async function replayCapture(sim: SimUnit, text: string, opts: { tool: st
       steps.push(s);
       pending.push(s);
     } else if (!fr.fromTool && fr.code === 0x2e && toUnit) {
-      const k = pending.findIndex((p) => p.request === fr.tpdu.toString("hex"));
+      const k = pending.findIndex((p) => p.request === fr.tpdu.toString("hex") && at - p.at <= CONFIRMATION_TIMEOUT_MS);
       if (k >= 0) pending.splice(k, 1)[0].unitCon = fr.line.includes("CON-NEG") ? "NEG" : "OK";
     } else if (!fr.fromTool && fr.code === 0x29 && fr.src === opts.device) {
       const last = steps.at(-1);

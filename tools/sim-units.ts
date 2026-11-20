@@ -114,24 +114,29 @@ export const THEBEN_METEODATA_140S: SimUnitSpec = {
   memoryMapped: { maxApdu: 15, additional: ["absolute-segment", "task-segment", "task-control-1"], peiType: 0x00, tableReferenceFollows: true, addressTableCountOnDeclaration: 0x01, clearedByRestart: new Map([[0x4800, 0x00]]) },
 };
 
-// The MDT BE-02001.02 binary input (M-0083_A-00B6-32-9642, MV-0705), from a collection taken after every capture
-// below (internal/captures/cap-1004/mdt-plain.json): its starting state is that later collection's, not the
+// The MDT BE-02001.02 binary input (M-0083_A-00B6-32-9642, MV-0705), from a collection taken after ETS's full
+// downloads below (internal/captures/cap-1004/mdt-plain.json): its starting state is that later collection's, not the
 // unit's before a capture, for which no collection exists. ETS's full downloads read no memory and nothing the
 // downloads between them change (identity, PID 56, the device control after the unloads), so their replays do
 // not depend on it. Its behaviour from ETS's three full downloads
-// (captures/mdt-be02001-ets-fulldownload-{defaults,linked,b7}.log) and Busforge's address assignment with its
-// restart (internal/captures/restart-end-2026-11-19/a2-mdt-ia-66to56.log), through a KNX-USB stick behind
+// (captures/mdt-be02001-ets-fulldownload-{defaults,linked,b7}.log), Busforge's address assignment with its
+// restart (internal/captures/restart-end-2026-11-19/a2-mdt-ia-66to56.log) and Busforge's two full downloads of
+// its smoke runs (internal/house-compat/hc13/runs-2026-10-08/bench-proxy/mdt-be02001-{api,ui}-r2.log.gz, the
+// proxy naming the tool ETS), all through a KNX-USB stick behind
 // Busforge's bridge at 1.1.100, which announces a maximum APDU of 40 (ETS6.log of the unit's partial downloads,
 // "InterfaceFeatures"):
 // - it refuses PID 56, and takes the 15-octet APDUs ETS sends it ("assuming 15", the same logs);
-// - A_Restart: acknowledged on layer 2, without T_Ack, in every capture; a frame 42 ms after the restart request
-//   not acknowledged, one 1.04 s after it acknowledged (the assignment), between them none shown; what it
-//   answers a numbered frame on the connection the restart ended is not shown. The windows are the captures',
-//   from the request; on the wall clock the simulator counts from when its line took the restart, `link.ackMs`
-//   later, as for the ABB US/U 4.2 above;
+// - A_Restart: acknowledged on layer 2, without T_Ack, in every capture; frames up to 496 ms after the restart
+//   request not acknowledged, frames from 593 ms on acknowledged, between them none shown; numbered frames on the
+//   connection the restart ended acknowledged and left without an answer (the probes of Busforge's full
+//   downloads). The windows are the captures', from the request; on the
+//   wall clock the simulator counts from when its line took the restart, `link.ackMs` later, as for the ABB
+//   US/U 4.2 above;
 // - in programming mode at the first full download (it answers ETS's A_IndividualAddress_Read), and out of it
 //   after a restart (no answer in the second, nor after the assignment's restart); its
 //   A_IndividualAddressSerialNumber_Response carries four zero octets after the serial (the second);
+// - it answers a memory read into a segment that is loading with the bytes written there since its load
+//   (Busforge's 230 read-backs in its full downloads);
 // - the free key grants access level 0;
 // - the interface confirmed a frame 20 to 35 ms after the request, negatively about 70 ms after it (the
 //   assignment).
@@ -143,9 +148,10 @@ export const MDT_BE02001: SimUnitSpec = {
   interfaceIa: 0x1164,
   interfaceMaxApdu: 40,
   behaviour: {
-    restart: { acknowledged: true, transportAck: false, linkDownMs: 43, linkUpMs: 1043, deadConnection: "unknown" },
+    restart: { acknowledged: true, transportAck: false, linkDownMs: 497, linkUpMs: 593, deadConnection: "nothing" },
     authorize: new Map([["ffffffff", 0]]),
     link: { ackMs: 20, nakMs: 70 },
+    readsWhileLoading: true,
     programmingMode: true,
     serialNumberResponseTail: Buffer.alloc(4),
     maxApdu: 15,

@@ -321,9 +321,11 @@ export const CORPUS_FILES: readonly string[] = [
   // The collections tools/sim-units.ts builds its MV-0705 units from.
   "internal/captures/cap-1004/mdt-plain.json",
   "collections/gira-m0008-backup-2026-10-05/1.1.1-gira-m0008-collect.json",
-  // Busforge's address assignment of the MDT BE-02001.02 and its full download of the Gira Tastsensor 3, which
-  // tools/sim-unit-0705.test.ts replays.
+  // Busforge's address assignment and full downloads of the MDT BE-02001.02 and its full download of the Gira
+  // Tastsensor 3, which tools/sim-unit-0705.test.ts replays.
   "internal/captures/restart-end-2026-11-19/a2-mdt-ia-66to56.log",
+  "internal/house-compat/hc13/runs-2026-10-08/bench-proxy/mdt-be02001-api-r2.log.gz",
+  "internal/house-compat/hc13/runs-2026-10-08/bench-proxy/mdt-be02001-ui-r2.log.gz",
   "collections/gira-m0008-busforge-fulldownload-2026-10-07/gira-m0008-busforge-fulldownload-20261007-004213.log",
   "collections/gira-m0008-busforge-fulldownload-2026-10-07/1.1.1-gira-m0008-collect-vor-busforge-20261007-004213.json",
   "dca-theben-dali-e64/backup-store.dat",
