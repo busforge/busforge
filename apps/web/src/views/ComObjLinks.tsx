@@ -39,7 +39,7 @@ export function ComObjLinks(props: Props) {
           <Waypoints className="size-3.5" />
         </IconButton>
       </PopoverTrigger>
-      <PopoverContent align="end" collisionPadding={16} className="w-[min(26rem,calc(100vw-2rem))] p-0" data-testid={`links-${props.number}-panel`}>
+      <PopoverContent align="end" className="w-[26rem] p-0" data-testid={`links-${props.number}-panel`}>
         <LinksPanel {...props} />
       </PopoverContent>
     </Popover>

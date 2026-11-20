@@ -20,7 +20,28 @@ const SUMMARY_TONE: Record<Summary, "ok" | "info" | "danger" | "warning" | "neut
 };
 const SUMMARY_ICON = { tested: ShieldCheck, partial: ShieldCheck, derived: ShieldQuestion, otherVersion: ShieldQuestion, failed: ShieldAlert, untested: ShieldQuestion, unsupported: ShieldOff } as const;
 
-const mark = (s: string | undefined) => (s === "pass" ? "✓" : s === "fail" ? "✗" : s === "conflict" ? "!" : s === "not-applicable" ? "n/a" : "–");
+// A cell's state as its mark and the words it stands for, the ones the popover uses for a state; a cell
+// not assessed or not shown at all is untested.
+const MARKS: Record<string, readonly [mark: string, words: string]> = {
+  pass: ["✓", "compat.state.tested"],
+  fail: ["✗", "compat.state.failed"],
+  conflict: ["!", "compat.state.conflict"],
+  "not-applicable": ["n/a", "compat.notApplicable"],
+};
+const UNTESTED = ["–", "compat.state.eligible"] as const;
+const markOf = (s: string | undefined) => (s !== undefined && MARKS[s]) || UNTESTED;
+
+// The marks of one axis through the API and the UI; a screen reader hears them in words.
+function MarkPair({ api, ui }: { api: string | undefined; ui: string | undefined }) {
+  const { t } = useTranslation();
+  const [a, u] = [markOf(api), markOf(ui)];
+  return (
+    <td className="px-1 py-1 text-center font-mono whitespace-nowrap">
+      <span aria-hidden>{a[0]} / {u[0]}</span>
+      <span className="sr-only">{t("compat.marks", { api: t(a[1]), ui: t(u[1]) })}</span>
+    </td>
+  );
+}
 
 // What was shown on hardware for this device's Product, per operation, from the evidence the
 // server ships. A summary badge next to the device name; the detail opens on click.
@@ -39,7 +60,7 @@ export function CompatibilityBadge({ view, manufacturer }: { view: Pick<DeviceCo
           <Icon /> {t("compat.badge", { summary: t(`compat.summary.${summary}`) })}
         </BadgeButton>
       </PopoverTrigger>
-      <PopoverContent align="start" collisionPadding={16} className="w-[28rem] max-w-[calc(100vw-2rem)] space-y-3 overflow-x-auto text-xs" data-testid="compatibility-detail">
+      <PopoverContent align="start" className="max-h-(--radix-popover-content-available-height) w-[28rem] scroll-shadow-y space-y-3 overflow-auto text-xs" data-testid="compatibility-detail">
         <p className="text-sm font-medium">{t("compat.title")}</p>
         {summary === "tested" && <p data-testid="compatibility-tested-detail">{t("compat.testedDetail")}</p>}
         <CompatibilityTable c={c} />
@@ -107,8 +128,8 @@ export function CompatibilityTable({ c }: { c: NonNullable<DeviceConfigView["com
               <tr key={op} className="border-t border-border/60 align-top">
                 <td className="py-1 pr-2">{t(`untested.op.${op}`)}<div className="@min-[25rem]:hidden"><OpState v={v} /></div></td>
                 <td className="hidden py-1 pr-2 @min-[25rem]:table-cell"><OpState v={v} /></td>
-                <td className="px-1 py-1 text-center font-mono whitespace-nowrap" aria-label={`API ${v.cells.api?.transfer.state ?? "none"}, UI ${v.cells.ui?.transfer.state ?? "none"}`}>{mark(v.cells.api?.transfer.state)} / {mark(v.cells.ui?.transfer.state)}</td>
-                <td className="px-1 py-1 text-center font-mono whitespace-nowrap" aria-label={`API ${v.cells.api?.persistence.state ?? "none"}, UI ${v.cells.ui?.persistence.state ?? "none"}`}>{mark(v.cells.api?.persistence.state)} / {mark(v.cells.ui?.persistence.state)}</td>
+                <MarkPair api={v.cells.api?.transfer.state} ui={v.cells.ui?.transfer.state} />
+                <MarkPair api={v.cells.api?.persistence.state} ui={v.cells.ui?.persistence.state} />
               </tr>
             );
           })}

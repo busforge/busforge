@@ -530,6 +530,7 @@ const en = {
     summary: { tested: "Transfer tested", partial: "Partly tested", derived: "Tested on a sibling", otherVersion: "Tested with another version", failed: "Failed on hardware", untested: "Untested", unsupported: "Not supported" },
     state: { tested: "tested", failed: "failed", conflict: "contradictory", derived: "derived", otherVersion: "other version tested", eligible: "untested", refused: "not supported" },
     colOperation: "Operation", colState: "State", colTransfer: "Bytes held", colPersistence: "Survives restart", colVia: "(API / UI)",
+    marks: "API: {{api}}, UI: {{ui}}", notApplicable: "not applicable",
     derivedFrom: "same hardware and application tested as <v>{{product}}</v>",
     sameApp: "same application tested on <v>{{product}}</v> (other hardware)",
     otherVersion: "tested with <v>{{app}}</v> of this application, on <v>{{product}}</v>",
@@ -537,7 +538,7 @@ const en = {
     firmwareOf: "firmware\u00a0{{fw}} (of <v>{{product}}</v>)",
     firmwareOfVersion: "firmware\u00a0{{fw}} (with <v>{{app}}</v>)",
     toolFailed: "a tool check (read-back tool or ETS comparison) failed on this product",
-    explain: "Tested means the device held exactly the bytes Busforge wrote, through the API and the UI, on this product. It does not prove the bytes match ETS or that the device acts on them. Operations Busforge does not support for this device are left out of the summary; n/a: not applicable.",
+    explain: "Tested means the device held exactly the bytes Busforge wrote, through the API and the UI, on this product. It does not prove the bytes match ETS or that the device acts on them. Operations Busforge does not support for this device are left out of the summary; n/a: $t(compat.notApplicable).",
     acknowledged: "You acknowledged in this project that untested operations of this product may be written.",
   },
   // The notice before writing a Product not tested on hardware (compatibility matrix).
