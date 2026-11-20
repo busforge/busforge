@@ -7,7 +7,8 @@ FROM oven/bun:1.3 AS source
 WORKDIR /app
 COPY . .
 # A context that bypasses .dockerignore (a tar on stdin is sent as-is) would carry tests and
-# fixtures; refuse it rather than build an image that ships them.
+# fixtures; refuse it rather than build an image that ships them. `bun run check` reads this rule
+# (tools/image-context.ts) and applies it to the context without Docker; it refuses a shape it cannot read.
 RUN leaked=$(find . \( -name test -o -name fixtures -o -name docs -o -name scratchpad -o -name .git \
       -o -name '*.test.ts' -o -name '*.test.tsx' -o -name '*.gz' -o -name '*.dat' -o -name '*.log' \
       -o -name '*.bin' -o -name '*.knxproj' -o -name '*.knxprod' -o -name '*.knxkeys' \

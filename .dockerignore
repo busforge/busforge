@@ -31,9 +31,10 @@
 !apps/web/public
 !apps/web/src
 
-# Unit tests live next to the source in some workspaces; they are not runtime payload.
+# Unit tests and the web tests' DOM setup live next to the source; they are not runtime payload.
 **/*.test.ts
 **/*.test.tsx
+apps/web/src/test
 **/node_modules
 **/dist
 **/*.tsbuildinfo
