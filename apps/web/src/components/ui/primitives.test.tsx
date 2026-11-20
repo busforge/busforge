@@ -1,5 +1,7 @@
 import { test, expect, describe } from "bun:test";
+import { act, useState } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { mount } from "@/test/render";
 import { Button } from "./button.tsx";
 import { IconButton } from "./icon-button.tsx";
 import { Badge, BadgeButton } from "./badge.tsx";
@@ -177,6 +179,40 @@ describe("a checkbox", () => {
       if (/type=["']checkbox["']/.test(await Bun.file(file).text())) offenders.push(file);
     }
     expect(offenders).toEqual([]);
+  });
+
+  describe("in the page", () => {
+    const box = (container: HTMLElement) => container.querySelector("input")!;
+
+    test("is mixed after mounting and after every render, also when something cleared it in between", () => {
+      const view = mount(<Checkbox checked={false} indeterminate onChange={() => {}} />);
+      expect(box(view.container).indeterminate).toBe(true);
+      box(view.container).indeterminate = false;
+      view.rerender(<Checkbox checked={false} indeterminate onChange={() => {}} />);
+      expect(box(view.container).indeterminate).toBe(true);
+      view.rerender(<Checkbox checked={false} onChange={() => {}} />);
+      expect(box(view.container).indeterminate).toBe(false);
+    });
+
+    test("stays mixed and unticked after a click its owner does not take", () => {
+      const seen: boolean[] = [];
+      const view = mount(<Checkbox checked={false} indeterminate onChange={(e) => seen.push(e.target.checked)} />);
+      act(() => box(view.container).click());
+      expect(seen).toEqual([true]);
+      expect(box(view.container).checked).toBe(false);
+      expect(box(view.container).indeterminate).toBe(true);
+    });
+
+    test("leaves the mixed state once its owner takes the click", () => {
+      function Owner() {
+        const [state, setState] = useState<boolean | "mixed">("mixed");
+        return <Checkbox checked={state === true} indeterminate={state === "mixed"} onChange={(e) => setState(e.target.checked)} />;
+      }
+      const view = mount(<Owner />);
+      act(() => box(view.container).click());
+      expect(box(view.container).checked).toBe(true);
+      expect(box(view.container).indeterminate).toBe(false);
+    });
   });
 });
 
