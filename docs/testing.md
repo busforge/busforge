@@ -578,6 +578,37 @@ port over KNXnet/IP TCP; the simulator's own lines go to
 of [evidence-contract.md](evidence-contract.md) by itself: it shows what a tool sends given the
 simulator's answers, and the answers are a real unit's only as far as the table above says.
 
+### A unit's identity from its product alone
+
+A catalogue row of the sweep has no collection of a real unit. `tools/sim-unit-product.ts` takes from the
+application program alone what it says of the unit's identity, each value with its source: the mask
+(descriptor 0), the manufacturer the application is registered under (object 0 PID 12), and what each
+`LdCtrlCompareProp` expects, bit by bit where the compare masks. An application whose identity rests on a
+step that is not modelled (`LdCtrlCompareMem`, a `choose` in its load procedure) is refused. Nothing else
+is taken.
+
+When ETS finds the unit's identity unfit for the product, it refuses the download and logs in
+`ETS6.log` what it required:
+
+```text
+Required data mismatch at SystemProperty(0/78)[$0000]: <device> instead of <required>
+```
+
+`rerunIdentity(unit, log)` reads those lines (Latin-1, as ETS writes them) from a failed row's log and
+returns the identity to run the row again with, each required value put in with its line as its
+source, or the reason not to: no such line (the failure is not the identity), a line it cannot read, a
+value the product or another line contradicts, octets before the required ones nothing gives, a line
+whose device value is not what the unit answers (the log of another run), or a value the unit already
+answers (a rerun would fail the same).
+
+`tools/sim-unit-product.test.ts` holds the product unit of each of the ten simulated units against
+the unit built from its collection and lists every difference. The manufacturer is right on all ten,
+also where the application was made for another manufacturer; a compare's value is right but for its
+length where the unit answers fewer octets than the compare declares, and the bits a mask leaves out.
+Everything else a unit answers ETS before a download (its serial, order info, version, a hardware type
+no compare names, device control, maximum APDU, load states, table references, descriptions) the
+product does not give: a simulated unit of a catalogue row has no source for it.
+
 ### A sweep row: ETS and Busforge into the same simulated unit
 
 A sweep row holds ETS's download of one application at one configuration into a simulated unit, and
