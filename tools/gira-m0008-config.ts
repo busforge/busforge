@@ -6,7 +6,7 @@ import { decodeAbsoluteImage, decodeGroupTablesMv0705, toAppModel, buildDeviceCo
 import { captureText } from "./corpus.ts";
 import { captureDevice, memoryImage, parseCapture } from "./etsdiff.ts";
 
-export const GIRA_M0008_REVERT = "gira-m0008-ets-partial-revert.log";
+const GIRA_M0008_REVERT = "gira-m0008-ets-partial-revert.log";
 
 // `revert`: the bytes the revert wrote, by address.
 export function giraM0008Configuration(cfg: AppConfig): { ia: number; revert: Map<number, number>; links: { comObjNum: number; gaRaws: number[] }[]; params: Map<string, string>; addr: Buffer; assoc: Buffer } {

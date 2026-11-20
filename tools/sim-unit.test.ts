@@ -175,7 +175,8 @@ function* framesFrom(text: string, tool: string, from = 0) {
 }
 // The L_Data frames of a capture between the tool and the unit at `device`: the tool's requests to it and its
 // broadcasts (the address reads) with the interface's confirmation, the unit's frames to the interface and its
-// broadcasts with their first control field. Group telegrams are left out: the simulator sends none.
+// broadcasts with their first control field; a confirmation goes to the oldest request with its TPDU, and a
+// request whose confirmation the capture lacks keeps none. Group telegrams are left out: the simulator sends none.
 function frames(text: string, tool: string, device = DEVICE, from = 0): Frame[] {
   const out: Frame[] = [];
   const pending: Frame[] = [];
@@ -183,7 +184,7 @@ function frames(text: string, tool: string, device = DEVICE, from = 0): Frame[] 
     if (fr.group && fr.dst !== 0) continue;
     const toUnit = fr.group || fr.dst === device;
     if (fr.fromTool && fr.code === 0x11 && toUnit) { const f: Frame = { dir: ">>", tpdu: fr.tpdu.toString("hex") }; out.push(f); pending.push(f); }
-    else if (!fr.fromTool && fr.code === 0x2e && toUnit) { const f = pending.shift(); if (f) f.con = fr.line.includes("CON-NEG") ? "NEG" : "OK"; }
+    else if (!fr.fromTool && fr.code === 0x2e && toUnit) { const k = pending.findIndex((f) => f.tpdu === fr.tpdu.toString("hex")); if (k >= 0) pending.splice(k, 1)[0].con = fr.line.includes("CON-NEG") ? "NEG" : "OK"; }
     else if (!fr.fromTool && fr.code === 0x29 && fr.src === device) { const c = cemiOf(fr.line); out.push({ dir: "<<", tpdu: fr.tpdu.toString("hex"), ctrl: c[2 + c[1]], to: fr.dst, ...(fr.group ? { broadcast: true } : {}) }); }
   }
   return out;
@@ -364,11 +365,31 @@ corpusDescribe("the simulated Gira Tastsensor 3 Komfort", () => {
     expect(sim.refusals).toEqual([]);
   });
 
-  test("Busforge's full download of the captured configuration into a fresh unit: refused where Busforge reads back a write into a segment that is loading, which no capture of the unit shows", async () => {
+  // Busforge's full download into the unit, its read-backs while a segment loads, its restart probes and its
+  // verification by the memory-control blocks the unit computed; from the collection taken right before it,
+  // whose association segment holds four octets past the table that ETS's downloads after the first collection
+  // changed and Busforge does not write (the segment's CRC covers them).
+  test("answers every request of Busforge's captured full download as the unit did, and confirms each on the line as its interface did", async () => {
+    let clock = 0;
+    const dir = "collections/gira-m0008-busforge-fulldownload-2026-10-07";
+    const sim = newSimUnit({ ...GIRA_TS3, collection: `${dir}/1.1.1-gira-m0008-collect-vor-busforge-20261007-004213.json` }, { now: () => clock }, { link: { ackMs: 0, nakMs: 0 } });
+    const text = readFileSync(corpusPath(`${dir}/gira-m0008-busforge-fulldownload-20261007-004213.log`), "utf8");
+    const r = await replay(sim, text, { tool: "Busforge", device: sim.deviceIa, interfaceIa: GIRA_TS3.interfaceIa, clock: (at) => { clock = at; } });
+    expect(r.unitFrames.length).toBeGreaterThan(0);
+    // The capture holds no confirmation of the T_Disconnect that ends Busforge's first session, nor of the last
+    // T_Ack and T_Disconnect, after which it ends.
+    const unconfirmed = r.unit.filter((f) => f.dir === ">>" && f.con === undefined).map((f) => f.tpdu);
+    expect(unconfirmed).toEqual(["81", "ce", "81"]);
+    expect(r.simCons.filter((_, i) => r.unitCons[i] !== undefined)).toEqual(r.unitCons.filter((c) => c !== undefined));
+    expect(r.simFrames).toEqual(r.unitFrames);
+    expect(sim.refusals).toEqual([]);
+  });
+
+  test("takes Busforge's full download of the configuration ETS downloaded into a fresh unit, verified", async () => {
     const { links, params } = giraM0008Configuration(parseAppConfig(catalogueXml(GIRA_TS3.catalogue)));
     const run = await busforgeIntoSim(GIRA_TS3, { ia: "1.1.1", params: [...params], links });
-    expect([run.result, run.refused, run.error]).toEqual([null, null, "no reliable response (device not answering)"]);
-    expect(run.refusals).toEqual(["sim-refused A_Memory_Read 1 at 0x4000: into the segment of object 1 while it is in load state 2, where no capture shows the unit answer a read"]);
+    expect([run.refused, run.error, run.refusals]).toEqual([null, null, []]);
+    expect(run.result).toMatchObject({ kind: "flashed", verified: true });
   });
 });
 

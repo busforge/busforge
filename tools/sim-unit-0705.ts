@@ -12,7 +12,8 @@
 //   unload forgets the machine's segments and keeps their bytes (a later allocation at the same address
 //   holds them, which the CRCs of the memory-control blocks after a download show);
 // - a write goes into an EEPROM segment of a machine that is loading, a read into the segments of a machine
-//   that is loaded, and into the load states at 0xB6EA to 0xB6ED (46825 + machine), which hold PID 5;
+//   that is loaded (or loading, where the unit's captures show it answer then), and into the load states at
+//   0xB6EA to 0xB6ED (46825 + machine), which hold PID 5;
 // - the memory-control block (PID 27) of an object whose unit answers it: one element per segment with
 //   flags 0x80, in the order allocated, `<size:4> 00 <access> <CRC:2>`, computed at load completed;
 // - the table reference (PID 7) after a download: the address of the machine's first segment, where its task
@@ -20,23 +21,16 @@
 // - the unload of the application (object 3) sets the device control's application-stopped bit, as on System B
 //   the unload of object 4;
 // - no program id is written as a property: it comes with the task segment, into object 3 PID 13.
-import { crc16Ccitt, crc16CcittFalse, iaToNum, APCI } from "../packages/knx/src/index.ts";
+import { crc16CcittFalse, crc16Ccitt, iaToNum, APCI, MM_STATUS_BASE } from "../packages/knx/src/index.ts";
 import { flattenSteps, parseLoadProcedures, type CollectPackage } from "../packages/product/src/index.ts";
-import { SimUnit, type Reply, type SimUnitModel } from "./sim-unit.ts";
-import { collectedUnit, unitMaxApdu, type UnitBehaviour } from "./sim-unit-model.ts";
+import { SimUnit, mcbCrc, APPLICATION_STOPPED, EVENT, MEMORY_END, PID_DEVICE_CONTROL, PID_LOAD_STATE, PID_MCB, PID_PROGRAM_ID, PID_TABLE_REFERENCE, STATE, type Reply, type SimUnitModel } from "./sim-unit.ts";
+import { collectedUnit, refuse, unitMaxApdu, type Target, type UnitBehaviour } from "./sim-unit-model.ts";
 
-const PID_LOAD_STATE = 5, PID_TABLE_REFERENCE = 7, PID_PROGRAM_ID = 13, PID_DEVICE_CONTROL = 14, PID_MCB = 27;
-const STATE = { UNLOADED: 0, LOADED: 1, LOADING: 2 } as const;
-const EVENT = { LOAD: 1, LOAD_COMPLETED: 2, ADDITIONAL: 3, UNLOAD: 4 } as const;
 const SEGMENT = { DATA: 0x00, STACK: 0x01, TASK: 0x02 } as const;
-const VERIFY_MODE = 0x04, APPLICATION_STOPPED = 0x01;
 const LSMS = [1, 2, 3], APPLICATION_LSM = 3;
 const MEMORY_TYPE = { RAM: 2, EEPROM: 3 } as const;
 // The segment flag of a segment the unit reports in its memory-control block.
 const MCB_FLAG = 0x80;
-// The load states of the machines, one octet each from 46825 + machine.
-const LOAD_STATE_AREA = 46825;
-const MEMORY_END = 0x10000;
 
 export interface Sim0705Segment { at: number; size: number; access: number; memoryType: number; flags: number }
 
@@ -45,14 +39,12 @@ export interface Sim0705Model extends SimUnitModel {
   memory: { bytes: Buffer; known: Uint8Array };
   // Per load-state machine the segments the unit holds, in the order allocated.
   held: Map<number, Sim0705Segment[]>;
+  readsWhileLoading: boolean;
 }
-
-const refuse = (why: string): never => { throw new Error(`no simulated unit: ${why}`); };
-const crcOf = (conv: "ccitt" | "ccitt-false", b: Buffer) => conv === "ccitt" ? crc16Ccitt(b) : crc16CcittFalse(b);
-type Target = { address?: number };
 
 export function sim0705Model(collection: CollectPackage, appXml: string, behaviour: UnitBehaviour): Sim0705Model {
   const { records, mask, objects, descriptions } = collectedUnit(collection, appXml, "MV-0705");
+  const steps = flattenSteps(parseLoadProcedures(appXml), "full");
 
   const bytes = Buffer.alloc(MEMORY_END), known = new Uint8Array(MEMORY_END);
   for (const r of records) {
@@ -66,14 +58,14 @@ export function sim0705Model(collection: CollectPackage, appXml: string, behavio
   }
   const state = (lsm: number) => objects.get(lsm)?.get(PID_LOAD_STATE)?.elements?.[0]?.[0];
   for (const lsm of [...LSMS, 4]) {
-    const at = LOAD_STATE_AREA + lsm;
+    const at = MM_STATUS_BASE + lsm;
     if (known[at] && bytes[at] !== state(lsm)) refuse(`the unit reports load state ${state(lsm)} on object ${lsm} PID 5 and ${bytes[at]} at 0x${at.toString(16)}`);
     known[at] = 0;
   }
 
   // Where the unit holds its segments: those its application declares, or where it reports its own in the
   // memory-control block (a table ETS allocated at its own size), there.
-  const declared = (lsm: number): Sim0705Segment[] => flattenSteps(parseLoadProcedures(appXml), "full")
+  const declared = (lsm: number): Sim0705Segment[] => steps
     .filter((s) => s.verb === "LdCtrlAbsSegment" && Number(s.attrs.LsmIdx) === lsm)
     .map((s) => ({ at: Number(s.attrs.Address), size: Number(s.attrs.Size), access: Number(s.attrs.Access), memoryType: Number(s.attrs.MemType), flags: Number(s.attrs.SegFlags ?? 0) }));
   const held = new Map<number, Sim0705Segment[]>();
@@ -102,13 +94,13 @@ export function sim0705Model(collection: CollectPackage, appXml: string, behavio
         crc = conv;
       });
     }
-    if (ref && ref.readUInt16BE(0) !== segs[0]?.at) refuse(`object ${lsm} references 0x${ref.toString("hex")}, its first segment is at 0x${segs[0]?.at.toString(16)}`);
+    if (ref && (segs.length === 0 || ref.readUInt16BE(0) !== segs[0].at)) refuse(`object ${lsm} references 0x${ref.toString("hex")}, ${segs.length ? `its first segment is at 0x${segs[0].at.toString(16)}` : "it holds no segment"}`);
     held.set(lsm, segs);
   }
   return {
     ...behaviour,
     ia: iaToNum(collection.ia), mask, maxApdu: unitMaxApdu(collection, behaviour), objects, descriptions,
-    segments: new Map(), mcbControl: null, crc, memory: { bytes, known }, held,
+    segments: new Map(), mcbControl: null, crc, memory: { bytes, known }, held, readsWhileLoading: behaviour.readsWhileLoading ?? false,
   };
 }
 
@@ -203,15 +195,17 @@ export class SimUnit0705 extends SimUnit {
       if (unknown) { this.refuse(`${what}: the segment at 0x${unknown.at.toString(16)} holds octets no write set and the unit was not shown to hold, so its CRC is not known`); return false; }
       mcb.elements = flagged.map((s) => {
         const e = Buffer.alloc(8);
-        e.writeUInt32BE(s.size, 0); e[4] = 0; e[5] = s.access; e.writeUInt16BE(crcOf(crc, this.bytes.subarray(s.at, s.at + s.size)), 6);
+        e.writeUInt32BE(s.size, 0); e[4] = 0; e[5] = s.access; e.writeUInt16BE(mcbCrc(crc, this.bytes.subarray(s.at, s.at + s.size)), 6);
         return e;
       });
       mcb.countKnown = true;
       this.mcbKnown.set(obj, true);
     }
     const ref = this.property(obj, PID_TABLE_REFERENCE);
-    if (ref?.elements && this.referenceKnown.get(obj) === false && segs[0] && this.taskAt.get(obj) === segs[0].at) {
-      ref.elements = [Buffer.from([segs[0].at >> 8, segs[0].at & 0xff])];
+    const width = ref?.elements?.[0]?.length;
+    if (width && this.referenceKnown.get(obj) === false && segs[0] && this.taskAt.get(obj) === segs[0].at) {
+      const at = Buffer.alloc(width); at.writeUIntBE(segs[0].at, 0, width);
+      ref!.elements = [at];
       this.referenceKnown.set(obj, true);
     }
     return true;
@@ -227,15 +221,16 @@ export class SimUnit0705 extends SimUnit {
     const what = `A_Memory_Read ${n} at 0x${addr.toString(16)}`;
     if (n === 0) { this.refuse(`${what}: a read of no octet`); return; }
     const head = Buffer.from([addr >> 8, addr & 0xff]);
-    if (addr > LOAD_STATE_AREA && addr + n <= LOAD_STATE_AREA + 1 + 4) {
-      const states = Array.from({ length: n }, (_, i) => this.property(addr - LOAD_STATE_AREA + i, PID_LOAD_STATE)?.elements?.[0]?.[0]);
+    if (addr > MM_STATUS_BASE && addr + n <= MM_STATUS_BASE + 1 + 4) {
+      const states = Array.from({ length: n }, (_, i) => this.property(addr - MM_STATUS_BASE + i, PID_LOAD_STATE)?.elements?.[0]?.[0]);
       if (states.some((x) => x === undefined)) { this.refuse(`${what}: the load state of a machine the unit was not read on`); return; }
       reply(APCI.MEMORY_RESPONSE, Buffer.concat([head, Buffer.from(states as number[])]), n);
       return;
     }
     const hit = this.heldAt(addr, n);
     const data = this.memory(addr, n);
-    if (hit && this.state(hit[0]) !== STATE.LOADED) { this.refuse(`${what}: into the segment of object ${hit[0]} while it is in load state ${this.state(hit[0])}, where no capture shows the unit answer a read`); return; }
+    const state = hit ? this.state(hit[0]) : null;
+    if (hit && state !== STATE.LOADED && !(state === STATE.LOADING && this.unit.readsWhileLoading)) { this.refuse(`${what}: into the segment of object ${hit[0]} while it is in load state ${this.state(hit[0])}, where no capture shows the unit answer a read`); return; }
     if (!hit || !data) { this.refuse(`${what}: outside the memory the unit is known to hold in a loaded segment`); return; }
     reply(APCI.MEMORY_RESPONSE, Buffer.concat([head, data]), n);
   }
@@ -249,7 +244,6 @@ export class SimUnit0705 extends SimUnit {
     if (hit[1].memoryType !== MEMORY_TYPE.EEPROM) { this.refuse(`${what}: into a RAM segment, which no capture shows written`); return; }
     data.copy(this.bytes, addr);
     this.known.fill(1, addr, addr + n);
-    // In verify mode the unit answers each write with the bytes it then holds there.
-    if (this.property(0, PID_DEVICE_CONTROL)!.elements![0][0] & VERIFY_MODE) reply(APCI.MEMORY_RESPONSE, Buffer.concat([Buffer.from([addr >> 8, addr & 0xff]), this.bytes.subarray(addr, addr + n)]), n);
+    this.verifyEcho(addr, this.bytes.subarray(addr, addr + n), reply);
   }
 }

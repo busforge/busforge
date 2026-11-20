@@ -80,15 +80,18 @@ export const MDT_BE02001: SimUnitSpec = {
 
 // The Gira Tastsensor 3 Komfort 3fach (M-0008_A-10D7-11-2783-O000A, MV-0705), from the collection before ETS's
 // full download (collections/gira-m0008-backup-2026-10-05/1.1.1-gira-m0008-collect.json). Its behaviour from
-// that download (captures/gira-m0008-ets-fulldownload.log, with its ETS6.log), through a KNXnet/IP interface at
-// 1.1.254 announcing a maximum APDU of 210:
+// that download (captures/gira-m0008-ets-fulldownload.log, with its ETS6.log) and Busforge's full download
+// (collections/gira-m0008-busforge-fulldownload-2026-10-07/gira-m0008-busforge-fulldownload-20261007-004213.log),
+// both through a KNXnet/IP interface at 1.1.254 announcing a maximum APDU of 210:
 // - it refuses PID 56, and takes the 15-octet APDUs ETS sends it ("assuming 15");
-// - A_Restart: acknowledged on layer 2, without T_Ack; ETS's T_Disconnect 2.97 s after the restart request
-//   acknowledged, no frame before it shown; what it answers a numbered frame on the connection the restart ended
-//   is not shown;
+// - it answers a memory read into a segment that is loading with the bytes written there (Busforge's
+//   read-backs);
+// - A_Restart: acknowledged on layer 2, without T_Ack; a frame 41 ms after the restart request not acknowledged,
+//   one 312 ms after it acknowledged, between them none shown; numbered frames on the connection the restart
+//   ended acknowledged and left without an answer (Busforge's probes);
 // - the free key grants access level 0;
-// - the interface confirmed a frame 18 to 40 ms after the request; none negatively, so the time of a negative
-//   confirmation is the same interface's on the MEAN WELL above (its two maxtemp downloads, 75 ms).
+// - the interface confirmed a frame 18 to 40 ms after the request, negatively about 70 ms after it (Busforge's
+//   first probe), 75 ms on the MEAN WELL above (its two maxtemp downloads).
 export const GIRA_TS3: SimUnitSpec = {
   id: "gira-ts3",
   name: "Gira Tastsensor 3 Komfort 3fach",
@@ -97,10 +100,11 @@ export const GIRA_TS3: SimUnitSpec = {
   interfaceIa: 0x11fe,
   interfaceMaxApdu: 210,
   behaviour: {
-    restart: { acknowledged: "layer2", linkDownMs: 0, linkUpMs: 2967, deadConnection: "unknown" },
+    restart: { acknowledged: "layer2", linkDownMs: 42, linkUpMs: 312, deadConnection: "nothing" },
     authorize: new Map([["ffffffff", 0]]),
     link: { ackMs: 20, nakMs: 75 },
     maxApdu: 15,
+    readsWhileLoading: true,
   },
 };
 

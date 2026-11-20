@@ -8,16 +8,17 @@ import { parseAppConfig, parseLoadProcedures, declaredPropChecks, type CollectPa
 import type { SimProperty, SimUnitModel } from "./sim-unit.ts";
 
 // What the collection cannot show and the unit's captures do: how it takes a restart and an authorization, how
-// long its interface took to confirm a frame, the address services it answers, and its maximum APDU where it
-// refuses PID 56 and its captures show what it takes.
-export type UnitBehaviour = Pick<SimUnitModel, "restart" | "authorize" | "link" | "programmingMode" | "serialNumberResponseTail"> & { maxApdu?: number };
+// long its interface took to confirm a frame, the address services it answers, its maximum APDU where it
+// refuses PID 56 and its captures show what it takes, and (a System 7 unit) whether it answers a memory read
+// into a segment that is loading.
+export type UnitBehaviour = Pick<SimUnitModel, "restart" | "authorize" | "link" | "programmingMode" | "serialNumberResponseTail"> & { maxApdu?: number; readsWhileLoading?: boolean };
 
 // The fields of a record's target the model reads.
-type Target = { object?: number; pid?: number; start?: number; count?: number; address?: number; type?: number };
+export type Target = { object?: number; pid?: number; start?: number; count?: number; address?: number; type?: number };
 const LSMS = [1, 2, 3, 4];
 const PID_DEVICE_CONTROL = 14;
 
-const refuse = (why: string): never => { throw new Error(`no simulated unit: ${why}`); };
+export const refuse = (why: string): never => { throw new Error(`no simulated unit: ${why}`); };
 
 // What every simulated unit takes from its collection: the descriptor, the properties element by element and
 // their descriptions, checked against the application for the mask modelled (its mask, its declared property

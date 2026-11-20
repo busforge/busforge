@@ -32,14 +32,15 @@ import {
   type KnxTransport, type PropertyDescription,
 } from "../packages/knx/src/index.ts";
 
-const PID_LOAD_STATE = 5, PID_TABLE_REFERENCE = 7, PID_SERIAL = 11, PID_PROGRAM_ID = 13, PID_DEVICE_CONTROL = 14, PID_MCB = 27;
-const STATE = { UNLOADED: 0, LOADED: 1, LOADING: 2 } as const;
-const EVENT = { LOAD: 1, LOAD_COMPLETED: 2, ADDITIONAL: 3, UNLOAD: 4 } as const;
-const VERIFY_MODE = 0x04, APPLICATION_STOPPED = 0x01;
+export const PID_LOAD_STATE = 5, PID_TABLE_REFERENCE = 7, PID_SERIAL = 11, PID_PROGRAM_ID = 13, PID_DEVICE_CONTROL = 14, PID_MCB = 27;
+export const STATE = { UNLOADED: 0, LOADED: 1, LOADING: 2 } as const;
+export const EVENT = { LOAD: 1, LOAD_COMPLETED: 2, ADDITIONAL: 3, UNLOAD: 4 } as const;
+export const APPLICATION_STOPPED = 0x01;
+const VERIFY_MODE = 0x04;
 const APPLICATION_LSM = 4;
 const PRIORITY_BITS = 0x0c, STANDARD_FRAME = 0x80, STANDARD_TPDU_MAX = 16, GROUP_ADDRESS = 0x80;
 // The reach of the memory services the unit answers (A_Memory_Read/Write, a 16-bit address).
-const MEMORY_END = 0x10000;
+export const MEMORY_END = 0x10000;
 // KNX 3/3/4: a transport connection that carries nothing for 6 s is closed by the device.
 const CONNECTION_TIMEOUT_MS = 6_000;
 // KNX 3/3/4: a numbered frame is acknowledged within 3 s.
@@ -127,6 +128,8 @@ export class SimUnit implements KnxTransport {
   private deadPartner: number | null = null;
   // Whether the frame on the line is a restart the unit carried out.
   private restartedNow = false;
+  // When the frame on the line reached the unit: a restart's time, from which its captures measure the frames after it.
+  private arrivedAt = 0;
   // The priority bits of the request on the line, which the unit's frames in answer carry.
   private priority = 0;
   private line: Promise<void> = Promise.resolve();
@@ -177,6 +180,7 @@ export class SimUnit implements KnxTransport {
 
   private async onLine(cemi: Buffer): Promise<void> {
     const nak = async (why: string): Promise<never> => { await sleep(this.model.link.nakMs); throw new Error(why); };
+    this.arrivedAt = this.now();
     if (this.stopped) throw new Error("the simulated unit is disconnected");
     if (cemi[0] !== CEMI.LDATA_REQ) { this.refuse(`cEMI message code 0x${cemi[0].toString(16)}`); return; }
     const { src, dst, tpdu, isGroup } = parseCemiLData(cemi);
@@ -330,7 +334,7 @@ export class SimUnit implements KnxTransport {
     if (apci === APCI.INDIVIDUAL_ADDRESS_READ) {
       if (this.programmingMode === undefined) { this.refuse(`${what}: whether the unit is in programming mode is not known`); return; }
       if (!this.programmingMode) { this.note(`${what} outside programming mode: no answer`); return; }
-      this.emit(0, Buffer.from([0x01, APCI.INDIVIDUAL_ADDRESS_RESPONSE & 0xff]), true);
+      this.emit(0, Buffer.from([APCI.INDIVIDUAL_ADDRESS_RESPONSE >> 8, APCI.INDIVIDUAL_ADDRESS_RESPONSE & 0xff]), true);
       return;
     }
     const serial = this.property(0, PID_SERIAL)?.elements?.[0];
@@ -387,9 +391,9 @@ export class SimUnit implements KnxTransport {
   private restart(partner: number): void {
     this.close();
     // A restart ends programming mode.
-    this.programmingMode = false;
+    if (this.programmingMode !== undefined) this.programmingMode = false;
     this.deadPartner = partner;
-    this.restartedAt = this.now();
+    this.restartedAt = this.arrivedAt;
     this.restartedNow = true;
     // Its device control after the restart: the collections taken after a download read it 0.
     this.property(0, PID_DEVICE_CONTROL)!.elements = [Buffer.from([0])];
@@ -478,7 +482,7 @@ export class SimUnit implements KnxTransport {
         if (mcb && mcb.elements !== null) {
           if (!this.model.crc || !this.model.mcbControl) { this.refuse(`${what}: how the unit computes the memory-control block of object ${obj} is not known`); return null; }
           if (!seg || seg.known.some((k) => k === 0)) { this.refuse(`${what}: the segment of object ${obj} holds octets no write set and the unit was not shown to hold, so its CRC is not known`); return null; }
-          const crc = this.model.crc === "ccitt" ? crc16Ccitt(seg.bytes) : crc16CcittFalse(seg.bytes);
+          const crc = mcbCrc(this.model.crc, seg.bytes);
           const size = Buffer.alloc(4); size.writeUInt32BE(seg.size);
           mcb.elements = [Buffer.concat([size, this.model.mcbControl, Buffer.from([crc >> 8, crc & 0xff])])];
           this.mcbKnown.set(obj, true);
@@ -535,11 +539,17 @@ export class SimUnit implements KnxTransport {
     const off = addr - hit[1].at;
     data.copy(hit[1].bytes, off);
     hit[1].known.fill(1, off, off + n);
-    const control = this.property(0, PID_DEVICE_CONTROL)!.elements![0][0];
-    // In verify mode the unit answers each write with the bytes it then holds there.
-    if (control & VERIFY_MODE) reply(APCI.MEMORY_RESPONSE, Buffer.concat([Buffer.from([addr >> 8, addr & 0xff]), hit[1].bytes.subarray(off, off + n)]), n);
+    this.verifyEcho(addr, hit[1].bytes.subarray(off, off + n), reply);
+  }
+
+  // In verify mode the unit answers each write with the bytes it then holds there.
+  protected verifyEcho(addr: number, held: Buffer, reply: Reply): void {
+    if (this.property(0, PID_DEVICE_CONTROL)!.elements![0][0] & VERIFY_MODE) reply(APCI.MEMORY_RESPONSE, Buffer.concat([Buffer.from([addr >> 8, addr & 0xff]), held]), held.length);
   }
 }
+
+// The CRC of a memory-control-block element over the segment's bytes.
+export const mcbCrc = (conv: "ccitt" | "ccitt-false", b: Buffer): number => conv === "ccitt" ? crc16Ccitt(b) : crc16CcittFalse(b);
 
 // The broadcasts the unit takes: A_IndividualAddress_Read and A_IndividualAddressSerialNumber_Read.
 function isAddressBroadcast(tpdu: Buffer): boolean {
