@@ -496,13 +496,20 @@ into it over KNXnet/IP as into a real unit, and `tools/knxproxy.ts` in front log
 capture. It is built from a read-only collection of a real unit of the product (identity, every
 property and description the unit answered, where it placed its segments and what they held) and
 checked against the product's application program (mask, declared property compares); what only the
-unit's captures show (how it takes a restart, the authorization key it accepts, how long its line
-took to confirm a frame) is written next to it in `tools/sim-units.ts`, with the captures named.
+unit's captures show (how it takes a restart and when its line is back, the authorization key it accepts,
+how long its line took to confirm a frame, its device control after an unload, what it changes in its own
+memory after a restart) is written next to it in `tools/sim-units.ts`, with the captures named. Where the
+only collection of a unit was taken in a later state than its captures found it in, the answers the
+captures show different are taken from them, each named.
 
-It models the transport layer of one connection, the descriptor, authorization, property and memory
-services, the load-state machines with their table references and the memory-control-block CRC, verify mode and
-the restart. Everything else it refuses: a line in its log and in `refusals`, and no answer, so the
-tool's own timeout ends a run where an invented byte would have let it go on.
+It models the transport layer of one connection, the interface's APDU limit, the descriptor,
+authorization, property, function-property and memory services (`A_Memory_Write` and
+`A_MemoryExtended_Write`), the load-state machines with their table references and the memory-control
+blocks (one per segment, or the blocks written while loading, each with its CRC), verify mode, the basic and
+the confirmed restart. Everything else it refuses: a line in its log and in `refusals`, and no answer, so
+the tool's own timeout ends a run where an invented byte would have let it go on. A behaviour the unit's
+captures do not show is refused the same way: a frame in a time after a restart no capture shows the line
+in, a frame on the connection a restart ended, the device control after an unload.
 
 The units it simulates, and how each is held to its captures (`tools/sim-unit.test.ts`, with the
 private corpus):
@@ -510,13 +517,20 @@ private corpus):
 | Unit | ETS's downloads replayed | Busforge's full download |
 |---|---|---|
 | MEAN WELL KNX-40E-1280D power supply | Every request of ETS's six captured downloads (a link, a parameter, the revert, the full download, a parameter that shows an object, on and off), in order into one unit: every frame the simulator answers (its control field too, where the interface reports the frame type) and every confirmation on the line equal the unit's | Through `KnxIpServer` and the proxy, with the server's download task: taken without a refusal and verified; the bracket from the first unload to the restart equals the capture of the same download into the unit in every frame both ways (each TPDU without its sequence number, the unit's control field, every confirmation on the line) but for the order of the segments, which this build writes parameter segment first as ETS's capture of the unit shows and the captured run wrote last (so the run in this order is the simulator's, not the unit's); the session before it and the verification after it differ by Busforge's own changes since that capture, which the test names |
+| Theben DALI-Gateway KNX plus | Every request of ETS's six captured downloads (the full download it ran as a table download, a parameter, a link, the revert, the unload, the full download after it), in order into one unit: every frame the simulator answers (its priority; this interface reports no frame type) and every confirmation on the line equal the unit's | Taken and verified, with the memory-control blocks its read-back proves; its restart proof sends frames in times after the restart no capture shows the line in and on the connection the restart ended, which the simulator refuses |
+| OpenKNX RaumController | Every request of ETS's four captured downloads (the full download, a parameter, a link, the revert), as above | As the Theben DALI-Gateway |
+| Theben MIX 2 HMG 6 T | Every request of ETS's six captured downloads (the full download, a parameter, a link, the revert, a diagnosis parameter on and off), as above; the two captures that end before the interface confirmed ETS's last T_Disconnect are replayed up to it | Taken and verified without a refusal |
+| Jung 400021SE | Every request of ETS's full download (plain, before the unit took Data Secure), with the long writes the bridge refused and the connection timeouts they caused: every frame with its control field and every confirmation equal the unit's. Its only collection is of the unit under Data Secure in a later configuration: the capture's security mode (plain) and application load state (error) are taken from the capture | Taken and verified without a refusal |
+| GVS AMMA-04/06.S | Every request of ETS's full download at the application's defaults (plain), as the Jung's but for the last T_Disconnect, which the capture ends before the interface confirmed. Its only collection is of the unit under Data Secure: the capture's security mode (plain) is taken from the capture | As the Theben DALI-Gateway |
 
 ```bash
-BUSFORGE_CORPUS=... bun run tools/sim-unit-serve.ts meanwell-knx40e --tool ETS --log ./capture.log \
+BUSFORGE_CORPUS=... bun run tools/sim-unit-serve.ts <unit id> --tool ETS --log ./capture.log \
   [--port 3700] [--proxy-port 3701] [--advertise <this host's ip>]
 ```
 
-The tool connects to the proxy port over KNXnet/IP TCP; the simulator's own lines go to
+`<unit id>` is a unit's `id` in `tools/sim-units.ts` (`meanwell-knx40e`, `theben-dali-gateway`,
+`openknx-raumcontroller`, `theben-mix2-hmg6t`, `jung-400021se`, `gvs-amma`). The tool connects to the proxy
+port over KNXnet/IP TCP; the simulator's own lines go to
 `<log>.sim.txt`, and Ctrl-C prints its refusals. A download into the simulator is evidence on no axis
 of [evidence-contract.md](evidence-contract.md) by itself: it shows what a tool sends given the
 simulator's answers, and the answers are a real unit's only as far as the table above says.
