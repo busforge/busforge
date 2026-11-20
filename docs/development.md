@@ -31,7 +31,10 @@ data, so it never leaves the machine.
 
 ### An isolated instance
 
-Four environment variables move the pair; unset, each keeps the default above.
+`tools/ui-instance.ts` does everything this section describes in one command: free ports, a data
+directory of its own, a project imported, and a stop that ends exactly what it started
+([testing.md](testing.md#an-isolated-ui-instance)). By hand, four environment variables move the
+pair; unset, each keeps the default above.
 
 | Variable | Read by | Meaning | Default |
 |---|---|---|---|

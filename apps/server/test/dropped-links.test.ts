@@ -3,6 +3,7 @@ import { createState, handleApi, type AppState } from "../src/app.ts";
 import { unpackBusforge } from "../src/db/busforgeArtifact.ts";
 import { storeZip } from "../../../packages/project/test/ziputil.ts";
 import { tempDir } from "../../../tools/test-temp.ts";
+import { droppedLinksApplication, droppedLinksHardware, droppedLinksObject, droppedLinksRefusedApplication } from "../../../tools/ui-demo-projects.ts";
 
 // A project file whose import leaves links out lists them per com-object: in the preview, on the
 // imported project, and in its .busforge export. One device with an application of three objects:
@@ -10,32 +11,11 @@ import { tempDir } from "../../../tools/test-temp.ts";
 // the project does not have, object 3 imports in full. Address 0/0/3 is linked to nothing.
 const M = "M-TDL1";
 const A = `${M}_A-1`;
-const obj = (n: number, name: string, fn: string) =>
-  `<ComObject Id="${A}_O-${n}" Number="${n}" Name="${name}" Text="${name}" FunctionText="${fn}" ObjectSize="1 Bit" DatapointType="DPST-1-1" ReadFlag="Disabled" WriteFlag="Enabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled"/>`;
+const obj = (n: number, name: string, fn: string) => droppedLinksObject(M, n, name, fn);
 // `dynamic`: the application's <Dynamic> body; one whose condition Busforge refuses makes the device's
 // configuration refuse.
-const appXml = (dynamic = `<ChannelIndependentBlock><ParameterBlock Id="${A}_PB-1" Name="Main" Text="Main">
-  ${[1, 2, 3].map((n) => `<ComObjectRefRef RefId="${A}_O-${n}_R-${n}"/>`).join("")}
-</ParameterBlock></ChannelIndependentBlock>`) => `<?xml version="1.0" encoding="utf-8"?>
-<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="${M}"><ApplicationPrograms>
-<ApplicationProgram Id="${A}" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-07B0" Name="Dropped App" DefaultLanguage="en-US">
-<Static>
-<ParameterTypes><ParameterType Id="${A}_PT-1" Name="OnOff"><TypeRestriction Base="Value" SizeInBit="8"><Enumeration Text="Off" Value="0" Id="${A}_PT-1_EN-0"/><Enumeration Text="On" Value="1" Id="${A}_PT-1_EN-1"/></TypeRestriction></ParameterType></ParameterTypes>
-<Parameters><Parameter Id="${A}_P-1" Name="Show" ParameterType="${A}_PT-1" Text="Show" Value="0"><Memory CodeSegment="${A}_RS-1" Offset="0" BitOffset="0"/></Parameter></Parameters>
-<ParameterRefs><ParameterRef Id="${A}_P-1_R-1" RefId="${A}_P-1"/></ParameterRefs>
-<ComObjectTable>${obj(1, "Switch", "On/off")}${obj(2, "Status", "Feedback")}${obj(3, "Lock", "Block")}</ComObjectTable>
-<ComObjectRefs>${[1, 2, 3].map((n) => `<ComObjectRef Id="${A}_O-${n}_R-${n}" RefId="${A}_O-${n}"/>`).join("")}</ComObjectRefs>
-<Code><RelativeSegment Id="${A}_RS-1" Offset="0" Size="16" LoadStateMachine="4"/></Code>
-</Static>
-<Dynamic>${dynamic}</Dynamic>
-</ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
-const hardware = `<?xml version="1.0"?>
-<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="${M}">
-  <Hardware><Hardware Id="${M}_H-1" Name="HW" VersionNumber="1">
-    <Products><Product Id="${M}_H-1_P-1" Text="Dropped Product" OrderNumber="${M}-001"/></Products>
-    <Hardware2Programs><Hardware2Program Id="${M}_H-1_HP-1"><ApplicationProgramRef RefId="${A}"/></Hardware2Program></Hardware2Programs>
-  </Hardware></Hardware>
-</Manufacturer></ManufacturerData></KNX>`;
+const appXml = (dynamic?: string) => droppedLinksApplication(M, dynamic);
+const hardware = droppedLinksHardware(M);
 const xml0 = `<?xml version="1.0"?><KNX xmlns="http://knx.org/xml/project/21"><Project Id="P-0001"><Installations>
 <Installation InstallationId="0" Name="Main"><Topology><Area Address="1"><Line Address="1">
 <DeviceInstance Id="P-0001-0_DI-1" Name="Kitchen actuator" Address="5" ProductRefId="${M}_H-1_P-1" Hardware2ProgramRefId="${M}_H-1_HP-1"><ComObjectInstanceRefs>
@@ -144,8 +124,7 @@ describe("links an import does not take over, per com-object", () => {
   });
 
   test("a device whose configuration refuses its application shows the refusal on its objects, with the number the application declares, and the preview still answers", async () => {
-    // Object 1 is declared with Number 0: the digit of its ETS id is no number.
-    const refused = appXml(`<ChannelIndependentBlock><ParameterBlock Id="${A}_PB-1" Name="Main" Text="Main"><choose ParamRefId="${A}_P-1_R-1"><when test="on"><ComObjectRefRef RefId="${A}_O-1_R-1"/></when></choose></ParameterBlock></ChannelIndependentBlock>`).replace(`_O-1" Number="1"`, `_O-1" Number="0"`);
+    const refused = droppedLinksRefusedApplication(M);
     const a = await post(freshState(), "/api/projects/analyze", new File([knxprojWith(refused)], "Dropped.knxproj"));
     expect(a.droppedLinks.map((l: any) => [l.comObjNumber, l.comObjName, l.functionText, l.unresolved, l.refusal, l.unrecoverable])).toEqual([
       [0, "Switch", "On/off", "refused", "PARAM_TEST_UNSUPPORTED", true], [2, "Status", "Feedback", "refused", "PARAM_TEST_UNSUPPORTED", true],

@@ -395,16 +395,7 @@ export interface DemoSummary {
 // product is missing from the catalogue after the import, and when any write does not read back
 // as written.
 export async function buildDemoProject(api: DemoApi, demo: Demo, productDbs: ProductDb[]): Promise<DemoSummary> {
-  const call: Call = async <T>(method: string, path: string, body?: unknown, form?: FormData): Promise<T> => {
-    const r = await api(path, {
-      method,
-      body: form ?? (body === undefined ? undefined : JSON.stringify(body)),
-      headers: form || body === undefined ? undefined : { "content-type": "application/json" },
-    });
-    const text = await r.text();
-    if (!r.ok) throw new Error(`${method} ${path} answered ${r.status}: ${text}`);
-    return JSON.parse(text) as T;
-  };
+  const call = apiCall(api);
 
   const existing = await call<{ name: string }[]>("GET", "/api/projects");
   if (existing.some((p) => p.name === demo.name)) {
@@ -429,7 +420,21 @@ export async function buildDemoProject(api: DemoApi, demo: Demo, productDbs: Pro
   }
 }
 
-type Call = <T>(method: string, path: string, body?: unknown, form?: FormData) => Promise<T>;
+export type Call = <T>(method: string, path: string, body?: unknown, form?: FormData) => Promise<T>;
+
+// One request to the instance with a JSON body or a form; an answer that is not ok is refused with its text.
+export function apiCall(api: DemoApi): Call {
+  return async <T>(method: string, path: string, body?: unknown, form?: FormData): Promise<T> => {
+    const r = await api(path, {
+      method,
+      body: form ?? (body === undefined ? undefined : JSON.stringify(body)),
+      headers: form || body === undefined ? undefined : { "content-type": "application/json" },
+    });
+    const text = await r.text();
+    if (!r.ok) throw new Error(`${method} ${path} answered ${r.status}: ${text}`);
+    return JSON.parse(text) as T;
+  };
+}
 type CatalogueProduct = { appRef: string; productRef: string; manufacturer: number; name: string };
 
 async function fillDemoProject(call: Call, demo: Demo, projectId: string, products: Map<string, CatalogueProduct>): Promise<DemoSummary> {

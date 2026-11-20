@@ -194,6 +194,73 @@ only: hardware, application programs and their images) and the open demo's OpenK
 archives `demo/openknx/*.zip`, so `tools/demo-project.test.ts` builds both demos without the
 network.
 
+### An isolated UI instance
+
+To look at a UI change in a browser beside whatever runs on `:3000` and `:5173`,
+`tools/ui-instance.ts` starts a server and a Vite dev server of the checkout it lives in, on free
+ports, with an empty data directory of their own, imports a project and prints where to open it:
+
+```bash
+bun run tools/ui-instance.ts start --demo dropped-links
+```
+
+```text
+instance: $TMPDIR/busforge-ui-61820-440Tvs
+data directory: $TMPDIR/busforge-ui-61820-440Tvs/data
+server: http://127.0.0.1:61820 (process group 51446, log $TMPDIR/busforge-ui-61820-440Tvs/server.log)
+web: http://127.0.0.1:61823 (process group 51452, log $TMPDIR/busforge-ui-61820-440Tvs/web.log)
+project: 9ca783d1-d79b-4528-ad05-3629270c4b0b Main (3 devices, 3 group addresses; not imported: devicesWithoutProgram 1, unresolvedLinks 7, linksWithoutSender 2)
+  http://127.0.0.1:61823/projects/9ca783d1-d79b-4528-ad05-3629270c4b0b
+device: P-0001-0_DI-1  1.1.5  Kitchen actuator  http://127.0.0.1:61823/projects/9ca783d1-d79b-4528-ad05-3629270c4b0b/devices/P-0001-0_DI-1
+device: P-0001-0_DI-2  1.1.6  Hall actuator  http://127.0.0.1:61823/projects/9ca783d1-d79b-4528-ad05-3629270c4b0b/devices/P-0001-0_DI-2
+device: P-0001-0_DI-3  1.1.7  Garage actuator  http://127.0.0.1:61823/projects/9ca783d1-d79b-4528-ad05-3629270c4b0b/devices/P-0001-0_DI-3
+stop: bun run tools/ui-instance.ts stop --port 61820
+```
+
+| Option of `start` | Meaning |
+|---|---|
+| `--demo <name>` | Import a demo (below) |
+| `--project <file.knxproj>` | Import that file. With `--password-stdin` the password of a protected archive is read from stdin (`<password source> \| bun run tools/ui-instance.ts start --project <file> --password-stdin`), so it is on no command line and in no file |
+| `--port <n>`, `--web-port <n>` | The server's and the web app's port instead of free ones; a taken port is refused |
+| `--stop-with <pid>` | Stop the instance once process `<pid>` has ended, however it ended, also while the instance is still starting (for scripts and tests). A watchdog process does it; it keeps the instance's record, so it stops the instance even when its directory was removed first. It reports to no one: a stop that does not finish (a server still finishing a bus write) is tried again for ten minutes, and what is left shows in `status`. A process that is already gone is refused |
+
+Without `--demo` or `--project` the instance starts empty.
+
+| Demo | What it holds |
+|---|---|
+| `dropped-links` | Three invented devices whose import leaves links out: per object (an address the project lacks, an object the application lacks), a device whose application the archive lacks, a configuration Busforge refuses. Built by `tools/ui-demo-projects.ts`, no corpus |
+| `dropped-links-many` | The same with eight dropped links on the refused device, for a list that scrolls |
+| `openknx` | The open demo of [demo.md](demo.md); its OpenKNX archives come from the corpus where `BUSFORGE_CORPUS` is set, else from GitHub |
+| `manufacturers` | The manufacturer demo of [demo.md](demo.md); needs `BUSFORGE_CORPUS` |
+
+`bun run tools/ui-instance.ts status` lists the instances with their ports, process groups and
+project. `bun run tools/ui-instance.ts stop --port <n>` takes either port of an instance. It sends
+SIGTERM to exactly the process groups the tool started, after checking that each group's leader is
+still the process it started (by its start time), and removes the instance directory once they have
+ended. After 15 s it sends SIGKILL to the web app and the watchdog, never to the server: a server
+still running may be finishing a bus write, so `stop` then keeps the directory and says so, and a
+second `stop` finishes the job. `stop` has no default instance: those of other sessions live in the
+same temp directory.
+
+Each instance is one directory `busforge-ui-<server port>-*` under the system temp directory: the
+data directory, the two logs, and `instance.json` with the process groups. The server runs with
+`--watch` as `bun run dev:server` does, and Vite reloads the web app, so a change in the checkout
+shows without a restart. Both answer on `127.0.0.1`: `localhost` does not name the same address for
+every client everywhere. The start time of a process comes from `/proc` on Linux and from `ps` on
+macOS, and on Linux a process that has ended but was not reaped (in a container without an init)
+counts as ended. The Vite servers of one checkout share its dependency cache
+(`apps/web/node_modules/.vite`), so an instance that has to re-optimise a dependency can make another
+Vite of that checkout reload its page.
+
+The tool refuses, stopping what it started and removing the directory, when the server or Vite ends
+before it is listening, when the server logs an uncaught error before it listens, when the two are
+not listening and (with `--stop-with`) handed to the watchdog within 30 s, when the watchdog ends,
+when the import fails, and when the projects through Vite's proxy are not the server's. The import
+itself has no time limit; a Ctrl-C while the tool starts an instance cancels it and stops what was
+started. `tools/ui-instance.test.ts` starts an instance with `dropped-links`, reads the project
+through both ports, stops it and checks that no process and no directory is left; it runs in
+`bun run check` and needs no browser.
+
 ## When a change needs a hardware run
 
 A device that took ETS's download is the hardware proof of ETS's bytes. Once the capture
