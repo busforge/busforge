@@ -106,11 +106,12 @@ function measure(png: string, r: Region, ops: string[]): number {
 
 // ETS's 11-12 px UI text reads reliably only enlarged: tesseract runs on a copy at `scale`. Sparse text
 // (psm 11) suits a screen; a label/value table reads cleaner as a block (psm 6), a dialog's button bar as one
-// line (psm 7), where sparse text loses its light grey buttons.
+// line (psm 7), where sparse text loses its light grey buttons. A region ETS's search highlights in yellow reads
+// only in grey (`gray`).
 const OCR_SCALE = 2;
-function tesseract(png: string, region: Region | undefined, scale: number, psm: number, tsv: boolean): string {
+function tesseract(png: string, region: Region | undefined, scale: number, psm: number, tsv: boolean, gray = false): string {
   const big = join(dirname(png), `.${basename(png, ".png")}-ocr.png`);
-  execFileSync("magick", [png, ...(region ? crop(region) : []), "-resize", `${scale * 100}%`, big]);
+  execFileSync("magick", [png, ...(region ? crop(region) : []), "-resize", `${scale * 100}%`, ...(gray ? ["-colorspace", "Gray"] : []), big]);
   // Leptonica fails to open some absolute paths on macOS (/tmp through its symlink): read it by name from its directory.
   const out = execFileSync("tesseract", [basename(big), "-", "--psm", String(psm), ...(tsv ? ["tsv"] : [])], { cwd: dirname(big), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
   rmSync(big, { force: true });
@@ -118,10 +119,10 @@ function tesseract(png: string, region: Region | undefined, scale: number, psm: 
 }
 
 // The words OCR reads, each with its box (scaled back to the screen) and the id of its OCR line.
-function words(png: string, region?: Region, opts: { scale?: number; psm?: number } = {}): Word[] {
+function words(png: string, region?: Region, opts: { scale?: number; psm?: number; gray?: boolean } = {}): Word[] {
   const scale = opts.scale ?? OCR_SCALE;
   const ox = region?.x ?? 0, oy = region?.y ?? 0, s = (v: string) => Math.round(+v / scale);
-  return tesseract(png, region, scale, opts.psm ?? 11, true).split("\n").slice(1).flatMap((row) => {
+  return tesseract(png, region, scale, opts.psm ?? 11, true, opts.gray).split("\n").slice(1).flatMap((row) => {
     const c = row.split("\t");
     if (c.length < 12 || c[0] !== "5" || !c[11].trim()) return [];
     return [{ text: c[11].trim(), x: ox + s(c[6]), y: oy + s(c[7]), w: s(c[8]), h: s(c[9]), line: `${c[2]}.${c[3]}.${c[4]}` }];
@@ -183,9 +184,9 @@ class Screen {
   // A fresh screenshot.
   snap(): string { return shot(join(this.dir, `.screen-${this.n++ % 2}.png`)); }
   // A fresh screenshot and its words.
-  look(region?: Region): { png: string; ws: Word[] } {
+  look(region?: Region, gray = false): { png: string; ws: Word[] } {
     const png = this.snap();
-    return { png, ws: words(png, region) };
+    return { png, ws: words(png, region, { gray }) };
   }
   async waitText(phrase: string, region: Region | undefined, timeoutMs: number, what: string): Promise<Box> {
     const until = Date.now() + timeoutMs;
@@ -204,7 +205,7 @@ class Screen {
 // it changed before the next one relies on it.
 const AT = {
   overviewTab: [100, 20], projectTab: [300, 20],
-  panelSelector: [262, 93], toolbarInterface: [1716, 57],
+  panelSelector: [262, 93], toolbarInterface: [1716, 57], gridSearch: [1460, 92],
   leftTree: { x: 0, y: 105, w: 315, h: 525 }, mainTabs: { x: 315, y: 80, w: 500, h: 28 },
   mainGrid: { x: 315, y: 108, w: 1255, h: 515 }, catalogueGrid: { x: 315, y: 695, w: 1255, h: 465 },
   properties: { x: 1575, y: 80, w: 345, h: 600 }, menuRight: { x: 1500, y: 70, w: 420, h: 300 },
@@ -384,19 +385,51 @@ async function showProperties(s: Screen): Promise<void> {
   }
 }
 
-// The devices line 1.1 holds, as the main panel lists them with the line selected (its "Geräte" tab, whatever
-// the tree shows collapsed): the rows under the list's header. OCR misreads the narrow address cell ("Lil"
-// for 1.1.1), so a row counts by the text it carries, not by its address.
-async function lineDevices(s: Screen): Promise<{ y: number; text: string }[]> {
+// Line 1.1 selected in the tree and its "Geräte" tab in front (whatever the tree shows collapsed).
+async function showLineDevices(s: Screen): Promise<void> {
   const line = (await treeRow(s, LINE_11)) ?? fail("no line 1.1 in the topology");
   click(line.cx, line.cy);
   await sleep(1500);
   const tab = findText(s.look(AT.mainTabs).ws, "Ger")[0] ?? fail("no 'Geräte' tab with line 1.1 selected");
   click(tab.cx, tab.cy);
   await sleep(1500);
-  const { ws } = s.look(AT.mainGrid);
-  const header = findText(ws, "Adress")[0] ?? fail("the device list of line 1.1 shows no address column");
+}
+
+// The devices line 1.1 holds, as the main panel lists them with the line selected: the rows under the list's
+// header. OCR misreads the narrow address cell ("Lil" for 1.1.1), so a row counts by the text it carries, not
+// by its address.
+async function lineDevices(s: Screen): Promise<{ y: number; text: string }[]> {
+  await showLineDevices(s);
+  return gridRows(s);
+}
+function gridRows(s: Screen, gray = false): { y: number; text: string }[] {
+  const { ws } = s.look(AT.mainGrid, gray);
+  // A search highlights the header row, whose address cell then reads unreliably: any column header marks it.
+  const header = findText(ws, "Adress")[0] ?? findText(ws, "Hersteller")[0] ?? fail("the device list of line 1.1 shows no header");
   return rows(ws.filter(inside(AT.mainGrid))).filter((r) => r.y > header.y + header.h + 6 && r.words.filter((w) => /[A-Za-z]{3}/.test(w.text)).length >= 2).map((r) => ({ y: Math.round(r.y), text: r.text }));
+}
+
+// The device at `ia` of a configured project selected: line 1.1's device list filtered by ETS's search to that
+// address (a house project's tree holds more devices than the panel shows), its one row clicked, and the
+// address read back from the properties' "Physikalische Adresse" (line and device in two fields).
+async function selectByAddress(s: Screen, ia: string): Promise<void> {
+  await showLineDevices(s);
+  click(AT.gridSearch[0], AT.gridSearch[1]);
+  key("ctrl+a");
+  typeText(ia);
+  await sleep(2500);
+  const found = gridRows(s, true);
+  if (found.length !== 1) fail(`ETS's search for ${ia} in line 1.1 lists ${found.length} devices, not one`);
+  // The room, application and manufacturer cells are links that leave the list; the description cell is not.
+  click(560, found[0].y);
+  await sleep(1500);
+  await showProperties(s);
+  const { ws } = s.look(AT.properties);
+  const label = findText(ws, "Physikalische Adresse")[0] ?? fail("the properties show no 'Physikalische Adresse' for the selected row");
+  const values = ws.filter((w) => w.y > label.y + 8 && w.y < label.y + 40).map((w) => w.text.replace(/[^\d.]/g, "")).filter(Boolean);
+  const [area, line, device] = ia.split(".");
+  // OCR loses the dot of the line field now and then ("11" for 1.1).
+  if (!values.some((v) => v.replaceAll(".", "") === `${area}${line}`) || !values.includes(device)) fail(`the selected device is not ${ia} (its address fields read ${values.join(" ")})`);
 }
 
 // Every device of line 1.1 deleted; the deletion's confirmation, where ETS asks, given.
@@ -611,9 +644,9 @@ async function selectInterface(s: Screen, endpoint: string): Promise<void> {
   if (auto && mark(auto.cy) >= 0.2) fail("the interface's check mark is still on 'Automatisch'");
 }
 
-// The project exported (no password) from ETS's overview into the row as export.knxproj; the export is checked
-// to be of that project.
-async function exportProject(s: Screen, project: string, dir: string): Promise<void> {
+// The project exported from ETS's overview into the row as export.knxproj (a project with a password keeps it in
+// its export: `password` opens it); the export is checked to be of that project.
+async function exportProject(s: Screen, project: string, dir: string, password: string | undefined): Promise<void> {
   const h = host();
   click(AT.overviewTab[0], AT.overviewTab[1]);
   const card = await s.waitText(project, { x: 60, y: 600, w: 1800, h: 120 }, 20_000, "the project's card");
@@ -634,17 +667,17 @@ async function exportProject(s: Screen, project: string, dir: string): Promise<v
   const remoteFile = `${h.exportDir}/${file}`;
   writeFileSync(join(dir, "export.knxproj"), ssh(`cat ${q(remoteFile)}`, ""));
   remote(`rm -f ${q(remoteFile)}`);
-  const exported = loadKnxproj(readFileSync(join(dir, "export.knxproj")), undefined, "export").name;
+  const exported = loadKnxproj(readFileSync(join(dir, "export.knxproj")), password, "export").name;
   if (exported !== project) fail(`the export is of the project ${exported}, not ${project}`);
   click(AT.projectTab[0], AT.projectTab[1]);
   await sleep(2000);
 }
 
 // row.json, and configuration.json from the device's configuration in ETS's export.
-function writeRow(dir: string, o: RowOptions, applicationId: string, ia: string): void {
+function writeRow(dir: string, o: RowOptions, applicationId: string, ia: string, password: string | undefined): void {
   const spec: RowSpec = { format: ROW_FORMAT, unit: o.unit, etsBuild: ETS_BUILD, simulator: o.simulator, export: "export.knxproj" };
   writeFileSync(join(dir, ROW_FILES.row), JSON.stringify(spec, null, 2) + "\n");
-  const proj = loadKnxproj(readFileSync(join(dir, "export.knxproj")), undefined, "export");
+  const proj = loadKnxproj(readFileSync(join(dir, "export.knxproj")), password, "export");
   const d = proj.devices.find((x) => x.ia === ia) ?? fail(`ETS's export holds no device ${ia}`);
   if (appProgramId(d.appRef) !== applicationId) fail(`ETS's export runs ${appProgramId(d.appRef)} at ${ia}, not ${applicationId}`);
   const c = deviceConfiguration(parseAppConfig(catalogueXml(`${applicationId}.xml.gz`)), deviceRows(proj, d.id));
@@ -732,12 +765,15 @@ async function runRow(o: RowOptions): Promise<RowRun> {
       await insertProduct(s, o.orderNumber ?? fail("--order is needed to insert the product from the catalogue"), applicationId);
       step("address");
       await setAddress(s, ia);
-    } else if (!(await treeRow(s, iaRow(ia)))) fail(`the project holds no device at ${ia}`);
+    }
     step("interface");
     await selectInterface(s, o.wrongInterface ?? o.simulator);
-    const dev = (await treeRow(s, iaRow(ia))) ?? fail(`no device ${ia} in the topology`);
-    click(dev.cx, dev.cy);
-    await sleep(1500);
+    if (o.configured) await selectByAddress(s, ia);
+    else {
+      const dev = (await treeRow(s, iaRow(ia))) ?? fail(`no device ${ia} in the topology`);
+      click(dev.cx, dev.cy);
+      await sleep(1500);
+    }
     step("download");
     const started = etsClock();
     key("ctrl+alt+shift+d");
@@ -759,8 +795,9 @@ async function runRow(o: RowOptions): Promise<RowRun> {
     outcome = etsOutcome(readFileSync(join(dir, ROW_FILES.ets6log), "latin1"), ia, o.simulator);
     if (outcome.kind !== "completed") { shot(join(dir, "failure.png")); await closeDialogs(s); }
     step("export");
-    await exportProject(s, o.project, dir);
-    writeRow(dir, o, applicationId, ia);
+    const password = o.passwordEnv === undefined ? undefined : process.env[o.passwordEnv];
+    await exportProject(s, o.project, dir, password);
+    writeRow(dir, o, applicationId, ia, password);
   } catch (e) {
     // Every failure of the row is the driver's: its reason first, then what evidence can still be taken.
     const why = e instanceof DriverFailure ? e.message : `the driver broke off: ${e instanceof Error ? e.message : String(e)}`;

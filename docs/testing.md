@@ -730,21 +730,25 @@ bun run tools/ets-driver.ts down      # closes what `up` started, and nothing el
 
 One row, step by step:
 
-1. **The project.** ETS's own sweep project (no password) is brought to the front by its window
-   title; another open project is refused, not closed.
+1. **The project.** ETS's own sweep project (no password), or with `--project` another one (its
+   password, where it has one, from the variable `--password-env` names), is brought to the front by its
+   window title; another open project is refused, not closed.
 2. **Line 1.1 emptied** and the product **inserted from the online catalogue** by its order number.
    Each catalogue row found is selected and its application read back from ETS's properties panel
    (device type, program version, fingerprint, which together are the application id). The row whose
    application is the unit's is inserted; two rows under the order number and the unit's version are
    refused. The device then gets the unit's address. `--configured` skips this step and downloads the
-   device the project holds at that address as it is configured there.
+   device the project holds at that address as it is configured there: line 1.1's device list is
+   filtered by ETS's search to the address (a project with many devices shows more than the tree's
+   panel), its one row selected and the address read back from the properties.
 3. **The interface set explicitly** to the configured connection at the simulator's endpoint, in the
    toolbar (where the toolbar does not offer it, it is made the project's connection first), and its
    check mark read back. "Automatisch" would let ETS pick an interface itself.
 4. **The application download** by its shortcut; the driver waits for ETS6.log's end of the load
    task, or the exception that ended it (`ETS_TASK_FAILED`; ETS's other warnings of the task, such as
    falling back to a partial download, do not end the wait).
-5. **The export** of the project (no password; the export's project name is checked) and the row
+5. **The export** of the project (a project's password stays on its export; the export's project name
+   is checked) and the row
    written: `row.json`, `configuration.json` (the device's configuration as the export holds it), the
    simulator's capture `ets.log` with `ets.log.sim.txt` and its output `ets.log.serve.txt`,
    `ets6.log.txt` from the row's start, `export.knxproj`.
