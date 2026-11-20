@@ -508,19 +508,30 @@ were not read.
 
 ## A simulated unit
 
-`tools/sim-unit.ts` is one System B unit (MV-07B0) on the `KnxTransport` seam, which
-`KnxIpServer` puts on the network like the USB stick behind the bridge: ETS or Busforge download
-into it over KNXnet/IP as into a real unit, and `tools/knxproxy.ts` in front logs the run as a
+`tools/sim-unit.ts` is one System B unit (MV-07B0), and the transport core of the other masks' units, on the
+`KnxTransport` seam, which `KnxIpServer` puts on the network like the USB stick behind the bridge: ETS or
+Busforge download into it over KNXnet/IP as into a real unit, and `tools/knxproxy.ts` in front logs the run as a
 capture. It is built from a read-only collection of a real unit of the product (identity, every
 property and description the unit answered, where it placed its segments and what they held) and
 checked against the product's application program (mask, declared property compares); what only the
-unit's captures show (how it takes a restart, the authorization key it accepts, how long its line
-took to confirm a frame) is written next to it in `tools/sim-units.ts`, with the captures named.
+unit's captures show (how it takes a restart and when its line is back, the authorization key it accepts,
+how long its line took to confirm a frame, its device control after an unload, what it changes in its own
+memory after a restart) is written next to it in `tools/sim-units.ts`, with the captures named. Where the
+only collection of a unit was taken in a later state than its captures found it in, the answers the
+captures show different are taken from them, each named.
 
-It models the transport layer of one connection, the descriptor, authorization, property and memory
-services, the load-state machines with their table references and the memory-control-block CRC, verify mode and
-the restart. Everything else it refuses: a line in its log and in `refusals`, and no answer, so the
-tool's own timeout ends a run where an invented byte would have let it go on.
+It models the transport layer of one connection, the interface's APDU limit, the descriptor,
+authorization, property, function-property and memory services (`A_Memory_Read`/`_Write`,
+`A_MemoryExtended_Write`, and `A_MemoryExtended_Read` where the unit answered it when collected), the
+load-state machines with their table references and the memory-control blocks (one per segment, or the blocks written while loading, each with its CRC), verify mode, the basic and
+the confirmed restart. Everything else it refuses: a line in its log and in `refusals`, and no answer, so
+the tool's own timeout ends a run where an invented byte would have let it go on. A behaviour the unit's
+captures do not show is refused the same way: a frame in a time after a restart no capture shows the line
+in, a frame on the connection a restart ended, the device control after an unload, a property write or a
+memory service its captures and collection do not show. Two exceptions are chosen, not shown, both where
+Busforge's restart proof probes, so its download test does not hang on the scheduler or a refusal: the MEAN
+WELL's line, down 0.38 s and up 0.65 s after its restart, is taken back at 0.5 s; the Meteodata 140 S's line,
+shown up 41 ms after its restart, is taken as up from the restart on.
 
 `tools/sim-unit-0701.ts` is a memory-mapped System 7 unit (MV-0701) on the same transport core: its
 load-state machines take their controls as 11-octet memory writes to `0x0104` and report their states at
@@ -546,18 +557,60 @@ The units simulated, and how each is held to its captures (`tools/sim-unit.test.
 | Unit | ETS's downloads replayed | Busforge's full download |
 |---|---|---|
 | MEAN WELL KNX-40E-1280D power supply | Every request of ETS's six captured downloads (a link, a parameter, the revert, the full download, a parameter that shows an object, on and off), in order into one unit: every frame the simulator answers (its control field too, where the interface reports the frame type) and every confirmation on the line equal the unit's | Through `KnxIpServer` and the proxy, with the server's download task: taken without a refusal and verified; the bracket from the first unload to the restart equals the capture of the same download into the unit in every frame both ways (each TPDU without its sequence number, the unit's control field, every confirmation on the line) but for the order of the segments, which this build writes parameter segment first as ETS's capture of the unit shows and the captured run wrote last (so the run in this order is the simulator's, not the unit's); the session before it and the verification after it differ by Busforge's own changes since that capture, which the test names |
+| Theben DALI-Gateway KNX plus | Every request of ETS's six captured downloads (the full download it ran as a table download, a parameter, a link, the revert, the unload, the full download after it), in order into one unit: every frame the simulator answers (its priority; this interface reports no frame type) and every confirmation on the line equal the unit's | Taken and verified, with the memory-control blocks its read-back proves; its restart proof sends frames in times after the restart no capture shows the line in and on the connection the restart ended, which the simulator refuses |
+| OpenKNX RaumController | Every request of ETS's four captured downloads (the full download, a parameter, a link, the revert), as above | As the Theben DALI-Gateway |
+| Theben MIX 2 HMG 6 T | Every request of ETS's six captured downloads (the full download, a parameter, a link, the revert, a diagnosis parameter on and off), as above; the two captures that end before the interface confirmed ETS's last T_Disconnect are replayed up to it | Taken and verified without a refusal |
+| Jung 400021SE | Every request of ETS's full download (plain, before the unit took Data Secure), with the long writes the bridge refused and the connection timeouts they caused: every frame with its control field and every confirmation equal the unit's. Its only collection is of the unit under Data Secure in a later configuration: the capture's security mode (plain) and application load state (error) are taken from the capture | Taken and verified without a refusal |
+| GVS AMMA-04/06.S | Every request of ETS's full download at the application's defaults (plain), as the Jung's but for the last T_Disconnect, which the capture ends before the interface confirmed. Its only collection is of the unit under Data Secure: the capture's security mode (plain) is taken from the capture | As the Theben DALI-Gateway |
 | ABB US/U 4.2 universal interface (MV-0701) | Every request of ETS's captured downloads onto the loaded unit (the partial form, read and compared): a configuration and the download that undid it, in order into one unit, which then holds every octet the collection after them read; two application downloads at the defaults, each from the collection before it. ETS's first full download and the partial download after it, which no collection precedes, run on the earliest collection, taken after them: every frame and confirmation equal the unit's but for memory reads ETS made before writing, which answer what the unit held before and differ only in octets ETS then wrote | The defaults, from the collection before ETS's application download at the defaults: taken without a refusal and verified; ETS's partial form, its memory writes on the wire exactly ETS's, the unit's memory after it exactly what ETS's download left |
 | Theben Meteodata 140 S weather station (MV-0701) | Every request of ETS's four captured downloads (the full download, a parameter, a link, the revert), in order into one unit from the collection before them: every frame the simulator answers and every confirmation equal the unit's, the full download's 191 memory reads included | The configuration of ETS's full download (the project's parameter values, the links the unit's tables held) from the collection before it: taken without a refusal and verified; the declared form, its memory writes on the wire ETS's two (the address table's count and the download marker), the unit's memory after it exactly what ETS's download left |
 
 ```bash
-BUSFORGE_CORPUS=... bun run tools/sim-unit-serve.ts <meanwell-knx40e | abb-usu-4.2 | theben-meteodata-140s> --tool ETS --log ./capture.log \
+BUSFORGE_CORPUS=... bun run tools/sim-unit-serve.ts <unit id> --tool ETS --log ./capture.log \
   [--port 3700] [--proxy-port 3701] [--advertise <this host's ip>]
 ```
 
-The tool connects to the proxy port over KNXnet/IP TCP; the simulator's own lines go to
+`<unit id>` is a unit's `id` in `tools/sim-units.ts` (`meanwell-knx40e`, `theben-dali-gateway`,
+`openknx-raumcontroller`, `theben-mix2-hmg6t`, `jung-400021se`, `gvs-amma`, `abb-usu-4.2`,
+`theben-meteodata-140s`). The tool connects to the proxy
+port over KNXnet/IP TCP; the simulator's own lines go to
 `<log>.sim.txt`, and Ctrl-C prints its refusals. A download into the simulator is evidence on no axis
 of [evidence-contract.md](evidence-contract.md) by itself: it shows what a tool sends given the
 simulator's answers, and the answers are a real unit's only as far as the table above says.
+
+### A unit's identity from its product alone
+
+A catalogue row of the sweep has no collection of a real unit. `tools/sim-unit-product.ts` takes from the
+application program alone what it says of the unit's identity: the mask (descriptor 0), and, each with its
+source, the manufacturer the application is registered under (object 0 PID 12) and what each
+`LdCtrlCompareProp` expects, bit by bit where the compare masks. Refused: a mask whose identity is not
+held in a device object's properties (only System B and System 7 are taken), and an application whose
+identity rests on what is not modelled (`LdCtrlCompareMem`, a `choose` in its load procedure, a compare
+on another element than the first, with a malformed mask or with further attributes). Nothing else is
+taken.
+
+When ETS finds the unit's identity unfit for the product, it refuses the download and logs in
+`ETS6.log` what it required:
+
+```text
+Required data mismatch at SystemProperty(0/78)[$0000]: <device> instead of <required>
+```
+
+`rerunIdentity(unit, log)` reads those lines (Latin-1, as ETS writes them) from a failed row's log and
+returns the identity to run the row again with, each required value put in with its line as its
+source, or the reason not to: no such line (the failure is not the identity), a line it cannot read, a
+value the product or another line contradicts, a line whose device value is not what the unit answers
+(the log of another run), or a value the unit already answers (a rerun would fail the same). Only the
+form above is read, the values as contiguous hex; another index than `$0000`, a range or spaced octets
+are refused until a recorded line shows what they mean.
+
+`tools/sim-unit-product.test.ts` holds the product unit of each of the ten simulated units against
+the unit built from its collection and lists every difference. The manufacturer is right on all ten,
+also where the application was made for another manufacturer; a compare's value is right but for its
+length where the unit answers fewer octets than the compare declares, and the bits a mask leaves out.
+Everything else a unit answers ETS before a download (its serial, order info, version, a hardware type
+no compare names, device control, maximum APDU, load states, table references, descriptions) the
+product does not give: a simulated unit of a catalogue row has no source for it.
 
 ### A sweep row: ETS and Busforge into the same simulated unit
 
