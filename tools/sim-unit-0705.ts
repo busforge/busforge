@@ -24,8 +24,10 @@
 // - no program id is written as a property: it comes with the task segment, into object 3 PID 13.
 import { crc16CcittFalse, crc16Ccitt, iaToNum, APCI, MM_STATUS_BASE } from "../packages/knx/src/index.ts";
 import { flattenSteps, parseLoadProcedures, type CollectPackage } from "../packages/product/src/index.ts";
-import { SimUnit, mcbCrc, APPLICATION_STOPPED, EVENT, MEMORY_END, PID_DEVICE_CONTROL, PID_LOAD_STATE, PID_MCB, PID_PROGRAM_ID, PID_TABLE_REFERENCE, STATE, type Reply, type SimUnitModel } from "./sim-unit.ts";
-import { collectedUnit, refuse, unitMaxApdu, type Target, type UnitBehaviour } from "./sim-unit-model.ts";
+import { SimUnit, mcbCrc, APPLICATION_STOPPED, EVENT, MEMORY_END, PID_DEVICE_CONTROL, PID_LOAD_STATE, PID_MCB, PID_PROGRAM_ID, PID_TABLE_REFERENCE, STATE, type Reply, type SimUnitCoreModel } from "./sim-unit.ts";
+import { collectedUnit, unitMaxApdu, type Target, type UnitBehaviour } from "./sim-unit-model.ts";
+
+const refuse = (why: string): never => { throw new Error(`no simulated unit: ${why}`); };
 
 const SEGMENT = { DATA: 0x00, STACK: 0x01, TASK: 0x02 } as const;
 const LSMS = [1, 2, 3], APPLICATION_LSM = 3;
@@ -35,16 +37,19 @@ const MCB_FLAG = 0x80;
 
 export interface Sim0705Segment { at: number; size: number; access: number; memoryType: number; flags: number }
 
-export interface Sim0705Model extends SimUnitModel {
+export interface Sim0705Model extends SimUnitCoreModel {
   // The unit's memory, by address, and which octets of it are known (1).
   memory: { bytes: Buffer; known: Uint8Array };
   // Per load-state machine the segments the unit holds, in the order allocated.
   held: Map<number, Sim0705Segment[]>;
+  // The CRC convention of its memory-control blocks; null where the unit reports none.
+  crcConvention: "ccitt" | "ccitt-false" | null;
   readsWhileLoading: boolean;
 }
 
 export function sim0705Model(collection: CollectPackage, appXml: string, behaviour: UnitBehaviour): Sim0705Model {
-  const { records, mask, objects, descriptions } = collectedUnit(collection, appXml, "MV-0705");
+  if (collection.mask !== "MV-0705") refuse(`this model is for MV-0705, not ${collection.mask}`);
+  const { records, mask, objects, descriptions } = collectedUnit(collection, appXml, refuse);
   const steps = flattenSteps(parseLoadProcedures(appXml), "full");
 
   const bytes = Buffer.alloc(MEMORY_END), known = new Uint8Array(MEMORY_END);
@@ -100,8 +105,8 @@ export function sim0705Model(collection: CollectPackage, appXml: string, behavio
   }
   return {
     ...behaviour,
-    ia: iaToNum(collection.ia), mask, maxApdu: unitMaxApdu(collection, behaviour), objects, descriptions,
-    segments: new Map(), mcbControl: null, crc, memory: { bytes, known }, held, readsWhileLoading: behaviour.readsWhileLoading ?? false,
+    ia: iaToNum(collection.ia), mask, maxApdu: unitMaxApdu(collection, behaviour, refuse), objects, descriptions,
+    crcConvention: crc, memory: { bytes, known }, held, readsWhileLoading: behaviour.readsWhileLoading ?? false,
   };
 }
 
@@ -193,7 +198,7 @@ export class SimUnit0705 extends SimUnit {
     const segs = this.held.get(obj)!;
     const mcb = this.property(obj, PID_MCB);
     if (mcb?.elements) {
-      const crc = this.unit.crc;
+      const crc = this.unit.crcConvention;
       const flagged = segs.filter((s) => s.flags & MCB_FLAG);
       if (!crc) { this.refuse(`${what}: the unit reports a memory-control block whose CRC convention its collection does not show`); return false; }
       const unknown = flagged.find((s) => !this.memory(s.at, s.size));

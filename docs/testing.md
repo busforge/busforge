@@ -493,41 +493,64 @@ were not read.
 `tools/sim-unit.ts` is one System B unit (MV-07B0) on the `KnxTransport` seam, which
 `KnxIpServer` puts on the network like the USB stick behind the bridge: ETS or Busforge download
 into it over KNXnet/IP as into a real unit, and `tools/knxproxy.ts` in front logs the run as a
-capture. `tools/sim-unit-0705.ts` is the property-mapped System 7 unit (MV-0705) on the same
-transport and property core. Each is built from a read-only collection of a real unit of the product
-(identity, every property and description the unit answered, where it placed its segments and what
-they held) and checked against the product's application program (mask, declared property compares,
-the segments it declares against the memory-control blocks the unit reports); what only the unit's
-captures show (how it takes a restart, the authorization key it accepts, its programming mode, the
-largest APDU it takes where it reports none, how long its line took to confirm a frame) is written
-next to it in `tools/sim-units.ts`, with the captures named.
+capture. It is built from a read-only collection of a real unit of the product (identity, every
+property and description the unit answered, where it placed its segments and what they held) and
+checked against the product's application program (mask, declared property compares); what only the
+unit's captures show (how it takes a restart, the authorization key it accepts, how long its line
+took to confirm a frame) is written next to it in `tools/sim-units.ts`, with the captures named.
 
 It models the transport layer of one connection, the descriptor, authorization, property and memory
-services, the address reads by broadcast (in programming mode, by serial number), the load-state
-machines with their table references and the memory-control-block CRC, verify mode and the restart.
-On System B the machines take relative segments; on MV-0705 absolute and stack segments at the
-address the request names and the task segment that carries the program id, over one memory at
-fixed addresses whose bytes an unload keeps, and the load states readable as memory. Everything else
-it refuses: a line in its log and in `refusals`, and no answer, so the tool's own timeout ends a run
-where an invented byte would have let it go on. That includes the time after a restart and the
-frames on the connection it ended where the unit's captures show neither, and a read of a segment
-while it is loading where no capture shows the unit answer it.
+services, the address reads by broadcast (in programming mode, which the restart ends, and by serial
+number, as far as a unit's captures show them), the load-state machines with their table references and
+the memory-control-block CRC, verify mode and the restart. Everything else it refuses: a line in its log and in `refusals`, and no answer, so the
+tool's own timeout ends a run where an invented byte would have let it go on.
 
-The units it simulates, and how each is held to its captures (`tools/sim-unit.test.ts`, with the
-private corpus):
+`tools/sim-unit-0701.ts` is a memory-mapped System 7 unit (MV-0701) on the same transport core: its
+load-state machines take their controls as 11-octet memory writes to `0x0104` and report their states at
+`0xB6EA` onwards ([load-procedures.md](load-procedures.md#the-meteodata-140-s-memory-mapped)). Its memory is the
+memory its collection read, octet by octet; a read of an octet the collection did not read is refused,
+naming the read that would close it. The state of each machine comes from its PID 5 in the collection (the
+unit's single-octet read of a state answers the same; a read of more than one state octet is refused, the
+ABB US/U 4.2 answers it otherwise). The additional load controls (absolute segment, task segment, task
+control 1) are taken only where the unit's captures show it taking them, each field checked against them:
+a task segment at a declared segment, carrying the application the unit holds and the PEI type its
+captures carry. After an unload, load completed is taken only once an absolute segment and the task
+segment were declared. Memory writes go only into an EEPROM segment of a machine that is loading: the
+segments declared since its unload, or the application's for a machine the unit holds loaded. No property
+write is taken (none is shown on these units), and neither PID 5 nor the device control is answered after
+an event of the session. What only a unit's captures show besides (whether its tables' PID 7 follows a
+declaration, what its address table's count reads after the declaration, a download marker it clears at
+the restart) is in its entry in `tools/sim-units.ts`; where a unit's captures leave a gap after its restart
+(the ABB US/U 4.2: no frame between 42 ms and 1.04 s after it), a frame in the gap is refused.
+
+`tools/sim-unit-0705.ts` is the property-mapped System 7 unit (MV-0705) on the same core: its load-state
+machines take their events on PID 5 like System B, but absolute and stack segments at the address the
+request names and the task segment, which carries the program id, over one memory at fixed addresses whose
+bytes an unload keeps; the load states are readable as memory at `0xB6EA` onwards as well. Where the unit
+reports memory-control blocks (PID 27), it computes one element per segment it marks for it, with the access
+the allocation named and the CRC its collection shows; where it reports none they stay refused, and so does
+a table reference no capture shows. Which segments a unit holds at the start comes from its application's
+declaration or, where they differ, its own memory-control blocks. A read into a segment that is loading is
+answered only where the unit's captures show it, and only with the bytes written since the load; what the
+unit answers on a connection its restart ended, where no capture shows it, is refused.
+
+The units simulated, and how each is held to its captures (`tools/sim-unit.test.ts`,
+`tools/sim-unit-0701.test.ts` and `tools/sim-unit-0705.test.ts`, with the private corpus; `tools/sim-unit-replay.ts` replays a capture):
 
 | Unit | Captured downloads replayed | Busforge's full download |
 |---|---|---|
 | MEAN WELL KNX-40E-1280D power supply | Every request of ETS's six captured downloads (a link, a parameter, the revert, the full download, a parameter that shows an object, on and off), in order into one unit: every frame the simulator answers (its control field too, where the interface reports the frame type) and every confirmation on the line equal the unit's | Through `KnxIpServer` and the proxy, with the server's download task: taken without a refusal and verified; the bracket from the first unload to the restart equals the capture of the same download into the unit in every frame both ways (each TPDU without its sequence number, the unit's control field, every confirmation on the line) but for the order of the segments, which this build writes parameter segment first as ETS's capture of the unit shows and the captured run wrote last (so the run in this order is the simulator's, not the unit's); the session before it and the verification after it differ by Busforge's own changes since that capture, which the test names |
+| ABB US/U 4.2 universal interface (MV-0701) | Every request of ETS's captured downloads onto the loaded unit (the partial form, read and compared): a configuration and the download that undid it, in order into one unit, which then holds every octet the collection after them read; two application downloads at the defaults, each from the collection before it. ETS's first full download and the partial download after it, which no collection precedes, run on the earliest collection, taken after them: every frame and confirmation equal the unit's but for memory reads ETS made before writing, which answer what the unit held before and differ only in octets ETS then wrote | The defaults, from the collection before ETS's application download at the defaults: taken without a refusal and verified; ETS's partial form, its memory writes on the wire exactly ETS's, the unit's memory after it exactly what ETS's download left |
+| Theben Meteodata 140 S weather station (MV-0701) | Every request of ETS's four captured downloads (the full download, a parameter, a link, the revert), in order into one unit from the collection before them: every frame the simulator answers and every confirmation equal the unit's, the full download's 191 memory reads included | The configuration of ETS's full download (the project's parameter values, the links the unit's tables held) from the collection before it: taken without a refusal and verified; the declared form, its memory writes on the wire ETS's two (the address table's count and the download marker), the unit's memory after it exactly what ETS's download left |
 | MDT BE-02001.02 binary input (MV-0705) | Every request of ETS's three captured full downloads (a unit in programming mode at the application's defaults, one link, a later configuration), in order into one unit, and the restart of Busforge's address assignment: every frame the simulator answers and every confirmation on the line equal the unit's but for one answer, to a request the capture of the third download does not hold; the unit's start-up group telegrams after a restart are not simulated | Through `KnxIpServer` and the proxy, at defaults into a fresh unit: refused. Busforge writes without verify mode and reads each write back while the segment is loading; no capture shows the unit answer a read then (ETS writes in verify mode), so the simulator refuses the first read-back and the download ends without an answer. The unit's answer to a read outside its memory (a response without data) is not modelled either |
-| Gira Tastsensor 3 Komfort 3fach (MV-0705) | Every request of ETS's captured full download, its partial form on a unit holding the application (the stamps read before and after, the tables rewritten, the application loaded again without an unload), and of Busforge's captured full download (its read-back of each write while a segment loads, its probes after the restart, its verification by the memory-control blocks): every frame the simulator answers and every confirmation on the line equal the unit's; the unit's start-up group telegrams after a restart are not simulated | The configuration ETS downloaded, the same way into a fresh unit: taken and verified. Busforge's first probe after the restart comes a few milliseconds after the latest moment the captures show the unit not acknowledge a frame; where the simulator's line puts it past that moment, the simulator refuses that probe and the download goes on |
+| Gira Tastsensor 3 Komfort 3fach (MV-0705) | Every request of ETS's captured full download, its partial form on a unit holding the application (the stamps read before and after, the tables rewritten, the application loaded again without an unload), and of Busforge's captured full download (its read-back of each write while a segment loads, its probes after the restart, its verification by the memory-control blocks): every frame the simulator answers and every confirmation on the line equal the unit's; the unit's start-up group telegrams after a restart are not simulated | The configuration ETS downloaded, the same way into a fresh unit: taken without a refusal and verified |
 
 ```bash
-BUSFORGE_CORPUS=... bun run tools/sim-unit-serve.ts <unit> --tool ETS --log ./capture.log \
+BUSFORGE_CORPUS=... bun run tools/sim-unit-serve.ts <meanwell-knx40e | abb-usu-4.2 | theben-meteodata-140s | mdt-be02001 | gira-ts3> --tool ETS --log ./capture.log \
   [--port 3700] [--proxy-port 3701] [--advertise <this host's ip>]
 ```
 
-`<unit>` is `meanwell-knx40e`, `mdt-be02001` or `gira-ts3`. The tool connects to the proxy port over KNXnet/IP TCP; the simulator's own lines go to
+The tool connects to the proxy port over KNXnet/IP TCP; the simulator's own lines go to
 `<log>.sim.txt`, and Ctrl-C prints its refusals. A download into the simulator is evidence on no axis
 of [evidence-contract.md](evidence-contract.md) by itself: it shows what a tool sends given the
 simulator's answers, and the answers are a real unit's only as far as the table above says.

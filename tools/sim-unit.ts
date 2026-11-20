@@ -1,8 +1,7 @@
 // A simulated System B unit (MV-07B0) on the KnxTransport seam: one device on an otherwise empty line,
 // built from what a real unit of the product answered (a read-only collection, tools/collect.ts) and checked
 // against the product's application program. KnxIpServer puts it on the network, so ETS or Busforge download
-// into it over KNXnet/IP exactly as into a unit behind the bench bridge. tools/sim-unit-0705.ts builds the
-// property-mapped System 7 unit (MV-0705) on its transport and property core.
+// into it over KNXnet/IP exactly as into a unit behind the bench bridge.
 //
 // It is strict, like packages/product/test/collected-unit.ts: what it does not model it refuses, with a
 // reason in its log and in `refusals`, and sends nothing in answer, so the tool's own timeout ends the run
@@ -27,6 +26,8 @@
 // - the basic restart as the unit's captures show it.
 // Every frame it sends carries the request's priority (system priority on a transport-layer control frame)
 // and is an extended frame where it is longer than a standard one, as the unit's frames in the captures are.
+// tools/sim-unit-0701.ts builds the memory-mapped System 7 unit (MV-0701) on this transport core,
+// tools/sim-unit-0705.ts the property-mapped one (MV-0705).
 import {
   APCI, CEMI, cemiLData, numToIa, parseApdu, parseCemiLData, tpAck, tpDisconnect, withMessageCode, crc16Ccitt, crc16CcittFalse,
   type KnxTransport, type PropertyDescription,
@@ -56,14 +57,16 @@ export interface SimProperty {
 
 // How the unit takes a basic A_Restart, from its captures.
 export interface SimRestart {
-  // The unit acknowledges the restart frame itself: on layer 2 and with T_Ack (true), on layer 2 only
-  // ("layer2"), or not at all (false).
-  acknowledged: boolean | "layer2";
-  // For this long after the restart no frame to it is acknowledged on layer 2.
+  // The unit acknowledges the restart frame itself, on layer 2 and, unless `transportAck` is false, with T_Ack.
+  acknowledged: boolean;
+  transportAck?: boolean;
+  // For this long after the restart no frame to it is acknowledged on layer 2. The restart's time is when the
+  // line took it, its request's plus the line's confirmation delay (`link.ackMs`); the captures give these
+  // windows from the request.
   linkDownMs: number;
-  // From linkDownMs until this long after the restart its captures show no frame to it: one then is refused
-  // and not confirmed as taken.
-  // Absent: it acknowledges every frame from linkDownMs on.
+  // From this long after the restart a frame is acknowledged again, where the captures leave a gap after
+  // `linkDownMs`: a frame in the gap is refused (and confirmed negatively), since no capture shows whether the
+  // unit acknowledges it. Absent: acknowledged from `linkDownMs` on.
   linkUpMs?: number;
   // What the unit answers a numbered frame on the connection the restart ended, until that partner connects
   // again: T_Disconnect (KNX 3/3/4 A10), nothing, as a unit whose stack drops such frames, or "unknown" where
@@ -71,7 +74,8 @@ export interface SimRestart {
   deadConnection: "disconnect" | "nothing" | "unknown";
 }
 
-export interface SimUnitModel {
+// What a simulated unit holds whatever its load control.
+export interface SimUnitCoreModel {
   ia: number;
   mask: number;
   maxApdu: number;
@@ -79,14 +83,6 @@ export interface SimUnitModel {
   objects: Map<number, Map<number, SimProperty>>;
   // object index -> the descriptions the unit gave; one with PID 0 is its answer past its last property.
   descriptions: Map<number, PropertyDescription[]>;
-  // Per load-state machine: where the unit places its segment (it chose that address on every download its
-  // captures show) and the segment it holds at the start.
-  segments: Map<number, { at: number; size: number; bytes: Buffer }>;
-  // The two octets of a memory-control-block element between the size and the CRC, as the unit reports them;
-  // null where they are not one constant of the unit.
-  mcbControl: Buffer | null;
-  // The CRC convention of its memory-control blocks; null where the unit reports none.
-  crc: "ccitt" | "ccitt-false" | null;
   // A_Authorize_Request key (hex) -> the level the unit grants.
   authorize: Map<string, number>;
   restart: SimRestart;
@@ -100,6 +96,16 @@ export interface SimUnitModel {
   // The four octets after the serial number in its A_IndividualAddressSerialNumber_Response, as its captures
   // show them. Absent: the read is refused.
   serialNumberResponseTail?: Buffer;
+}
+
+// A System B unit: its relative load control on PID 5.
+export interface SimUnitModel extends SimUnitCoreModel {
+  // Per load-state machine: where the unit places its segment (it chose that address on every download its
+  // captures show) and the segment it holds at the start.
+  segments: Map<number, { at: number; size: number; bytes: Buffer }>;
+  // The two octets of a memory-control-block element between the size and the CRC, as the unit reports them.
+  mcbControl: Buffer;
+  crc: "ccitt" | "ccitt-false";
 }
 
 // A segment's bytes, and which of them the unit is known to hold (1): a mode-0 allocation that grows a segment
@@ -128,8 +134,6 @@ export class SimUnit implements KnxTransport {
   private deadPartner: number | null = null;
   // Whether the frame on the line is a restart the unit carried out.
   private restartedNow = false;
-  // When the tool sent the frame on the line: a restart's time.
-  private arrivedAt = 0;
   // The priority bits of the request on the line, which the unit's frames in answer carry.
   private priority = 0;
   private line: Promise<void> = Promise.resolve();
@@ -138,7 +142,9 @@ export class SimUnit implements KnxTransport {
   private programmingMode: boolean | undefined;
 
   constructor(
-    private readonly model: SimUnitModel,
+    // A unit of another load control (tools/sim-unit-0701.ts) has none of System B's segments and
+    // memory-control blocks, and takes its load events elsewhere than PID 5.
+    private readonly model: SimUnitCoreModel & Partial<Pick<SimUnitModel, "segments" | "mcbControl" | "crc">>,
     // The interface's own individual address: the source of the frames the tool sends through it.
     readonly assignedIa: number,
     private readonly opts: { log?: (line: string) => void; now?: () => number } = {},
@@ -146,7 +152,7 @@ export class SimUnit implements KnxTransport {
     this.programmingMode = model.programmingMode;
     this.objects = new Map([...model.objects].map(([o, props]) => [o, new Map([...props].map(([pid, p]) => [pid, { ...p, elements: p.elements?.map((e) => Buffer.from(e)) ?? null }]))]));
     if (!this.property(0, PID_DEVICE_CONTROL)?.elements?.[0]) throw new Error("a simulated unit needs the device control (object 0 PID 14) its unit answered: verify mode and the stopped application live there");
-    for (const [lsm, s] of model.segments) {
+    for (const [lsm, s] of model.segments ?? []) {
       this.segments.set(lsm, { at: s.at, size: s.size, bytes: Buffer.from(s.bytes), known: new Uint8Array(s.size).fill(1) });
       this.referenceKnown.set(lsm, true);
       this.mcbKnown.set(lsm, true);
@@ -157,7 +163,7 @@ export class SimUnit implements KnxTransport {
   get deviceIa(): number { return this.model.ia; }
 
   private now(): number { return this.opts.now?.() ?? Date.now(); }
-  private note(line: string): void { this.lines.push(line); this.opts.log?.(line); }
+  protected note(line: string): void { this.lines.push(line); this.opts.log?.(line); }
   protected refuse(what: string): void { const r = `sim-refused ${what}`; this.refusals.push(r); this.note(r); }
 
   async connect(): Promise<void> { this.stopped = false; }
@@ -173,16 +179,13 @@ export class SimUnit implements KnxTransport {
   // KNXnet/IP server confirms negatively. Frames take the line one after the other, each for the time the
   // unit's interface took to confirm it.
   sendCemi(cemi: Buffer): Promise<void> {
-    // The tool's request time, from which the unit's captures measure the frames after a restart.
-    const at = this.now();
-    const turn = this.line.then(() => this.onLine(cemi, at));
+    const turn = this.line.then(() => this.onLine(cemi));
     this.line = turn.catch(() => {});
     return turn;
   }
 
-  private async onLine(cemi: Buffer, at: number): Promise<void> {
+  private async onLine(cemi: Buffer): Promise<void> {
     const nak = async (why: string): Promise<never> => { await sleep(this.model.link.nakMs); throw new Error(why); };
-    this.arrivedAt = at;
     if (this.stopped) throw new Error("the simulated unit is disconnected");
     if (cemi[0] !== CEMI.LDATA_REQ) { this.refuse(`cEMI message code 0x${cemi[0].toString(16)}`); return; }
     const { src, dst, tpdu, isGroup } = parseCemiLData(cemi);
@@ -197,10 +200,9 @@ export class SimUnit implements KnxTransport {
       this.note(`restarting (${since} ms): ${tpdu.toString("hex")} not acknowledged`);
       return nak("the unit is restarting and acknowledged nothing");
     }
-    // Neither confirmation is shown then; the frame is not confirmed as taken.
     if (since !== null && this.model.restart.linkUpMs !== undefined && since < this.model.restart.linkUpMs) {
-      this.refuse(`${tpdu.toString("hex")} from ${numToIa(src)} ${since} ms after the restart: whether the unit takes a frame then is not shown`);
-      throw new Error("whether the unit takes a frame this soon after its restart is not shown");
+      this.refuse(`${tpdu.toString("hex")} ${since} ms after the restart: whether the unit acknowledges a frame then is not shown`);
+      return nak("the unit's answer this soon after its restart is not shown");
     }
     await sleep(this.model.link.ackMs);
     this.restartedAt = null;
@@ -208,7 +210,7 @@ export class SimUnit implements KnxTransport {
     this.restartedNow = false;
     try { if (isGroup) this.onBroadcast(src, tpdu); else this.onFrame(src, tpdu); }
     catch (e) { this.refuse(`${tpdu.toString("hex")} from ${numToIa(src)}: ${e instanceof Error ? e.message : String(e)}`); }
-    if (this.restartedNow && this.model.restart.acknowledged === false) {
+    if (this.restartedNow && !this.model.restart.acknowledged) {
       await sleep(this.model.link.nakMs - this.model.link.ackMs);
       throw new Error("the unit restarted without acknowledging the restart");
     }
@@ -244,7 +246,7 @@ export class SimUnit implements KnxTransport {
       const why = this.restartRefusal();
       if (why) { this.emit(src, tpAck(seq)); this.refuse(`A_Restart: ${why}`); return; }
       // A unit that restarts at once acknowledges the restart neither on layer 2 nor with T_Ack.
-      if (this.model.restart.acknowledged === true) this.emit(src, tpAck(seq));
+      if (this.model.restart.acknowledged && this.model.restart.transportAck !== false) this.emit(src, tpAck(seq));
       this.restart(src);
       return;
     }
@@ -385,17 +387,17 @@ export class SimUnit implements KnxTransport {
   }
 
   // Why the unit's restart now is not modelled, or null.
-  private restartRefusal(): string | null {
+  protected restartRefusal(): string | null {
     const loading = [...this.objects.keys()].filter((o) => this.state(o) === STATE.LOADING);
     return loading.length ? `with object ${loading.join(", ")} loading; what the unit holds after that is not shown` : null;
   }
 
-  private restart(partner: number): void {
+  protected restart(partner: number): void {
     this.close();
     // A restart ends a programming mode the unit's captures show.
     if (this.programmingMode !== undefined) this.programmingMode = false;
     this.deadPartner = partner;
-    this.restartedAt = this.arrivedAt;
+    this.restartedAt = this.now();
     this.restartedNow = true;
     // Its device control after the restart: the collections taken after a download read it 0.
     this.property(0, PID_DEVICE_CONTROL)!.elements = [Buffer.from([0])];
@@ -406,7 +408,7 @@ export class SimUnit implements KnxTransport {
     return this.objects.get(obj)?.get(pid) ?? null;
   }
 
-  private propertyRead(obj: number, pid: number, count: number, start: number, reply: Reply): void {
+  protected propertyRead(obj: number, pid: number, count: number, start: number, reply: Reply): void {
     const what = `A_PropertyValue_Read ${obj}/${pid} of ${count} from ${start}`;
     const prop = this.property(obj, pid);
     if (!prop) { this.refuse(`${what}: the unit was not read there`); return; }
@@ -482,8 +484,8 @@ export class SimUnit implements KnxTransport {
         const seg = this.segments.get(obj);
         const mcb = this.property(obj, PID_MCB);
         if (mcb && mcb.elements !== null) {
-          if (!this.model.crc || !this.model.mcbControl) { this.refuse(`${what}: how the unit computes the memory-control block of object ${obj} is not known`); return null; }
           if (!seg || seg.known.some((k) => k === 0)) { this.refuse(`${what}: the segment of object ${obj} holds octets no write set and the unit was not shown to hold, so its CRC is not known`); return null; }
+          if (!this.model.mcbControl || !this.model.crc) { this.refuse(`${what}: the unit's memory-control block of object ${obj} is not modelled`); return null; }
           const crc = mcbCrc(this.model.crc, seg.bytes);
           const size = Buffer.alloc(4); size.writeUInt32BE(seg.size);
           mcb.elements = [Buffer.concat([size, this.model.mcbControl, Buffer.from([crc >> 8, crc & 0xff])])];

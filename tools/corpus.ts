@@ -307,7 +307,18 @@ export const CORPUS_FILES: readonly string[] = [
     "theluxa-p300-ets6log-partial-params.txt",
     "theluxa-p300-ets6log-partial-revert.txt",
   ].map((f) => `captures/${f}`),
-  // The collections tools/sim-units.ts builds its System 7 units from.
+  // The collections and captures of the simulated MV-0701 units (tools/sim-units.ts, tools/sim-unit-0701.test.ts)
+  // outside captures/.
+  ...[
+    "abb-counter-2026-11-20/collect-1.1.201-before.json",
+    "abb-counter-2026-11-20/collect-1.1.201-after-ets-restore.json",
+    "abb-counter-2026-11-20/e2-abb-restore-download.log",
+    "abb-fresh-2026-11-20/collect-1.1.201-before.json",
+    "abb-fresh-2026-11-20/e1-abb-fresh-app-download.log",
+    "cap-1004/abb-plain.json",
+  ].map((f) => `internal/captures/${f}`),
+  "collections/meteodata-140s-hc04-2026-10-07/1.1.24-meteodata-collect-vor.json",
+  // The collections tools/sim-units.ts builds its MV-0705 units from.
   "internal/captures/cap-1004/mdt-plain.json",
   "collections/gira-m0008-backup-2026-10-05/1.1.1-gira-m0008-collect.json",
   // Busforge's address assignment of the MDT BE-02001.02 and its full download of the Gira Tastsensor 3, which
