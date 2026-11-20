@@ -1525,16 +1525,7 @@ corpusDescribe("Auro presence detector (M-0081_A-FE01-11-75D9) against ETS", () 
     // to the device.
     const addr = Buffer.from(Array.from({ length: 1 + 2 * at(0x4000) }, (_, i) => (i === 1 ? ia >> 8 : i === 2 ? ia & 0xff : at(0x4000 + i))));
     const assoc = Buffer.from(Array.from({ length: 1 + 2 * at(0x402f) }, (_, i) => at(0x402f + i)));
-    const decoded = new Map(decodeAbsoluteImage(toAppModel(cfg, { includeUnions: true }), paramSeg.id, held));
-    let params = new Map<string, string>();
-    for (let i = 0; ; i++) {
-      const active = new Set(buildDeviceConfig(cfg, params).imageValues.keys());
-      const next = new Map([...decoded].filter(([r]) => active.has(r)));
-      if (next.size === params.size && [...next].every(([r, v]) => params.get(r) === v)) break;
-      if (i > 16) throw new Error("the configuration read from the full download never settled");
-      params = next;
-    }
-    return { links: decodeGroupTablesMv0705(addr, assoc), params };
+    return { links: decodeGroupTablesMv0705(addr, assoc), params: configurationOfImage(cfg, written) };
   })();
   const full = () => classify(cfg).planFullDownload(cfg.mask, { ia: IA, params: baseline.params, links: baseline.links, proc });
   const LED = "M-0081_A-FE01-11-75D9_P-10";

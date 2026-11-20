@@ -41,7 +41,7 @@ import {
 const PID_LOAD_STATE = 5, PID_TABLE_REFERENCE = 7, PID_PROGRAM_ID = 13, PID_DEVICE_CONTROL = 14, PID_MCB = 27;
 const STATE = { UNLOADED: 0, LOADED: 1, LOADING: 2 } as const;
 const EVENT = { LOAD: 1, LOAD_COMPLETED: 2, ADDITIONAL: 3, UNLOAD: 4 } as const;
-const VERIFY_MODE = 0x04, PID_SERIAL = 11;
+const VERIFY_MODE = 0x04, PID_SERIAL = 11, PID_PROGRAMMING_MODE = 54;
 export const APPLICATION_STOPPED = 0x01;
 const APPLICATION_LSM = 4;
 // A_Restart_Response (KNX 3/3/7): the restart type in the APCI's low bit.
@@ -173,7 +173,7 @@ export class SimUnit implements KnxTransport {
   private applicationLoaded = false;
   // Whether its device control is not known: after an unload of the application where the captures do not
   // show what the unit reports then, until it is written or the unit restarts.
-  private deviceControlUnknown = false;
+  protected deviceControlUnknown = false;
   // The priority bits of the request on the line, which the unit's frames in answer carry.
   private priority = 0;
   private line: Promise<void> = Promise.resolve();
@@ -529,6 +529,8 @@ export class SimUnit implements KnxTransport {
 
   protected propertyRead(obj: number, pid: number, count: number, start: number, reply: Reply): void {
     const what = `A_PropertyValue_Read ${obj}/${pid} of ${count} from ${start}`;
+    const collectedMode = obj === 0 && pid === PID_PROGRAMMING_MODE ? this.property(0, pid)?.elements?.[0]?.[0] : undefined;
+    if (collectedMode !== undefined && this.programmingMode !== null && ((collectedMode & 1) === 1) !== this.programmingMode) { this.refuse(`${what}: the unit's programming mode differs from the one collected, and what it reports then is not shown`); return; }
     const prop = this.property(obj, pid);
     if (!prop) { this.refuse(`${what}: the unit was not read there`); return; }
     const head = (n: number) => Buffer.from([obj, pid, (n << 4) | ((start >> 8) & 0x0f), start & 0xff]);

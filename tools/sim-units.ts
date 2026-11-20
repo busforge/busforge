@@ -350,9 +350,11 @@ export const THEBEN_METEODATA_140S: SimUnitSpec = {
 // - it refuses PID 56, and takes the 15-octet APDUs ETS sends it ("assuming 15", the same logs);
 // - A_Restart: acknowledged on layer 2, without T_Ack, in every capture; frames from 40 to 496 ms after the
 //   restart request not acknowledged, frames from 593 ms on acknowledged, between them none shown, and before
-//   40 ms the line taken as down, as the ABB's below (the restart's own confirmation takes those milliseconds);
+//   40 ms the line taken as down, as the ABB's above (the restart's own confirmation takes those milliseconds);
 //   numbered frames on the connection the restart ended acknowledged and left without an answer (the probes of
 //   Busforge's full downloads);
+// - its task segments carry 01 between the address and the program id (every capture);
+// - its device control reads 1 after ETS unloaded objects 1 to 3 (application stopped), 5 with verify mode;
 // - in programming mode at the first full download (it answers ETS's A_IndividualAddress_Read), and out of it
 //   after a restart (no answer in the second, nor after the assignment's restart); its
 //   A_IndividualAddressSerialNumber_Response carries four zero octets after the serial (the second);
@@ -380,7 +382,7 @@ export const MDT_BE02001: SimUnitSpec = {
     descriptionIndex: null,
     shownWrites: new Map(),
   },
-  propertyMapped: { maxApdu: 15, readsWhileLoading: true },
+  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x01, unloadStopsApplication: true },
 };
 
 // The Gira Tastsensor 3 Komfort 3fach (M-0008_A-10D7-11-2783-O000A, MV-0705), from the collection before ETS's
@@ -391,6 +393,8 @@ export const MDT_BE02001: SimUnitSpec = {
 // - it refuses PID 56, and takes the 15-octet APDUs ETS sends it ("assuming 15");
 // - it answers a memory read into a segment that is loading with the bytes written there since its load
 //   (Busforge's read-backs);
+// - its task segments carry 00 between the address and the program id; no capture unloads its application, so
+//   what its device control reports after that is not shown;
 // - A_Restart: acknowledged on layer 2, without T_Ack; frames 41 or 42 ms after the restart request not
 //   acknowledged, frames from 312 ms on acknowledged, between them none shown, before 41 ms the line taken as
 //   down as for the MDT above; numbered frames on the connection the restart ended acknowledged and left without
@@ -418,7 +422,7 @@ export const GIRA_TS3: SimUnitSpec = {
     descriptionIndex: null,
     shownWrites: new Map(),
   },
-  propertyMapped: { maxApdu: 15, readsWhileLoading: true },
+  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x00, unloadStopsApplication: null },
 };
 
 export const SIM_UNITS: readonly SimUnitSpec[] = [MEANWELL_KNX40E, THEBEN_DALI_GATEWAY, OPENKNX_RAUMCONTROLLER, THEBEN_MIX2_HMG6T, JUNG_400021SE, GVS_AMMA, ABB_USU42, THEBEN_METEODATA_140S, MDT_BE02001, GIRA_TS3];

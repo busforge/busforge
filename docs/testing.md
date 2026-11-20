@@ -556,8 +556,10 @@ the restart) is in its entry in `tools/sim-units.ts`; where a unit's captures le
 
 `tools/sim-unit-0705.ts` is the property-mapped System 7 unit (MV-0705) on the same core: its load-state
 machines take their events on PID 5 like System B, but absolute and stack segments at the address the
-request names and the task segment, which carries the program id, over one memory at fixed addresses whose
-bytes an unload keeps; the load states are readable as memory at `0xB6EA` onwards as well. Where the unit
+request names and the task segment, which must name a segment the machine holds and carry the unit's PEI
+type and the application it holds, over one memory at fixed addresses whose bytes an unload keeps; no property
+write but PID 5 and the device control is taken, and the device control after the application's unload only
+where the unit's captures show it; the load states are readable as memory at `0xB6EA` onwards as well. Where the unit
 reports memory-control blocks (PID 27), it computes one element per segment it marks for it, with the access
 the allocation named and the CRC its collection shows; where it reports none they stay refused, and so does
 a table reference no capture shows. Which segments a unit holds at the start comes from its application's

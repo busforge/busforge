@@ -19,10 +19,11 @@
 //   flags 0x80, in the order allocated, `<size:4> 00 <access> <CRC:2>`, computed at load completed;
 // - the table reference (PID 7) after a download: the address of the machine's first segment, where its task
 //   segment names the same address;
-// - the unload of the application (object 3) sets the device control's application-stopped bit, as on System B
-//   the unload of object 4;
-// - no program id is written as a property: it comes with the task segment, into object 3 PID 13.
-import { iaToNum, APCI, MM_STATUS_BASE, PID, STATE } from "../packages/knx/src/index.ts";
+// - the unload of the application (object 3) sets the device control's application-stopped bit where the unit's
+//   captures show it (`unloadStopsApplication`), as on System B the unload of object 4;
+// - no property but PID 5 and the device control is written; the program id comes with the task segment, which
+//   names a segment the machine holds and carries the unit's PEI type and the application it holds.
+import { iaToNum, APCI, LSM, MM_STATUS_BASE, PID, STATE } from "../packages/knx/src/index.ts";
 import { flattenSteps, parseLoadProcedures, type CollectPackage } from "../packages/product/src/index.ts";
 import { SimUnit, crcConventionOf, mcbCrc, APPLICATION_STOPPED, MEMORY_END, type Reply, type SimUnitCoreModel } from "./sim-unit.ts";
 import { collectedUnit, type Target, type UnitBehaviour } from "./sim-unit-model.ts";
@@ -30,7 +31,7 @@ import { collectedUnit, type Target, type UnitBehaviour } from "./sim-unit-model
 const refuse = (why: string): never => { throw new Error(`no simulated unit: ${why}`); };
 
 const PID_LOAD_STATE = PID.LOAD_STATE_CONTROL, PID_TABLE_REFERENCE = PID.TABLE_REFERENCE, PID_PROGRAM_ID = PID.PROGRAM_ID, PID_DEVICE_CONTROL = PID.DEVICE_CONTROL, PID_MCB = PID.MCB_TABLE;
-const EVENT = { LOAD: 1, LOAD_COMPLETED: 2, ADDITIONAL: 3, UNLOAD: 4 } as const;
+const EVENT = { ...LSM, ADDITIONAL: 3 } as const;
 const SEGMENT = { DATA: 0x00, STACK: 0x01, TASK: 0x02 } as const;
 const LSMS = [1, 2, 3], APPLICATION_LSM = 3;
 const MEMORY_TYPE = { RAM: 2, EEPROM: 3 } as const;
@@ -46,6 +47,11 @@ export interface PropertyMappedBehaviour {
   // Whether it answers a memory read into a segment that is loading (with the bytes written there since its
   // load), or refuses it, as no capture shows it answer.
   readsWhileLoading: boolean;
+  // The octet between the address and the program id of its task segments (`03 02 <address:2> <octet> <id:5>`).
+  peiType: number;
+  // Whether the unload of its application (object 3) sets the device control's application-stopped bit
+  // (PID 14 bit 0) until its restart; null where no capture shows it, and the device control is then unknown.
+  unloadStopsApplication: boolean | null;
 }
 
 export interface SimUnit0705Model extends SimUnitCoreModel {
@@ -55,6 +61,8 @@ export interface SimUnit0705Model extends SimUnitCoreModel {
   held: Map<number, SimUnit0705Segment[]>;
   // The CRC convention of its memory-control blocks; null where the unit reports none.
   crcConvention: "ccitt" | "ccitt-false" | null;
+  // The application the unit holds (object 3 PID 13), which every task segment carries.
+  programId: Buffer;
   propertyMapped: PropertyMappedBehaviour;
 }
 
@@ -62,6 +70,7 @@ export function simUnit0705Model(collection: CollectPackage, appXml: string, beh
   if (collection.mask !== "MV-0705") refuse(`this model is for MV-0705, not ${collection.mask}`);
   const { records, mask, objects, descriptions, functionStates, memoryExtendedRead } = collectedUnit(collection, appXml, refuse);
   if (collection.maxApdu !== null && collection.maxApdu !== pm.maxApdu) refuse(`the unit reports a maximum APDU of ${collection.maxApdu}, the spec ${pm.maxApdu}`);
+  const programId = objects.get(APPLICATION_LSM)?.get(PID_PROGRAM_ID)?.elements?.[0] ?? refuse("the collection did not read the program id (object 3 PID 13)");
   const steps = flattenSteps(parseLoadProcedures(appXml), "full");
 
   const bytes = Buffer.alloc(MEMORY_END), known = new Uint8Array(MEMORY_END);
@@ -118,7 +127,7 @@ export function simUnit0705Model(collection: CollectPackage, appXml: string, beh
   return {
     ...behaviour,
     ia: iaToNum(collection.ia), mask, maxApdu: pm.maxApdu, objects, descriptions, functionStates, memoryExtendedRead,
-    crcConvention: crc, memory: { bytes, known }, held, propertyMapped: pm,
+    crcConvention: crc, memory: { bytes, known }, held, programId: Buffer.from(programId), propertyMapped: pm,
   };
 }
 
@@ -146,8 +155,9 @@ export class SimUnit0705 extends SimUnit {
     return this.known.subarray(at, at + n).every((k) => k === 1) ? Buffer.from(this.bytes.subarray(at, at + n)) : null;
   }
 
+  // Its captures write PID 5 and the device control, nothing else; the program id comes with the task segment.
   protected override propertyWrite(obj: number, pid: number, count: number, start: number, value: Buffer, reply: Reply): void {
-    if (pid === PID_PROGRAM_ID) { this.refuse(`A_PropertyValue_Write ${obj}/${pid} ${value.toString("hex")}: a System 7 unit takes its program id with the task segment`); return; }
+    if (pid !== PID_LOAD_STATE && !(obj === 0 && pid === PID_DEVICE_CONTROL)) { this.refuse(`A_PropertyValue_Write ${obj}/${pid} ${value.toString("hex")}: no capture shows this unit take a write of it`); return; }
     super.propertyWrite(obj, pid, count, start, value, reply);
   }
 
@@ -163,9 +173,8 @@ export class SimUnit0705 extends SimUnit {
         this.unloaded.add(obj);
         if (this.property(obj, PID_TABLE_REFERENCE)?.elements) this.referenceKnown.set(obj, false);
         if (this.property(obj, PID_MCB)?.elements) this.mcbKnown.set(obj, false);
-        // The unit reports its application stopped after the application is unloaded: the MDT BE-02001.02's
-        // device control read 1 after ETS unloaded objects 1 to 3, the Gira's 0 after it unloaded 1 and 2.
-        if (obj === APPLICATION_LSM) { const dc = this.property(0, PID_DEVICE_CONTROL)!; dc.elements = [Buffer.from([dc.elements![0][0] | APPLICATION_STOPPED])]; }
+        if (obj === APPLICATION_LSM && this.unit.propertyMapped.unloadStopsApplication === null) this.deviceControlUnknown = true;
+        if (obj === APPLICATION_LSM && this.unit.propertyMapped.unloadStopsApplication) { const dc = this.property(0, PID_DEVICE_CONTROL)!; dc.elements = [Buffer.from([dc.elements![0][0] | APPLICATION_STOPPED])]; }
         return set(STATE.UNLOADED);
       case EVENT.LOAD:
         if (state === STATE.LOADING) { this.refuse(`${what}: a load of a machine that is loading`); return null; }
@@ -198,12 +207,11 @@ export class SimUnit0705 extends SimUnit {
     }
     if (value[1] === SEGMENT.TASK) {
       if (value.length !== 10) { this.refuse(`${what}: a task segment of another form`); return false; }
-      const id = value.subarray(5, 10);
-      const pid13 = this.property(obj, PID_PROGRAM_ID);
-      // The program id the collections after ETS's downloads read in object 3 PID 13 is the one its task segment
-      // carried.
-      if (pid13?.elements?.[0] && pid13.elements[0].length === id.length) pid13.elements = [Buffer.from(id)];
-      this.taskAt.set(obj, value.readUInt16BE(2));
+      const at = value.readUInt16BE(2), id = value.subarray(5, 10);
+      if (!segs.some((x) => x.at === at)) { this.refuse(`${what}: a task segment at 0x${at.toString(16)}, where object ${obj} holds no segment`); return false; }
+      if (value[4] !== this.unit.propertyMapped.peiType) { this.refuse(`${what}: a task segment of PEI type ${value[4]}, where the unit's captures carry ${this.unit.propertyMapped.peiType}`); return false; }
+      if (!id.equals(this.unit.programId)) { this.refuse(`${what}: a task segment for application ${id.toString("hex")}, where the unit holds ${this.unit.programId.toString("hex")}`); return false; }
+      this.taskAt.set(obj, at);
       return true;
     }
     this.refuse(`${what}: additional load control 0x${value[1].toString(16)} is not shown on this unit`);
@@ -266,6 +274,7 @@ export class SimUnit0705 extends SimUnit {
   protected override memoryWrite(n: number, addr: number, data: Buffer, reply: Reply): void {
     const what = `A_Memory_Write ${n} at 0x${addr.toString(16)}`;
     if (n === 0 || data.length !== n) { this.refuse(`${what}: ${data.length} octets of data`); return; }
+    if (this.deviceControlUnknown) { this.refuse(`${what}: whether the unit echoes it is not known, its device control after the application's unload not shown`); return; }
     const hit = this.heldAt(addr, n);
     if (!hit) { this.refuse(`${what}: outside an allocated segment`); return; }
     if (this.state(hit[0]) !== STATE.LOADING) { this.refuse(`${what}: into the segment of object ${hit[0]} while it is not loading`); return; }

@@ -66,6 +66,25 @@ corpusDescribe("the simulated MDT BE-02001.02", () => {
     expect(sim.refusals).toEqual([]);
   });
 
+  test("refuses a task segment no capture shows, a property write but PID 5 and 14, and its programming mode where it contradicts the collection", async () => {
+    const sim = newSimUnit(MDT_BE02001, {}, { link: { ackMs: 0, nakMs: 0 } });
+    const send = (tpdu: string) => sim.sendCemi(withSource(cemiLData(0, sim.deviceIa, Buffer.from(tpdu, "hex")), MDT_BE02001.interfaceIa));
+    // In programming mode at the start, where the collection read PID 54 as 00: its read is refused.
+    for (const t of ["80", "43d500361001"]) await send(t);
+    // Unload, load and allocate object 1, then a task segment for another application, and a PID 27 write.
+    for (const t of ["47d70105100104000000000000000000", "c2", "4bd70105100101000000000000000000", "c6", "4fd701051001030040000201ff038000", "ca", "53d7010510010302400001deadbeef01", "57d7011b10010000000100001234"]) await send(t);
+    expect(sim.refusals).toEqual([
+      "sim-refused A_PropertyValue_Read 0/54 of 1 from 1: the unit's programming mode differs from the one collected, and what it reports then is not shown",
+      "sim-refused A_PropertyValue_Write 1/5 0302400001deadbeef01: a task segment for application deadbeef01, where the unit holds 008300b632",
+      "sim-refused A_PropertyValue_Write 1/27 0000000100001234: no capture shows this unit take a write of it",
+    ]);
+    // The Gira: no capture shows its device control after its application's unload.
+    const gira = newSimUnit(GIRA_TS3, {}, { link: { ackMs: 0, nakMs: 0 } });
+    const g = (tpdu: string) => gira.sendCemi(withSource(cemiLData(0, gira.deviceIa, Buffer.from(tpdu, "hex")), GIRA_TS3.interfaceIa));
+    for (const t of ["80", "43d70305100104000000000000000000", "c2", "47d5000e1001"]) await g(t);
+    expect(gira.refusals).toEqual(["sim-refused A_PropertyValue_Read 0/14 of 1 from 1 after the unload of the application: what the unit reports then is not shown"]);
+  });
+
   test("refuses load completed after an unload without the segment and task segment every capture declares", async () => {
     const sim = newSimUnit(MDT_BE02001, {}, { link: { ackMs: 0, nakMs: 0 } });
     const send = (tpdu: string) => sim.sendCemi(withSource(cemiLData(0, sim.deviceIa, Buffer.from(tpdu, "hex")), MDT_BE02001.interfaceIa));

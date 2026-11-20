@@ -24,14 +24,13 @@
 import { APCI, LSM, MM_CTRL_ADDR, MM_STATUS_BASE, STATE, VERIFY_MODE, iaToNum } from "../packages/knx/src/index.ts";
 import { flattenSteps, lsmIdx, memType, parseLoadProcedures, stepAddress, stepSize, unreadableReason, type CollectPackage } from "../packages/product/src/index.ts";
 import { collectedUnit, type UnitBehaviour } from "./sim-unit-model.ts";
-import { SimUnit, type Reply, type SimUnitCoreModel } from "./sim-unit.ts";
+import { SimUnit, MEMORY_END, type Reply, type SimUnitCoreModel } from "./sim-unit.ts";
 
 // A load control is 11 octets (packages/knx/src/flash.ts); the event of the additional load controls.
 const LOAD_CONTROL_LENGTH = 11, ADDITIONAL = 3;
 const LSMS = [1, 2, 3, 4];
 const STATES_AT = MM_STATUS_BASE + 1, STATES_END = MM_STATUS_BASE + 1 + LSMS.length;
 // The reach of A_Memory_Read and A_Memory_Write: a 16-bit address.
-const MEMORY_END = 0x10000;
 // The memory type of every segment the units' captures write (MemType="3" in their applications).
 const WRITTEN_MEMORY_TYPE = 3;
 const PID_LOAD_STATE = 5, PID_TABLE_REFERENCE = 7, PID_PROGRAM_ID = 13, PID_DEVICE_CONTROL = 14;
