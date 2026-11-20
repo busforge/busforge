@@ -200,11 +200,13 @@ Every test in `apps/web` runs with a [happy-dom](https://github.com/capricorn86/
 when `bun test` runs in `apps/web` (as `bun run check` does; from the repository root the preload is
 not found). `apps/web/bunfig.toml` preloads `src/test/dom.ts`, which makes a happy-dom window the
 test process's `window`, `document`, DOM classes, `localStorage` and `navigator`. Bun keeps its own
-`fetch`, `Request`, `Response`, `Headers`, `WebSocket`, `URL`, abort signals and timers, so the API
-client tests and the tests that wait run on the same globals as without a DOM. happy-dom's error
+`fetch`, `Request`, `Response`, `Headers`, `WebSocket`, the bodies they take (`FormData`, `Blob`,
+`File`, streams), `URL`, abort signals and timers, so the API client tests and the tests that wait run
+on the same globals as without a DOM. happy-dom's error
 capture is off, so an exception in an event listener fails the test instead of being logged. After
-each test the preload unmounts what the test mounted (also after a failed assertion), empties the
-body and the storage, and sets the window back to 1024 x 768.
+each test the preload unmounts what the test mounted (also after a failed assertion; an unmount that
+throws fails the test once the rest is reset), empties the body and the storage, and sets the window
+back to 1024 x 768.
 
 A test that only needs markup renders with `renderToStaticMarkup` as before. A test that needs
 effects, refs, clicks or events mounts the component with `mount` from `src/test/render.tsx` and

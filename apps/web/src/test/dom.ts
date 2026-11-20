@@ -12,11 +12,13 @@ import { BrowserErrorCaptureEnum, GlobalWindow, PropertySymbol } from "happy-dom
 const window = new GlobalWindow({ url: "http://localhost/", console: globalThis.console, settings: { errorCapture: BrowserErrorCaptureEnum.disabled } });
 const VIEWPORT = { width: 1024, height: 768 };
 
-// Bun's own network, URL, abort and timer globals stay, so a test of the API client and a test that waits
-// run on what they ran on before.
+// Bun's own network globals stay, with the bodies, streams, URL and abort signals they take, and its timers,
+// so a test of the API client and a test that waits run on what they ran on before. A body from happy-dom's
+// FormData or Blob would not serialise in Bun's Request.
 const keep = new Set<PropertyKey>([
   "constructor", "undefined", "NaN", "Infinity", "global", "globalThis",
-  "fetch", "Request", "Response", "Headers", "WebSocket", "URL", "URLSearchParams", "AbortController", "AbortSignal",
+  "fetch", "Request", "Response", "Headers", "WebSocket", "FormData", "Blob", "File", "ReadableStream", "WritableStream",
+  "TransformStream", "URL", "URLSearchParams", "AbortController", "AbortSignal", "atob", "btoa",
   "setTimeout", "clearTimeout", "setInterval", "clearInterval", "setImmediate", "clearImmediate", "queueMicrotask",
 ]);
 for (const key of Reflect.ownKeys(window)) {
@@ -29,14 +31,23 @@ for (const key of Reflect.ownKeys(window)) {
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 // What one test leaves in the shared document is gone before the next: its mounted roots (`mount` registers
-// their unmount here, so a failed assertion leaks none), the body, storage and the window size.
+// their unmount here, so a failed assertion leaks none), the body, storage and the window size. An unmount
+// that throws fails the test after the rest is reset.
 export const cleanups = new Set<() => void>();
 afterEach(() => {
-  for (const cleanup of cleanups) cleanup();
+  const errors: unknown[] = [];
+  for (const cleanup of [...cleanups]) {
+    try {
+      cleanup();
+    } catch (e) {
+      errors.push(e);
+    }
+  }
   cleanups.clear();
   document.body.replaceChildren();
   localStorage.clear();
   sessionStorage.clear();
   window.happyDOM.setViewport(VIEWPORT);
+  if (errors.length) throw new AggregateError(errors, "unmounting a test's roots failed");
 });
 afterAll(() => window.happyDOM.close());
