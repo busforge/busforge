@@ -558,8 +558,9 @@ taken the same way: the ABB US/U 4.2 heads its counter page with one (`P-404`, "
 ParameterRefRef places it), and with channel A a counter whose additional options and differential counter
 are on, ETS's download writes what the only, default branch of the choose on it places (com-objects 2, 4
 and 5, the differential counter's overrun value). Busforge's image of that configuration is every byte of
-ETS's. So a memoryless parameter heading a reached block counts as placed for the default branch, whatever
-its type. It decides nothing else; the value its ParameterRef resolves to is the one §9 gives.
+ETS's. So a memoryless parameter heading a reached block counts as placed for the default branch; the
+captures show it for `TypeNone` and numeric headings, and Busforge applies it to a memoryless heading of any
+type. It decides nothing else; the value its ParameterRef resolves to is the one §9 gives.
 
 Unions overlay several parameters on the same bytes; only the member an active branch places is
 meaningful. On the GVS AMMA a choose tests a union member that no active branch places. Evaluated

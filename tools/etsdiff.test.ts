@@ -396,7 +396,7 @@ function partialLinkGas(file: string, cfg: ReturnType<typeof parseAppConfig>, n:
 corpusDescribe("the bench captures go to the bench devices, on the bench project's addresses", () => {
   test("each capture's memory writes go to its bench device", () => {
     const devices: [string, string[]][] = [
-      ["1.1.201", ["abb-usu-4.2-ets-partial-links.log", "abb-usu-4.2-ets-fulldownload-loaded.log"]],
+      ["1.1.201", ["abb-usu-4.2-ets-partial-links.log", "abb-usu-4.2-ets-fulldownload-loaded.log", "abb-usu-4.2-ets-counter-download.log"]],
       ["1.1.203", ["gvs-amma-ets-fulldownload-defaults.log", "gvs-amma-ets-partial-links.log"]],
       ["1.1.204", ["jung-400021se-ets-fulldownload.log", "jung-400021se-ets-partial-links.log", "jung-400021se-ets-partial-structure.log"]],
       ["1.1.56", ["mdt-be02001-ets-partial-links.log", "mdt-be02001-ets-fulldownload-b7.log", "mdt-be02001-ets-partial-structure.log"]],
@@ -1186,57 +1186,48 @@ corpusDescribe("ABB US/U 4.2 (M-0002_A-A001-13-63C2) full download on a loaded u
     expect(span(ets)).toEqual(["4003-4004", "4202-4202", "4407-4407", "440f-440f", "6d0a-6d0d"]);
     expect(sorted(readCompared(plan, held))).toEqual(sorted(ets));
   });
-});
 
-// ETS 6 application download of the same bench unit with channel A a counter (P-9 = 6, 32 bit), its additional
-// options on (P-178), divider 3, factor 2 and the differential counter on (P-411). The counter's page PB-404 is
-// headed by P-404, a numeric parameter without memory that no ParameterRefRef places; everything on the page,
-// the com-objects 2, 4 and 5 and UP-412's overrun value among it, sits in the only, default branch of a choose
-// on P-404 (docs/findings.md §11). ETS takes that branch, and Busforge's image of the configuration (the five
-// values are what ETS's export of the project stores for the device) is every byte ETS's image holds.
-corpusDescribe("ABB US/U 4.2 (M-0002_A-A001-13-63C2) counter channel against ETS", () => {
-  const xml = catalogueXml("M-0002_A-A001-13-63C2.xml.gz");
-  const cfg = parseAppConfig(xml);
-  const proc = parseLoadProcedures(xml);
-  const FILE = "abb-usu-4.2-ets-counter-download.log", LOG = etsLog("abb-usu-4.2-ets6log-counter-download.txt");
-  const ia = deviceOf(FILE), IA = numToIa(ia);
-  const A = "M-0002_A-A001-13-63C2_";
-  const params = new Map([["P-9_R-9", "6"], ["P-178_R-178", "1"], ["UP-166_R-405", "3"], ["UP-167_R-406", "2"], ["P-411_R-411", "1"]].map(([r, v]) => [A + r, v]));
-  const build = () => classify(cfg).planFullDownload(cfg.mask, { ia: IA, params, links: [], proc, unitHoldsApplication: true });
+  // ETS 6 application download of the same unit with channel A a counter (P-9 = 6, 32 bit), its additional options
+  // on (P-178), divider 3, factor 2 and the differential counter on (P-411). The counter's page PB-404 is headed by
+  // P-404, a numeric parameter without memory that no ParameterRefRef places; everything on the page, the
+  // com-objects 2, 4 and 5 and UP-412's overrun value among it, sits in the only, default branch of a choose on
+  // P-404 (docs/findings.md §11). ETS takes that branch, and Busforge's image of the configuration (the five values
+  // are what ETS's export of the project stores for the device) is every byte ETS's image holds.
+  describe("with channel A a counter", () => {
+    const COUNTER = "abb-usu-4.2-ets-counter-download.log", COUNTER_LOG = etsLog("abb-usu-4.2-ets6log-counter-download.txt");
+    const A = "M-0002_A-A001-13-63C2_";
+    const params = new Map([["P-9_R-9", "6"], ["P-178_R-178", "1"], ["UP-166_R-405", "3"], ["UP-167_R-406", "2"], ["P-411_R-411", "1"]].map(([r, v]) => [A + r, v]));
+    const counter = () => classify(cfg).planFullDownload(cfg.mask, { ia: IA, params, links: [], proc, unitHoldsApplication: true });
 
-  test("the page heading the choose is a numeric parameter without memory that nothing places", () => {
-    const heading = cfg.params.get(`${A}P-404`)!;
-    expect([heading.hasMemory, cfg.types.get(heading.typeId)?.kind]).toEqual([false, "TypeNumber"]);
-    expect(xml.includes(`<ParameterRefRef RefId="${A}P-404_R-404"`)).toBe(false);
-    expect(xml.includes(`<ParameterBlock Id="${A}PB-404" Name="R_Impulszaehler" ParamRefId="${A}P-404_R-404">`)).toBe(true);
-  });
+    test("the page heading the choose is a numeric parameter without memory that nothing places", () => {
+      const heading = cfg.params.get(`${A}P-404`)!;
+      expect([heading.hasMemory, cfg.types.get(heading.typeId)?.kind]).toEqual([false, "TypeNumber"]);
+      expect(xml.includes(`<ParameterRefRef RefId="${A}P-404_R-404"`)).toBe(false);
+      expect(xml.includes(`<ParameterBlock Id="${A}PB-404" Name="R_Impulszaehler" ParamRefId="${A}P-404_R-404">`)).toBe(true);
+    });
 
-  test("ETS's log: the partial form on the loaded unit, as for its defaults", () => {
-    expect(IA).toBe("1.1.201");
-    expect(LOG.steps.map((s) => `${s.verb}${s.attrs.LsmIdx ?? s.attrs.Address ?? ""}`)).toEqual([
-      "LdCtrlConnect", "LdCtrlCompareProp", "LdCtrlUnload1", "LdCtrlUnload2",
-      "LdCtrlLoad1", "LdCtrlAbsSegment1", "LdCtrlTaskSegment1", "LdCtrlLoadCompleted1",
-      "LdCtrlLoad2", "LdCtrlAbsSegment2", "LdCtrlTaskSegment2", "LdCtrlLoadCompleted2",
-      "LdCtrlLoad3", "LdCtrlWriteMem17920", "LdCtrlWriteMem28432", "LdCtrlWriteMem17406", "LdCtrlWriteMem27904", "LdCtrlWriteMem28416",
-      "LdCtrlLoadCompleted3", "LdCtrlRestart", "LdCtrlDisconnect",
-    ]);
-  });
+    test("ETS's log: the partial form, the steps of the defaults' download", () => {
+      const steps = (l: ReturnType<typeof etsLog>) => l.steps.map((s) => `${s.verb}${s.attrs.LsmIdx ?? s.attrs.Address ?? ""}`);
+      expect(steps(COUNTER_LOG)).toEqual(steps(LOG));
+    });
 
-  test("Busforge takes the choose's default branch, and its image is every byte of ETS's", () => {
-    expect([...buildDeviceConfig(cfg, params).imageComObjects.keys()].sort((x, y) => x - y)).toEqual([0, 1, 2, 3, 4, 5]);
-    const ours = bytesOf(build().plan);
-    expect([...ours].sort(([a], [b]) => a - b)).toEqual([...LOG.image].sort(([a], [b]) => a - b));
-    // The default branch's own bytes in ETS's image: UP-412's overrun value 1000, the descriptors of objects 2, 4 and 5.
-    expect([0x6d12, 0x6d13, 0x440b, 0x440c, 0x4413, 0x4417].map((a) => LOG.image.get(a))).toEqual([0xe8, 0x03, 0x53, 0x0a, 0x43, 0x13]);
-    // On the wire, read and compared against what the unit held, Busforge's writes are exactly ETS's.
-    const wire = new Map([...memoryImage(parseCapture(captureText(FILE), ia).writes)].filter(([a]) => a < 0x0104 || a >= 0x0104 + 11));
-    expect(wire.size).toBeGreaterThan(0);
-    expect([...readCompared(build().plan, heldBeforeWrite(FILE, ia))].sort(([a], [b]) => a - b)).toEqual([...wire].sort(([a], [b]) => a - b));
-  });
+    test("Busforge takes the choose's default branch, and its image is every byte of ETS's", () => {
+      expect([...buildDeviceConfig(cfg, params).imageComObjects.keys()].sort((x, y) => x - y)).toEqual([0, 1, 2, 3, 4, 5]);
+      const ours = bytesOf(counter().plan);
+      expect([...ours].sort(([a], [b]) => a - b)).toEqual([...COUNTER_LOG.image].sort(([a], [b]) => a - b));
+      // The default branch's own bytes in ETS's image: UP-412's overrun value 1000, the config bytes of objects 2,
+      // 4 and 5 and object 2's type.
+      expect([0x6d12, 0x6d13, 0x440b, 0x440c, 0x4413, 0x4417].map((a) => COUNTER_LOG.image.get(a))).toEqual([0xe8, 0x03, 0x53, 0x0a, 0x43, 0x13]);
+      // On the wire, read and compared against what the unit held, Busforge's writes are exactly ETS's.
+      const wire = new Map([...memoryImage(parseCapture(captureText(COUNTER), ia).writes)].filter(([a]) => a < 0x0104 || a >= 0x0104 + 11));
+      expect(wire.size).toBeGreaterThan(0);
+      expect([...readCompared(counter().plan, heldBeforeWrite(COUNTER, ia))].sort(([a], [b]) => a - b)).toEqual([...wire].sort(([a], [b]) => a - b));
+    });
 
-  test("Busforge's partial form: ETS's steps, its writes aside", () => {
-    const steps = (x: string[]) => x.filter((s) => s !== "write");
-    expect(steps(planSteps(build().plan))).toEqual(steps(captureSteps(FILE, ia)));
+    test("Busforge's partial form: ETS's steps, its writes aside", () => {
+      const steps = (x: string[]) => x.filter((s) => s !== "write");
+      expect(steps(planSteps(counter().plan))).toEqual(steps(captureSteps(COUNTER, ia)));
+    });
   });
 });
 
