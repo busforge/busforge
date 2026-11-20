@@ -1,14 +1,15 @@
 #!/usr/bin/env bun
 // An index of the private corpus's captures: per file, which tool talked (ETS or Busforge), to which units,
 // what each unit's device descriptor 0 said (its mask version), which addresses were assigned, which
-// services went each way and which interface-object/PID pairs were touched. It answers "does a capture show
-// X" by a lookup instead of a hex search through memory dumps.
+// services went each way, which interface-object/PID pairs were touched, the first and last timestamp of
+// its telegram lines and how many memory and property writes went to each unit. It answers "does a capture
+// show X" and "what ran before this capture" by a lookup instead of a hex search through memory dumps.
 //
 //   BUSFORGE_CORPUS=<corpus> bun run tools/capture-index.ts
 //
 // writes internal/captures/INDEX.md (for reading and grep) and internal/captures/index.json (every field,
-// for scripts) into the corpus. It walks captures/, internal/captures/ and collections/ and reads three
-// telegram formats, each with the decoder of its kind:
+// for scripts) into the corpus. It walks the directories of INDEX_DIRS, the ones of the corpus that hold
+// telegram logs or collections, and reads three telegram formats, each with the decoder of its kind:
 //
 //   knxproxy      the log of tools/knxproxy.ts (also tools/pcap.ts's output): each frame's hex decoded here
 //   ets6log       ETS 6's own log (Falcon.KnxStack lines): ETS's decode, read as ETS wrote it
@@ -39,10 +40,13 @@ import {
   SecureCaptureDecoder, addKeys, corpusKeys, emptyKeys, groupKeyCount, parseKeyList, type KeyLoad, type NamedKey, type SecureFrame, type SecureKeys,
 } from "./secure-capture.ts";
 
-export const INDEX_DIRS = ["captures", "internal/captures", "collections"] as const;
+// Every corpus directory that holds telegram logs or collections, named here and not found by a blind walk
+// over the corpus. A directory that starts holding telegram logs is added; the corpus test of this file's
+// tests fails on one that is missing.
+export const INDEX_DIRS = ["captures", "collections", "internal/captures", "internal/ets-sweep", "internal/house-compat", "internal/release-readiness"] as const;
 export const INDEX_MD = "internal/captures/INDEX.md";
 export const INDEX_JSON = "internal/captures/index.json";
-export const INDEX_FORMAT = "busforge-capture-index/3";
+export const INDEX_FORMAT = "busforge-capture-index/4";
 export const KEYS_ENV = "CAPTURE_KEYS";
 // The bussard set's oracle rows name the public password of its synthetic keyrings in their header.
 export const BUSSARD_ROWS = `${BUSSARD_SYNTHETIC_DIR}/captures/rows.txt`;
@@ -52,6 +56,13 @@ export type Format = "knxproxy" | "pcap" | "ets6log" | "groupmonitor";
 export const PCAP_CLIENT = "client";
 
 export interface ServiceCount { sent: number; received: number }
+// The memory and property write requests the tool sent to one unit (WRITE_SERVICES).
+export interface WriteCount { memory: number; property: number }
+// The timestamps of the first and the last telegram line in file order (the lines `telegrams` counts, so no
+// connection management, heartbeat, confirmation or download action), as the file writes them: an ISO time in
+// UTC for a proxy log or pcap capture, ETS's local "<date> <time>,<ms>" for its own log, a listener's time of
+// day (no date) or ISO time for a group monitor.
+export interface Span { first: string; last: string }
 export interface Device { address: string; descriptor0: string[] }
 export interface IndexedFile {
   file: string;
@@ -64,7 +75,12 @@ export interface IndexedFile {
   // kind, null where none was sent or the format shows no frame.
   framesBuiltAs: "ETS" | "Busforge" | "other" | "mixed" | null;
   telegrams: number;
+  // Null where no telegram line of the file carries a timestamp.
+  span: Span | null;
   devices: Device[];
+  // Per destination unit, the memory and property writes the tool sent, inside opened secured telegrams too; a
+  // request the interface confirmed negatively counts like in `services`.
+  writes: Record<string, WriteCount>;
   // Addresses written by A_IndividualAddress_Write or A_IndividualAddressSerialNumber_Write.
   assigned: string[];
   // Sent = from the tool, received = from the bus. A group monitor receives, apart from the reads its listener
@@ -189,12 +205,23 @@ const CONTROL_SERVICES = new Set<number>([
 // Group telegrams are left out: ETS sends some of those with 0xBC.
 const FRAME_BUILDERS: Record<number, "ETS" | "Busforge"> = { 0xb0: "ETS", 0x30: "ETS", 0xbc: "Busforge", 0x3c: "Busforge" };
 
+// The services that write a unit's memory or properties, by their names in `services`.
+export const WRITE_SERVICES: Record<string, keyof WriteCount> = {
+  A_Memory_Write: "memory", A_MemoryExtended_Write: "memory", A_MemoryBit_Write: "memory", A_UserMemory_Write: "memory", A_UserMemoryBit_Write: "memory",
+  A_PropertyValue_Write: "property", A_PropertyExtValue_WriteCon: "property", A_PropertyExtValue_WriteUnCon: "property",
+};
+
 // ── per-file accumulation ─────────────────────────────────────────────────────
 
 class FileStats {
   readonly tools = new Set<string>();
   readonly builders = new Set<string>();
   telegrams = 0;
+  // The time at the start of the line being read, "" where it has none.
+  time = "";
+  first: string | null = null;
+  last: string | null = null;
+  readonly writes = new Map<string, WriteCount>();
   readonly devices = new Map<string, Set<string>>();
   readonly assigned = new Set<string>();
   readonly services = new Map<string, ServiceCount>();
@@ -223,6 +250,21 @@ class FileStats {
     if (sent) c.sent++; else c.received++;
     into.set(name, c);
   }
+  // Counts a telegram line, whose time (`time`, as the line writes it) the span takes.
+  telegram(): void {
+    this.telegrams++;
+    if (!this.time) return;
+    this.first ??= this.time;
+    this.last = this.time;
+  }
+  // A write request sent to `dest`, the unit it addresses (null where it addresses none).
+  write(service: string, dest: string | null): void {
+    const kind = WRITE_SERVICES[service];
+    if (!kind || dest === null) return;
+    const w = this.writes.get(dest) ?? { memory: 0, property: 0 };
+    w[kind]++;
+    this.writes.set(dest, w);
+  }
   propertyAnswer(property: string, device: string, elements: number, errorOctet: boolean): void {
     const key = `${property}|${device}|${elements}|${errorOctet}`;
     const a = this.propertyAnswers.get(key) ?? { property, device, elements, errorOctet, count: 0 };
@@ -240,6 +282,8 @@ class FileStats {
       tools: [...this.tools].sort(),
       framesBuiltAs: this.builders.size === 0 ? null : this.builders.size > 1 ? "mixed" : ([...this.builders][0] as IndexedFile["framesBuiltAs"]),
       telegrams: this.telegrams,
+      span: this.first === null ? null : { first: this.first, last: this.last! },
+      writes: Object.fromEntries([...this.writes.entries()].sort(([a], [b]) => byAddress(a, b))),
       devices: [...this.devices.keys()].sort(byAddress).map((address) => ({ address, descriptor0: [...this.devices.get(address)!].sort() })),
       assigned: [...this.assigned].sort(byAddress),
       services: Object.fromEntries([...this.services.entries()].sort(([a], [b]) => byText(a, b))),
@@ -328,10 +372,13 @@ function payloadFits(apci: number, tpdu: Buffer, data: Buffer): boolean {
   return true;
 }
 
-// One application-layer telegram: its service, and what the index takes from its payload.
-function applicationTelegram(st: FileStats, apci: number, tpdu: Buffer, sent: boolean, src: string): boolean {
+// One application-layer telegram: its service, and what the index takes from its payload. `dest` is the unit a
+// sent telegram is addressed to, null for a received one or one that addresses no single unit.
+function applicationTelegram(st: FileStats, apci: number, tpdu: Buffer, sent: boolean, src: string, dest: string | null): boolean {
   const data = tpdu.subarray(2);
-  st.service(apciName(apci), sent);
+  const name = apciName(apci);
+  st.service(name, sent);
+  if (sent) st.write(name, dest);
   if (!payloadFits(apci, tpdu, data)) return false;
   if (PROPERTY_APCIS.has(apci)) {
     st.properties.add(`${data[0]}/${data[1]}`);
@@ -358,7 +405,7 @@ function applicationTelegram(st: FileStats, apci: number, tpdu: Buffer, sent: bo
 
 // A secured telegram as the decoder left it. An opened S-A_Data's inner telegram is read like any other; one no
 // key opened is counted by what its frame shows in clear.
-function secureTelegram(st: FileStats, fr: SecureFrame, sent: boolean, src: string, group: boolean, dst: number): boolean {
+function secureTelegram(st: FileStats, fr: SecureFrame, sent: boolean, src: string, group: boolean, dst: number, dest: string | null): boolean {
   const q = { toolAccess: fr.toolAccess, group, broadcast: group && dst === 0 };
   if (fr.truncated) { st.service(secureInside(`${fr.service} (truncated)`, q), sent, st.secureInside); return false; }
   if (!fr.opened) { st.service(secureInside(`${fr.service} (not opened)`, q), sent, st.secureInside); return true; }
@@ -370,7 +417,7 @@ function secureTelegram(st: FileStats, fr: SecureFrame, sent: boolean, src: stri
   if (p.length < 2 || (p[0] & 0xfc) !== 0) { st.service(secureInside("S-A_Data (inner APDU malformed)", q), sent, st.secureInside); return false; }
   const apci = ((p[0] & 0x03) << 8) | p[1];
   st.service(secureInside(apciName(apci), q), sent, st.secureInside);
-  return applicationTelegram(st, apci, p, sent, src);
+  return applicationTelegram(st, apci, p, sent, src, dest);
 }
 
 // The cEMI message behind a KNXnet/IP header and its connection header, each led by its own length.
@@ -393,8 +440,9 @@ function tunnelTelegram(st: FileStats, f: Buffer, hexFrame: string, sent: boolea
     return true;
   }
   openPending(st);
-  st.telegrams++;
+  st.telegram();
   const src = numToIa(fr.src), dst = fr.dst;
+  const dest = sent && !fr.group ? numToIa(dst) : null;
   if (sent && fr.code === CEMI.LDATA_REQ && (!fr.group || dst === 0)) st.builders.add(FRAME_BUILDERS[ctrl1] ?? "other");
   if (fr.group) {
     if (dst !== 0) st.groups.add(numToGa(dst));
@@ -411,9 +459,9 @@ function tunnelTelegram(st: FileStats, f: Buffer, hexFrame: string, sent: boolea
   // A group or broadcast telegram is unnumbered data: no sequence number, no numbered flag.
   if (fr.group && (t[0] & 0xfc) !== 0) return false;
   const apci = ((t[0] & 0x03) << 8) | t[1];
-  const ok = applicationTelegram(st, apci, t, sent, src);
+  const ok = applicationTelegram(st, apci, t, sent, src, dest);
   if (apci !== 0x3f1 || !ok) return ok;
-  const open = () => secureTelegram(st, st.decoder.open(fr.code === CEMI.LDATA_REQ && fr.src === 0 ? st.tunnelIa : fr.src, dst, fr.group, t), sent, src, fr.group, dst);
+  const open = () => secureTelegram(st, st.decoder.open(fr.code === CEMI.LDATA_REQ && fr.src === 0 ? st.tunnelIa : fr.src, dst, fr.group, t), sent, src, fr.group, dst, dest);
   if (fr.code !== CEMI.LDATA_REQ || fr.src !== 0) return open();
   st.pending = { line: st.line, open };
   return true;
@@ -467,6 +515,8 @@ const ETS_TELEGRAM = /([A-Za-z]+(?:_[A-Za-z]+)*)_(req|ind) (->|<-) (\S+)(?: -> (
 // "Send next message from queue ..." names a telegram already logged; a telegram line starts with its service.
 const ETS_SEND_RECEIVE = /Falcon\.KnxStack\.LL - \[[^\]]*\] (Send|Received) (?=[A-Za-z_]+_(?:req|ind)\b)/;
 const ETS_LINE = new RegExp(`${ETS_SEND_RECEIVE.source}${ETS_TELEGRAM.source}`);
+// ETS's local time at the start of a line, "2026-10-07 12:06:15,118".
+const ETS_STAMP = /^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d+) /;
 const ETS_INNER = new RegExp(`InnerTelegram=${ETS_TELEGRAM.source}`);
 const ETS_ACTION = /DownloadManager - (Start[A-Za-z]+(?:\([A-Za-z]*\))?) (\d+\.\d+\.\d+)|Hawk\.LoadDeviceTask - Begin ([A-Za-z]+) (\d+\.\d+\.\d+)(?: \(([A-Za-z]+)\))?/;
 // ETS's service names where they differ from the standard's (the rest are the standard's without "A_"):
@@ -481,6 +531,7 @@ const IA = /^\d+\.\d+\.\d+$/, GA = /^\d+\/\d+\/\d+$/;
 // False where a property service names no property in a form read here.
 function etsTelegram(st: FileStats, sent: boolean, service: string, addr: string, to: string | undefined, rest: string): boolean {
   st.service(etsName(service), sent);
+  if (sent && to === undefined && IA.test(addr)) st.write(etsName(service), addr);
   // A received group telegram's first address is its sender, not a unit the tool addressed; 0/0/0 is the
   // broadcast an address response goes to. A sent one names only the group address.
   if (to !== undefined && to !== "0/0/0") st.groups.add(to);
@@ -510,12 +561,13 @@ function etsLine(st: FileStats, line: string): boolean | null {
   const a = line.match(ETS_ACTION);
   if (a) { st.etsActions.add(a[1] ? `${a[1]} ${a[2]}` : a[5] ? `${a[3]}(${a[5]}) ${a[4]}` : `${a[3]} ${a[4]}`); return null; }
   if (!ETS_SEND_RECEIVE.test(line)) return null;
+  st.time = line.match(ETS_STAMP)?.[1] ?? "";
   const m = line.match(ETS_LINE);
-  if (!m) { st.tools.add("ETS"); st.telegrams++; return false; }
+  if (!m) { st.tools.add("ETS"); st.telegram(); return false; }
   const [, dir, service, , , addr, to, , rest] = m;
   const sent = dir === "Send";
   st.tools.add("ETS");
-  st.telegrams++;
+  st.telegram();
   let ok = etsTelegram(st, sent, service, addr, to, rest);
   if (service === "Sec") {
     st.secure++;
@@ -564,7 +616,7 @@ const GROUP_WORD = { GroupValueRead: "READ", GroupValueResponse: "RESPONSE", Gro
 function groupLine(st: FileStats, m: RegExpMatchArray): boolean {
   const [, , ga, word, wordHex, bareHex] = m;
   const h = word ? wordHex : bareHex;
-  st.telegrams++;
+  st.telegram();
   st.groups.add(ga);
   if (h.length % 2 || h.length < 4) return false;
   const tpdu = Buffer.from(h, "hex");
@@ -579,7 +631,7 @@ function groupLine(st: FileStats, m: RegExpMatchArray): boolean {
 
 function groupSend(st: FileStats, m: RegExpMatchArray): boolean {
   const [, kind, ga, con, readGa] = m;
-  st.telegrams++;
+  st.telegram();
   st.groups.add(ga ?? readGa);
   if (kind === "pulse") return false;
   st.service("A_GroupValue_Read", true);
@@ -604,6 +656,8 @@ export function indexText(file: string, text: string, keys: SecureKeys = emptyKe
     st.line = i + 1;
     let ok: boolean | null = null;
     const p = line.match(PROXY_LINE);
+    // A proxy log and a group monitor start every line with its time.
+    st.time = line.slice(0, Math.max(line.indexOf(" "), 0));
     if (p) { formats.add("knxproxy"); ok = proxyLine(st, p); }
     else if (line.includes("Falcon.KnxStack.LL") || ETS_ACTION.test(line)) {
       ok = etsLine(st, line);
@@ -612,7 +666,7 @@ export function indexText(file: string, text: string, keys: SecureKeys = emptyKe
       const g = line.match(GROUP_LINE), s = g ? null : line.match(GROUP_SEND);
       if (g) { formats.add("groupmonitor"); ok = groupLine(st, g); }
       else if (s) { formats.add("groupmonitor"); ok = groupSend(st, s); }
-      else if (GROUP_CANDIDATE.test(line) || /^\S+ (?:(?:read|pulse) \d+\/\d+\/\d+|SEND READ )/.test(line)) { formats.add("groupmonitor"); st.telegrams++; ok = false; }
+      else if (GROUP_CANDIDATE.test(line) || /^\S+ (?:(?:read|pulse) \d+\/\d+\/\d+|SEND READ )/.test(line)) { formats.add("groupmonitor"); st.telegram(); ok = false; }
       else if (line.trim() !== "" && !PROXY_MARKER.test(line) && !firstOther) firstOther = i + 1;
     }
     if (ok === false) st.undecoded.push(i + 1);
@@ -646,6 +700,7 @@ export function indexFile(root: string, file: string, keys: SecureKeys = emptyKe
 }
 
 function walk(root: string, dir: string, out: string[]): void {
+  if (!existsSync(join(root, dir))) throw new Error(`the corpus has no ${dir}/, which INDEX_DIRS names; it is not the corpus this tool indexes`);
   for (const name of readdirSync(join(root, dir)).sort()) {
     const rel = join(dir, name);
     if (rel === INDEX_MD || rel === INDEX_JSON) continue;
@@ -713,7 +768,11 @@ export function renderMarkdown(index: CaptureIndex): string {
   out.push("\"Inside secured telegrams\". **Tool** is the name the proxy wrote (`PROXY_TOOL`), which");
   out.push("the proxy cannot check, so where the tool's frames come from the other tool's frame builder the");
   out.push("cell says so (`ETS (frames: Busforge)`): Busforge sends control field BC/3C, ETS 6 B0/30. A pcap capture");
-  out.push(`names its client \`${PCAP_CLIENT}\`, and only its frames say which tool it was.`, "");
+  out.push(`names its client \`${PCAP_CLIENT}\`, and only its frames say which tool it was. **First** and **Last** are the`);
+  out.push("timestamps of the file's first and last telegram line, as the file writes them: UTC (`...Z`) in a proxy log or pcap");
+  out.push("capture, ETS's local time in its own log (its machine's zone, not UTC), a listener's time of day without a");
+  out.push("date in a group monitor, so compare them within a format. **Writes** are the memory and property write requests the");
+  out.push("tool sent to each unit, those inside opened secured telegrams included.", "");
 
   const disagree = index.files.filter(labelDisagrees);
   out.push("## Tool label and frames disagree", "");
@@ -771,13 +830,14 @@ export function renderMarkdown(index: CaptureIndex): string {
   out.push("");
 
   out.push("## Files", "");
-  out.push("| File | Format | Tool | Telegrams | Devices | Assigned | Sent | Not on bus | Received | Properties | Groups | Secure | ETS actions | Undecoded lines |");
-  out.push("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
+  out.push("| File | Format | Tool | Telegrams | First | Last | Devices | Assigned | Sent | Writes | Not on bus | Received | Properties | Groups | Secure | ETS actions | Undecoded lines |");
+  out.push("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
   for (const f of index.files) {
     const devices = f.devices.map((d) => (d.descriptor0.length ? `${d.address} [${d.descriptor0.join(", ")}]` : d.address)).join(", ");
     const secure = f.secure.telegrams ? `${f.secure.telegrams} (${f.secure.shown} shown)` : "";
     const undecoded = f.undecoded.count ? `${f.undecoded.count} (from line ${f.undecoded.lines.join(", ")})` : "";
-    out.push(`| \`${f.file}\` | ${f.format} | ${toolCell(f)} | ${f.telegrams} | ${cell(devices)} | ${cell(f.assigned.join(", "))} | ${cell(services(f, "sent"))} | ${f.notOnBus || ""} | ${cell(services(f, "received"))} | ${cell(f.properties.join(", "))} | ${f.groupAddresses || ""} | ${secure} | ${cell(f.etsActions.join(", "))} | ${undecoded} |`);
+    const writes = Object.entries(f.writes).map(([unit, w]) => `${unit}: ${[...(w.memory ? [`${w.memory} memory`] : []), ...(w.property ? [`${w.property} property`] : [])].join(", ")}`).join("; ");
+    out.push(`| \`${f.file}\` | ${f.format} | ${toolCell(f)} | ${f.telegrams} | ${f.span?.first ?? ""} | ${f.span?.last ?? ""} | ${cell(devices)} | ${cell(f.assigned.join(", "))} | ${cell(services(f, "sent"))} | ${cell(writes)} | ${f.notOnBus || ""} | ${cell(services(f, "received"))} | ${cell(f.properties.join(", "))} | ${f.groupAddresses || ""} | ${secure} | ${cell(f.etsActions.join(", "))} | ${undecoded} |`);
   }
   out.push("");
 
