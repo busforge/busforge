@@ -335,7 +335,12 @@ export class SimUnit implements KnxTransport {
     c.pendingAck = null;
     c.send = (c.send + 1) & 0x0f;
     this.touch(c);
-    if (c.restartOnAck) this.restart(src);
+    if (c.restartOnAck) {
+      this.restart(src);
+      // A confirmed restart's line is timed from the T_Ack's arrival, as its captures show it (ETS's T_Disconnect
+      // so many ms after its T_Ack), not `link.ackMs` later when the unit takes the frame.
+      this.restartedAt = this.now() - this.model.link.ackMs;
+    }
   }
 
   private touch(c: Connection): void {
@@ -492,9 +497,10 @@ export class SimUnit implements KnxTransport {
     // A restart ends a programming mode the unit's captures show.
     if (this.programmingMode !== null) this.programmingMode = false;
     this.deadPartner = partner;
-    // The restart's line (`restart.line`) is timed from here: on the wall clock `link.ackMs` (about 20 ms) after
-    // the tool's request, from which the specs give it, so it runs that much later live than in the captures;
-    // on a replay's clock, which stands still during the confirmation, at the request.
+    // A basic restart's line (`restart.line`) is timed from here: on the wall clock `link.ackMs` (about 20 ms)
+    // after the tool's request, from which the specs give it, so it runs that much later live than in the
+    // captures; on a replay's clock, which stands still during the confirmation, at the request. A confirmed
+    // restart's is moved back to its T_Ack's arrival (onAck).
     this.restartedAt = this.now();
     this.applicationLoaded = false;
     this.deviceControlUnknown = false;

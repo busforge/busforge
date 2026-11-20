@@ -534,7 +534,8 @@ in, a frame on the connection a restart ended, the device control after an unloa
 memory service its captures and collection do not show. Two exceptions are chosen, not shown, both where
 Busforge's restart proof probes, so its download test does not hang on the scheduler or a refusal: the MEAN
 WELL's line, down 0.38 s and up 0.65 s after its restart, is taken back at 0.5 s; the Meteodata 140 S's line,
-shown up 41 ms after its restart, is taken as up from the restart on.
+shown up 41 ms after its restart, is taken as up from the restart on. A confirmed restart's line runs from the
+moment the tool's T_Ack reaches the unit, as the captures time it, also on the wall clock.
 
 `tools/sim-unit-0701.ts` is a memory-mapped System 7 unit (MV-0701) on the same transport core: its
 load-state machines take their controls as 11-octet memory writes to `0x0104` and report their states at
