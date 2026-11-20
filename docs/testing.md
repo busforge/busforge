@@ -511,11 +511,16 @@ memory its collection read, octet by octet; a read of an octet the collection di
 naming the read that would close it. The state of each machine comes from its PID 5 in the collection (the
 unit's single-octet read of a state answers the same; a read of more than one state octet is refused, the
 ABB US/U 4.2 answers it otherwise). The additional load controls (absolute segment, task segment, task
-control 1) are taken only where the unit's captures show it taking them, writes only into a segment of a
-machine that is loading: the segments declared since its unload, or the application's for a machine the
-unit holds loaded. What only a unit's captures show besides (whether its tables' PID 7 follows a
+control 1) are taken only where the unit's captures show it taking them, each field checked against them:
+a task segment at a declared segment, carrying the application the unit holds and the PEI type its
+captures carry. After an unload, load completed is taken only once an absolute segment and the task
+segment were declared. Memory writes go only into an EEPROM segment of a machine that is loading: the
+segments declared since its unload, or the application's for a machine the unit holds loaded. No property
+write is taken (none is shown on these units), and neither PID 5 nor the device control is answered after
+an event of the session. What only a unit's captures show besides (whether its tables' PID 7 follows a
 declaration, what its address table's count reads after the declaration, a download marker it clears at
-the restart) is in its entry in `tools/sim-units.ts`.
+the restart) is in its entry in `tools/sim-units.ts`; where a unit's captures leave a gap after its restart
+(the ABB US/U 4.2: no frame between 42 ms and 1.04 s after it), a frame in the gap is refused.
 
 The units simulated, and how each is held to its captures (`tools/sim-unit.test.ts` and
 `tools/sim-unit-0701.test.ts`, with the private corpus; `tools/sim-unit-replay.ts` replays a capture):

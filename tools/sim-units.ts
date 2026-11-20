@@ -54,14 +54,14 @@ export const MEANWELL_KNX40E: SimUnitSpec = {
 // (internal/captures/progmode-end-2026-11-19/e3-abb-busforge-fulldownload.log,
 // restart-end-2026-11-19/a3-abb-ia-201to211.log, a4-abb-ia-211to201.log), all through a KNX-USB stick behind
 // Busforge's bridge at 1.1.100:
-// - A_Restart: confirmed by the interface and acknowledged with T_Ack; a frame 0.04 to 0.09 s after it is
-//   confirmed negatively, one 1.04 s after it positively (the 0.5 s threshold between is no capture's); numbered
-//   frames on the connection the restart ended are dropped without T_Disconnect (Busforge's probes);
+// - A_Restart: confirmed by the interface and acknowledged with T_Ack; a frame sent up to 42 ms after it is
+//   confirmed negatively, one 1.04 s after it positively, and one between is refused (no capture shows it);
+//   numbered frames on the connection the restart ended are dropped without T_Disconnect (Busforge's probes);
 // - the free key (FFFFFFFF) grants access level 0;
 // - the interface confirmed a frame about 21 ms after the request, negatively after 70 to 90 ms;
 // - no PID 56 (the unit answers it with no element; ETS negotiates 15, "restricted by ByTargetDevice"): its
 //   longest frames, a 12-octet memory read and write, carry an APDU of 15 octets;
-// - of the additional load controls at 0x0104, the absolute segment and the task segment.
+// - of the additional load controls at 0x0104, the absolute segment and the task segment, PEI type 80.
 export const ABB_USU42: SimUnitSpec = {
   id: "abb-usu-4.2",
   name: "ABB US/U 4.2",
@@ -70,11 +70,11 @@ export const ABB_USU42: SimUnitSpec = {
   interfaceIa: 0x1164,
   interfaceMaxApdu: 40,
   behaviour: {
-    restart: { acknowledged: true, linkDownMs: 500, deadConnection: "nothing" },
+    restart: { acknowledged: true, linkDownMs: 42, linkUpMs: 1040, deadConnection: "nothing" },
     authorize: new Map([["ffffffff", 0]]),
     link: { ackMs: 20, nakMs: 70 },
   },
-  memoryMapped: { maxApdu: 15, additional: ["absolute-segment", "task-segment"], tableReferenceFollows: false, addressTableCountOnDeclaration: null, clearedByRestart: new Map() },
+  memoryMapped: { maxApdu: 15, additional: ["absolute-segment", "task-segment"], peiType: 0x80, tableReferenceFollows: false, addressTableCountOnDeclaration: null, clearedByRestart: new Map() },
 };
 
 // The Theben Meteodata 140 S weather station (M-0048_A-140C-14-EB70, MV-0701, memory-mapped load control), from
@@ -87,9 +87,11 @@ export const ABB_USU42: SimUnitSpec = {
 //   T_Disconnect (Busforge's probes);
 // - the free key (FFFFFFFF) grants access level 0;
 // - the interface confirmed a frame about 18 ms after the request; no capture shows it confirm one
-//   negatively, so the negative confirmation of a frame to another address takes the bench stick's 75 ms;
+//   negatively, so the negative confirmation of a frame to another address takes the bench stick's 70 ms (the
+//   ABB US/U 4.2's entry);
 // - no PID 56 (ETS: "Empty response; assuming 15");
-// - of the additional load controls at 0x0104, the absolute segment, the task segment and task control 1;
+// - of the additional load controls at 0x0104, the absolute segment, the task segment (PEI type 00) and task
+//   control 1;
 // - after a download, objects 1 and 2 report by PID 7 the address their table was declared at (Busforge's
 //   verification reads, where the address equals the one collected);
 // - after load-state machine 1 is unloaded and its segment declared again, the address table's count reads 01
@@ -106,9 +108,9 @@ export const THEBEN_METEODATA_140S: SimUnitSpec = {
   behaviour: {
     restart: { acknowledged: true, transportAck: false, linkDownMs: 0, deadConnection: "nothing" },
     authorize: new Map([["ffffffff", 0]]),
-    link: { ackMs: 18, nakMs: 75 },
+    link: { ackMs: 18, nakMs: 70 },
   },
-  memoryMapped: { maxApdu: 15, additional: ["absolute-segment", "task-segment", "task-control-1"], tableReferenceFollows: true, addressTableCountOnDeclaration: 0x01, clearedByRestart: new Map([[0x4800, 0x00]]) },
+  memoryMapped: { maxApdu: 15, additional: ["absolute-segment", "task-segment", "task-control-1"], peiType: 0x00, tableReferenceFollows: true, addressTableCountOnDeclaration: 0x01, clearedByRestart: new Map([[0x4800, 0x00]]) },
 };
 
 export const SIM_UNITS: readonly SimUnitSpec[] = [MEANWELL_KNX40E, ABB_USU42, THEBEN_METEODATA_140S];
@@ -119,10 +121,31 @@ export function simUnitSpec(id: string): SimUnitSpec {
   return spec;
 }
 
+type SimOpts = ConstructorParameters<typeof SimUnit>[2];
+
+// The spec's unit as `collectionPath` shows it: its own collection, or another collection of the same unit (the
+// same address and serial), taken at another time.
+function collectionOf(spec: SimUnitSpec, collectionPath: string): CollectPackage {
+  const read = (path: string) => JSON.parse(readFileSync(corpusPath(path), "utf8")) as CollectPackage;
+  const c = read(collectionPath);
+  if (collectionPath === spec.collection) return c;
+  const serial = (x: CollectPackage) => x.records.find((r) => {
+    const t = r.target as { object?: number; pid?: number; start?: number };
+    return r.space === "property" && r.outcome === "bytes" && t.object === 0 && t.pid === 11 && (t.start ?? 1) === 1;
+  })?.bytes;
+  const own = read(spec.collection);
+  if (c.ia !== own.ia || !serial(c) || serial(c) !== serial(own)) throw new Error(`no simulated unit: ${collectionPath} is not a collection of the unit of ${spec.collection} (address ${c.ia}, serial ${serial(c) ?? "not read"})`);
+  return c;
+}
+
 // A fresh unit as its collection shows it (another collection of the same unit where one is named).
-export function newSimUnit(spec: SimUnitSpec, opts: ConstructorParameters<typeof SimUnit>[2] = {}, behaviour: Partial<UnitBehaviour> = {}, collectionPath = spec.collection): SimUnit {
-  const collection = JSON.parse(readFileSync(corpusPath(collectionPath), "utf8")) as CollectPackage;
-  const appXml = catalogueXml(spec.catalogue), b = { ...spec.behaviour, ...behaviour };
-  if (spec.memoryMapped) return new SimUnit0701(simUnit0701Model(collection, appXml, b, spec.memoryMapped), spec.interfaceIa, opts);
-  return new SimUnit(simUnitModel(collection, appXml, b), spec.interfaceIa, opts);
+export function newSimUnit(spec: SimUnitSpec, opts: SimOpts = {}, behaviour: Partial<UnitBehaviour> = {}, collectionPath = spec.collection): SimUnit {
+  if (spec.memoryMapped) return newSimUnit0701(spec, opts, behaviour, collectionPath);
+  return new SimUnit(simUnitModel(collectionOf(spec, collectionPath), catalogueXml(spec.catalogue), { ...spec.behaviour, ...behaviour }), spec.interfaceIa, opts);
+}
+
+// The same for a memory-mapped System 7 unit, refused for a spec of another.
+export function newSimUnit0701(spec: SimUnitSpec, opts: SimOpts = {}, behaviour: Partial<UnitBehaviour> = {}, collectionPath = spec.collection): SimUnit0701 {
+  if (!spec.memoryMapped) throw new Error(`${spec.id} is not a memory-mapped System 7 unit`);
+  return new SimUnit0701(simUnit0701Model(collectionOf(spec, collectionPath), catalogueXml(spec.catalogue), { ...spec.behaviour, ...behaviour }, spec.memoryMapped), spec.interfaceIa, opts);
 }
