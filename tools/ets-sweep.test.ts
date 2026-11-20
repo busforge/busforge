@@ -57,6 +57,17 @@ describe("a sweep row's run", () => {
     expect([s.writes, s.other, s.functionCalls, s.notTaken]).toEqual([5, [], [], ["outside a connection: 4300"]]);
   });
 
+  test("records a function property's state read as a read and compares its command", () => {
+    const s = runState(capture(
+      line("ETS->BRIDGE", "01d500110010330000"), // A_FunctionPropertyExtState_Read of the security mode (17/1/51)
+      line("ETS->BRIDGE", "80"),
+      line("ETS->BRIDGE", "42c8113300"), // A_FunctionPropertyState_Read
+      line("ETS->BRIDGE", "46c7113301"), // A_FunctionPropertyCommand
+    ), "ETS", DEV, "MV-07B0");
+    expect([...s.reads]).toEqual(["A_FunctionPropertyExtState_Read 00110010330000", "A_FunctionPropertyState_Read 113300"]);
+    expect([s.functionCalls, s.writes]).toEqual([["A_FunctionPropertyCommand 113301"], 1]);
+  });
+
   test("leaves out what the unit did not take: a frame the line confirmed negatively, a numbered one outside a connection; a restart it takes unconfirmed", () => {
     const s = runState(capture(
       line("ETS->BRIDGE", "4281400001"), // numbered, before any T_Connect
@@ -218,6 +229,19 @@ corpusDescribe("the ETS sweep rows", () => {
       const found = r.verdict.verdict === "differs" ? r.verdict.differences : [];
       expect({ verdict: r.verdict.verdict, differences: found }).toEqual({ verdict: row.explained.verdict, differences: row.explained.differences.map((d) => d.difference) });
       expect(row.explained.differences.every((d) => d.cause.trim().length > 0)).toBe(true);
+    });
+  }
+
+  // A calibrated row: ETS's dialogue with the simulated unit against its dialogue with the real unit at the same
+  // configuration, position by position; every position that differs is explained.
+  for (const id of rows) {
+    const row = readRow(id);
+    if (row.spec.calibration === undefined) continue;
+    test(`${id}: ETS's frames into the simulated unit equal its frames into the real unit but for the explained positions`, () => {
+      const real = readFileSync(corpusPath(row.spec.calibration!), "utf8");
+      const found = dialogueDifferences(real, readFileSync(join(row.dir, ROW_FILES.ets), "utf8"), iaToNum(row.conf.ia));
+      expect(found).toEqual((row.explained.calibration ?? []).map((d) => d.difference));
+      expect((row.explained.calibration ?? []).every((d) => d.cause.trim().length > 0)).toBe(true);
     });
   }
 

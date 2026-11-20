@@ -10,19 +10,21 @@
 //
 // A ROW lives in the corpus under captures/ets-sweep/<application id>/<variant>/ (ROW_FILES):
 //   row.json            what the row is (RowSpec): the simulated unit, ETS's build, the simulator's endpoint
-//                       ETS was set to, ETS's project export where the row has one
+//                       ETS was set to, ETS's project export where the row has one, the capture of ETS's
+//                       download of the configuration into the real unit where the row is calibrated by it
 //   configuration.json  the device's configuration ETS downloaded (RowConfiguration), which Busforge downloads
 //   ets.log             ETS's download into the simulator, as tools/knxproxy.ts logs it
 //   ets.log.sim.txt     the simulator's lines of that run, every refusal among them
 //   ets6.log.txt        ETS6.log of the run
-//   explained.json      the verdict the row has today and every difference with its cause (Explained)
+//   explained.json      the verdict the row has today and every difference with its cause, and where the row
+//                       is calibrated, every position its ETS capture differs from the real unit's (Explained)
 //
 // WHAT IS COMPARED (runState, compareRuns). Each run's requests as the unit took them (a transport-layer
 // repetition once; a frame the line confirmed negatively or a numbered one outside a connection not at all)
 // and the unit's answers: every segment octet either side wrote or an allocation with fill set, a later one
 // winning (a byte only one side set is a difference, and so is one both set by different memory services);
 // every property write by object and PID, with its elements, in order; each load-state machine's load
-// controls (events and allocation records) in order; every function-property call; the load state and
+// controls (events and allocation records) in order; every function-property command; the load state and
 // table reference the unit last reported for each machine; the restart form; every other service that is
 // no read, in order. Reads and the requests the unit did not take are recorded, not compared.
 //
@@ -40,12 +42,14 @@ import net from "node:net";
 import { gunzipSync } from "node:zlib";
 import { APCI, KnxIpServer, MM_CTRL_ADDR, MM_STATUS_BASE, PID, iaToNum } from "../packages/knx/src/index.ts";
 import { appProgramId, etsLoadedCompletely, etsNotDownloaded, loadKnxproj } from "../packages/project/src/index.ts";
+import { readXml0 } from "../packages/project/src/knxproj.ts";
 import { isMemoryMappedLsm, parseAppConfig, parseLoadProcedures, ProductError, type ComObjectLink, type ComObjInstanceOverride, type FlashResult, type ModuleInstance } from "../packages/product/src/index.ts";
 import { downloadDeviceFull } from "../apps/server/src/deviceprofile.ts";
 import type { Connection } from "../apps/server/src/db/connections.ts";
 import { ApiError } from "../apps/server/src/errors.ts";
 import { apciName } from "./capture-index.ts";
 import { catalogueXml, corpusPath, corpusUnlistedPath } from "./corpus.ts";
+import { codeOf, NEEDS_PASSWORD, NOT_THIS_PASSWORD, passwords, PASSWORDS_ENV } from "./corpus-archives.ts";
 import { captureLData, capturedOnLoadedUnit, memWriteOf, parseCapture } from "./etsdiff.ts";
 import { loadedImageComparison } from "./ets-records.ts";
 import { gitRevision } from "./evidence.ts";
@@ -70,8 +74,16 @@ export interface RowSpec {
   etsBuild: string;
   // The interface ETS was set to: the simulator's proxy, "<host>:<port>".
   simulator: string;
-  // ETS's project export after the download, a file of the row (gzipped or not), without a password.
+  // ETS's project export after the download, a file of the row (gzipped or not); a project's password stays on
+  // its export, which then opens with one of KNXPROJ_PASSWORDS.
   export?: string;
+  // The calibration: ETS's capture of the same configuration downloaded into the real unit, relative to the
+  // corpus root. ETS's dialogue with the simulator is held to it position by position (tools/etsdiff.ts
+  // dialogueDifferences), every position that differs explained in explained.json's `calibration`.
+  calibration?: string;
+  // The application id the export gives the device where it is another build of the unit's (same manufacturer,
+  // number and version) that parses as the unit's: configuration.json names the unit's ids (tools/ets-driver.ts).
+  exportApplication?: string;
 }
 
 export interface RowConfiguration {
@@ -99,6 +111,9 @@ export type Verdict =
 export interface Explained {
   verdict: Verdict["verdict"];
   differences: { difference: string; cause: string }[];
+  // Where row.json names a calibration: each position ETS's dialogue with the simulator differs from its
+  // dialogue with the real unit, with its cause.
+  calibration?: { difference: string; cause: string }[];
 }
 
 // ---- one run's final state ----
@@ -108,10 +123,13 @@ export interface Explained {
 // MM_STATUS_BASE + the machine.
 const MM_LSMS = [1, 2, 3, 4];
 const L_DATA_REQ = 0x11, L_DATA_CON = 0x2e, L_DATA_IND = 0x29;
-const FUNCTION_PROPERTY_SERVICES = new Set([0x2c7, 0x2c8, APCI.FUNCTION_PROPERTY_EXT_COMMAND, APCI.FUNCTION_PROPERTY_EXT_STATE_READ]);
+// A function-property command (A_FunctionPropertyCommand, its extended form); its state reads are reads.
+const FUNCTION_PROPERTY_SERVICES = new Set([0x2c7, APCI.FUNCTION_PROPERTY_EXT_COMMAND]);
 // The requests that leave the unit as it was: reads, and the authorization that opens the session.
 const READ_SERVICES = new Set([
   APCI.MEMORY_EXT_READ, APCI.PROPERTY_READ, APCI.PROPERTY_DESCRIPTION_READ, APCI.PROPERTY_EXT_READ, APCI.AUTHORIZE_REQUEST,
+  0x2c8, // A_FunctionPropertyState_Read
+  APCI.FUNCTION_PROPERTY_EXT_STATE_READ, // A_FunctionPropertyExtState_Read
   0x1d2, // A_PropertyExtDescription_Read
   0x2c0, // A_UserMemory_Read
   0x2c5, // A_UserManufacturerInfo_Read
@@ -444,12 +462,12 @@ export type LoadedImageCheck =
 // Busforge's images for `conf` against ETS's LoadedImage of the device at conf.ia in the project export.
 // `unitHoldsApplication`: whether the unit held the application when ETS downloaded (etsdiff.ts
 // capturedOnLoadedUnit), which decides the form of the download the images are planned for.
-export function loadedImageCheck(exportBytes: Buffer, appXml: string, conf: RowConfiguration, unitHoldsApplication: boolean): LoadedImageCheck {
-  const proj = loadKnxproj(exportBytes, undefined, "export");
+export function loadedImageCheck(exportBytes: Buffer, appXml: string, conf: RowConfiguration, unitHoldsApplication: boolean, password?: string, exportApplication?: string): LoadedImageCheck {
+  const proj = loadKnxproj(exportBytes, password, "export");
   const d = proj.devices.find((x) => x.ia === conf.ia);
   if (!d) return { state: "not compared", why: `the export holds no device ${conf.ia}` };
   const cfg = parseAppConfig(appXml);
-  if (appProgramId(d.appRef) !== cfg.id) return { state: "not compared", why: `the export's ${conf.ia} runs ${appProgramId(d.appRef)}, not ${cfg.id}` };
+  if (appProgramId(d.appRef) !== cfg.id && appProgramId(d.appRef) !== exportApplication) return { state: "not compared", why: `the export's ${conf.ia} runs ${appProgramId(d.appRef)}, not ${cfg.id}` };
   if (!etsLoadedCompletely(d)) return { state: "not compared", why: `ETS marks ${(etsNotDownloaded(d) ?? ["the application"]).join(", ")} as not loaded` };
   if (d.etsLoadedImage === undefined) return { state: "not compared", why: "the export carries no LoadedImage for the device (its load procedure names no LdCtrlLoadImageProp)" };
   const o = loadedImageComparison(cfg, parseLoadProcedures(appXml), conf.ia, {
@@ -486,8 +504,9 @@ export function readRow(id: string): Row {
   const unitApp = unit.catalogue.replace(/\.xml\.gz$/, "");
   if (unitApp !== application) throw new Error(`row ${id}: the simulated unit ${unit.id} runs ${unitApp}, not ${application}`);
   const conf = readJson<RowConfiguration>(join(dir, ROW_FILES.configuration));
-  if (conf.appRef !== undefined && appProgramId(conf.appRef) !== application) throw new Error(`row ${id}: the configuration is of ${conf.appRef}, not of ${application}`);
+  if (conf.appRef !== undefined && appProgramId(conf.appRef) !== application && appProgramId(conf.appRef) !== spec.exportApplication) throw new Error(`row ${id}: the configuration is of ${conf.appRef}, not of ${application}`);
   if (spec.export !== undefined && !existsSync(join(dir, spec.export))) throw new Error(`row ${id}: the export ${spec.export} is missing`);
+  if (spec.calibration !== undefined && !existsSync(corpusPath(spec.calibration))) throw new Error(`row ${id}: the calibration capture ${spec.calibration} is missing`);
   return { id, application, variant, dir, spec, unit, conf, explained: readJson<Explained>(join(dir, ROW_FILES.explained)) };
 }
 
@@ -516,14 +535,27 @@ export async function runRow(row: Row): Promise<RowResult> {
     () => compareRuns(etsRun, bfRun),
   );
   const exportFile = row.spec.export;
-  const loadedImage: LoadedImageCheck = exportFile === undefined ? { state: "no export" } : loadedImageCheck(
-    (() => { const b = readFileSync(join(row.dir, exportFile)); return exportFile.endsWith(".gz") ? gunzipSync(b) : b; })(),
-    catalogueXml(row.unit.catalogue), row.conf, capturedOnLoadedUnit(parseCapture(etsText, sim.deviceIa)),
-  );
+  const loadedImage: LoadedImageCheck = (() => {
+    if (exportFile === undefined) return { state: "no export" };
+    const b = readFileSync(join(row.dir, exportFile));
+    const bytes = exportFile.endsWith(".gz") ? gunzipSync(b) : b;
+    const password = exportPassword(bytes);
+    if (password === null) return { state: "not compared", why: `the export is password-protected and none of the ${passwords().length} password(s) in ${PASSWORDS_ENV} opens it` };
+    return loadedImageCheck(bytes, catalogueXml(row.unit.catalogue), row.conf, capturedOnLoadedUnit(parseCapture(etsText, sim.deviceIa)), password, row.spec.exportApplication);
+  })();
   return {
     verdict, loadedImage, busforge, notTaken: { ets: etsRun.notTaken, busforge: bfRun.notTaken },
     reads: { onlyEts: [...etsRun.reads].filter((r) => !bfRun.reads.has(r)).sort(), onlyBusforge: [...bfRun.reads].filter((r) => !etsRun.reads.has(r)).sort() },
   };
+}
+
+// What opens a project export: no password, one of KNXPROJ_PASSWORDS, or null where none does.
+function exportPassword(bytes: Buffer): string | undefined | null {
+  for (const p of [undefined, ...passwords()]) {
+    try { readXml0(bytes, p); return p; }
+    catch (e) { if (!NEEDS_PASSWORD.has(codeOf(e) ?? "") && !NOT_THIS_PASSWORD.has(codeOf(e) ?? "")) throw e; }
+  }
+  return null;
 }
 
 // The differences of a verdict, with the cause explained.json gives each; null where none is given.
@@ -545,6 +577,8 @@ export interface ManifestRow {
   reads: RowResult["reads"];
   notTaken: RowResult["notTaken"];
   loadedImage: LoadedImageCheck;
+  // The real unit's capture the row is calibrated by, and the positions ETS's dialogues differ in, explained.
+  calibration: { capture: string; differences: { difference: string; cause: string }[] } | null;
   files: string[];
 }
 export interface Manifest { format: typeof MANIFEST_FORMAT; busforgeRevision: string | null; rows: ManifestRow[] }
@@ -564,6 +598,7 @@ export function manifestRow(row: Row, r: RowResult): ManifestRow {
     application: row.application, variant: row.variant, unit: row.unit.id, product: row.unit.name, mask: cfg.mask,
     manufacturer: row.application.split("_")[0], etsBuild: row.spec.etsBuild, verdict: v.verdict, first, cause, differences: diffs,
     reads: r.reads, notTaken: r.notTaken, loadedImage: r.loadedImage,
+    calibration: row.spec.calibration === undefined ? null : { capture: row.spec.calibration, differences: row.explained.calibration ?? [] },
     files: readdirSync(row.dir).sort().map((f) => `${SWEEP_DIR}/${row.id}/${f}`),
   };
 }

@@ -674,11 +674,12 @@ all, as the unit drops it), and the unit's answers:
 - every property write, by object and PID, with its elements and values, in order;
 - each load-state machine's load controls (events and allocation records) in order, by property or,
   on MV-0700/0701, by the control register at `0x0104`;
-- every function-property call; the restart form; every other service that is no read, in order;
+- every function-property command; the restart form; every other service that is no read, in order;
 - the load state and table reference the unit last reported for each load-state machine.
 
-Reads (descriptions, identity, memory-control blocks, the read before a compare) and the requests the
-unit did not take are recorded and listed per side, not compared.
+Reads (descriptions, identity, memory-control blocks, the read before a compare, a function property's
+state, such as the security mode ETS reads of a unit that can run Data Secure) and the requests the unit
+did not take are recorded and listed per side, not compared.
 
 **Verdicts**, exactly one per row:
 
@@ -699,9 +700,10 @@ runs over the corpus projects; its result stands beside the verdict.
 
 **A row in the corpus** is a directory `captures/ets-sweep/<application id>/<variant>/` holding
 `row.json` (the simulated unit, ETS's build, the simulator's endpoint ETS was set to, the export
-where there is one), `configuration.json` (the device's configuration ETS downloaded, which Busforge
-downloads), ETS's capture `ets.log` with the simulator's lines `ets.log.sim.txt`, `ets6.log.txt`, and
-`explained.json` (the row's verdict today and every difference with its cause). A row may also hold
+where there is one, the calibration where there is one), `configuration.json` (the device's
+configuration ETS downloaded, which Busforge downloads), ETS's capture `ets.log` with the simulator's
+lines `ets.log.sim.txt`, `ets6.log.txt`, and `explained.json` (the row's verdict today and every
+difference with its cause). A row may also hold
 `checks/<name>/`: runs of the driver below that repeat the row or were made to fail, each with the outcome
 its ETS6.log must give (`expected.json`), which `tools/ets-sweep.test.ts` holds it to; they are no rows
 of their own. The tool writes the verdicts into `internal/ets-sweep/manifest.json`:
@@ -710,8 +712,15 @@ of their own. The tool writes the verdicts into `internal/ets-sweep/manifest.jso
 BUSFORGE_CORPUS=... bun run tools/ets-sweep.ts [<application>/<variant>]... [--keep=<dir>]
 ```
 
+**A calibrated row** names in `row.json` ETS's capture of the same configuration downloaded into the
+real unit. ETS's dialogue with the simulated unit (its requests with their line confirmations, the
+unit's frames with their first control field) is held to its dialogue with the real unit position by
+position, and every position that differs is listed with its cause in `explained.json` (`calibration`):
+what such a row's simulator answers is what the real unit answered ETS, or the row names where not.
+
 `tools/ets-sweep.test.ts` runs every row with the private corpus and holds its verdict and its
-differences to `explained.json`: a new difference fails, and so does an explained one that is gone.
+differences to `explained.json`: a new difference fails, and so does an explained one that is gone; the
+same holds for a calibrated row's positions.
 Without the corpus it is skipped visibly. A row is evidence on no axis of
 [evidence-contract.md](evidence-contract.md): it shows what Busforge sends next to what ETS sends,
 both given the same simulator's answers.
@@ -750,8 +759,9 @@ One row, step by step:
    Each catalogue row found is selected and its application read back from ETS's properties panel
    (device type, program version, fingerprint, which together are the application id). The row whose
    application is the unit's is inserted; two rows under the order number and the unit's version are
-   refused. The device then gets the unit's address. `--configured` skips this step and downloads the
-   device the project holds at that address as it is configured there: line 1.1's device list is
+   refused. ETS's question for a project password, which it asks for a product that can run Data Secure,
+   is cancelled (the device stays plain). The device then gets the unit's address. `--configured` skips
+   this step and downloads the device the project holds at that address as it is configured there: line 1.1's device list is
    filtered by ETS's search to the address (a project with many devices shows more than the tree's
    panel), its one row selected and the address read back from the properties.
 3. **The interface set explicitly** to the configured connection at the simulator's endpoint, in the
@@ -761,10 +771,12 @@ One row, step by step:
    task, or the exception that ended it (`ETS_TASK_FAILED`; ETS's other warnings of the task, such as
    falling back to a partial download, do not end the wait).
 5. **The export** of the project (a project's password stays on its export; the export's project name
-   is checked) and the row
-   written: `row.json`, `configuration.json` (the device's configuration as the export holds it), the
+   is checked) and the row written: `row.json`, `configuration.json` (the device's configuration as the export holds it), the
    simulator's capture `ets.log` with `ets.log.sim.txt` and its output `ets.log.serve.txt`,
-   `ets6.log.txt` from the row's start, `export.knxproj`.
+   `ets6.log.txt` from the row's start, `export.knxproj`. Where the project holds the unit's application
+   under another build's id (same manufacturer, number and version, another content hash: the OpenKNX
+   release ETS took in), the row is written only if that build parses as the unit's; its ids are then
+   written as the unit's and the project's named in `row.json` (`exportApplication`).
 
 The row is written to `--out`, by default under the system's temporary directory
 (`ets-sweep-rows/<application id>/<variant>/`), never straight into the corpus: `tools/ets-sweep.test.ts`

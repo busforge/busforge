@@ -36,7 +36,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { numToIa } from "../packages/knx/src/index.ts";
-import { appProgramId, loadKnxproj } from "../packages/project/src/index.ts";
+import { appProgramId, loadKnxproj, readAppProgram } from "../packages/project/src/index.ts";
 import { parseAppConfig } from "../packages/product/src/index.ts";
 import { catalogueXml } from "./corpus.ts";
 import { deviceConfiguration, deviceRows, dialogue, dialogueDifferences } from "./etsdiff.ts";
@@ -107,11 +107,13 @@ function measure(png: string, r: Region, ops: string[]): number {
 // ETS's 11-12 px UI text reads reliably only enlarged: tesseract runs on a copy at `scale`. Sparse text
 // (psm 11) suits a screen; a label/value table reads cleaner as a block (psm 6), a dialog's button bar as one
 // line (psm 7), where sparse text loses its light grey buttons. A region ETS's search highlights in yellow reads
-// only in grey (`gray`).
+// only in grey (`prep` "gray"), a selected row's blue text on its blue only in black and white ("binary").
 const OCR_SCALE = 2;
-function tesseract(png: string, region: Region | undefined, scale: number, psm: number, tsv: boolean, gray = false): string {
+type Prep = "gray" | "binary";
+const PREP: Record<Prep, string[]> = { gray: ["-colorspace", "Gray"], binary: ["-colorspace", "Gray", "-threshold", "75%"] };
+function tesseract(png: string, region: Region | undefined, scale: number, psm: number, tsv: boolean, prep?: Prep): string {
   const big = join(dirname(png), `.${basename(png, ".png")}-ocr.png`);
-  execFileSync("magick", [png, ...(region ? crop(region) : []), "-resize", `${scale * 100}%`, ...(gray ? ["-colorspace", "Gray"] : []), big]);
+  execFileSync("magick", [png, ...(region ? crop(region) : []), "-resize", `${scale * 100}%`, ...(prep ? PREP[prep] : []), big]);
   // Leptonica fails to open some absolute paths on macOS (/tmp through its symlink): read it by name from its directory.
   const out = execFileSync("tesseract", [basename(big), "-", "--psm", String(psm), ...(tsv ? ["tsv"] : [])], { cwd: dirname(big), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
   rmSync(big, { force: true });
@@ -119,10 +121,10 @@ function tesseract(png: string, region: Region | undefined, scale: number, psm: 
 }
 
 // The words OCR reads, each with its box (scaled back to the screen) and the id of its OCR line.
-function words(png: string, region?: Region, opts: { scale?: number; psm?: number; gray?: boolean } = {}): Word[] {
+function words(png: string, region?: Region, opts: { scale?: number; psm?: number; prep?: Prep } = {}): Word[] {
   const scale = opts.scale ?? OCR_SCALE;
   const ox = region?.x ?? 0, oy = region?.y ?? 0, s = (v: string) => Math.round(+v / scale);
-  return tesseract(png, region, scale, opts.psm ?? 11, true, opts.gray).split("\n").slice(1).flatMap((row) => {
+  return tesseract(png, region, scale, opts.psm ?? 11, true, opts.prep).split("\n").slice(1).flatMap((row) => {
     const c = row.split("\t");
     if (c.length < 12 || c[0] !== "5" || !c[11].trim()) return [];
     return [{ text: c[11].trim(), x: ox + s(c[6]), y: oy + s(c[7]), w: s(c[8]), h: s(c[9]), line: `${c[2]}.${c[3]}.${c[4]}` }];
@@ -130,8 +132,8 @@ function words(png: string, region?: Region, opts: { scale?: number; psm?: numbe
 }
 
 // The text of a region read as one block, line by line.
-function textLines(png: string, region: Region): string[] {
-  return tesseract(png, region, OCR_SCALE, 6, false).split("\n").map((l) => l.trim()).filter(Boolean);
+function textLines(png: string, region: Region, scale = OCR_SCALE): string[] {
+  return tesseract(png, region, scale, 6, false).split("\n").map((l) => l.trim()).filter(Boolean);
 }
 
 // OCR reads umlauts unreliably ("hinzufiigen"); words are compared without them.
@@ -184,9 +186,9 @@ class Screen {
   // A fresh screenshot.
   snap(): string { return shot(join(this.dir, `.screen-${this.n++ % 2}.png`)); }
   // A fresh screenshot and its words.
-  look(region?: Region, gray = false): { png: string; ws: Word[] } {
+  look(region?: Region, prep?: Prep): { png: string; ws: Word[] } {
     const png = this.snap();
-    return { png, ws: words(png, region, { gray }) };
+    return { png, ws: words(png, region, { prep }) };
   }
   async waitText(phrase: string, region: Region | undefined, timeoutMs: number, what: string): Promise<Box> {
     const until = Date.now() + timeoutMs;
@@ -371,7 +373,8 @@ async function showTopology(s: Screen): Promise<void> {
 
 // Tree rows as OCR reads them: icons come out as stray characters before the text ("{1.1.20 KNX-…"), and the
 // project has one TP line, the only "Linie" row that is neither the backbone, the main line nor a search folder.
-const iaRow = (ia: string) => new RegExp(`(?<![\\d.])${ia.replace(/\./g, "\\.")}(?![\\d.])`);
+// OCR loses a dot of an address now and then ("1.151" for 1.1.51 in a selected row): the dots are optional.
+const iaRow = (ia: string) => new RegExp(`(?<![\\d.])${ia.replace(/\./g, "\\.?")}(?![\\d.])`);
 const ANY_DEVICE = /(?<![\d.])1\.1\.\d+(?![\d.])/;
 const LINE_11 = /^(?!.*(Backbone|Haupt|Keiner|Programmieren)).*Linie\s*$/;
 
@@ -402,8 +405,8 @@ async function lineDevices(s: Screen): Promise<{ y: number; text: string }[]> {
   await showLineDevices(s);
   return gridRows(s);
 }
-function gridRows(s: Screen, gray = false): { y: number; text: string }[] {
-  const { ws } = s.look(AT.mainGrid, gray);
+function gridRows(s: Screen, prep?: Prep): { y: number; text: string }[] {
+  const { ws } = s.look(AT.mainGrid, prep);
   // A search highlights the header row, whose address cell then reads unreliably: any column header marks it.
   const header = findText(ws, "Adress")[0] ?? findText(ws, "Hersteller")[0] ?? fail("the device list of line 1.1 shows no header");
   return rows(ws.filter(inside(AT.mainGrid))).filter((r) => r.y > header.y + header.h + 6 && r.words.filter((w) => /[A-Za-z]{3}/.test(w.text)).length >= 2).map((r) => ({ y: Math.round(r.y), text: r.text }));
@@ -418,7 +421,7 @@ async function selectByAddress(s: Screen, ia: string): Promise<void> {
   key("ctrl+a");
   typeText(ia);
   await sleep(2500);
-  const found = gridRows(s, true);
+  const found = gridRows(s, "gray");
   if (found.length !== 1) fail(`ETS's search for ${ia} in line 1.1 lists ${found.length} devices, not one`);
   // The room, application and manufacturer cells are links that leave the list; the description cell is not.
   click(560, found[0].y);
@@ -464,8 +467,9 @@ async function readCatalogueEntry(s: Screen): Promise<CatalogueEntry> {
     const t = findText(ws, name).find((b) => b.y < 165) ?? fail(`the properties panel shows no ${name} tab for the catalogue row`);
     click(t.cx, t.cy);
     await sleep(1500);
-    // The tab's label/value table, read as one block (word by word, OCR drops the dot in "1.1").
-    return textLines(s.snap(), { x: AT.properties.x, y: t.y + 20, w: AT.properties.w, h: 200 });
+    // The tab's label/value table, read as one block (word by word, OCR drops the dot in "1.1"), at three times
+    // its size: at two OCR reads "$493B" as "3493B" and "B471" as "B4a71".
+    return textLines(s.snap(), { x: AT.properties.x, y: t.y + 20, w: AT.properties.w, h: 200 }, 3);
   };
   const value = (lines: string[], label: string) => {
     const l = lines.find((x) => norm(x).startsWith(norm(label)));
@@ -508,13 +512,17 @@ async function insertProduct(s: Screen, orderNumber: string, applicationId: stri
   key("Escape");
   await sleep(1000);
   const grid = { x: AT.catalogueGrid.x, y: header.cy + 37, w: AT.catalogueGrid.w, h: 1160 - header.cy - 37 };
-  // Product rows carry a medium cell; the manufacturers' group headers do not. A header ETS left collapsed is
-  // opened by its arrow.
-  const products = () => rows(s.look(grid).ws.filter(inside(grid))).filter((r) => r.words.some((w) => w.x >= 570 && w.x <= 605 && /^(TP|IP|RF|PL)$/.test(w.text)));
+  // Product rows carry a medium and a version cell; the manufacturers' group headers neither. OCR reads a cut
+  // order number and the medium beside it as one word ("4930...TP"), so the medium is the end of the word that
+  // ends in the medium's column; it misreads two media ("TP,IP" as "TRIP"), so a version alone counts too.
+  const products = () => rows(s.look(grid, "binary").ws.filter(inside(grid))).filter((r) => r.words.some((w) =>
+    (w.x + w.w >= 580 && w.x + w.w <= 612 && /(?:^|[^A-Za-z])(TP|IP|RF|PL)$/.test(w.text)) || (w.x >= 740 && w.x <= 830 && /^\d[\d.]*$/.test(w.text))));
   let items = products();
-  if (items.length === 0) {
+  // A manufacturer's header can stand open with its rows still loading, so a click may close it: it is clicked
+  // until its rows show, each time given a while (the online catalogue lists them late).
+  for (let toggle = 0; items.length === 0 && toggle < 3; toggle++) {
     for (const h of rows(s.look(grid).ws.filter(inside(grid)))) { click(326, Math.round(h.y)); await sleep(1000); }
-    items = products();
+    for (let i = 0; i < 3 && (items = products()).length === 0; i++) await sleep(2000);
   }
   if (items.length === 0) fail(`the catalogue holds no product for order number ${orderNumber}`);
   const entries: (CatalogueEntry & { y: number })[] = [];
@@ -523,9 +531,14 @@ async function insertProduct(s: Screen, orderNumber: string, applicationId: stri
     await sleep(1500);
     entries.push({ ...(await readCatalogueEntry(s)), y: Math.round(r.y) });
   }
-  const atVersion = entries.filter((e) => e.orderNumber === orderNumber && e.version === want.version);
+  // OCR breaks a long order number into words ("OpenKnxRau mController"): compared without spaces.
+  const atVersion = entries.filter((e) => e.orderNumber.replace(/\s+/g, "") === orderNumber.replace(/\s+/g, "") && e.version === want.version);
   if (atVersion.length > 1) fail(`refused: the catalogue holds ${atVersion.length} applications under order number ${orderNumber} and version ${want.version} (${atVersion.map((e) => `${e.deviceType} ${e.fingerprint}`).join(", ")})`);
+  // The one row at the unit's device type and version under another fingerprint is another build of its
+  // application (an OpenKNX release ETS took from an imported project); writeRow takes it only where it parses
+  // as the unit's.
   const hit = atVersion.find((e) => e.deviceType === want.deviceType && e.fingerprint === want.fingerprint)
+    ?? (atVersion.length === 1 && atVersion[0].deviceType === want.deviceType ? atVersion[0] : undefined)
     ?? fail(`no catalogue row with order number ${orderNumber} runs ${applicationId} (read: ${entries.map((e) => `${e.orderNumber} ${e.deviceType} ${e.version} ${e.fingerprint}`).join("; ")})`);
   click(500, hit.y);
   await sleep(1500);
@@ -535,6 +548,17 @@ async function insertProduct(s: Screen, orderNumber: string, applicationId: stri
   click(add.cx, add.cy);
   for (let i = 0; i < 30; i++) {
     await sleep(2000);
+    // A product that can run Data Secure makes ETS ask for a project password; cancelling inserts it plain.
+    const png = s.snap(), box = dialogBox(png);
+    if (box) {
+      const text = words(png, box).map((w) => w.text).join(" ");
+      // ETS imports the product's data first, behind a progress dialog.
+      if (findText(words(png, box), "Importiere Daten").length) continue;
+      if (!findText(words(png, box), "Projektpasswort setzen").length) fail(`ETS shows a dialog after the insert: ${text.slice(0, 160)}`);
+      const cancel = findText(dialogButtons(png, box), "Abbrechen")[0] ?? fail("no Abbrechen under ETS's project password dialog");
+      click(cancel.cx, cancel.cy);
+      continue;
+    }
     const devices = await lineDevices(s);
     if (devices.length > 1) fail(`line 1.1 holds ${devices.length} devices after the insert`);
     if (devices.length === 1) return;
@@ -673,16 +697,31 @@ async function exportProject(s: Screen, project: string, dir: string, password: 
   await sleep(2000);
 }
 
-// row.json, and configuration.json from the device's configuration in ETS's export.
+// An application program's parse, with its id replaced by `as`: what Busforge plans a download from.
+const parsedAs = (xml: string, id: string, as: string) => JSON.stringify(parseAppConfig(xml.replaceAll(id, as)), (_, v: unknown) => v instanceof Map ? [...v] : v instanceof Set ? [...v] : v);
+
+// row.json, and configuration.json from the device's configuration in ETS's export. A project can hold the
+// unit's application under another build's id (same manufacturer, number and version, another content hash;
+// an OpenKNX application ETS imported from its release): taken only where the project's application parses as
+// the unit's does, its ids then written as the unit's and the project's named in row.json (exportApplication).
 function writeRow(dir: string, o: RowOptions, applicationId: string, ia: string, password: string | undefined): void {
-  const spec: RowSpec = { format: ROW_FORMAT, unit: o.unit, etsBuild: ETS_BUILD, simulator: o.simulator, export: "export.knxproj" };
-  writeFileSync(join(dir, ROW_FILES.row), JSON.stringify(spec, null, 2) + "\n");
-  const proj = loadKnxproj(readFileSync(join(dir, "export.knxproj")), password, "export");
+  const bytes = readFileSync(join(dir, "export.knxproj"));
+  const proj = loadKnxproj(bytes, password, "export");
   const d = proj.devices.find((x) => x.ia === ia) ?? fail(`ETS's export holds no device ${ia}`);
-  if (appProgramId(d.appRef) !== applicationId) fail(`ETS's export runs ${appProgramId(d.appRef)} at ${ia}, not ${applicationId}`);
-  const c = deviceConfiguration(parseAppConfig(catalogueXml(`${applicationId}.xml.gz`)), deviceRows(proj, d.id));
+  const exported = appProgramId(d.appRef);
+  const unitXml = catalogueXml(`${applicationId}.xml.gz`);
+  let xml = unitXml;
+  if (exported !== applicationId) {
+    const versionOf = (id: string) => id.replace(/^(M-[0-9A-F]{4}_A-[0-9A-F]{4}-[0-9A-F]{2})-[0-9A-F]{4}((?:-O[0-9A-F]+)?)$/, "$1$2");
+    if (versionOf(exported) !== versionOf(applicationId)) fail(`ETS's export runs ${exported} at ${ia}, not ${applicationId}`);
+    xml = readAppProgram(bytes, d.appRef) ?? fail(`ETS's export holds no application ${exported}`);
+    if (parsedAs(xml, exported, applicationId) !== parsedAs(unitXml, applicationId, applicationId)) fail(`ETS's export runs ${exported} at ${ia}, another build of ${applicationId} that parses otherwise`);
+  }
+  const spec: RowSpec = { format: ROW_FORMAT, unit: o.unit, etsBuild: ETS_BUILD, simulator: o.simulator, export: "export.knxproj", ...(exported === applicationId ? {} : { exportApplication: exported }) };
+  writeFileSync(join(dir, ROW_FILES.row), JSON.stringify(spec, null, 2) + "\n");
+  const c = deviceConfiguration(parseAppConfig(xml), deviceRows(proj, d.id));
   const conf: RowConfiguration = { ia, appRef: d.appRef, params: [...c.params], links: c.links, moduleInstances: c.instances, comObjectOverrides: [...c.comObjectOverrides] };
-  writeFileSync(join(dir, ROW_FILES.configuration), JSON.stringify(conf, null, 1) + "\n");
+  writeFileSync(join(dir, ROW_FILES.configuration), JSON.stringify(conf, null, 1).replaceAll(exported, applicationId) + "\n");
 }
 
 // ---- the simulator on this machine ----
