@@ -540,19 +540,21 @@ flowchart LR
   B -.-> L
 ```
 
-**What is compared.** Each run's requests to the unit, a transport-layer repetition taken once, and
-the unit's answers:
+**What is compared.** Each run's requests to the unit as the unit took them (a transport-layer
+repetition once; a frame the line confirmed negatively, or a numbered one outside a connection, not at
+all, as the unit drops it), and the unit's answers:
 
-- every segment octet either side wrote, a later write winning; a byte only one side wrote is a
-  difference, whichever side wrote it;
-- every property write, by object, PID and element, with its values in order;
+- every segment octet either side wrote or an allocation with fill set, a later one winning; a byte
+  only one side set is a difference, whichever side set it, and so is an octet both set by different
+  memory services;
+- every property write, by object and PID, with its elements and values, in order;
 - each load-state machine's load controls (events and allocation records) in order, by property or,
   on MV-0700/0701, by the control register at `0x0104`;
 - every function-property call; the restart form; every other service that is no read, in order;
 - the load state and table reference the unit last reported for each load-state machine.
 
-Reads (descriptions, identity, memory-control blocks, the read before a compare) are recorded and
-listed per side, not compared.
+Reads (descriptions, identity, memory-control blocks, the read before a compare) and the requests the
+unit did not take are recorded and listed per side, not compared.
 
 **Verdicts**, exactly one per row:
 
@@ -560,11 +562,11 @@ listed per side, not compared.
 |---|---|
 | `identical` | every compared item is equal |
 | `differs` | the differences, the first first; each carries its cause once explained |
-| `refused` | Busforge refuses the download with a coded refusal where ETS downloads |
+| `refused` | Busforge refuses the download with a coded refusal (its planner's or its server's) where ETS downloads; any other error of its download fails the run instead |
 | `busforge-only` | Busforge writes where ETS failed or the simulator refused ETS |
 | `sim-refused` | the simulator refused a request of either run (its log names it); nothing is compared |
-| `ets-failed` | ETS's log shows no completed download (no end of its load task, or the application, parameters and group addresses not recorded as loaded) |
-| `driver-failed` | ETS's log shows the download connected to anything but the simulator, or not exactly one download of the device |
+| `ets-failed` | ETS's log shows no completed download: no end of its load task, no load-procedure step executed, or the programming state it records after the last step not all loaded (address, configuration, application, parameters, group addresses) |
+| `driver-failed` | ETS's log shows not exactly one download of the device, or the download connected to nothing or to anything but the simulator |
 
 **The second check.** Where a row holds ETS's project export from after its download, Busforge's
 images for the row's configuration are held against ETS's own record of that download

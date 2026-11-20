@@ -1,17 +1,11 @@
 import { test, expect, describe, setDefaultTimeout } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import net from "node:net";
-import { KnxIpServer, cemiLData, crc16CcittFalse, parseCemiLData, withSource, type PropertyDescription } from "../packages/knx/src/index.ts";
-import { downloadDeviceFull } from "../apps/server/src/deviceprofile.ts";
-import type { Connection } from "../apps/server/src/db/connections.ts";
-import { captureText, catalogueXml } from "./corpus.ts";
+import { cemiLData, crc16CcittFalse, parseCemiLData, withSource, type PropertyDescription } from "../packages/knx/src/index.ts";
+import { captureText } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
-import { memWriteOf, parseTunnelFrame } from "./etsdiff.ts";
-import { startProxy } from "./knxproxy.ts";
+import { captureLData, memWriteOf } from "./etsdiff.ts";
+import { busforgeIntoSim } from "./ets-sweep.ts";
 import { SimUnit, type SimProperty, type SimUnitModel } from "./sim-unit.ts";
 import { MEANWELL_KNX40E, newSimUnit } from "./sim-units.ts";
-import { removeTempDir, tempDir } from "./test-temp.ts";
 
 // The Busforge download below runs on the wall clock (the unit's line timing, the restart proof's 4 s window):
 // about 15 s alone; twenty times that under a loaded full check (docs/testing.md, "Timeouts of heavy tests").
@@ -137,19 +131,17 @@ describe("a simulated unit", () => {
 const DEVICE = 0x1114;
 interface Frame { dir: ">>" | "<<"; tpdu: string; con?: "OK" | "NEG"; ctrl?: number; to?: number }
 // The cEMI frame of a capture line's KNXnet/IP frame.
-const cemiOf = (hex: string) => { const f = Buffer.from(hex, "hex"); return f.subarray(f[0] + f[f[0]]); };
+const cemiOf = (line: string) => { const f = Buffer.from(line.match(/\| ([0-9a-fA-F]+)\s*$/)![1], "hex"); return f.subarray(f[0] + f[f[0]]); };
 // The L_Data frames of a capture between the tool and the unit: the tool's requests with the interface's
 // confirmation, the unit's frames to the interface with their first control field.
 function frames(text: string, tool: string): Frame[] {
   const out: Frame[] = [];
   const pending: Frame[] = [];
-  for (const line of text.split("\n")) {
-    const m = line.match(/\| ([0-9a-fA-F]+)\s*$/);
-    const fr = m && line.includes("TUNNELLING_REQ") ? parseTunnelFrame(m[1]) : null;
-    if (!fr || fr.group) continue;
-    if (line.includes(`${tool}->BRIDGE`) && fr.code === 0x11 && fr.dst === DEVICE) { const f: Frame = { dir: ">>", tpdu: fr.tpdu.toString("hex") }; out.push(f); pending.push(f); }
-    else if (line.includes(`BRIDGE->${tool}`) && fr.code === 0x2e && fr.dst === DEVICE) { const f = pending.shift(); if (f) f.con = line.includes("CON-NEG") ? "NEG" : "OK"; }
-    else if (line.includes(`BRIDGE->${tool}`) && fr.code === 0x29 && fr.src === DEVICE) { const c = cemiOf(m![1]); out.push({ dir: "<<", tpdu: fr.tpdu.toString("hex"), ctrl: c[2 + c[1]], to: fr.dst }); }
+  for (const fr of captureLData(text, tool)) {
+    if (fr.group) continue;
+    if (fr.fromTool && fr.code === 0x11 && fr.dst === DEVICE) { const f: Frame = { dir: ">>", tpdu: fr.tpdu.toString("hex") }; out.push(f); pending.push(f); }
+    else if (!fr.fromTool && fr.code === 0x2e && fr.dst === DEVICE) { const f = pending.shift(); if (f) f.con = fr.line.includes("CON-NEG") ? "NEG" : "OK"; }
+    else if (!fr.fromTool && fr.code === 0x29 && fr.src === DEVICE) { const c = cemiOf(fr.line); out.push({ dir: "<<", tpdu: fr.tpdu.toString("hex"), ctrl: c[2 + c[1]], to: fr.dst }); }
   }
   return out;
 }
@@ -166,11 +158,10 @@ corpusDescribe("the simulated MEAN WELL KNX-40E-1280D", () => {
     for (const kind of ["links", "params", "revert", "fulldownload", "partial-maxtemp-on", "partial-maxtemp-off"]) {
       const text = captureText(`meanwell-ets-${kind}.log`);
       const unitFrames: string[] = [], simFrames: string[] = [], unitCons: string[] = [], simCons: string[] = [];
-      for (const line of text.split("\n")) {
-        const m = line.match(/\| ([0-9a-fA-F]+)\s*$/);
-        const fr = m && line.includes("ETS->BRIDGE TUNNELLING_REQ") ? parseTunnelFrame(m[1]) : null;
-        if (!fr || fr.group || fr.code !== 0x11 || fr.dst !== DEVICE) continue;
-        const cemi = Buffer.from(cemiOf(m![1]));
+      for (const fr of captureLData(text, "ETS")) {
+        if (!fr.fromTool || fr.group || fr.code !== 0x11 || fr.dst !== DEVICE) continue;
+        const line = fr.line;
+        const cemi = Buffer.from(cemiOf(line));
         // The bridge sends a frame from 0.0.0 from the tunnel's address.
         if (cemi.readUInt16BE(4) === 0) cemi.writeUInt16BE(MEANWELL_KNX40E.interfaceIa, 4);
         clock = Date.parse(line.split(" ")[0]);
@@ -202,74 +193,53 @@ corpusDescribe("the simulated MEAN WELL KNX-40E-1280D", () => {
   // build that took it, whose download into this simulator gives that capture frame for frame (the corpus's
   // internal/ets-sweep/spike.md); the differences of this build's frames are Busforge's own, named below.
   test("takes Busforge's full download through the KNXnet/IP server, every frame as the unit answered it", async () => {
-    const dir = tempDir("busforge-sim-unit-");
-    const sim = newSimUnit(MEANWELL_KNX40E);
-    const port = await freePort();
-    const server = new KnxIpServer({ transport: sim, maxApdu: MEANWELL_KNX40E.interfaceMaxApdu, port });
-    const log = join(dir, "capture.log");
-    const proxy = startProxy({ port: 0, bridgeHost: "127.0.0.1", bridgePort: port, log, tool: "Busforge" });
-    try {
-      await server.start();
-      await new Promise<void>((r) => proxy.listen(0, "127.0.0.1", () => r()));
-      const proxyPort = (proxy.address() as { port: number }).port;
-      const fx = JSON.parse(captureText("meanwell-project.json")) as { ia: string; params: [string, string][]; links: { comObjNum: number; gaRaws: number[] }[] };
-      const connection: Connection = { id: "sim", name: "sim", type: "ip", host: "127.0.0.1", port: proxyPort, ipTransport: "tcp", usbVendorId: null, usbProductId: null, usbSerial: null, createdAt: 0 };
-      const result = await downloadDeviceFull({ projectId: "p", deviceId: "d", ia: fx.ia, appXml: catalogueXml(MEANWELL_KNX40E.catalogue), dataDir: dir, connection, params: new Map(fx.params), links: fx.links, comObjectOverrides: new Map(), dryRun: false });
-      // The session ends with its T_Ack and T_Disconnect after the result.
-      for (let i = 0; !readFileSync(log, "utf8").includes("DISCONNECT_REQ"); i++) {
-        if (i === 100) throw new Error("the session did not end within 10 s of the download's result");
-        await new Promise((r) => setTimeout(r, 100));
-      }
-      const unitDownload = frames(captureText("meanwell-busforge-fulldownload.log"), "Busforge");
-      const simDownload = frames(readFileSync(log, "utf8"), "Busforge");
-      expect(sim.refusals).toEqual([]);
-      // The memory-control blocks the unit reported after the capture's download; the restart without a
-      // T_Disconnect to prove it, as the unit took it.
-      expect(result).toMatchObject({ kind: "flashed", verified: true, restartUnproven: true, stamps: [1, 2, 3, 4].map((obj) => ({ obj, hex: unitDownload.find((f) => f.dir === "<<" && f.tpdu.slice(2, 10) === `d60${obj}1b10`)!.tpdu.slice(12) })) });
+    const fx = JSON.parse(captureText("meanwell-project.json")) as { ia: string; params: [string, string][]; links: { comObjNum: number; gaRaws: number[] }[] };
+    const { result, capture, sim } = await busforgeIntoSim(MEANWELL_KNX40E, fx);
+    const unitDownload = frames(captureText("meanwell-busforge-fulldownload.log"), "Busforge");
+    const simDownload = frames(capture, "Busforge");
+    expect(sim.refusals).toEqual([]);
+    // The memory-control blocks the unit reported after the capture's download; the restart without a
+    // T_Disconnect to prove it, as the unit took it.
+    expect(result).toMatchObject({ kind: "flashed", verified: true, restartUnproven: true, stamps: [1, 2, 3, 4].map((obj) => ({ obj, hex: unitDownload.find((f) => f.dir === "<<" && f.tpdu.slice(2, 10) === `d60${obj}1b10`)!.tpdu.slice(12) })) });
 
-      const unitPhases = phases(unitDownload), simPhases = phases(simDownload);
-      // The segments in the order written: this build writes the parameter segment before the three tables, in
-      // ETS's order (held against ETS's capture of the unit in tools/etsdiff.test.ts); the captured build wrote the
-      // tables first.
-      const writeOrder = (fs: Frame[]) => {
-        const lsms = fs.flatMap((f) => {
-          const t = Buffer.from(f.tpdu, "hex");
-          const w = f.dir === ">>" && t.length >= 2 ? memWriteOf(t, ((t[0] & 0x03) << 8) | t[1]) : null;
-          if (!w) return [];
-          return [[1, 2, 3, 4].find((lsm) => { const s = sim.segment(lsm)!; return w.addr >= s.at && w.addr < s.at + s.bytes.length; }) ?? 0];
-        });
-        return lsms.filter((l, i) => lsms[i - 1] !== l);
-      };
-      expect(writeOrder(simPhases.bracket)).toEqual([4, 3, 2, 1]);
-      expect(writeOrder(unitPhases.bracket)).toEqual([3, 2, 1, 4]);
-      // From the first unload to the A_Restart: every request, every answer and every confirmation the unit's, the
-      // parameter segment's run (object 4's two PID 7 reads and the segment's memory writes) taken before the tables'.
-      expect(simPhases.bracket).toEqual(parameterSegmentFirst(unitPhases.bracket));
-      // Before it this build also reads the association table's element form (object 2's PID 23 description).
-      const at = simPhases.open.findIndex((f) => f.dir === ">>" && f.tpdu === "43d8021700");
-      expect(simPhases.open.slice(at, at + 4)).toEqual([{ dir: ">>", tpdu: "43d8021700", con: "OK" }, { dir: "<<", tpdu: "c2", ctrl: 0xb0, to: 0x1164 }, { dir: "<<", tpdu: "43d90217031400ffff", ctrl: 0xbc, to: 0x1164 }, { dir: ">>", tpdu: "c2", con: "OK" }]);
-      expect(simPhases.open.toSpliced(at, 4)).toEqual(unitPhases.open);
-      // After the restart: probes on the dead connection, which the unit leaves without a frame (how many of
-      // them its interface confirms negatively depends on the wall clock).
-      for (const ph of [simPhases, unitPhases]) {
-        expect(ph.probes.length).toBeGreaterThan(0);
-        expect(ph.probes.every((f) => f.dir === ">>" && f.tpdu === "4300")).toBe(true);
-      }
-      // The verification on a new connection: this build proves every segment by its memory-control block
-      // (PID 27 of objects 1 to 4), the captured one read the three tables back; every request both send is
-      // answered as the unit answered it.
-      const reqs = (fs: Frame[]) => fs.filter((f) => f.dir === ">>" && f.tpdu.length > 2).map((f) => f.tpdu);
-      expect(reqs(simPhases.verify)).toEqual(["4300", "43d5011b1001", "43d5021b1001", "43d5031b1001", "43d504071001", "43d5041b1001"]);
-      expect(reqs(unitPhases.verify)).toEqual(["4300", "43d501071001", "43d500381001", "42021002", "420e1002", "43d502071001", "42021404", "421a1404", "43d503071001", "42021c06", "42301c06", "421a1c36", "43d5041b1001"]);
-      const answer = (fs: Frame[], req: string) => { const i = fs.findIndex((f) => f.dir === ">>" && f.tpdu === req); return fs.slice(i + 1).find((f) => f.dir === "<<" && f.tpdu.length > 2)?.tpdu; };
-      const shared = reqs(simPhases.verify).filter((r) => reqs(unitPhases.verify).includes(r));
-      expect(shared).toEqual(["4300", "43d5041b1001"]);
-      for (const r of shared) expect([r, answer(simPhases.verify, r)]).toEqual([r, answer(unitPhases.verify, r)]);
-    } finally {
-      proxy.close();
-      await server.stop();
-      removeTempDir(dir);
+    const unitPhases = phases(unitDownload), simPhases = phases(simDownload);
+    // The segments in the order written: this build writes the parameter segment before the three tables, in
+    // ETS's order (held against ETS's capture of the unit in tools/etsdiff.test.ts); the captured build wrote the
+    // tables first.
+    const writeOrder = (fs: Frame[]) => {
+      const lsms = fs.flatMap((f) => {
+        const t = Buffer.from(f.tpdu, "hex");
+        const w = f.dir === ">>" && t.length >= 2 ? memWriteOf(t, ((t[0] & 0x03) << 8) | t[1]) : null;
+        if (!w) return [];
+        return [[1, 2, 3, 4].find((lsm) => { const s = sim.segment(lsm)!; return w.addr >= s.at && w.addr < s.at + s.bytes.length; }) ?? 0];
+      });
+      return lsms.filter((l, i) => lsms[i - 1] !== l);
+    };
+    expect(writeOrder(simPhases.bracket)).toEqual([4, 3, 2, 1]);
+    expect(writeOrder(unitPhases.bracket)).toEqual([3, 2, 1, 4]);
+    // From the first unload to the A_Restart: every request, every answer and every confirmation the unit's, the
+    // parameter segment's run (object 4's two PID 7 reads and the segment's memory writes) taken before the tables'.
+    expect(simPhases.bracket).toEqual(parameterSegmentFirst(unitPhases.bracket));
+    // Before it this build also reads the association table's element form (object 2's PID 23 description).
+    const at = simPhases.open.findIndex((f) => f.dir === ">>" && f.tpdu === "43d8021700");
+    expect(simPhases.open.slice(at, at + 4)).toEqual([{ dir: ">>", tpdu: "43d8021700", con: "OK" }, { dir: "<<", tpdu: "c2", ctrl: 0xb0, to: 0x1164 }, { dir: "<<", tpdu: "43d90217031400ffff", ctrl: 0xbc, to: 0x1164 }, { dir: ">>", tpdu: "c2", con: "OK" }]);
+    expect(simPhases.open.toSpliced(at, 4)).toEqual(unitPhases.open);
+    // After the restart: probes on the dead connection, which the unit leaves without a frame (how many of
+    // them its interface confirms negatively depends on the wall clock).
+    for (const ph of [simPhases, unitPhases]) {
+      expect(ph.probes.length).toBeGreaterThan(0);
+      expect(ph.probes.every((f) => f.dir === ">>" && f.tpdu === "4300")).toBe(true);
     }
+    // The verification on a new connection: this build proves every segment by its memory-control block
+    // (PID 27 of objects 1 to 4), the captured one read the three tables back; every request both send is
+    // answered as the unit answered it.
+    const reqs = (fs: Frame[]) => fs.filter((f) => f.dir === ">>" && f.tpdu.length > 2).map((f) => f.tpdu);
+    expect(reqs(simPhases.verify)).toEqual(["4300", "43d5011b1001", "43d5021b1001", "43d5031b1001", "43d504071001", "43d5041b1001"]);
+    expect(reqs(unitPhases.verify)).toEqual(["4300", "43d501071001", "43d500381001", "42021002", "420e1002", "43d502071001", "42021404", "421a1404", "43d503071001", "42021c06", "42301c06", "421a1c36", "43d5041b1001"]);
+    const answer = (fs: Frame[], req: string) => { const i = fs.findIndex((f) => f.dir === ">>" && f.tpdu === req); return fs.slice(i + 1).find((f) => f.dir === "<<" && f.tpdu.length > 2)?.tpdu; };
+    const shared = reqs(simPhases.verify).filter((r) => reqs(unitPhases.verify).includes(r));
+    expect(shared).toEqual(["4300", "43d5041b1001"]);
+    for (const r of shared) expect([r, answer(simPhases.verify, r)]).toEqual([r, answer(unitPhases.verify, r)]);
   });
 });
 
@@ -293,13 +263,4 @@ function parameterSegmentFirst(fs: Frame[]): Frame[] {
   const tables = req(0, /^43d503071001$/), parameters = req(tables, /^43d504071001$/), programId = req(parameters, /^43d7040d/);
   if (tables < 0 || parameters < 0 || programId < 0) throw new Error("the bracket has no table run, parameter segment run and program id");
   return [...fs.slice(0, tables), ...fs.slice(parameters, programId), ...fs.slice(tables, parameters), ...fs.slice(programId)];
-}
-
-// A port for the KNXnet/IP server, which takes a port number for its UDP socket and TCP listener alike.
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const s = net.createServer();
-    s.on("error", reject);
-    s.listen(0, "127.0.0.1", () => { const a = s.address(); s.close(() => resolve(typeof a === "object" && a ? a.port : 0)); });
-  });
 }

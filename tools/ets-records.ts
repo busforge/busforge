@@ -61,17 +61,19 @@ export function loadedImageComparison(
   cfg: AppConfig, proc: LoadProcedures, ia: string,
   conf: { params: Map<string, string>; instances: ModuleInstance[]; links: ComObjectLink[]; comObjectOverrides: Map<number, ComObjInstanceOverride> },
   loadedImage: string,
+  // Whether the unit held the application when ETS downloaded it. Unset: as in a project, where ETS downloaded
+  // the device and it holds the application; on System 7, ETS's download of such a unit leaves the
+  // application loaded and writes the bytes the parameters cover (docs/load-procedures.md, "Which bytes ETS
+  // writes"); on System B the partial form needs the unit's memory, and the full form's images hold the
+  // same bytes.
+  unitHoldsApplication?: boolean,
 ): { refused: string } | { bytes: number; mismatches: string[] } {
   const profile = classify(cfg);
   let segments;
   try {
-    // A unit ETS downloaded holds the application. On System 7, ETS's download of such a unit leaves
-    // the application loaded and writes the bytes the parameters cover (docs/load-procedures.md,
-    // "Which bytes ETS writes"); on System B the partial form needs the unit's memory, and the full
-    // form's images hold the same bytes.
     segments = profile.planFullDownload(cfg.mask, {
       ia, params: conf.params, links: conf.links, moduleInstances: conf.instances, proc, comObjectOverrides: conf.comObjectOverrides,
-      unitHoldsApplication: proc.preferPartialIfLoaded && profile.family === "system-7",
+      unitHoldsApplication: unitHoldsApplication ?? (proc.preferPartialIfLoaded && profile.family === "system-7"),
     }).segments;
   } catch (e) {
     if (e instanceof ProductError) return { refused: e.code };

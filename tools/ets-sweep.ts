@@ -17,35 +17,40 @@
 //   ets6.log.txt        ETS6.log of the run
 //   explained.json      the verdict the row has today and every difference with its cause (Explained)
 //
-// WHAT IS COMPARED (runState, compareRuns). Each run's requests to the unit, a transport-layer repetition
-// taken once, and the unit's answers: every segment octet either side wrote, a later write winning (a byte
-// only one side wrote is a difference); every property write by object, PID and element, in order; each
-// load-state machine's load controls (events and allocation records) in order; every function-property
-// call; the load state and table reference the unit last reported for each machine; the restart form;
-// every other service that is no read, in order. Reads are recorded, not compared.
+// WHAT IS COMPARED (runState, compareRuns). Each run's requests as the unit took them (a transport-layer
+// repetition once; a frame the line confirmed negatively or a numbered one outside a connection not at all)
+// and the unit's answers: every segment octet either side wrote or an allocation with fill set, a later one
+// winning (a byte only one side set is a difference, and so is one both set by different memory services);
+// every property write by object and PID, with its elements, in order; each load-state machine's load
+// controls (events and allocation records) in order; every function-property call; the load state and
+// table reference the unit last reported for each machine; the restart form; every other service that is
+// no read, in order. Reads and the requests the unit did not take are recorded, not compared.
 //
 // VERDICTS (judge), exactly one per row: identical; differs (the differences, the first first, each with its
-// cause once explained); refused (Busforge's coded refusal where ETS downloads); busforge-only (Busforge
+// cause once explained); refused (Busforge's coded refusal, a ProductError or ApiError, where ETS downloads); busforge-only (Busforge
 // writes where ETS failed or the simulator refused ETS); sim-refused (the simulator refused a request of
 // either run); ets-failed; driver-failed (ETS6.log shows no download into the simulator alone).
 //
 // BESIDE THE VERDICT, where the row has ETS's project export: Busforge's images against ETS's record of the
 // download in it (LoadedImage, tools/ets-records.ts).
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
 import net from "node:net";
 import { gunzipSync } from "node:zlib";
-import { APCI, KnxIpServer, iaToNum } from "../packages/knx/src/index.ts";
+import { APCI, KnxIpServer, MM_CTRL_ADDR, MM_STATUS_BASE, PID, iaToNum } from "../packages/knx/src/index.ts";
 import { appProgramId, etsLoadedCompletely, etsNotDownloaded, loadKnxproj } from "../packages/project/src/index.ts";
-import { isMemoryMappedLsm, parseAppConfig, parseLoadProcedures, type ComObjectLink, type ComObjInstanceOverride, type FlashResult, type ModuleInstance } from "../packages/product/src/index.ts";
+import { isMemoryMappedLsm, parseAppConfig, parseLoadProcedures, ProductError, type ComObjectLink, type ComObjInstanceOverride, type FlashResult, type ModuleInstance } from "../packages/product/src/index.ts";
 import { downloadDeviceFull } from "../apps/server/src/deviceprofile.ts";
 import type { Connection } from "../apps/server/src/db/connections.ts";
+import { ApiError } from "../apps/server/src/errors.ts";
 import { apciName } from "./capture-index.ts";
 import { catalogueXml, corpusPath, corpusUnlistedPath } from "./corpus.ts";
-import { memWriteOf, parseTunnelFrame } from "./etsdiff.ts";
+import { captureLData, capturedOnLoadedUnit, memWriteOf, parseCapture } from "./etsdiff.ts";
 import { loadedImageComparison } from "./ets-records.ts";
 import { gitRevision } from "./evidence.ts";
 import { startProxy } from "./knxproxy.ts";
+import type { SimUnit } from "./sim-unit.ts";
 import { newSimUnit, simUnitSpec, type SimUnitSpec } from "./sim-units.ts";
 import { removeTempDir, tempDir } from "./test-temp.ts";
 
@@ -83,9 +88,11 @@ export type Verdict =
   | { verdict: "identical" }
   | { verdict: "differs"; differences: string[] }
   | { verdict: "refused"; code: string; message: string }
-  | { verdict: "busforge-only"; ets: string; busforgeWrites: number }
-  | { verdict: "sim-refused"; run: "ETS" | "Busforge"; refusals: string[] }
-  | { verdict: "ets-failed"; why: string }
+  // Busforge wrote where ETS did not download; `busforgeRefused` where it then refused.
+  | { verdict: "busforge-only"; ets: string; busforgeWrites: number; busforgeRefused?: string }
+  // Where ETS's run failed, `busforge` says how Busforge's ended.
+  | { verdict: "sim-refused"; run: "ETS" | "Busforge"; refusals: string[]; busforge?: string }
+  | { verdict: "ets-failed"; why: string; busforge?: string }
   | { verdict: "driver-failed"; why: string };
 
 // What a row's explained.json holds: the verdict the row has today and the cause of every difference.
@@ -96,11 +103,11 @@ export interface Explained {
 
 // ---- one run's final state ----
 
-const PID_LOAD_STATE = 5, PID_TABLE_REFERENCE = 7;
 // The memory-mapped load-state machines of MV-0700/0701 (docs/load-procedures.md): the load control is a
-// memory write to 0x0104 with the machine in the high nibble of its first octet, the state the byte at
-// 46825 + the machine.
-const MM_CTRL_ADDR = 0x0104, MM_STATUS_BASE = 46825, MM_LSMS = [1, 2, 3, 4];
+// memory write to MM_CTRL_ADDR with the machine in the high nibble of its first octet, the state the byte at
+// MM_STATUS_BASE + the machine.
+const MM_LSMS = [1, 2, 3, 4];
+const L_DATA_REQ = 0x11, L_DATA_CON = 0x2e, L_DATA_IND = 0x29;
 const FUNCTION_PROPERTY_SERVICES = new Set([0x2c7, 0x2c8, APCI.FUNCTION_PROPERTY_EXT_COMMAND, APCI.FUNCTION_PROPERTY_EXT_STATE_READ]);
 // The requests that leave the unit as it was: reads, and the authorization that opens the session.
 const READ_SERVICES = new Set([
@@ -112,8 +119,13 @@ const READ_SERVICES = new Set([
 const READ_GROUPS = new Set([APCI.MEMORY_READ, APCI.DEVICE_DESCRIPTOR_READ, 0x180 /* A_ADC_Read */]);
 
 export interface RunState {
+  // Every octet the run left in the unit's segments: its writes, a later one winning, and the fill of an
+  // allocation with fill where it came after them.
   memory: Map<number, number>;
-  // "<object>/<PID> <count>@<start>" -> the values written there, in order.
+  // address -> the service that set it last (A_Memory_Write, A_UserMemory_Write, A_MemoryExtended_Write, the
+  // allocation's fill).
+  memoryService: Map<number, string>;
+  // "<object>/<PID>" -> its writes in order, each "<count>@<start> <value>".
   properties: Map<string, string[]>;
   // load-state machine -> its load controls, in order.
   loadControls: Map<number, string[]>;
@@ -123,6 +135,9 @@ export interface RunState {
   restarts: string[];
   other: string[];
   reads: Set<string>;
+  // Requests the unit did not take: negatively confirmed on the line, or numbered outside a connection
+  // (the unit drops them or answers T_Disconnect). Recorded, not compared.
+  notTaken: string[];
   // The requests that change the unit: every one but the reads.
   writes: number;
 }
@@ -131,32 +146,82 @@ const hexOf = (b: Buffer) => b.toString("hex");
 
 // A capture's frames between `tool` and the unit at `device`, as tools/knxproxy.ts logs them.
 export function runState(text: string, tool: string, device: number, mask: string): RunState {
-  const s: RunState = { memory: new Map(), properties: new Map(), loadControls: new Map(), functionCalls: [], loadStates: new Map(), tableReferences: new Map(), restarts: [], other: [], reads: new Set(), writes: 0 };
+  const s: RunState = { memory: new Map(), memoryService: new Map(), properties: new Map(), loadControls: new Map(), functionCalls: [], loadStates: new Map(), tableReferences: new Map(), restarts: [], other: [], reads: new Set(), notTaken: [], writes: 0 };
   const memoryMapped = isMemoryMappedLsm(mask);
-  const push = <K>(m: Map<K, string[]>, k: K, v: string) => { (m.get(k) ?? m.set(k, []).get(k)!).push(v); };
-  let lastSeq: number | null = null;
-  for (const line of text.split("\n")) {
-    const m = line.match(/\| ([0-9a-fA-F]+)\s*$/);
-    const fr = m && line.includes("TUNNELLING_REQ") ? parseTunnelFrame(m[1]) : null;
-    if (!fr || fr.group) continue;
-    const t = fr.tpdu, tpci = t[0];
-    if (line.includes(` ${tool}->BRIDGE `) && fr.code === 0x11 && fr.dst === device) {
-      if (t.length === 1) { if ((tpci & 0xc3) === 0x80 || (tpci & 0xc3) === 0x81) lastSeq = null; continue; }
-      if ((tpci & 0xc0) === 0x40) {
-        const seq = (tpci >> 2) & 0x0f;
-        // The unit acknowledges a repetition again and does not execute it (KNX 3/3/4).
-        if (seq === lastSeq) continue;
-        lastSeq = seq;
-      }
-      request(s, t, memoryMapped, push);
-    } else if (line.includes(` BRIDGE->${tool} `) && fr.code === 0x29 && fr.src === device && t.length >= 2) {
-      answer(s, t, memoryMapped);
+  const r: Replay = { s, memoryMapped, order: new Map(), fills: [], mmStates: new Map(), n: 0 };
+  // Each request with its confirmation on the line, and the unit's frames, in order.
+  type Item = { request: true; t: Buffer; neg: boolean } | { request: false; t: Buffer };
+  const items: Item[] = [], pending: { t: Buffer; neg: boolean }[] = [];
+  for (const fr of captureLData(text, tool)) {
+    if (fr.group) continue;
+    if (fr.fromTool && fr.code === L_DATA_REQ && fr.dst === device) { const it: Item = { request: true, t: fr.tpdu, neg: false }; items.push(it); pending.push(it); }
+    else if (!fr.fromTool && fr.code === L_DATA_CON && fr.dst === device) {
+      // The confirmation repeats the request's frame: it confirms the oldest request still waiting with it.
+      const i = pending.findIndex((p) => p.t.equals(fr.tpdu));
+      if (i >= 0) pending.splice(i, 1)[0].neg = fr.line.includes("CON-NEG");
     }
+    else if (!fr.fromTool && fr.code === L_DATA_IND && fr.src === device) items.push({ request: false, t: fr.tpdu });
   }
+  // The transport connection as the unit keeps it (KNX 3/3/4): a T_Connect while connected is taken as
+  // nothing, so only a new connection, after a disconnect or a restart, starts the sequence numbers again.
+  let connected = false, lastSeq: number | null = null;
+  for (const it of items) {
+    const t = it.t, tpci = t[0];
+    if (!it.request) {
+      if (t.length === 1 && (tpci & 0xc3) === 0x81) connected = false;
+      else if (t.length >= 2) answer(r, t);
+      continue;
+    }
+    const restart = isRestart(t);
+    // A frame the line did not confirm did not reach the unit, but for a restart: a unit that restarts at
+    // once acknowledges it on no layer (tools/sim-units.ts) and the tool sees it confirmed negatively.
+    if (it.neg && !restart) { s.notTaken.push(`not confirmed: ${hexOf(t)}`); continue; }
+    if (t.length === 1) {
+      if ((tpci & 0xc3) === 0x80 && !connected) { connected = true; lastSeq = null; }
+      if ((tpci & 0xc3) === 0x81) connected = false;
+      continue;
+    }
+    if ((tpci & 0xc0) === 0x40) {
+      if (!connected) { s.notTaken.push(`outside a connection: ${hexOf(t)}`); continue; }
+      const seq = (tpci >> 2) & 0x0f;
+      // The unit acknowledges a repetition again and does not execute it.
+      if (seq === lastSeq) continue;
+      lastSeq = seq;
+    }
+    request(r, t);
+    if (restart) connected = false;
+  }
+  // An allocation with fill sets its whole segment, where the unit reported it, over every earlier write.
+  for (const f of r.fills) {
+    const ref = s.tableReferences.get(f.lsm);
+    if (ref === undefined) throw new Error(`the run allocates object ${f.lsm} with fill ${f.fill.toString(16).padStart(2, "0")}, but shows no table reference to place it at`);
+    const at = parseInt(ref, 16);
+    for (let a = at; a < at + f.size; a++) if ((r.order.get(a) ?? -1) < f.n) { s.memory.set(a, f.fill); s.memoryService.set(a, "allocation fill"); r.order.set(a, f.n); }
+  }
+  // A memory-mapped machine's state, for the machines the run controlled.
+  for (const [lsm, state] of r.mmStates) if (MM_LSMS.includes(lsm) || s.loadControls.has(lsm)) s.loadStates.set(lsm, state);
   return s;
 }
 
-function request(s: RunState, t: Buffer, memoryMapped: boolean, push: <K>(m: Map<K, string[]>, k: K, v: string) => void): void {
+const isRestart = (t: Buffer) => t.length >= 2 && (((t[0] & 0x03) << 8 | t[1]) & 0x3c0) === APCI.RESTART;
+
+interface Replay {
+  s: RunState;
+  memoryMapped: boolean;
+  // address -> the number of the request that last set it.
+  order: Map<number, number>;
+  // The allocations with fill (load control 03 0B <size:4> 01 <fill>), numbered in the run.
+  fills: { lsm: number; size: number; fill: number; n: number }[];
+  // A memory-mapped machine (up to 15) -> the state byte the unit last answered for it.
+  mmStates: Map<number, number>;
+  n: number;
+}
+
+const push = <K>(m: Map<K, string[]>, k: K, v: string) => { (m.get(k) ?? m.set(k, []).get(k)!).push(v); };
+
+function request(r: Replay, t: Buffer): void {
+  const { s, memoryMapped } = r;
+  const n = r.n++;
   const raw = ((t[0] & 0x03) << 8) | t[1];
   const data = t.subarray(2);
   if (READ_SERVICES.has(raw)) { s.reads.add(`${apciName(raw)} ${hexOf(data)}`); return; }
@@ -165,12 +230,13 @@ function request(s: RunState, t: Buffer, memoryMapped: boolean, push: <K>(m: Map
   s.writes++;
   const mem = memWriteOf(t, raw);
   if (mem && memoryMapped && mem.addr === MM_CTRL_ADDR) { push(s.loadControls, mem.data[0] >> 4, hexOf(mem.data)); return; }
-  if (mem) { mem.data.forEach((b, i) => s.memory.set(mem.addr + i, b)); return; }
+  if (mem) { mem.data.forEach((b, i) => { s.memory.set(mem.addr + i, b); s.memoryService.set(mem.addr + i, mem.service); r.order.set(mem.addr + i, n); }); return; }
   if (raw === APCI.PROPERTY_WRITE && t.length >= 6) {
     const [obj, pid] = [t[2], t[3]];
-    const value = hexOf(t.subarray(6));
-    if (pid === PID_LOAD_STATE) push(s.loadControls, obj, value);
-    else push(s.properties, `${obj}/${pid} ${t[4] >> 4}@${((t[4] & 0x0f) << 8) | t[5]}`, value);
+    const value = t.subarray(6);
+    if (pid !== PID.LOAD_STATE_CONTROL) { push(s.properties, `${obj}/${pid}`, `${t[4] >> 4}@${((t[4] & 0x0f) << 8) | t[5]} ${hexOf(value)}`); return; }
+    push(s.loadControls, obj, hexOf(value));
+    if (value.length >= 8 && value[0] === 0x03 && value[1] === 0x0b && value[6] === 1) r.fills.push({ lsm: obj, size: value.readUInt32BE(2), fill: value[7], n });
     return;
   }
   if (FUNCTION_PROPERTY_SERVICES.has(raw)) { s.functionCalls.push(`${apciName(raw)} ${hexOf(data)}`); return; }
@@ -178,24 +244,26 @@ function request(s: RunState, t: Buffer, memoryMapped: boolean, push: <K>(m: Map
   s.other.push(`${apciName(raw)} ${hexOf(data)}`);
 }
 
-function answer(s: RunState, t: Buffer, memoryMapped: boolean): void {
+function answer(r: Replay, t: Buffer): void {
+  const { s } = r;
   const raw = ((t[0] & 0x03) << 8) | t[1];
   if (raw === APCI.PROPERTY_RESPONSE && t.length >= 7 && t[4] >> 4 > 0) {
-    if (t[3] === PID_LOAD_STATE) s.loadStates.set(t[2], t[6]);
-    if (t[3] === PID_TABLE_REFERENCE) s.tableReferences.set(t[2], hexOf(t.subarray(6)));
+    if (t[3] === PID.LOAD_STATE_CONTROL) s.loadStates.set(t[2], t[6]);
+    if (t[3] === PID.TABLE_REFERENCE) s.tableReferences.set(t[2], hexOf(t.subarray(6)));
     return;
   }
-  if (memoryMapped && (raw & 0x3c0) === APCI.MEMORY_RESPONSE && t.length >= 4) {
+  if (r.memoryMapped && (raw & 0x3c0) === APCI.MEMORY_RESPONSE && t.length >= 4) {
     const at = t.readUInt16BE(2), bytes = t.subarray(4, 4 + (raw & 0x3f));
-    for (const lsm of MM_LSMS) { const i = MM_STATUS_BASE + lsm - at; if (i >= 0 && i < bytes.length) s.loadStates.set(lsm, bytes[i]); }
+    for (let lsm = 1; lsm <= 15; lsm++) { const i = MM_STATUS_BASE + lsm - at; if (i >= 0 && i < bytes.length) r.mmStates.set(lsm, bytes[i]); }
   }
 }
 
 // ---- the comparison ----
 
-// Octets as hex, long ones cut to their first 16 with the count.
+// Octets as hex; long ones cut to their first 16, with their count and a digest of all of them, so the text
+// still tells every two runs apart.
 function octets(hex: string): string {
-  return hex.length <= 32 ? hex : `${hex.slice(0, 32)}... (${hex.length / 2} octets)`;
+  return hex.length <= 32 ? hex : `${hex.slice(0, 32)}... (${hex.length / 2} octets, sha256 ${createHash("sha256").update(hex).digest("hex").slice(0, 16)})`;
 }
 const list = (xs: string[] | undefined) => xs === undefined || xs.length === 0 ? "none" : xs.map(octets).join(", ");
 const shown = (v: string | number | undefined) => v === undefined ? "not shown" : String(v);
@@ -206,14 +274,21 @@ export function compareRuns(ets: RunState, busforge: RunState): string[] {
   const out: string[] = [];
   const at = (n: number) => `0x${n.toString(16).padStart(4, "0")}`;
   const addrs = [...new Set([...ets.memory.keys(), ...busforge.memory.keys()])].sort((a, b) => a - b);
-  for (let i = 0; i < addrs.length;) {
-    if (ets.memory.get(addrs[i]) === busforge.memory.get(addrs[i])) { i++; continue; }
-    let j = i;
-    while (j + 1 < addrs.length && addrs[j + 1] === addrs[j] + 1 && ets.memory.get(addrs[j + 1]) !== busforge.memory.get(addrs[j + 1])) j++;
-    const run = (m: Map<number, number>) => addrs.slice(i, j + 1).map((a) => m.get(a)?.toString(16).padStart(2, "0") ?? "--").join("");
-    out.push(`memory ${at(addrs[i])}${j > i ? `-${at(addrs[j])}` : ""}: ETS ${octets(run(ets.memory))}, Busforge ${octets(run(busforge.memory))}`);
-    i = j + 1;
-  }
+  // Each run of consecutive addresses where `get` differs, as one difference.
+  const runs = <V>(what: string, get: (st: RunState, a: number) => V | undefined, text: (vs: (V | undefined)[]) => string) => {
+    for (let i = 0; i < addrs.length;) {
+      const differ = (a: number) => get(ets, a) !== get(busforge, a);
+      if (!differ(addrs[i])) { i++; continue; }
+      let j = i;
+      while (j + 1 < addrs.length && addrs[j + 1] === addrs[j] + 1 && differ(addrs[j + 1])) j++;
+      const span = addrs.slice(i, j + 1);
+      out.push(`${what} ${at(addrs[i])}${j > i ? `-${at(addrs[j])}` : ""}: ETS ${text(span.map((a) => get(ets, a)))}, Busforge ${text(span.map((a) => get(busforge, a)))}`);
+      i = j + 1;
+    }
+  };
+  runs("memory", (st, a) => st.memory.get(a), (vs) => octets(vs.map((v) => v?.toString(16).padStart(2, "0") ?? "--").join("")));
+  // Where both set an octet, they set it by the same service.
+  runs("memory service", (st, a) => (ets.memory.has(a) && busforge.memory.has(a) ? st.memoryService.get(a) : undefined), (vs) => [...new Set(vs)].join(", "));
   const keyed = <K>(what: string, a: Map<K, string[]>, b: Map<K, string[]>, order: (x: K, y: K) => number) => {
     for (const k of [...new Set([...a.keys(), ...b.keys()])].sort(order)) {
       if (JSON.stringify(a.get(k) ?? []) !== JSON.stringify(b.get(k) ?? [])) out.push(`${what} ${String(k)}: ETS ${list(a.get(k))}, Busforge ${list(b.get(k))}`);
@@ -250,7 +325,12 @@ export function etsOutcome(ets6log: string, ia: string, endpoint: string): EtsOu
   if (connects.length === 0) return { kind: "driver-failed", why: "ETS6.log shows no connection of the download" };
   if (elsewhere.length) return { kind: "driver-failed", why: `the download connected to ${[...new Set(elsewhere)].join(", ")}, not only to the simulator at ${endpoint}` };
   if (end < 0) return { kind: "ets-failed", why: "ETS6.log shows no end of the download's load task" };
-  if (!window.some((l) => /UpdateProgramingState: .*App=True, Par=True, Grp=True/.test(l))) return { kind: "ets-failed", why: "ETS did not record the application, its parameters and group addresses as loaded" };
+  // ETS also writes the project's earlier programming state when its load task begins; only the state it
+  // records after the last load-procedure step it executed is this download's.
+  const lastStep = window.findLastIndex((l) => l.includes("Impl.LoadProcedure - Executing: <LdCtrl"));
+  const state = window.findLastIndex((l) => l.includes("UpdateProgramingState: Adr="));
+  if (lastStep < 0) return { kind: "ets-failed", why: "ETS6.log shows no load-procedure step executed" };
+  if (state < lastStep || !/UpdateProgramingState: Adr=True, Cfg=True, App=True, Par=True, Grp=True\s*$/.test(window[state])) return { kind: "ets-failed", why: "ETS did not record the address, configuration, application, parameters and group addresses as loaded after the download's steps" };
   return { kind: "completed" };
 }
 
@@ -264,8 +344,11 @@ export function simRefusals(simLines: string): string[] {
 export interface BusforgeRun {
   capture: string;
   refusals: string[];
-  // Busforge's coded refusal (ProductError, ApiError, KnxError), or null where its download returned.
+  // Busforge's coded refusal (a ProductError of its planner, an ApiError of its server), or null.
   refused: { code: string; message: string } | null;
+  // Any other error of its download, where the simulator refused a request of it (which the error follows
+  // from); without a refusal such an error is thrown.
+  error: string | null;
   result: FlashResult | null;
 }
 
@@ -273,8 +356,9 @@ export function judge(ets: { outcome: EtsOutcome; refusals: string[] }, busforge
   if (ets.outcome.kind === "driver-failed") return { verdict: "driver-failed", why: ets.outcome.why };
   const etsDown = ets.refusals.length ? `the simulator refused ETS: ${ets.refusals[0]}` : ets.outcome.kind === "ets-failed" ? ets.outcome.why : null;
   if (etsDown !== null) {
-    if (busforge.writes > 0 && busforge.refusals.length === 0) return { verdict: "busforge-only", ets: etsDown, busforgeWrites: busforge.writes };
-    return ets.refusals.length ? { verdict: "sim-refused", run: "ETS", refusals: ets.refusals } : { verdict: "ets-failed", why: etsDown };
+    if (busforge.writes > 0 && busforge.refusals.length === 0) return { verdict: "busforge-only", ets: etsDown, busforgeWrites: busforge.writes, ...(busforge.refused ? { busforgeRefused: busforge.refused.code } : {}) };
+    const bf = busforge.refusals.length ? `the simulator refused Busforge: ${busforge.refusals[0]}` : busforge.refused ? `Busforge refused: ${busforge.refused.code}` : "Busforge wrote nothing";
+    return ets.refusals.length ? { verdict: "sim-refused", run: "ETS", refusals: ets.refusals, busforge: bf } : { verdict: "ets-failed", why: etsDown, busforge: bf };
   }
   if (busforge.refusals.length) return { verdict: "sim-refused", run: "Busforge", refusals: busforge.refusals };
   if (busforge.refused) return { verdict: "refused", ...busforge.refused };
@@ -286,7 +370,7 @@ export function judge(ets: { outcome: EtsOutcome; refusals: string[] }, busforge
 
 // Busforge's full download of `conf` into a fresh unit of `spec`, through the KNXnet/IP server ETS connects
 // to and the logging proxy ETS's capture is taken with: the server's own download task.
-export async function busforgeIntoSim(spec: SimUnitSpec, conf: RowConfiguration): Promise<BusforgeRun & { simLines: string[] }> {
+export async function busforgeIntoSim(spec: SimUnitSpec, conf: RowConfiguration): Promise<BusforgeRun & { sim: SimUnit }> {
   const dir = tempDir("busforge-ets-sweep-");
   const sim = newSimUnit(spec);
   const port = await freePort();
@@ -298,23 +382,25 @@ export async function busforgeIntoSim(spec: SimUnitSpec, conf: RowConfiguration)
     await new Promise<void>((r) => proxy.listen(0, "127.0.0.1", () => r()));
     const proxyPort = (proxy.address() as { port: number }).port;
     const connection: Connection = { id: "sim", name: "sim", type: "ip", host: "127.0.0.1", port: proxyPort, ipTransport: "tcp", usbVendorId: null, usbProductId: null, usbSerial: null, createdAt: 0 };
-    let result: FlashResult | null = null, refused: BusforgeRun["refused"] = null;
+    let result: FlashResult | null = null, refused: BusforgeRun["refused"] = null, error: string | null = null;
     try {
       result = await downloadDeviceFull({
         projectId: "sweep", deviceId: "row", ia: conf.ia, appXml: catalogueXml(spec.catalogue), dataDir: dir, connection,
         params: new Map(conf.params), links: conf.links, moduleInstances: conf.moduleInstances, comObjectOverrides: new Map(conf.comObjectOverrides ?? []), dryRun: false,
       });
     } catch (e) {
-      const code = (e as { code?: unknown }).code;
-      if (typeof code !== "string") throw e;
-      refused = { code, message: e instanceof Error ? e.message : String(e) };
+      if (e instanceof ProductError || e instanceof ApiError) refused = { code: e.code, message: e.message };
+      else if (sim.refusals.length) error = e instanceof Error ? e.message : String(e);
+      else throw e;
     }
-    // The session ends with its T_Ack and T_Disconnect after the result.
-    for (let i = 0; !(existsSync(log) && readFileSync(log, "utf8").includes("DISCONNECT_REQ")); i++) {
+    // The capture is complete once every KNXnet/IP connection Busforge opened is closed (its T_Disconnect
+    // goes before the tunnel's DISCONNECT_REQ). After a refusal the session may end otherwise.
+    const ended = () => { const t = existsSync(log) ? readFileSync(log, "utf8") : ""; const n = (svc: string) => t.split("\n").filter((l) => l.includes(`Busforge->BRIDGE ${svc} `)).length; return n("CONNECT_REQ") > 0 && n("DISCONNECT_REQ") >= n("CONNECT_REQ"); };
+    for (let i = 0; !ended(); i++) {
       if (i === 100) { if (result) throw new Error("Busforge's session did not end within 10 s of the download's result"); break; }
       await new Promise((r) => setTimeout(r, 100));
     }
-    return { capture: existsSync(log) ? readFileSync(log, "utf8") : "", refusals: [...sim.refusals], refused, result, simLines: [...sim.lines] };
+    return { capture: existsSync(log) ? readFileSync(log, "utf8") : "", refusals: [...sim.refusals], refused, error, result, sim };
   } finally {
     proxy.close();
     await server.stop();
@@ -340,7 +426,9 @@ export type LoadedImageCheck =
   | { state: "differs"; bytes: number; mismatches: string[] };
 
 // Busforge's images for `conf` against ETS's LoadedImage of the device at conf.ia in the project export.
-export function loadedImageCheck(exportBytes: Buffer, appXml: string, conf: RowConfiguration): LoadedImageCheck {
+// `unitHoldsApplication`: whether the unit held the application when ETS downloaded (etsdiff.ts
+// capturedOnLoadedUnit), which decides the form of the download the images are planned for.
+export function loadedImageCheck(exportBytes: Buffer, appXml: string, conf: RowConfiguration, unitHoldsApplication: boolean): LoadedImageCheck {
   const proj = loadKnxproj(exportBytes, undefined, "export");
   const d = proj.devices.find((x) => x.ia === conf.ia);
   if (!d) return { state: "not compared", why: `the export holds no device ${conf.ia}` };
@@ -350,7 +438,7 @@ export function loadedImageCheck(exportBytes: Buffer, appXml: string, conf: RowC
   if (d.etsLoadedImage === undefined) return { state: "not compared", why: "the export carries no LoadedImage for the device (its load procedure names no LdCtrlLoadImageProp)" };
   const o = loadedImageComparison(cfg, parseLoadProcedures(appXml), conf.ia, {
     params: new Map(conf.params), instances: conf.moduleInstances ?? [], links: conf.links, comObjectOverrides: new Map(conf.comObjectOverrides ?? []),
-  }, d.etsLoadedImage);
+  }, d.etsLoadedImage, unitHoldsApplication);
   if ("refused" in o) return { state: "not compared", why: `Busforge refuses the full download: ${o.refused}` };
   return o.mismatches.length ? { state: "differs", bytes: o.bytes, mismatches: o.mismatches } : { state: "equal", bytes: o.bytes };
 }
@@ -392,7 +480,9 @@ export interface RowResult {
   // The reads only one run made (recorded, not compared).
   reads: { onlyEts: string[]; onlyBusforge: string[] };
   loadedImage: LoadedImageCheck;
-  busforge: BusforgeRun & { simLines: string[] };
+  // The requests the unit did not take, per run (recorded, not compared).
+  notTaken: { ets: string[]; busforge: string[] };
+  busforge: BusforgeRun & { sim: SimUnit };
 }
 
 export async function runRow(row: Row): Promise<RowResult> {
@@ -400,7 +490,8 @@ export async function runRow(row: Row): Promise<RowResult> {
   const sim = newSimUnit(row.unit);
   if (iaToNum(row.conf.ia) !== sim.deviceIa) throw new Error(`row ${row.id}: the configuration is of ${row.conf.ia}, the simulated unit answers at another address`);
   const mask = parseAppConfig(catalogueXml(row.unit.catalogue)).mask;
-  const etsRun = runState(read(ROW_FILES.ets), "ETS", sim.deviceIa, mask);
+  const etsText = read(ROW_FILES.ets);
+  const etsRun = runState(etsText, "ETS", sim.deviceIa, mask);
   const busforge = await busforgeIntoSim(row.unit, row.conf);
   const bfRun = runState(busforge.capture, "Busforge", sim.deviceIa, mask);
   const verdict = judge(
@@ -411,10 +502,10 @@ export async function runRow(row: Row): Promise<RowResult> {
   const exportFile = row.spec.export;
   const loadedImage: LoadedImageCheck = exportFile === undefined ? { state: "no export" } : loadedImageCheck(
     (() => { const b = readFileSync(join(row.dir, exportFile)); return exportFile.endsWith(".gz") ? gunzipSync(b) : b; })(),
-    catalogueXml(row.unit.catalogue), row.conf,
+    catalogueXml(row.unit.catalogue), row.conf, capturedOnLoadedUnit(parseCapture(etsText, sim.deviceIa)),
   );
   return {
-    verdict, loadedImage, busforge,
+    verdict, loadedImage, busforge, notTaken: { ets: etsRun.notTaken, busforge: bfRun.notTaken },
     reads: { onlyEts: [...etsRun.reads].filter((r) => !bfRun.reads.has(r)).sort(), onlyBusforge: [...bfRun.reads].filter((r) => !etsRun.reads.has(r)).sort() },
   };
 }
@@ -436,6 +527,7 @@ export interface ManifestRow {
   cause: string | null;
   differences: { difference: string; cause: string | null }[];
   reads: RowResult["reads"];
+  notTaken: RowResult["notTaken"];
   loadedImage: LoadedImageCheck;
   files: string[];
 }
@@ -454,7 +546,7 @@ export function manifestRow(row: Row, r: RowResult): ManifestRow {
   return {
     application: row.application, variant: row.variant, unit: row.unit.id, product: row.unit.name, mask: cfg.mask,
     manufacturer: row.application.split("_")[0], etsBuild: row.spec.etsBuild, verdict: v.verdict, first, cause, differences: diffs,
-    reads: r.reads, loadedImage: r.loadedImage,
+    reads: r.reads, notTaken: r.notTaken, loadedImage: r.loadedImage,
     files: readdirSync(row.dir).sort().map((f) => `${SWEEP_DIR}/${row.id}/${f}`),
   };
 }
@@ -494,7 +586,7 @@ async function main(): Promise<number> {
       const out = join(keep, id);
       mkdirSync(out, { recursive: true });
       writeFileSync(join(out, "busforge.log"), r.busforge.capture);
-      writeFileSync(join(out, "busforge.log.sim.txt"), r.busforge.simLines.join("\n") + "\n");
+      writeFileSync(join(out, "busforge.log.sim.txt"), r.busforge.sim.lines.join("\n") + "\n");
       copyFileSync(join(row.dir, ROW_FILES.ets), join(out, "ets.log"));
       console.log(`  kept in ${out}`);
     }
