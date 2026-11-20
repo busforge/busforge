@@ -24,6 +24,7 @@ The hardware smoke framework in `smoke/` has its own document, [`docs/testing.md
 | `udp-ssh-relay.ts` | Carry KNXnet/IP over an SSH TCP forward when the direct UDP route is broken |
 | `demo-project.ts` | **Writes to a Busforge instance, not to a bus.** Build a demo project through the API of a running server: the open demo from OpenKNX's release archives, or the manufacturer demo from the product databases given (docs/demo.md) |
 | `ui-instance.ts` | Start, list and stop isolated UI instances: server and Vite dev server on free ports with their own data directory, a project or demo (`ui-demo-projects.ts`) imported, stopped by the process groups it started (docs/testing.md, "An isolated UI instance") |
+| `image-context.ts` | Part of `bun run check`: the image build context Docker would send (the repository through `.dockerignore`), judged by the check the `Dockerfile` runs on it, read from the `Dockerfile`; fails with the leaked files (docs/deployment.md) |
 | `smoke/runner.ts` | The hardware smoke framework: capabilities and behaviours on real devices, in the `api` and `ui` channels |
 
 Output written by the read-back tools is **real device memory**, including group addresses from a

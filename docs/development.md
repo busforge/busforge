@@ -76,7 +76,7 @@ empty. `jq` is the only tool beyond `curl` this needs.
 ## The gate
 
 ```bash
-bun run check         # typecheck + lint + tests + build, every workspace
+bun run check         # image build context + typecheck + lint + tests + build, every workspace
 ```
 
 Nothing is done until this is green. It is offline by construction: no bus, no network, no

@@ -21,12 +21,13 @@ describes the machinery, not the claims.
 | Capture comparison | `tools/etsdiff.test.ts`, and `tools/bussard-synthetic.test.ts` for [third-party captures](#third-party-test-data) (both need the [private corpus](#the-private-corpus)) | **Reference**: the bytes and services Busforge plans for a device equal what ETS wrote to that device in a capture, byte for byte | Wire behaviour no capture holds: timing, restarts, link handling |
 | Capture CRC check | `tools/mcb-crc.test.ts` (needs the [private corpus](#the-private-corpus)) | **Reference** for the check a full download takes in place of a read-back: after each captured ETS full download, the CRC every region of every object reports in its memory-control block is the CRC over the bytes ETS wrote there | That a device without such a capture computes its CRC the same way (where it does not, the download reads back), and that a device computes it from its memory again after the restart: the file shows that on the Jung 400021SE only |
 | Corpus archive smoke | `tools/corpus-archives.test.ts` (needs the [private corpus](#the-private-corpus)) | **Readability**: every `.knxproj`, `.knxprod` and `.busforge` in the corpus opens with Busforge's own readers (ZIP, WinZip-AES decryption, the `.busforge` container where the corpus holds one), a failure naming the file; a password-protected archive opens only in a run given its password | That what opens is parsed correctly (it opens the archive and reads `0.xml`, nothing more), and the traditional PKWARE encryption of ETS 4 and 5, which no corpus archive uses (`packages/project/test/older-ets-and-shapes.test.ts` covers it) |
+| Image build context | `tools/image-context.ts`, the first step of `bun run check` | The files Docker sends as the build context (the repository through `.dockerignore`) pass the check the `Dockerfile` runs on them, read from the `Dockerfile` itself: no test, fixture, capture, project or key file, database or tool source, a failure listing every such file | That the image runs; the image build on CI shows that |
 | Hardware smoke | `tools/smoke` | That busforge places the intended bytes on a real device **and** that the device acts on them | Only what it was run against |
 
 Everything except the last row runs offline and is bundled in the gate:
 
 ```bash
-bun run check      # typecheck + lint + tests + build, across every workspace
+bun run check      # image build context + typecheck + lint + tests + build, across every workspace
 ```
 
 The hardware smoke framework is deliberately **not** part of `bun run check`. It needs a KNX
