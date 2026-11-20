@@ -29,6 +29,7 @@
 //   as the unit's captures show them.
 // Every frame it sends carries the request's priority (system priority on a transport-layer control frame)
 // and is an extended frame where it is longer than a standard one, as the unit's frames in the captures are.
+// tools/sim-unit-0701.ts builds the memory-mapped System 7 unit (MV-0701) on this transport core.
 import {
   APCI, CEMI, cemiLData, numToIa, parseApdu, parseCemiLData, tpAck, tpDisconnect, withMessageCode, crc16Ccitt, crc16CcittFalse,
   type KnxTransport, type PropertyDescription,
@@ -77,7 +78,8 @@ export interface SimRestart {
   confirmedRestartSeconds: number | null;
 }
 
-export interface SimUnitModel {
+// What a simulated unit holds whatever its load control.
+export interface SimUnitCoreModel {
   ia: number;
   mask: number;
   maxApdu: number;
@@ -88,25 +90,12 @@ export interface SimUnitModel {
   // A_FunctionPropertyExtState_Read `<object type>/<instance>/<PID> <data hex>` -> the result the unit answered
   // with return code 0.
   functionStates: Map<string, Buffer>;
-  // Per load-state machine: where the unit places its segment (it chose that address on every download its
-  // captures show), the segment it holds at the start (empty where its memory-control block held no element,
-  // so none of its octets is known), and the two octets of its memory-control-block element between the size
-  // and the CRC, as the unit reports them (they differ between a unit's segments; null where the block held
-  // several elements, so what a load that writes none leaves is not shown).
-  segments: Map<number, { at: number; size: number; bytes: Buffer; mcbControl: Buffer | null }>;
-  crc: "ccitt" | "ccitt-false";
   // A_Authorize_Request key (hex) -> the level the unit grants.
   authorize: Map<string, number>;
   restart: SimRestart;
-  // Whether the unit sets its device control's application-stopped bit (PID 14 bit 0) when its application is
-  // unloaded, until its restart.
-  unloadStopsApplication: boolean | null;
   // The property index an A_PropertyDescription_Read by PID is answered with: the property's own, or the
-  // request's.
-  descriptionIndex: "property" | "request";
-  // Bits the unit's application clears in a segment of its own after a restart (`clear` the bit mask at
-  // `offset` from the segment's start).
-  clearsAfterRestart: { lsm: number; offset: number; clear: number }[];
+  // request's; null where no capture shows one, and such a read is refused.
+  descriptionIndex: "property" | "request" | null;
   // Whether the unit answered A_MemoryExtended_Read when it was collected (the collection holds memory it read so).
   memoryExtendedRead: boolean;
   // Whether its captures show it answer A_MemoryExtended_Write; a segment past 64 KB is allocated only then.
@@ -120,13 +109,30 @@ export interface SimUnitModel {
   link: { ackMs: number; nakMs: number };
 }
 
+// A System B unit: its relative load control on PID 5.
+export interface SimUnitModel extends SimUnitCoreModel {
+  // Per load-state machine: where the unit places its segment (it chose that address on every download its
+  // captures show), the segment it holds at the start (empty where its memory-control block held no element,
+  // so none of its octets is known), and the two octets of its memory-control-block element between the size
+  // and the CRC, as the unit reports them (they differ between a unit's segments; null where the block held
+  // several elements, so what a load that writes none leaves is not shown).
+  segments: Map<number, { at: number; size: number; bytes: Buffer; mcbControl: Buffer | null }>;
+  crc: "ccitt" | "ccitt-false";
+  // Whether the unit sets its device control's application-stopped bit (PID 14 bit 0) when its application is
+  // unloaded, until its restart.
+  unloadStopsApplication: boolean | null;
+  // Bits the unit's application clears in a segment of its own after a restart (`clear` the bit mask at
+  // `offset` from the segment's start).
+  clearsAfterRestart: { lsm: number; offset: number; clear: number }[];
+}
+
 // A segment's bytes, and which of them the unit is known to hold (1): a mode-0 allocation that grows a segment
 // leaves its new octets unknown until they are written.
 interface Segment { at: number; size: number; bytes: Buffer; known: Uint8Array; mcbControl: Buffer | null }
 // `lastAt`: when the connection last carried a frame, on the unit's clock. `restartOnAck`: the unit restarts
 // once its answer under way is acknowledged (a confirmed restart).
 interface Connection { partner: number; recv: number; send: number; pendingAck: ReturnType<typeof setTimeout> | null; idle: ReturnType<typeof setTimeout> | null; lastAt: number; restartOnAck: boolean }
-type Reply = (apci: number, data: Buffer, low?: number) => void;
+export type Reply = (apci: number, data: Buffer, low?: number) => void;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -163,7 +169,9 @@ export class SimUnit implements KnxTransport {
   private stopped = false;
 
   constructor(
-    private readonly model: SimUnitModel,
+    // A unit of another load control (tools/sim-unit-0701.ts) has none of System B's segments, memory-control
+    // blocks and PID 5 load events, nor what follows from them.
+    private readonly model: SimUnitCoreModel & Partial<Pick<SimUnitModel, "segments" | "crc" | "unloadStopsApplication" | "clearsAfterRestart">>,
     // The interface's own individual address: the source of the frames the tool sends through it.
     readonly assignedIa: number,
     // `interfaceMaxApdu`: the longest APDU the interface puts on the line; a longer frame it confirms
@@ -172,7 +180,7 @@ export class SimUnit implements KnxTransport {
   ) {
     this.objects = new Map([...model.objects].map(([o, props]) => [o, new Map([...props].map(([pid, p]) => [pid, { ...p, elements: p.elements?.map((e) => Buffer.from(e)) ?? null }]))]));
     if (!this.property(0, PID_DEVICE_CONTROL)?.elements?.[0]) throw new Error("a simulated unit needs the device control (object 0 PID 14) its unit answered: verify mode and the stopped application live there");
-    for (const [lsm, s] of model.segments) {
+    for (const [lsm, s] of model.segments ?? []) {
       this.segments.set(lsm, { at: s.at, size: s.size, bytes: Buffer.from(s.bytes), known: new Uint8Array(s.size).fill(1), mcbControl: s.mcbControl && Buffer.from(s.mcbControl) });
       this.referenceKnown.set(lsm, true);
       this.mcbKnown.set(lsm, true);
@@ -183,8 +191,8 @@ export class SimUnit implements KnxTransport {
   get deviceIa(): number { return this.model.ia; }
 
   private now(): number { return this.opts.now?.() ?? Date.now(); }
-  private note(line: string): void { this.lines.push(line); this.opts.log?.(line); }
-  private refuse(what: string): void { const r = `sim-refused ${what}`; this.refusals.push(r); this.note(r); }
+  protected note(line: string): void { this.lines.push(line); this.opts.log?.(line); }
+  protected refuse(what: string): void { const r = `sim-refused ${what}`; this.refusals.push(r); this.note(r); }
 
   async connect(): Promise<void> { this.stopped = false; }
   async disconnect(): Promise<void> { this.stopped = true; this.close(); await this.line; }
@@ -422,7 +430,7 @@ export class SimUnit implements KnxTransport {
   }
 
   // Why the unit's restart now is not modelled, or null.
-  private restartRefusal(): string | null {
+  protected restartRefusal(): string | null {
     const loading = [...this.objects.keys()].filter((o) => this.state(o) === STATE.LOADING);
     return loading.length ? `with object ${loading.join(", ")} loading; what the unit holds after that is not shown` : null;
   }
@@ -441,7 +449,7 @@ export class SimUnit implements KnxTransport {
     if (this.conn) this.conn.restartOnAck = true;
   }
 
-  private restart(partner: number): void {
+  protected restart(partner: number): void {
     this.close();
     this.deadPartner = partner;
     this.restartedAt = this.now();
@@ -449,7 +457,8 @@ export class SimUnit implements KnxTransport {
     this.deviceControlUnknown = false;
     // Only a loaded application clears them; the memory-control block reports the CRC over the segment as it
     // then holds it.
-    for (const { lsm, offset, clear } of this.model.clearsAfterRestart) {
+    // A unit without System B's segments has none to clear.
+    for (const { lsm, offset, clear } of this.model.clearsAfterRestart ?? []) {
       const seg = this.segments.get(lsm);
       if (!seg || offset >= seg.size || this.state(lsm) !== STATE.LOADED) continue;
       seg.bytes[offset] &= ~clear;
@@ -463,11 +472,11 @@ export class SimUnit implements KnxTransport {
     this.note("restart");
   }
 
-  private property(obj: number, pid: number): SimProperty | null {
+  protected property(obj: number, pid: number): SimProperty | null {
     return this.objects.get(obj)?.get(pid) ?? null;
   }
 
-  private propertyRead(obj: number, pid: number, count: number, start: number, reply: Reply): void {
+  protected propertyRead(obj: number, pid: number, count: number, start: number, reply: Reply): void {
     const what = `A_PropertyValue_Read ${obj}/${pid} of ${count} from ${start}`;
     const prop = this.property(obj, pid);
     if (!prop) { this.refuse(`${what}: the unit was not read there`); return; }
@@ -495,11 +504,12 @@ export class SimUnit implements KnxTransport {
   private propertyDescription(obj: number, pid: number, index: number, reply: Reply): void {
     const d = this.model.descriptions.get(obj)?.find((x) => pid !== 0 ? x.pid === pid : x.propertyIndex === index);
     if (!d) { this.refuse(`A_PropertyDescription_Read ${obj}/${pid} index ${index}: the unit's description is not known`); return; }
+    if (pid !== 0 && this.model.descriptionIndex === null) { this.refuse(`A_PropertyDescription_Read ${obj}/${pid} index ${index}: which index the unit answers a read by PID with is not shown`); return; }
     const at = pid !== 0 && this.model.descriptionIndex === "request" ? index : d.propertyIndex;
     reply(APCI.PROPERTY_DESCRIPTION_RESPONSE, Buffer.from([obj, d.pid, at, (d.writable ? 0x80 : 0) | d.pdt, (d.maxElements >> 8) & 0x0f, d.maxElements & 0xff, (d.readLevel << 4) | d.writeLevel]));
   }
 
-  private propertyWrite(obj: number, pid: number, count: number, start: number, value: Buffer, reply: Reply): void {
+  protected propertyWrite(obj: number, pid: number, count: number, start: number, value: Buffer, reply: Reply): void {
     const prop = this.property(obj, pid);
     const what = `A_PropertyValue_Write ${obj}/${pid} ${value.toString("hex")}`;
     if (!prop) { this.refuse(`${what}: the unit was not read there`); return; }
@@ -577,7 +587,7 @@ export class SimUnit implements KnxTransport {
       case EVENT.UNLOAD:
         this.mcbWritten.delete(obj);
         if (this.segments.has(obj)) { this.referenceKnown.set(obj, false); this.mcbKnown.set(obj, false); }
-        if (obj === APPLICATION_LSM && this.model.unloadStopsApplication === null) this.deviceControlUnknown = true;
+        if (obj === APPLICATION_LSM && (this.model.unloadStopsApplication ?? null) === null) this.deviceControlUnknown = true;
         if (obj === APPLICATION_LSM && this.model.unloadStopsApplication) { const dc = this.property(0, PID_DEVICE_CONTROL)!; dc.elements = [Buffer.from([dc.elements![0][0] | APPLICATION_STOPPED])]; }
         return set(STATE.UNLOADED);
       case EVENT.LOAD:
@@ -594,6 +604,7 @@ export class SimUnit implements KnxTransport {
         const mcb = this.property(obj, PID_MCB);
         if (mcb && mcb.elements !== null) {
           if (!seg || seg.known.some((k) => k === 0)) { this.refuse(`${what}: the segment of object ${obj} holds octets no write set and the unit was not shown to hold, so its CRC is not known`); return null; }
+          if (!this.model.crc) { this.refuse(`${what}: the unit's memory-control block of object ${obj} is not modelled`); return null; }
           // The blocks written while loading, else the whole segment under the unit's own control octets.
           const written = this.mcbWritten.get(obj);
           if (!written && !seg.mcbControl) { this.refuse(`${what}: the memory-control block of object ${obj} held several blocks and none was written; what the unit reports then is not shown`); return null; }
@@ -636,7 +647,7 @@ export class SimUnit implements KnxTransport {
     return null;
   }
 
-  private memoryRead(n: number, addr: number, reply: Reply): void {
+  protected memoryRead(n: number, addr: number, reply: Reply): void {
     const what = `A_Memory_Read ${n} at 0x${addr.toString(16)}`;
     if (n === 0) { this.refuse(`${what}: a read of no octet`); return; }
     const bytes = this.knownBytes(addr, n);
@@ -652,7 +663,7 @@ export class SimUnit implements KnxTransport {
     return Buffer.from(hit[1].bytes.subarray(off, off + n));
   }
 
-  private memoryWrite(n: number, addr: number, data: Buffer, reply: Reply): void {
+  protected memoryWrite(n: number, addr: number, data: Buffer, reply: Reply): void {
     const what = `A_Memory_Write ${n} at 0x${addr.toString(16)}`;
     if (n === 0 || data.length !== n) { this.refuse(`${what}: ${data.length} octets of data`); return; }
     if (this.deviceControlUnknown) { this.refuse(`${what}: whether the unit echoes it is not known, its device control after the application's unload not shown`); return; }

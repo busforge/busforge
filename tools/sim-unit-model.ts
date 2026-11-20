@@ -5,38 +5,42 @@
 // must agree with what the unit answered, or the model is refused rather than a unit built that no real one is.
 import { crc16Ccitt, crc16CcittFalse, declaredPropMatches, iaToNum, type PropertyDescription } from "../packages/knx/src/index.ts";
 import { parseAppConfig, parseLoadProcedures, declaredPropChecks, type CollectPackage } from "../packages/product/src/index.ts";
-import type { SimProperty, SimUnitModel } from "./sim-unit.ts";
+import type { SimProperty, SimUnitCoreModel, SimUnitModel } from "./sim-unit.ts";
 
-// What the collection cannot show and the unit's captures do: how it takes a restart and an authorization, how
-// long its interface took to confirm a frame, its device control after an unload, its description answers by
-// PID, what its application changes in its memory after a restart, the property writes only they show answered,
-// whether it takes A_MemoryExtended_Write, and, for a unit whose memory-control blocks held no element when it was collected, what they report
-// once a load completes (`mcb`, the two octets between size and CRC as hex, and the CRC's convention).
-// `stateInCaptures`: for a unit collected in a later state than its captures found it, the answers its captures
-// show where they differ from the collection: a property's first element (`<object>/<PID>` -> hex) and a
-// function-property state (the `functionStates` key -> hex); each must be one the collection holds.
-export type UnitBehaviour = Pick<SimUnitModel, "restart" | "authorize" | "link" | "unloadStopsApplication" | "descriptionIndex" | "clearsAfterRestart" | "shownWrites" | "memoryExtendedWrite">
-  & {
-    mcb?: { control: string; crc: SimUnitModel["crc"] };
-    stateInCaptures?: { properties: Record<string, string>; functionStates: Record<string, string> };
-  };
+// What the collection cannot show and the unit's captures do, whatever its mask: how it takes a restart and an
+// authorization, how long its interface took to confirm a frame, its description answers by PID, the property
+// writes only they show answered, whether it takes A_MemoryExtended_Write.
+export type UnitBehaviour = Pick<SimUnitCoreModel, "restart" | "authorize" | "link" | "descriptionIndex" | "shownWrites" | "memoryExtendedWrite">;
+
+// A captured state where the collection was taken in a later one: the answers the unit's captures show where they
+// differ from the collection, a property's first element (`<object>/<PID>` -> hex) and a function-property state
+// (the `functionStates` key -> hex); each must be one the collection holds.
+export interface StateInCaptures { properties: Record<string, string>; functionStates: Record<string, string> }
+
+// What a System B unit's captures show besides: its device control after an unload, what its application changes
+// in its memory after a restart, and, for a unit whose memory-control blocks held no element when it was
+// collected, what they report once a load completes (`mcb`, the two octets between size and CRC as hex, and the
+// CRC's convention).
+export type SystemBBehaviour = UnitBehaviour & Pick<SimUnitModel, "unloadStopsApplication" | "clearsAfterRestart">
+  & { mcb?: { control: string; crc: SimUnitModel["crc"] }; stateInCaptures?: StateInCaptures };
 
 // The fields of a record's target the model reads.
 type Target = { object?: number; pid?: number; start?: number; count?: number; address?: number; type?: number };
 const LSMS = [1, 2, 3, 4];
 const PID_DEVICE_CONTROL = 14;
 
-export function simUnitModel(collection: CollectPackage, appXml: string, behaviour: UnitBehaviour): SimUnitModel {
+// What every simulated unit takes from its collection, whatever its mask: its mask (the descriptor it answered,
+// which must be the application's), the interface objects and properties it answered and their descriptions, its
+// function-property states, whether it answered A_MemoryExtended_Read; with `stateInCaptures` where its captures
+// found it otherwise. The application's own pre-flight compares must pass on them. `refuse` throws.
+export function collectedUnit(collection: CollectPackage, appXml: string, refuse: (why: string) => never, stateInCaptures?: StateInCaptures) {
   const cfg = parseAppConfig(appXml);
-  const refuse = (why: string): never => { throw new Error(`no simulated unit: ${why}`); };
   if (cfg.mask !== collection.mask) refuse(`the application is for ${cfg.mask}, the collected unit is ${collection.mask}`);
-  if (cfg.mask !== "MV-07B0") refuse(`only System B (MV-07B0) is modelled, not ${cfg.mask}`);
   const records = collection.records.map((r) => ({ ...r, target: r.target as Target }));
   const descriptor = records.find((r) => r.space === "descriptor" && r.outcome === "bytes" && (r.target.type ?? 0) === 0);
   if (!descriptor?.bytes) refuse("the collection holds no device descriptor 0");
   const mask = Buffer.from(descriptor!.bytes!, "hex").readUInt16BE(0);
   if (`MV-${mask.toString(16).padStart(4, "0").toUpperCase()}` !== cfg.mask) refuse(`the unit answered descriptor ${descriptor!.bytes}, the application is for ${cfg.mask}`);
-  if (collection.maxApdu === null) refuse("the collection holds no maximum APDU length");
 
   const objects = new Map<number, Map<number, SimProperty>>();
   const prop = (o: number, pid: number) => {
@@ -98,13 +102,13 @@ export function simUnitModel(collection: CollectPackage, appXml: string, behavio
     if (p.elements !== null && p.elements.length === 0 && !p.countKnown) props.delete(pid);
   }
 
-  for (const [key, hex] of Object.entries(behaviour.stateInCaptures?.properties ?? {})) {
+  for (const [key, hex] of Object.entries(stateInCaptures?.properties ?? {})) {
     const [o, pid] = key.split("/").map(Number);
     const p = objects.get(o)?.get(pid);
     if (!p?.elements?.[0] || p.elements[0].length !== hex.length / 2) refuse(`the captures' answer ${hex} for property ${key}, which the collection does not hold in that form`);
     p!.elements![0] = Buffer.from(hex, "hex");
   }
-  for (const [key, hex] of Object.entries(behaviour.stateInCaptures?.functionStates ?? {})) {
+  for (const [key, hex] of Object.entries(stateInCaptures?.functionStates ?? {})) {
     if (!functionStates.has(key)) refuse(`the captures' answer ${hex} for function property ${key}, which the collection does not hold`);
     functionStates.set(key, Buffer.from(hex, "hex"));
   }
@@ -118,6 +122,15 @@ export function simUnitModel(collection: CollectPackage, appXml: string, behavio
   }
 
   if (!objects.get(0)?.get(PID_DEVICE_CONTROL)?.elements?.[0]) refuse("the collection did not read the device control (object 0 PID 14)");
+  const memoryExtendedRead = records.some((r) => r.space === "memory-extended" && r.outcome === "bytes");
+  return { mask, objects, descriptions, functionStates, memoryExtendedRead, records };
+}
+
+export function simUnitModel(collection: CollectPackage, appXml: string, behaviour: SystemBBehaviour): SimUnitModel {
+  const refuse = (why: string): never => { throw new Error(`no simulated unit: ${why}`); };
+  if (collection.mask !== "MV-07B0") refuse(`only System B (MV-07B0) is modelled here, not ${collection.mask}`);
+  const { mask, objects, descriptions, functionStates, memoryExtendedRead, records } = collectedUnit(collection, appXml, refuse, behaviour.stateInCaptures);
+  if (collection.maxApdu === null) refuse("the collection holds no maximum APDU length");
 
   const memory = records.filter((r) => (r.space === "memory" || r.space === "memory-extended") && r.outcome === "bytes" && r.target.address !== undefined && r.bytes);
   const segments: SimUnitModel["segments"] = new Map();
@@ -154,8 +167,7 @@ export function simUnitModel(collection: CollectPackage, appXml: string, behavio
   crc ??= emptyMcb?.crc ?? null;
   if (crc === null) refuse("the collection holds no segment with its memory-control block");
   return {
-    ia: iaToNum(collection.ia), mask, maxApdu: collection.maxApdu!, objects, descriptions, functionStates, segments, crc: crc!,
-    memoryExtendedRead: records.some((r) => r.space === "memory-extended" && r.outcome === "bytes"),
+    ia: iaToNum(collection.ia), mask, maxApdu: collection.maxApdu!, objects, descriptions, functionStates, memoryExtendedRead, segments, crc: crc!,
     ...unitBehaviour,
   };
 }

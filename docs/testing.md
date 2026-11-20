@@ -504,8 +504,8 @@ captures show different are taken from them, each named.
 
 It models the transport layer of one connection, the interface's APDU limit, the descriptor,
 authorization, property, function-property and memory services (`A_Memory_Read`/`_Write`,
-`A_MemoryExtended_Write`, and `A_MemoryExtended_Read` where the unit answered it when collected), the load-state machines with their table references and the memory-control
-blocks (one per segment, or the blocks written while loading, each with its CRC), verify mode, the basic and
+`A_MemoryExtended_Write`, and `A_MemoryExtended_Read` where the unit answered it when collected), the
+load-state machines with their table references and the memory-control blocks (one per segment, or the blocks written while loading, each with its CRC), verify mode, the basic and
 the confirmed restart. Everything else it refuses: a line in its log and in `refusals`, and no answer, so
 the tool's own timeout ends a run where an invented byte would have let it go on. A behaviour the unit's
 captures do not show is refused the same way: a frame in a time after a restart no capture shows the line
@@ -514,8 +514,26 @@ memory service its captures and collection do not show. One exception is chosen,
 line, down 0.38 s and up 0.65 s after its restart, is taken back at 0.5 s, where Busforge's restart proof
 probes, so its download test does not hang on the scheduler.
 
-The units it simulates, and how each is held to its captures (`tools/sim-unit.test.ts`, with the
-private corpus):
+`tools/sim-unit-0701.ts` is a memory-mapped System 7 unit (MV-0701) on the same transport core: its
+load-state machines take their controls as 11-octet memory writes to `0x0104` and report their states at
+`0xB6EA` onwards ([load-procedures.md](load-procedures.md#the-meteodata-140-s-memory-mapped)). Its memory is the
+memory its collection read, octet by octet; a read of an octet the collection did not read is refused,
+naming the read that would close it. The state of each machine comes from its PID 5 in the collection (the
+unit's single-octet read of a state answers the same; a read of more than one state octet is refused, the
+ABB US/U 4.2 answers it otherwise). The additional load controls (absolute segment, task segment, task
+control 1) are taken only where the unit's captures show it taking them, each field checked against them:
+a task segment at a declared segment, carrying the application the unit holds and the PEI type its
+captures carry. After an unload, load completed is taken only once an absolute segment and the task
+segment were declared. Memory writes go only into an EEPROM segment of a machine that is loading: the
+segments declared since its unload, or the application's for a machine the unit holds loaded. No property
+write is taken (none is shown on these units), and neither PID 5 nor the device control is answered after
+an event of the session. What only a unit's captures show besides (whether its tables' PID 7 follows a
+declaration, what its address table's count reads after the declaration, a download marker it clears at
+the restart) is in its entry in `tools/sim-units.ts`; where a unit's captures leave a gap after its restart
+(the ABB US/U 4.2: no frame between 42 ms and 1.04 s after it), a frame in the gap is refused.
+
+The units simulated, and how each is held to its captures (`tools/sim-unit.test.ts` and
+`tools/sim-unit-0701.test.ts`, with the private corpus; `tools/sim-unit-replay.ts` replays a capture):
 
 | Unit | ETS's downloads replayed | Busforge's full download |
 |---|---|---|
@@ -525,6 +543,8 @@ private corpus):
 | Theben MIX 2 HMG 6 T | Every request of ETS's six captured downloads (the full download, a parameter, a link, the revert, a diagnosis parameter on and off), as above; the two captures that end before the interface confirmed ETS's last T_Disconnect are replayed up to it | Taken and verified without a refusal |
 | Jung 400021SE | Every request of ETS's full download (plain, before the unit took Data Secure), with the long writes the bridge refused and the connection timeouts they caused: every frame with its control field and every confirmation equal the unit's. Its only collection is of the unit under Data Secure in a later configuration: the capture's security mode (plain) and application load state (error) are taken from the capture | Taken and verified without a refusal |
 | GVS AMMA-04/06.S | Every request of ETS's full download at the application's defaults (plain), as the Jung's but for the last T_Disconnect, which the capture ends before the interface confirmed. Its only collection is of the unit under Data Secure: the capture's security mode (plain) is taken from the capture | As the Theben DALI-Gateway |
+| ABB US/U 4.2 universal interface (MV-0701) | Every request of ETS's captured downloads onto the loaded unit (the partial form, read and compared): a configuration and the download that undid it, in order into one unit, which then holds every octet the collection after them read; two application downloads at the defaults, each from the collection before it. ETS's first full download and the partial download after it, which no collection precedes, run on the earliest collection, taken after them: every frame and confirmation equal the unit's but for memory reads ETS made before writing, which answer what the unit held before and differ only in octets ETS then wrote | The defaults, from the collection before ETS's application download at the defaults: taken without a refusal and verified; ETS's partial form, its memory writes on the wire exactly ETS's, the unit's memory after it exactly what ETS's download left |
+| Theben Meteodata 140 S weather station (MV-0701) | Every request of ETS's four captured downloads (the full download, a parameter, a link, the revert), in order into one unit from the collection before them: every frame the simulator answers and every confirmation equal the unit's, the full download's 191 memory reads included | The configuration of ETS's full download (the project's parameter values, the links the unit's tables held) from the collection before it: taken without a refusal and verified; the declared form, its memory writes on the wire ETS's two (the address table's count and the download marker), the unit's memory after it exactly what ETS's download left |
 
 ```bash
 BUSFORGE_CORPUS=... bun run tools/sim-unit-serve.ts <unit id> --tool ETS --log ./capture.log \
@@ -532,7 +552,8 @@ BUSFORGE_CORPUS=... bun run tools/sim-unit-serve.ts <unit id> --tool ETS --log .
 ```
 
 `<unit id>` is a unit's `id` in `tools/sim-units.ts` (`meanwell-knx40e`, `theben-dali-gateway`,
-`openknx-raumcontroller`, `theben-mix2-hmg6t`, `jung-400021se`, `gvs-amma`). The tool connects to the proxy
+`openknx-raumcontroller`, `theben-mix2-hmg6t`, `jung-400021se`, `gvs-amma`, `abb-usu-4.2`,
+`theben-meteodata-140s`). The tool connects to the proxy
 port over KNXnet/IP TCP; the simulator's own lines go to
 `<log>.sim.txt`, and Ctrl-C prints its refusals. A download into the simulator is evidence on no axis
 of [evidence-contract.md](evidence-contract.md) by itself: it shows what a tool sends given the

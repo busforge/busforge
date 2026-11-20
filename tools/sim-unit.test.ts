@@ -3,7 +3,8 @@ import { cemiLData, crc16CcittFalse, parseCemiLData, withSource, type PropertyDe
 import { buildDeviceConfig, parseAppConfig, placeComObjOverrides, type ComObjInstanceOverride, type ModuleInstance } from "../packages/product/src/index.ts";
 import { captureText, catalogueXml } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
-import { captureLData, memWriteOf, parseTunnelFrame } from "./etsdiff.ts";
+import { captureLData, memWriteOf } from "./etsdiff.ts";
+import { replayCapture, replayDifferences } from "./sim-unit-replay.ts";
 import { busforgeIntoSim, type RowConfiguration } from "./ets-sweep.ts";
 import { SimUnit, type SimProperty, type SimUnitModel } from "./sim-unit.ts";
 import { BENCH_BRIDGE, GVS_AMMA, JUNG_400021SE, MEANWELL_KNX40E, OPENKNX_RAUMCONTROLLER, THEBEN_DALI_GATEWAY, THEBEN_MIX2_HMG6T, newSimUnit, type SimUnitSpec } from "./sim-units.ts";
@@ -227,35 +228,13 @@ function frames(text: string, tool: string, device: number): Frame[] {
   return out;
 }
 
-// ETS's requests to the unit in a capture, each with when it was sent and the interface's confirmation, and the
-// unit's frames. A frame from 0.0.0 goes out from the tunnel's address, as the interface sends it: the one its
-// CONNECT_RES assigned, or `tunnel` where the capture holds the device's frames only. The requests at the end of a
-// capture that ends before the interface confirmed them are counted, not returned.
-function etsRequests(text: string, device: number, tunnel: number): { requests: { cemi: Buffer; at: number; con: "OK" | "NEG" }[]; unconfirmed: number; unit: Frame[] } {
-  const requests: { cemi: Buffer; at: number; con?: "OK" | "NEG" }[] = [];
-  for (const line of text.split("\n")) {
-    const res = line.match(/CONNECT_RES\s+\| ([0-9a-f]+)\s*$/);
-    const crd = res ? Buffer.from(res[1], "hex") : null;
-    // A CONNECT_RES with status 0 carries the tunnel's address at the end of its CRD.
-    if (crd && crd.length >= 20 && crd[7] === 0) tunnel = crd.readUInt16BE(18);
-    const m = line.match(/\| ([0-9a-fA-F]+)\s*$/);
-    const fr = m && line.includes("ETS->BRIDGE TUNNELLING_REQ") ? parseTunnelFrame(m[1]) : null;
-    if (!fr || fr.group || fr.code !== 0x11 || fr.dst !== device) continue;
-    const cemi = Buffer.from(cemiOf(line));
-    if (cemi.readUInt16BE(4) === 0) cemi.writeUInt16BE(tunnel, 4);
-    requests.push({ cemi, at: Date.parse(line.split(" ")[0]) });
-  }
-  const unit = frames(text, "ETS", device);
-  const cons = unit.filter((f) => f.dir === ">>").map((f) => f.con);
-  cons.forEach((con, i) => { requests[i].con = con; });
-  const confirmed = requests.findIndex((r) => r.con === undefined);
-  const n = confirmed < 0 ? requests.length : confirmed;
-  if (requests.slice(n).some((r) => r.con !== undefined)) throw new Error("a request inside the capture holds no confirmation");
-  return { requests: requests.slice(0, n) as { cemi: Buffer; at: number; con: "OK" | "NEG" }[], unconfirmed: requests.length - n, unit };
-}
-
 // The frame type of a long frame is the interface's to report: Busforge's bench bridge reports the extended frames a
-// unit sends, the house's KNXnet/IP interface a standard one; the priority is the unit's on both.
+// unit sends, the house's KNXnet/IP interface a standard one; the priority is the unit's on both. Where the unit's
+// frames went elsewhere than to the bridge, a frame (`b0 434007b0`) is compared by its priority.
+function framesAsReported(text: string, device: number): (frame: string) => string {
+  const viaBridge = [...captureLData(text, "ETS")].some((fr) => !fr.fromTool && fr.code === 0x29 && fr.src === device && fr.dst === BENCH_BRIDGE.ia);
+  return viaBridge ? (f) => f : (f) => f.replace(/^[0-9a-f]{2}/, (c) => (parseInt(c, 16) & 0x0c).toString(16).padStart(2, "0"));
+}
 
 // Each unit's ETS captures in the order they ran on it, from the state its collection shows (with what its
 // captures show different, sim-units.ts), and the requests at their ends the interface confirmed after the
@@ -280,25 +259,13 @@ for (const { spec, captures, unconfirmed = {} } of CALIBRATIONS) {
     test("answers every request as the unit did, and confirms each on the line as its interface did", async () => {
       let clock = 0;
       const sim = newSimUnit(spec, { now: () => clock }, { link: { ackMs: 0, nakMs: 0 } });
-      const answered: string[] = [];
-      sim.onRawCemi = (c) => answered.push(`${c[2 + c[1]]} ${parseCemiLData(c).tpdu.toString("hex")}`);
       for (const capture of captures) {
-        const { requests, unconfirmed: open, unit } = etsRequests(captureText(capture), sim.deviceIa, spec.interfaceIa);
-        expect([capture, open]).toEqual([capture, unconfirmed[capture] ?? 0]);
-        const simFrames: string[] = [], simCons: string[] = [];
-        for (const r of requests) {
-          clock = r.at;
-          answered.length = 0;
-          simCons.push(await sim.sendCemi(r.cemi).then(() => "OK", () => "NEG"));
-          await new Promise((res) => setTimeout(res, 2));
-          simFrames.push(...answered);
-        }
-        const viaBridge = unit.find((f) => f.dir === "<<")!.to === BENCH_BRIDGE.ia;
-        const shown = (ctrl: number, tpdu: string) => `${viaBridge ? ctrl : ctrl & 0x0c} ${tpdu}`;
-        const unitFrames = unit.filter((f) => f.dir === "<<").map((f) => shown(f.ctrl!, f.tpdu));
-        expect([capture, unitFrames.length > 0]).toEqual([capture, true]);
-        expect([capture, simCons]).toEqual([capture, requests.map((r) => r.con)]);
-        expect([capture, simFrames.map((f) => shown(Number(f.split(" ")[0]), f.split(" ")[1]))]).toEqual([capture, unitFrames]);
+        const text = captureText(capture);
+        const steps = await replayCapture(sim, text, { tool: "ETS", device: sim.deviceIa, interfaceIa: spec.interfaceIa, clock: (ms) => { clock = ms; }, skipUnconfirmedEnd: true });
+        const shown = framesAsReported(text, sim.deviceIa);
+        const reported = steps.map((s) => ({ ...s, unit: s.unit.map(shown), sim: s.sim.map(shown) }));
+        expect([capture, steps.filter((s) => s.unitCon === undefined).length, steps.some((s) => s.unit.length > 0)]).toEqual([capture, unconfirmed[capture] ?? 0, true]);
+        expect([capture, replayDifferences(reported, { context: 3 })]).toEqual([capture, []]);
       }
       expect(sim.refusals).toEqual([]);
     });
