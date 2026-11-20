@@ -12,7 +12,8 @@
 //   unload forgets the machine's segments and keeps their bytes (a later allocation at the same address
 //   holds them, which the CRCs of the memory-control blocks after a download show);
 // - a write goes into an EEPROM segment of a machine that is loading, a read into the segments of a machine
-//   that is loaded (or loading, where the unit's captures show it answer then), and into the load states at
+//   that is loaded (or loading, the bytes written since its load, where the unit's captures show it answer
+//   them), and into the load states at
 //   0xB6EA to 0xB6ED (46825 + machine), which hold PID 5;
 // - the memory-control block (PID 27) of an object whose unit answers it: one element per segment with
 //   flags 0x80, in the order allocated, `<size:4> 00 <access> <CRC:2>`, computed at load completed;
@@ -107,6 +108,8 @@ export function sim0705Model(collection: CollectPackage, appXml: string, behavio
 export class SimUnit0705 extends SimUnit {
   private readonly bytes: Buffer;
   private readonly known: Uint8Array;
+  // The octets written since the load of the machine holding them (1).
+  private readonly fresh = new Uint8Array(MEMORY_END);
   private readonly held = new Map<number, Sim0705Segment[]>();
   // The address each machine's task segment named since its unload.
   private readonly taskAt = new Map<number, number>();
@@ -145,6 +148,7 @@ export class SimUnit0705 extends SimUnit {
         return set(STATE.UNLOADED);
       case EVENT.LOAD:
         if (state === STATE.LOADING) { this.refuse(`${what}: a load of a machine that is loading`); return null; }
+        for (const s of this.held.get(obj)!) this.fresh.fill(0, s.at, s.at + s.size);
         return set(STATE.LOADING);
       case EVENT.ADDITIONAL:
         if (state !== STATE.LOADING) { this.refuse(`${what}: an additional load control in state ${state}`); return null; }
@@ -167,6 +171,7 @@ export class SimUnit0705 extends SimUnit {
       if (value[1] === SEGMENT.STACK && s.memoryType !== MEMORY_TYPE.RAM) { this.refuse(`${what}: a stack segment outside RAM`); return false; }
       const other = [...this.held].flatMap(([lsm, l]) => l.map((x) => [lsm, x] as const)).find(([, x]) => s.at < x.at + x.size && x.at < s.at + s.size);
       if (other) { this.refuse(`${what}: ${s.size} octets at 0x${s.at.toString(16)} reach into a segment of object ${other[0]} at 0x${other[1].at.toString(16)}`); return false; }
+      this.fresh.fill(0, s.at, s.at + s.size);
       segs.push(s);
       return true;
     }
@@ -230,8 +235,9 @@ export class SimUnit0705 extends SimUnit {
     const hit = this.heldAt(addr, n);
     const data = this.memory(addr, n);
     const state = hit ? this.state(hit[0]) : null;
-    if (hit && state !== STATE.LOADED && !(state === STATE.LOADING && this.unit.readsWhileLoading)) { this.refuse(`${what}: into the segment of object ${hit[0]} while it is in load state ${this.state(hit[0])}, where no capture shows the unit answer a read`); return; }
-    if (!hit || !data) { this.refuse(`${what}: outside the memory the unit is known to hold in a loaded segment`); return; }
+    const freshlyWritten = this.unit.readsWhileLoading && this.fresh.subarray(addr, addr + n).every((f) => f === 1);
+    if (hit && state !== STATE.LOADED && !(state === STATE.LOADING && freshlyWritten)) { this.refuse(`${what}: into the segment of object ${hit[0]} while it is in load state ${this.state(hit[0])}, where no capture shows the unit answer a read of these octets`); return; }
+    if (!hit || !data) { this.refuse(`${what}: outside the memory the unit is known to hold in its segments`); return; }
     reply(APCI.MEMORY_RESPONSE, Buffer.concat([head, data]), n);
   }
 
@@ -244,6 +250,7 @@ export class SimUnit0705 extends SimUnit {
     if (hit[1].memoryType !== MEMORY_TYPE.EEPROM) { this.refuse(`${what}: into a RAM segment, which no capture shows written`); return; }
     data.copy(this.bytes, addr);
     this.known.fill(1, addr, addr + n);
+    this.fresh.fill(1, addr, addr + n);
     this.verifyEcho(addr, this.bytes.subarray(addr, addr + n), reply);
   }
 }

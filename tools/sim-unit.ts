@@ -32,11 +32,11 @@ import {
   type KnxTransport, type PropertyDescription,
 } from "../packages/knx/src/index.ts";
 
-export const PID_LOAD_STATE = 5, PID_TABLE_REFERENCE = 7, PID_SERIAL = 11, PID_PROGRAM_ID = 13, PID_DEVICE_CONTROL = 14, PID_MCB = 27;
+export const PID_LOAD_STATE = 5, PID_TABLE_REFERENCE = 7, PID_PROGRAM_ID = 13, PID_DEVICE_CONTROL = 14, PID_MCB = 27;
 export const STATE = { UNLOADED: 0, LOADED: 1, LOADING: 2 } as const;
 export const EVENT = { LOAD: 1, LOAD_COMPLETED: 2, ADDITIONAL: 3, UNLOAD: 4 } as const;
 export const APPLICATION_STOPPED = 0x01;
-const VERIFY_MODE = 0x04;
+const VERIFY_MODE = 0x04, PID_SERIAL = 11;
 const APPLICATION_LSM = 4;
 const PRIORITY_BITS = 0x0c, STANDARD_FRAME = 0x80, STANDARD_TPDU_MAX = 16, GROUP_ADDRESS = 0x80;
 // The reach of the memory services the unit answers (A_Memory_Read/Write, a 16-bit address).
@@ -128,7 +128,7 @@ export class SimUnit implements KnxTransport {
   private deadPartner: number | null = null;
   // Whether the frame on the line is a restart the unit carried out.
   private restartedNow = false;
-  // When the frame on the line reached the unit: a restart's time, from which its captures measure the frames after it.
+  // When the tool sent the frame on the line: a restart's time.
   private arrivedAt = 0;
   // The priority bits of the request on the line, which the unit's frames in answer carry.
   private priority = 0;
@@ -173,14 +173,16 @@ export class SimUnit implements KnxTransport {
   // KNXnet/IP server confirms negatively. Frames take the line one after the other, each for the time the
   // unit's interface took to confirm it.
   sendCemi(cemi: Buffer): Promise<void> {
-    const turn = this.line.then(() => this.onLine(cemi));
+    // The tool's request time, from which the unit's captures measure the frames after a restart.
+    const at = this.now();
+    const turn = this.line.then(() => this.onLine(cemi, at));
     this.line = turn.catch(() => {});
     return turn;
   }
 
-  private async onLine(cemi: Buffer): Promise<void> {
+  private async onLine(cemi: Buffer, at: number): Promise<void> {
     const nak = async (why: string): Promise<never> => { await sleep(this.model.link.nakMs); throw new Error(why); };
-    this.arrivedAt = this.now();
+    this.arrivedAt = at;
     if (this.stopped) throw new Error("the simulated unit is disconnected");
     if (cemi[0] !== CEMI.LDATA_REQ) { this.refuse(`cEMI message code 0x${cemi[0].toString(16)}`); return; }
     const { src, dst, tpdu, isGroup } = parseCemiLData(cemi);
@@ -390,7 +392,7 @@ export class SimUnit implements KnxTransport {
 
   private restart(partner: number): void {
     this.close();
-    // A restart ends programming mode.
+    // A restart ends a programming mode the unit's captures show.
     if (this.programmingMode !== undefined) this.programmingMode = false;
     this.deadPartner = partner;
     this.restartedAt = this.arrivedAt;

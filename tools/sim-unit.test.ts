@@ -157,9 +157,21 @@ describe("a simulated unit", () => {
       "sim-refused 80 from 1.1.255 999 ms after the restart: whether the unit takes a frame then is not shown",
       "sim-refused numbered frame 4700 from 1.1.255 on the connection the restart ended: the unit's answer is not shown",
     ]);
-    const { sim: unknown } = unit();
+    // A programming mode the captures do not show stays unknown after a restart.
+    const { sim: unknown, send: sendUnknown } = unit();
+    await sendUnknown("80");
+    await sendUnknown("4380");
     await unknown.sendCemi(cemiLDataGroup(TOOL, 0, Buffer.from("0100", "hex")));
     expect(unknown.refusals).toEqual(["sim-refused A_IndividualAddress_Read 0100 from 1.1.255: whether the unit is in programming mode is not known"]);
+  });
+
+  test("measures the time after a restart from the tool's request, as the captures do, not from the line's confirmation", async () => {
+    const { send, sim } = unit({ restart: { acknowledged: "layer2", linkDownMs: 40, deadConnection: "nothing" }, link: { ackMs: 30, nakMs: 0 } });
+    await send("80");
+    void sim.sendCemi(withSource(cemiLData(0, DEV, Buffer.from("4380", "hex")), TOOL));
+    await new Promise((r) => setTimeout(r, 50));
+    // 50 ms after the restart request, 20 ms after its confirmation.
+    expect(await sim.sendCemi(withSource(cemiLData(0, DEV, Buffer.from("80", "hex")), TOOL)).then(() => "OK", () => "NEG")).toBe("OK");
   });
 });
 
@@ -346,7 +358,7 @@ corpusDescribe("the simulated MDT BE-02001.02", () => {
   test("Busforge's full download of the defaults into a fresh unit: refused where Busforge reads back a write into a segment that is loading, which no capture of the unit shows", async () => {
     const run = await busforgeIntoSim(MDT_BE02001, { ia: "1.1.56", params: [], links: [] });
     expect([run.result, run.refused, run.error]).toEqual([null, null, "no reliable response (device not answering)"]);
-    expect(run.refusals).toEqual(["sim-refused A_Memory_Read 1 at 0x4000: into the segment of object 1 while it is in load state 2, where no capture shows the unit answer a read"]);
+    expect(run.refusals).toEqual(["sim-refused A_Memory_Read 1 at 0x4000: into the segment of object 1 while it is in load state 2, where no capture shows the unit answer a read of these octets"]);
   });
 });
 
@@ -385,11 +397,17 @@ corpusDescribe("the simulated Gira Tastsensor 3 Komfort", () => {
     expect(sim.refusals).toEqual([]);
   });
 
-  test("takes Busforge's full download of the configuration ETS downloaded into a fresh unit, verified", async () => {
+  // Busforge probes the unit as soon as the line confirmed the restart: 41 or 42 ms after the restart request in
+  // its captures, where the unit did not acknowledge it. Through the simulator's server the probe takes a few
+  // milliseconds more and can fall after the last 42 ms the captures show, which the simulator refuses; the
+  // download goes on and is verified either way.
+  test("takes Busforge's full download of the configuration ETS downloaded into a fresh unit, verified; its first probe after the restart at the edge of what the captures show", async () => {
     const { links, params } = giraM0008Configuration(parseAppConfig(catalogueXml(GIRA_TS3.catalogue)));
     const run = await busforgeIntoSim(GIRA_TS3, { ia: "1.1.1", params: [...params], links });
-    expect([run.refused, run.error, run.refusals]).toEqual([null, null, []]);
+    expect([run.refused, run.error]).toEqual([null, null]);
     expect(run.result).toMatchObject({ kind: "flashed", verified: true });
+    expect(run.refusals.filter((r) => !/^sim-refused [0-9a-f]{2}00 from 1\.1\.254 4[3-9] ms after the restart: whether the unit takes a frame then is not shown$/.test(r))).toEqual([]);
+    expect(run.refusals.length).toBeLessThanOrEqual(1);
   });
 });
 

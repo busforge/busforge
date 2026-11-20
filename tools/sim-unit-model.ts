@@ -5,7 +5,7 @@
 // must agree with what the unit answered, or the model is refused rather than a unit built that no real one is.
 import { crc16Ccitt, crc16CcittFalse, declaredPropMatches, iaToNum, type PropertyDescription } from "../packages/knx/src/index.ts";
 import { parseAppConfig, parseLoadProcedures, declaredPropChecks, type CollectPackage } from "../packages/product/src/index.ts";
-import type { SimProperty, SimUnitModel } from "./sim-unit.ts";
+import { PID_DEVICE_CONTROL, type SimProperty, type SimUnitModel } from "./sim-unit.ts";
 
 // What the collection cannot show and the unit's captures do: how it takes a restart and an authorization, how
 // long its interface took to confirm a frame, the address services it answers, its maximum APDU where it
@@ -16,7 +16,6 @@ export type UnitBehaviour = Pick<SimUnitModel, "restart" | "authorize" | "link" 
 // The fields of a record's target the model reads.
 export type Target = { object?: number; pid?: number; start?: number; count?: number; address?: number; type?: number };
 const LSMS = [1, 2, 3, 4];
-const PID_DEVICE_CONTROL = 14;
 
 export const refuse = (why: string): never => { throw new Error(`no simulated unit: ${why}`); };
 

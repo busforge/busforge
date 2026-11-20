@@ -84,11 +84,12 @@ export const MDT_BE02001: SimUnitSpec = {
 // (collections/gira-m0008-busforge-fulldownload-2026-10-07/gira-m0008-busforge-fulldownload-20261007-004213.log),
 // both through a KNXnet/IP interface at 1.1.254 announcing a maximum APDU of 210:
 // - it refuses PID 56, and takes the 15-octet APDUs ETS sends it ("assuming 15");
-// - it answers a memory read into a segment that is loading with the bytes written there (Busforge's
-//   read-backs);
-// - A_Restart: acknowledged on layer 2, without T_Ack; a frame 41 ms after the restart request not acknowledged,
-//   one 312 ms after it acknowledged, between them none shown; numbered frames on the connection the restart
-//   ended acknowledged and left without an answer (Busforge's probes);
+// - it answers a memory read into a segment that is loading with the bytes written there since its load
+//   (Busforge's read-backs);
+// - A_Restart: acknowledged on layer 2, without T_Ack; a frame 41 or 42 ms after the restart request not
+//   acknowledged, one 312 to 315 ms after it acknowledged, between them none shown; numbered frames on the
+//   connection the restart ended acknowledged and left without an answer (the probes of Busforge's full
+//   download and of its four flashes in collections/gira-m0008-busforge-flashes-2026-10-07);
 // - the free key grants access level 0;
 // - the interface confirmed a frame 18 to 40 ms after the request, negatively about 70 ms after it (Busforge's
 //   first probe), 75 ms on the MEAN WELL above (its two maxtemp downloads).
@@ -100,9 +101,9 @@ export const GIRA_TS3: SimUnitSpec = {
   interfaceIa: 0x11fe,
   interfaceMaxApdu: 210,
   behaviour: {
-    restart: { acknowledged: "layer2", linkDownMs: 42, linkUpMs: 312, deadConnection: "nothing" },
+    restart: { acknowledged: "layer2", linkDownMs: 43, linkUpMs: 312, deadConnection: "nothing" },
     authorize: new Map([["ffffffff", 0]]),
-    link: { ackMs: 20, nakMs: 75 },
+    link: { ackMs: 20, nakMs: 70 },
     maxApdu: 15,
     readsWhileLoading: true,
   },
