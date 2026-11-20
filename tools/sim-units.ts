@@ -1,4 +1,4 @@
-// The units tools/sim-unit.ts and tools/sim-unit-0701.ts simulate, each from a read-only collection of a real
+// The units tools/sim-unit.ts, tools/sim-unit-0701.ts and tools/sim-unit-0705.ts simulate, each from a read-only collection of a real
 // unit and its product's application program in the private corpus, with what only the unit's captures show of it.
 import { readFileSync } from "node:fs";
 import { catalogueXml, corpusPath } from "./corpus.ts";
@@ -6,6 +6,7 @@ import { SimUnit } from "./sim-unit.ts";
 import type { CollectPackage } from "../packages/product/src/index.ts";
 import { simUnitModel, type SystemBBehaviour, type UnitBehaviour } from "./sim-unit-model.ts";
 import { SimUnit0701, simUnit0701Model, type MemoryMappedBehaviour } from "./sim-unit-0701.ts";
+import { SimUnit0705, simUnit0705Model, type PropertyMappedBehaviour } from "./sim-unit-0705.ts";
 
 interface SimUnitSpecBase {
   id: string;
@@ -21,9 +22,12 @@ interface SimUnitSpecBase {
   interfaceMaxApdu: number;
 }
 
-// A System B unit, or a memory-mapped System 7 unit (MV-0701, tools/sim-unit-0701.ts) with what only its captures
-// show besides.
-export type SimUnitSpec = SimUnitSpecBase & ({ behaviour: SystemBBehaviour; memoryMapped?: undefined } | { behaviour: UnitBehaviour; memoryMapped: MemoryMappedBehaviour });
+// A System B unit, a memory-mapped System 7 unit (MV-0701, tools/sim-unit-0701.ts) or a property-mapped one
+// (MV-0705, tools/sim-unit-0705.ts), each System 7 unit with what only its captures show besides.
+export type SimUnitSpec = SimUnitSpecBase & (
+  | { behaviour: SystemBBehaviour; memoryMapped?: undefined; propertyMapped?: undefined }
+  | { behaviour: UnitBehaviour; memoryMapped: MemoryMappedBehaviour; propertyMapped?: undefined }
+  | { behaviour: UnitBehaviour; propertyMapped: PropertyMappedBehaviour; memoryMapped?: undefined });
 
 // Busforge's bench bridge at 1.1.100 (a KNX-USB stick), which the Jung's and the GVS's captures ran through
 // announcing a maximum APDU of 40: it confirmed their frames longer than that negatively within 2 to 4 ms,
@@ -57,6 +61,8 @@ export const MEANWELL_KNX40E: SimUnitSpec = {
     restart: { basic: { acknowledged: false, tAck: "never" }, line: [{ atMs: 0, up: false }, { atMs: 499, up: false }, { atMs: 500, up: true }], deadConnection: "nothing", confirmedRestartSeconds: null },
     authorize: new Map([["ffffffff", 0]]),
     link: { ackMs: 20, nakMs: 75 },
+    programmingMode: null,
+    serialNumberResponseTail: null,
     unloadStopsApplication: true,
     memoryExtendedWrite: false,
     descriptionIndex: "property",
@@ -96,6 +102,8 @@ export const THEBEN_DALI_GATEWAY: SimUnitSpec = {
     restart: { basic: { acknowledged: true, tAck: "unless-application-loaded" }, line: [{ atMs: 1058, up: false }, { atMs: 1071, up: false }, { atMs: 2992, up: true }], deadConnection: null, confirmedRestartSeconds: null },
     authorize: new Map([["ffffffff", 0]]),
     link: HOUSE_INTERFACE.link,
+    programmingMode: null,
+    serialNumberResponseTail: null,
     unloadStopsApplication: false,
     memoryExtendedWrite: false,
     descriptionIndex: "request",
@@ -130,6 +138,8 @@ export const OPENKNX_RAUMCONTROLLER: SimUnitSpec = {
     restart: { basic: { acknowledged: true, tAck: "never" }, line: [{ atMs: 2864, up: true }], deadConnection: null, confirmedRestartSeconds: null },
     authorize: new Map([["ffffffff", 0]]),
     link: HOUSE_INTERFACE.link,
+    programmingMode: null,
+    serialNumberResponseTail: null,
     unloadStopsApplication: null,
     memoryExtendedWrite: true,
     descriptionIndex: "property",
@@ -163,6 +173,8 @@ export const THEBEN_MIX2_HMG6T: SimUnitSpec = {
     restart: { basic: null, line: [{ atMs: 22, up: true }], deadConnection: null, confirmedRestartSeconds: 1 },
     authorize: new Map([["ffffffff", 0]]),
     link: HOUSE_INTERFACE.link,
+    programmingMode: null,
+    serialNumberResponseTail: null,
     unloadStopsApplication: null,
     memoryExtendedWrite: true,
     descriptionIndex: "property",
@@ -199,6 +211,8 @@ export const JUNG_400021SE: SimUnitSpec = {
     restart: { basic: null, line: [{ atMs: 26, up: false }, { atMs: 29, up: false }, { atMs: 1279, up: true }], deadConnection: null, confirmedRestartSeconds: 0 },
     authorize: new Map([["ffffffff", 0]]),
     link: { ackMs: 21, nakMs: 68 },
+    programmingMode: null,
+    serialNumberResponseTail: null,
     unloadStopsApplication: null,
     memoryExtendedWrite: true,
     descriptionIndex: "property",
@@ -233,6 +247,8 @@ export const GVS_AMMA: SimUnitSpec = {
     restart: { basic: null, line: [{ atMs: 24, up: true }, { atMs: 1215, up: false }, { atMs: 1289, up: false }, { atMs: 4292, up: true }], deadConnection: null, confirmedRestartSeconds: 0 },
     authorize: new Map([["ffffffff", 0]]),
     link: { ackMs: 20, nakMs: 74 },
+    programmingMode: null,
+    serialNumberResponseTail: null,
     unloadStopsApplication: null,
     memoryExtendedWrite: true,
     descriptionIndex: "property",
@@ -270,6 +286,8 @@ export const ABB_USU42: SimUnitSpec = {
     restart: { basic: { acknowledged: true, tAck: "always" }, line: [{ atMs: 0, up: false }, { atMs: 42, up: false }, { atMs: 1040, up: true }], deadConnection: "nothing", confirmedRestartSeconds: null },
     authorize: new Map([["ffffffff", 0]]),
     link: { ackMs: 20, nakMs: 70 },
+    programmingMode: null,
+    serialNumberResponseTail: null,
     memoryExtendedWrite: false,
     descriptionIndex: null,
     shownWrites: new Map(),
@@ -310,6 +328,8 @@ export const THEBEN_METEODATA_140S: SimUnitSpec = {
     restart: { basic: { acknowledged: true, tAck: "never" }, line: [{ atMs: 0, up: true }], deadConnection: "nothing", confirmedRestartSeconds: null },
     authorize: new Map([["ffffffff", 0]]),
     link: { ackMs: 18, nakMs: HOUSE_INTERFACE.link.nakMs },
+    programmingMode: null,
+    serialNumberResponseTail: null,
     memoryExtendedWrite: false,
     descriptionIndex: null,
     shownWrites: new Map(),
@@ -317,7 +337,95 @@ export const THEBEN_METEODATA_140S: SimUnitSpec = {
   memoryMapped: { maxApdu: 15, additional: ["absolute-segment", "task-segment", "task-control-1"], peiType: 0x00, tableReferenceFollows: true, addressTableCountOnDeclaration: 0x01, clearedByRestart: new Map([[0x4800, 0x00]]) },
 };
 
-export const SIM_UNITS: readonly SimUnitSpec[] = [MEANWELL_KNX40E, THEBEN_DALI_GATEWAY, OPENKNX_RAUMCONTROLLER, THEBEN_MIX2_HMG6T, JUNG_400021SE, GVS_AMMA, ABB_USU42, THEBEN_METEODATA_140S];
+// The MDT BE-02001.02 binary input (M-0083_A-00B6-32-9642, MV-0705), from a collection taken after ETS's full
+// downloads below (internal/captures/cap-1004/mdt-plain.json): its starting state is that later collection's, not
+// the unit's before a capture, for which no collection exists. ETS's full downloads read no memory and nothing the
+// downloads between them change (identity, PID 56, the device control after the unloads), so their replays do
+// not depend on it. Its behaviour from ETS's three full downloads
+// (captures/mdt-be02001-ets-fulldownload-{defaults,linked,b7}.log), Busforge's address assignment with its
+// restart (internal/captures/restart-end-2026-11-19/a2-mdt-ia-66to56.log) and Busforge's two full downloads of
+// its smoke runs (internal/house-compat/hc13/runs-2026-10-08/bench-proxy/mdt-be02001-{api,ui}-r2.log.gz, the
+// proxy naming the tool ETS), all through Busforge's bench bridge, which announces a maximum APDU of 40 (ETS6.log
+// of the unit's partial downloads, "InterfaceFeatures"):
+// - it refuses PID 56, and takes the 15-octet APDUs ETS sends it ("assuming 15", the same logs);
+// - A_Restart: acknowledged on layer 2, without T_Ack, in every capture; frames from 40 to 496 ms after the
+//   restart request not acknowledged, frames from 593 ms on acknowledged, between them none shown, and before
+//   40 ms the line taken as down, as the ABB's above (the restart's own confirmation takes those milliseconds);
+//   numbered frames on the connection the restart ended acknowledged and left without an answer (the probes of
+//   Busforge's full downloads);
+// - its task segments carry 01 between the address and the program id (every capture);
+// - its device control reads 1 after ETS unloaded objects 1 to 3 (application stopped), 5 with verify mode;
+// - in programming mode at the first full download (it answers ETS's A_IndividualAddress_Read), and out of it
+//   after a restart (no answer in the second, nor after the assignment's restart); its
+//   A_IndividualAddressSerialNumber_Response carries four zero octets after the serial (the second);
+// - it answers a memory read into a segment that is loading with the bytes written there since its load
+//   (Busforge's 230 read-backs in its full downloads);
+// - the free key grants access level 0;
+// - the interface confirmed a frame 20 to 35 ms after the request, negatively about 70 ms after it (the
+//   assignment);
+// - no capture reads a property description by PID, nor writes a property but PID 5 and 14, nor uses an extended
+//   memory service.
+export const MDT_BE02001: SimUnitSpec = {
+  id: "mdt-be02001",
+  name: "MDT BE-02001.02",
+  collection: "internal/captures/cap-1004/mdt-plain.json",
+  catalogue: "M-0083_A-00B6-32-9642.xml.gz",
+  interfaceIa: BENCH_BRIDGE.ia,
+  interfaceMaxApdu: BENCH_BRIDGE.maxApdu,
+  behaviour: {
+    restart: { basic: { acknowledged: true, tAck: "never" }, line: [{ atMs: 0, up: false }, { atMs: 496, up: false }, { atMs: 593, up: true }], deadConnection: "nothing", confirmedRestartSeconds: null },
+    authorize: new Map([["ffffffff", 0]]),
+    link: { ackMs: 20, nakMs: 70 },
+    programmingMode: true,
+    serialNumberResponseTail: Buffer.alloc(4),
+    memoryExtendedWrite: false,
+    descriptionIndex: null,
+    shownWrites: new Map(),
+  },
+  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x01, unloadStopsApplication: true },
+};
+
+// The Gira Tastsensor 3 Komfort 3fach (M-0008_A-10D7-11-2783-O000A, MV-0705), from the collection before ETS's
+// full download (collections/gira-m0008-backup-2026-10-05/1.1.1-gira-m0008-collect.json). Its behaviour from
+// that download (captures/gira-m0008-ets-fulldownload.log, with its ETS6.log) and Busforge's full download
+// (collections/gira-m0008-busforge-fulldownload-2026-10-07/gira-m0008-busforge-fulldownload-20261007-004213.log),
+// both through the house's KNXnet/IP interface:
+// - it refuses PID 56, and takes the 15-octet APDUs ETS sends it ("assuming 15");
+// - it answers a memory read into a segment that is loading with the bytes written there since its load
+//   (Busforge's read-backs);
+// - its task segments carry 00 between the address and the program id; no capture unloads its application, so
+//   what its device control reports after that is not shown;
+// - A_Restart: acknowledged on layer 2, without T_Ack; frames 41 or 42 ms after the restart request not
+//   acknowledged, frames from 312 ms on acknowledged, between them none shown, before 41 ms the line taken as
+//   down as for the MDT above; numbered frames on the connection the restart ended acknowledged and left without
+//   an answer (the probes of Busforge's full download and of its four flashes in
+//   collections/gira-m0008-busforge-flashes-2026-10-07);
+// - the free key grants access level 0;
+// - the interface confirmed a frame 18 to 40 ms after the request, negatively about 70 ms after it (Busforge's
+//   first probe);
+// - no capture shows its programming mode or a serial-number read, reads a property description by PID, writes a
+//   property but PID 5 and 14, or uses an extended memory service.
+export const GIRA_TS3: SimUnitSpec = {
+  id: "gira-ts3",
+  name: "Gira Tastsensor 3 Komfort 3fach",
+  collection: "collections/gira-m0008-backup-2026-10-05/1.1.1-gira-m0008-collect.json",
+  catalogue: "M-0008_A-10D7-11-2783-O000A.xml.gz",
+  interfaceIa: 0x11fe,
+  interfaceMaxApdu: HOUSE_INTERFACE.maxApdu,
+  behaviour: {
+    restart: { basic: { acknowledged: true, tAck: "never" }, line: [{ atMs: 0, up: false }, { atMs: 42, up: false }, { atMs: 312, up: true }], deadConnection: "nothing", confirmedRestartSeconds: null },
+    authorize: new Map([["ffffffff", 0]]),
+    link: { ackMs: 20, nakMs: 70 },
+    programmingMode: null,
+    serialNumberResponseTail: null,
+    memoryExtendedWrite: false,
+    descriptionIndex: null,
+    shownWrites: new Map(),
+  },
+  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x00, unloadStopsApplication: null },
+};
+
+export const SIM_UNITS: readonly SimUnitSpec[] = [MEANWELL_KNX40E, THEBEN_DALI_GATEWAY, OPENKNX_RAUMCONTROLLER, THEBEN_MIX2_HMG6T, JUNG_400021SE, GVS_AMMA, ABB_USU42, THEBEN_METEODATA_140S, MDT_BE02001, GIRA_TS3];
 
 export function simUnitSpec(id: string): SimUnitSpec {
   const spec = SIM_UNITS.find((u) => u.id === id);
@@ -344,9 +452,10 @@ function collectionOf(spec: SimUnitSpec, collectionPath: string): CollectPackage
 
 // A fresh unit as its collection shows it (another collection of the same unit where one is named).
 export function newSimUnit(spec: SimUnitSpec, opts: SimOpts = {}, behaviour: Partial<SystemBBehaviour> = {}, collectionPath = spec.collection): SimUnit {
-  if (spec.memoryMapped) {
+  if (spec.memoryMapped || spec.propertyMapped) {
     const systemB = (["unloadStopsApplication", "clearsAfterRestart", "mcb", "stateInCaptures"] as const).filter((k) => k in behaviour);
-    if (systemB.length) throw new Error(`no simulated unit: ${systemB.join(", ")} of a System B unit given for the memory-mapped ${spec.id}`);
+    if (systemB.length) throw new Error(`no simulated unit: ${systemB.join(", ")} of a System B unit given for the System 7 ${spec.id}`);
+    if (spec.propertyMapped) return new SimUnit0705(simUnit0705Model(collectionOf(spec, collectionPath), catalogueXml(spec.catalogue), { ...spec.behaviour, ...behaviour }, spec.propertyMapped), spec.interfaceIa, { interfaceMaxApdu: spec.interfaceMaxApdu, ...opts });
     return newSimUnit0701(spec, opts, behaviour, collectionPath);
   }
   return new SimUnit(simUnitModel(collectionOf(spec, collectionPath), catalogueXml(spec.catalogue), { ...spec.behaviour, ...behaviour }), spec.interfaceIa, { interfaceMaxApdu: spec.interfaceMaxApdu, ...opts });

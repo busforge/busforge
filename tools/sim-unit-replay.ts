@@ -20,7 +20,10 @@ export interface ReplayStep {
 
 // The cEMI frame of a capture line's KNXnet/IP frame.
 export const cemiOfLine = (line: string) => { const f = Buffer.from(line.match(/\| ([0-9a-fA-F]+)\s*$/)![1], "hex"); return f.subarray(f[0] + f[f[0]]); };
-const frameOf = (cemi: Buffer, tpdu: Buffer) => `${cemi[2 + cemi[1]].toString(16).padStart(2, "0")} ${tpdu.toString("hex")}`;
+// A broadcast (the address type in the second control field) is marked as one.
+const frameOf = (cemi: Buffer, tpdu: Buffer) => `${cemi[2 + cemi[1]].toString(16).padStart(2, "0")} ${cemi[3 + cemi[1]] & 0x80 ? "broadcast " : ""}${tpdu.toString("hex")}`;
+// KNXnet/IP tunnelling: the interface confirms a request within 3 s or not at all.
+const CONFIRMATION_TIMEOUT_MS = 3_000;
 
 // A step holds the frames the unit sent between its request and the next one; an answer that comes after the
 // tool's next request (a T_Disconnect sent while the unit still answers) lands one step later than the
@@ -29,8 +32,11 @@ const frameOf = (cemi: Buffer, tpdu: Buffer) => `${cemi[2 + cemi[1]].toString(16
 // it assigned, as the interface sends it, or from `interfaceIa` where the capture holds none. `clock` is set to
 // each request's time before it is sent. `skipUnconfirmedEnd`: the requests at the end of a capture that ends before
 // the interface confirmed them are not sent (their step holds no answer and no confirmation of the simulator); a
-// request inside it without a confirmation is refused.
-export async function replayCapture(sim: SimUnit, text: string, opts: { tool: string; device: number; interfaceIa: number; clock: (ms: number) => void; skipUnconfirmedEnd?: boolean }): Promise<ReplayStep[]> {
+// request inside it without a confirmation is refused. With `broadcasts`, the tool's broadcasts (the address reads)
+// and the unit's are replayed with the rest; group telegrams never are. A confirmation goes to the oldest request
+// with its TPDU sent within the interface's confirmation timeout before it; a request whose confirmation the
+// capture lacks keeps none. `from` (ms since the epoch) starts the replay later in the capture.
+export async function replayCapture(sim: SimUnit, text: string, opts: { tool: string; device: number; interfaceIa: number; clock: (ms: number) => void; skipUnconfirmedEnd?: boolean; broadcasts?: boolean; from?: number }): Promise<ReplayStep[]> {
   const steps: (ReplayStep & { cemi: Buffer })[] = [];
   const pending: ReplayStep[] = [];
   const lines = text.split("\n");
@@ -43,16 +49,18 @@ export async function replayCapture(sim: SimUnit, text: string, opts: { tool: st
       if (crd && crd.length >= 20 && crd[7] === 0) tunnel = crd.readUInt16BE(18);
     }
     at++;
-    if (fr.group) continue;
-    if (fr.fromTool && fr.code === 0x11 && fr.dst === opts.device) {
+    const time = Date.parse(fr.line.split(" ")[0]);
+    if ((fr.group && (fr.dst !== 0 || !opts.broadcasts)) || time < (opts.from ?? 0)) continue;
+    const toUnit = fr.group || fr.dst === opts.device;
+    if (fr.fromTool && fr.code === 0x11 && toUnit) {
       const cemi = Buffer.from(cemiOfLine(fr.line));
       if (cemi.readUInt16BE(4) === 0) cemi.writeUInt16BE(tunnel, 4);
-      const s: ReplayStep & { cemi: Buffer } = { request: fr.tpdu.toString("hex"), at: Date.parse(fr.line.split(" ")[0]), unit: [], unitCon: undefined, sim: [], simCon: undefined, cemi };
+      const s: ReplayStep & { cemi: Buffer } = { request: fr.tpdu.toString("hex"), at: time, unit: [], unitCon: undefined, sim: [], simCon: undefined, cemi };
       steps.push(s);
       pending.push(s);
-    } else if (!fr.fromTool && fr.code === 0x2e && fr.dst === opts.device) {
-      const s = pending.shift();
-      if (s) s.unitCon = fr.line.includes("CON-NEG") ? "NEG" : "OK";
+    } else if (!fr.fromTool && fr.code === 0x2e && toUnit) {
+      const k = pending.findIndex((p) => p.request === fr.tpdu.toString("hex") && time - p.at <= CONFIRMATION_TIMEOUT_MS);
+      if (k >= 0) pending.splice(k, 1)[0].unitCon = fr.line.includes("CON-NEG") ? "NEG" : "OK";
     } else if (!fr.fromTool && fr.code === 0x29 && fr.src === opts.device) {
       const last = steps.at(-1);
       if (!last) throw new Error(`the unit sent ${fr.tpdu.toString("hex")} before the tool's first request, which the replay cannot attribute`);

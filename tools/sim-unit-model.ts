@@ -3,14 +3,15 @@
 // not: the unit's serial, order info, hardware type (object 0 PID 78), descriptions, where it places its
 // segments and what they hold. The product is checked against it: its mask and its declared property compares
 // must agree with what the unit answered, or the model is refused rather than a unit built that no real one is.
-import { crc16Ccitt, crc16CcittFalse, declaredPropMatches, iaToNum, type PropertyDescription } from "../packages/knx/src/index.ts";
+import { declaredPropMatches, iaToNum, type PropertyDescription } from "../packages/knx/src/index.ts";
 import { parseAppConfig, parseLoadProcedures, declaredPropChecks, type CollectPackage } from "../packages/product/src/index.ts";
-import type { SimProperty, SimUnitCoreModel, SimUnitModel } from "./sim-unit.ts";
+import { crcConventionOf, type SimProperty, type SimUnitCoreModel, type SimUnitModel } from "./sim-unit.ts";
 
 // What the collection cannot show and the unit's captures do, whatever its mask: how it takes a restart and an
 // authorization, how long its interface took to confirm a frame, its description answers by PID, the property
-// writes only they show answered, whether it takes A_MemoryExtended_Write.
-export type UnitBehaviour = Pick<SimUnitCoreModel, "restart" | "authorize" | "link" | "descriptionIndex" | "shownWrites" | "memoryExtendedWrite">;
+// writes only they show answered, whether it takes A_MemoryExtended_Write, its programming mode and the rest of
+// its answer to a serial-number read.
+export type UnitBehaviour = Pick<SimUnitCoreModel, "restart" | "authorize" | "link" | "descriptionIndex" | "shownWrites" | "memoryExtendedWrite" | "programmingMode" | "serialNumberResponseTail">;
 
 // A captured state where the collection was taken in a later one: the answers the unit's captures show where they
 // differ from the collection, a property's first element (`<object>/<PID>` -> hex) and a function-property state
@@ -25,7 +26,7 @@ export type SystemBBehaviour = UnitBehaviour & Pick<SimUnitModel, "unloadStopsAp
   & { mcb?: { control: string; crc: SimUnitModel["crc"] }; stateInCaptures?: StateInCaptures };
 
 // The fields of a record's target the model reads.
-type Target = { object?: number; pid?: number; start?: number; count?: number; address?: number; type?: number };
+export type Target = { object?: number; pid?: number; start?: number; count?: number; address?: number; type?: number };
 const LSMS = [1, 2, 3, 4];
 const PID_DEVICE_CONTROL = 14;
 
@@ -157,7 +158,7 @@ export function simUnitModel(collection: CollectPackage, appXml: string, behavio
     let from = 0;
     for (const e of mcb) {
       const block = bytes.subarray(from, from += e.readUInt32BE(0)), reported = e.readUInt16BE(6);
-      const conv = reported === crc16CcittFalse(block) ? "ccitt-false" : reported === crc16Ccitt(block) ? "ccitt" : null;
+      const conv = crcConventionOf(reported, block);
       if (conv === null) refuse(`the memory-control block of object ${lsm} reports CRC ${reported.toString(16)}, which neither convention gives over the block collected`);
       if (crc && crc !== conv) refuse(`the memory-control blocks take both CRC conventions`);
       crc = conv;

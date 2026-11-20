@@ -516,7 +516,9 @@ property and description the unit answered, where it placed its segments and wha
 checked against the product's application program (mask, declared property compares); what only the
 unit's captures show (how it takes a restart and when its line is back, the authorization key it accepts,
 how long its line took to confirm a frame, its device control after an unload, what it changes in its own
-memory after a restart) is written next to it in `tools/sim-units.ts`, with the captures named. Where the
+memory after a restart, its programming mode and the rest of its answer to a serial-number read, the
+largest APDU an MV-0705 unit takes where it reports none, whether it answers a read while a segment loads)
+is written next to it in `tools/sim-units.ts`, with the captures named. Where the
 only collection of a unit was taken in a later state than its captures found it in, the answers the
 captures show different are taken from them, each named.
 
@@ -524,7 +526,8 @@ It models the transport layer of one connection, the interface's APDU limit, the
 authorization, property, function-property and memory services (`A_Memory_Read`/`_Write`,
 `A_MemoryExtended_Write`, and `A_MemoryExtended_Read` where the unit answered it when collected), the
 load-state machines with their table references and the memory-control blocks (one per segment, or the blocks written while loading, each with its CRC), verify mode, the basic and
-the confirmed restart. Everything else it refuses: a line in its log and in `refusals`, and no answer, so
+the confirmed restart, and the address reads by broadcast (in programming mode, which the restart ends, and by
+serial number, as far as a unit's captures show them). Everything else it refuses: a line in its log and in `refusals`, and no answer, so
 the tool's own timeout ends a run where an invented byte would have let it go on. A behaviour the unit's
 captures do not show is refused the same way: a frame in a time after a restart no capture shows the line
 in, a frame on the connection a restart ended, the device control after an unload, a property write or a
@@ -551,10 +554,23 @@ declaration, what its address table's count reads after the declaration, a downl
 the restart) is in its entry in `tools/sim-units.ts`; where a unit's captures leave a gap after its restart
 (the ABB US/U 4.2: no frame between 42 ms and 1.04 s after it), a frame in the gap is refused.
 
-The units simulated, and how each is held to its captures (`tools/sim-unit.test.ts` and
-`tools/sim-unit-0701.test.ts`, with the private corpus; `tools/sim-unit-replay.ts` replays a capture):
+`tools/sim-unit-0705.ts` is the property-mapped System 7 unit (MV-0705) on the same core: its load-state
+machines take their events on PID 5 like System B, but absolute and stack segments at the address the
+request names and the task segment, which must name a segment the machine holds and carry the unit's PEI
+type and the application it holds, over one memory at fixed addresses whose bytes an unload keeps; no property
+write but PID 5 and the device control is taken, and the device control after the application's unload only
+where the unit's captures show it; the load states are readable as memory at `0xB6EA` onwards as well. Where the unit
+reports memory-control blocks (PID 27), it computes one element per segment it marks for it, with the access
+the allocation named and the CRC its collection shows; where it reports none they stay refused, and so does
+a table reference no capture shows. Which segments a unit holds at the start comes from its application's
+declaration or, where they differ, its own memory-control blocks. A read into a segment that is loading is
+answered only where the unit's captures show it, and only with the bytes written since the load; what the
+unit answers on a connection its restart ended, where no capture shows it, is refused.
 
-| Unit | ETS's downloads replayed | Busforge's full download |
+The units simulated, and how each is held to its captures (`tools/sim-unit.test.ts`,
+`tools/sim-unit-0701.test.ts` and `tools/sim-unit-0705.test.ts`, with the private corpus; `tools/sim-unit-replay.ts` replays a capture):
+
+| Unit | Captured downloads replayed | Busforge's full download |
 |---|---|---|
 | MEAN WELL KNX-40E-1280D power supply | Every request of ETS's six captured downloads (a link, a parameter, the revert, the full download, a parameter that shows an object, on and off), in order into one unit: every frame the simulator answers (its control field too, where the interface reports the frame type) and every confirmation on the line equal the unit's | Through `KnxIpServer` and the proxy, with the server's download task: taken without a refusal and verified; the bracket from the first unload to the restart equals the capture of the same download into the unit in every frame both ways (each TPDU without its sequence number, the unit's control field, every confirmation on the line) but for the order of the segments, which this build writes parameter segment first as ETS's capture of the unit shows and the captured run wrote last (so the run in this order is the simulator's, not the unit's); the session before it and the verification after it differ by Busforge's own changes since that capture, which the test names |
 | Theben DALI-Gateway KNX plus | Every request of ETS's six captured downloads (the full download it ran as a table download, a parameter, a link, the revert, the unload, the full download after it), in order into one unit: every frame the simulator answers (its priority; this interface reports no frame type) and every confirmation on the line equal the unit's | Taken and verified, with the memory-control blocks its read-back proves; its restart proof sends frames in times after the restart no capture shows the line in and on the connection the restart ended, which the simulator refuses |
@@ -564,6 +580,8 @@ The units simulated, and how each is held to its captures (`tools/sim-unit.test.
 | GVS AMMA-04/06.S | Every request of ETS's full download at the application's defaults (plain), as the Jung's but for the last T_Disconnect, which the capture ends before the interface confirmed. Its only collection is of the unit under Data Secure: the capture's security mode (plain) is taken from the capture | As the Theben DALI-Gateway |
 | ABB US/U 4.2 universal interface (MV-0701) | Every request of ETS's captured downloads onto the loaded unit (the partial form, read and compared): a configuration and the download that undid it, in order into one unit, which then holds every octet the collection after them read; two application downloads at the defaults, each from the collection before it. ETS's first full download and the partial download after it, which no collection precedes, run on the earliest collection, taken after them: every frame and confirmation equal the unit's but for memory reads ETS made before writing, which answer what the unit held before and differ only in octets ETS then wrote | The defaults, from the collection before ETS's application download at the defaults: taken without a refusal and verified; ETS's partial form, its memory writes on the wire exactly ETS's, the unit's memory after it exactly what ETS's download left |
 | Theben Meteodata 140 S weather station (MV-0701) | Every request of ETS's four captured downloads (the full download, a parameter, a link, the revert), in order into one unit from the collection before them: every frame the simulator answers and every confirmation equal the unit's, the full download's 191 memory reads included | The configuration of ETS's full download (the project's parameter values, the links the unit's tables held) from the collection before it: taken without a refusal and verified; the declared form, its memory writes on the wire ETS's two (the address table's count and the download marker), the unit's memory after it exactly what ETS's download left |
+| MDT BE-02001.02 binary input (MV-0705) | Every request of ETS's three captured full downloads (a unit in programming mode at the application's defaults, one link, a later configuration), in order into one unit, the restart of Busforge's address assignment, and Busforge's two captured full downloads (its read-back of each write while a segment loads, its probes after each restart, its verification): every frame the simulator answers and every confirmation on the line equal the unit's, but for one answer, to a request the capture of ETS's third download does not hold, and Busforge's reads of the configuration the unit held before its downloads, which the collection, taken earlier, does not; the unit's start-up group telegrams after a restart are not simulated | Through `KnxIpServer` and the proxy, at defaults into a fresh unit: taken without a refusal and verified. The unit's answer to a read outside its memory (a response without data) is not modelled |
+| Gira Tastsensor 3 Komfort 3fach (MV-0705) | Every request of ETS's captured full download, its partial form on a unit holding the application (the stamps read before and after, the tables rewritten, the application loaded again without an unload), and of Busforge's captured full download (its read-back of each write while a segment loads, its probes after the restart, its verification by the memory-control blocks): every frame the simulator answers and every confirmation on the line equal the unit's; the unit's start-up group telegrams after a restart are not simulated | The configuration ETS downloaded, the same way into a fresh unit: taken without a refusal and verified |
 
 ```bash
 BUSFORGE_CORPUS=... bun run tools/sim-unit-serve.ts <unit id> --tool ETS --log ./capture.log \
@@ -572,7 +590,7 @@ BUSFORGE_CORPUS=... bun run tools/sim-unit-serve.ts <unit id> --tool ETS --log .
 
 `<unit id>` is a unit's `id` in `tools/sim-units.ts` (`meanwell-knx40e`, `theben-dali-gateway`,
 `openknx-raumcontroller`, `theben-mix2-hmg6t`, `jung-400021se`, `gvs-amma`, `abb-usu-4.2`,
-`theben-meteodata-140s`). The tool connects to the proxy
+`theben-meteodata-140s`, `mdt-be02001`, `gira-ts3`). The tool connects to the proxy
 port over KNXnet/IP TCP; the simulator's own lines go to
 `<log>.sim.txt`, and Ctrl-C prints its refusals. `--override` (System B units) makes the unit answer
 another first element for a property than its collection holds, or none (`0/78=`): a deliberately wrong

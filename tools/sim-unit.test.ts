@@ -1,5 +1,5 @@
 import { test, expect, describe, setDefaultTimeout } from "bun:test";
-import { cemiLData, crc16CcittFalse, parseCemiLData, withSource, type PropertyDescription } from "../packages/knx/src/index.ts";
+import { cemiLData, cemiLDataGroup, crc16CcittFalse, parseCemiLData, withSource, type PropertyDescription } from "../packages/knx/src/index.ts";
 import { buildDeviceConfig, parseAppConfig, placeComObjOverrides, type ComObjInstanceOverride, type ModuleInstance } from "../packages/product/src/index.ts";
 import { captureText, catalogueXml } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
@@ -37,6 +37,7 @@ function unit(over: Partial<SimUnitModel> = {}, opts: ConstructorParameters<type
     authorize: new Map([["ffffffff", 0]]),
     restart: { basic: { acknowledged: true, tAck: "always" }, line: [{ atMs: 0, up: true }], deadConnection: "disconnect", confirmedRestartSeconds: null }, link: { ackMs: 0, nakMs: 0 },
     unloadStopsApplication: true, descriptionIndex: "property", clearsAfterRestart: [], shownWrites: new Map(), memoryExtendedRead: false, memoryExtendedWrite: false,
+    programmingMode: null, serialNumberResponseTail: null,
     ...over,
   };
   const sim = new SimUnit(model, TOOL, opts);
@@ -196,6 +197,42 @@ describe("a simulated unit", () => {
     expect(await req("43d5041b2001")).toEqual([`d6041b2001${"00000003" + "0032" + crc("0a0b0c")}${"00000001" + "0133" + crc("0d")}`]);
     expect(sim.segment(4)?.bytes.toString("hex")).toBe("0a0b0c0d");
     expect(sim.refusals).toEqual(["sim-refused A_PropertyValue_Read 0/14 of 1 from 1 after the unload of the application: what the unit reports then is not shown"]);
+  });
+
+  test("answers the address broadcasts as far as its unit's captures show them; its restart ends programming mode, and the time and connection after it the captures do not show are refused", async () => {
+    let clock = 0;
+    const objects = new Map([[0, new Map([[14, p("00")], [11, p("000a45630b16")]])]]);
+    const { sim, send } = unit({ objects, programmingMode: true, serialNumberResponseTail: Buffer.alloc(4), restart: { basic: { acknowledged: true, tAck: "never" }, line: [{ atMs: 0, up: false }, { atMs: 39, up: false }, { atMs: 1000, up: true }], deadConnection: null, confirmedRestartSeconds: null } }, { now: () => clock });
+    const broadcasts: string[] = [];
+    sim.onCemi = (_src, dst, tpdu, isGroup) => { if (isGroup) broadcasts.push(`${dst} ${tpdu.toString("hex")}`); };
+    const broadcast = async (tpdu: string) => { await sim.sendCemi(cemiLDataGroup(TOOL, 0, Buffer.from(tpdu, "hex"))); await new Promise((r) => setTimeout(r, 5)); };
+    await broadcast("0100");
+    // The unit's serial number (object 0 PID 11), then another one.
+    await broadcast("03dc000a45630b16");
+    await broadcast("03dc000a45630b17");
+    expect(broadcasts).toEqual(["0 0140", "0 03dd000a45630b1600000000"]);
+    // Acknowledged on layer 2, no T_Ack; up to 39 ms nothing acknowledged, before 1000 ms refused.
+    await send("80");
+    expect(await send("4380")).toEqual([]);
+    clock = 39;
+    expect(await sim.sendCemi(withSource(cemiLData(0, DEV, Buffer.from("81", "hex")), TOOL)).then(() => "OK", () => "NEG")).toBe("NEG");
+    clock = 999;
+    expect(await sim.sendCemi(withSource(cemiLData(0, DEV, Buffer.from("80", "hex")), TOOL)).then(() => "OK", () => "NEG")).toBe("NEG");
+    clock = 1000;
+    expect(await send("4700")).toEqual([]);
+    broadcasts.length = 0;
+    await broadcast("0100");
+    expect(broadcasts).toEqual([]);
+    expect(sim.refusals).toEqual([
+      "sim-refused 80 999 ms after the restart: whether the unit acknowledges a frame then is not shown",
+      "sim-refused numbered frame 4700 from 1.1.255 on the connection the restart ended: what the unit answers it is not shown",
+    ]);
+    // A programming mode the captures do not show stays unknown after a restart.
+    const { sim: unknown, send: sendUnknown } = unit();
+    await sendUnknown("80");
+    await sendUnknown("4380");
+    await unknown.sendCemi(cemiLDataGroup(TOOL, 0, Buffer.from("0100", "hex")));
+    expect(unknown.refusals).toEqual(["sim-refused A_IndividualAddress_Read 0100 from 1.1.255: whether the unit is in programming mode is not known"]);
   });
 
   test("leaves a frame longer than the interface carries unsent, and closes a connection idle for 6 s on its own clock", async () => {

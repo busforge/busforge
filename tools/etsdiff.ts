@@ -54,7 +54,7 @@ import { gunzipSync } from "node:zlib";
 import { gaFromLevels, iaToNum, OBJ } from "../packages/knx/src/index.ts";
 import { loadKnxproj, readAppProgram, readZip, type Project, type DeviceParam, type ModuleInstanceData, type DeviceLink, type ComObjInstanceAttrs } from "../packages/project/src/index.ts";
 import {
-  parseAppConfig, classify, parseLoadProcedures, isMemoryMappedLsm, buildDeviceConfig, placeComObjOverrides,
+  parseAppConfig, classify, parseLoadProcedures, isMemoryMappedLsm, buildDeviceConfig, placeComObjOverrides, decodeAbsoluteImage, toAppModel,
   type AppConfig, type ComObjectLink, type ComObjInstanceOverride, type FullDownloadSegment, type ModuleInstance,
 } from "../packages/product/src/index.ts";
 import { fullRef } from "../apps/server/src/refids.ts";
@@ -530,4 +530,27 @@ function ranges(xs: number[], absolute = false): string {
 if (import.meta.main) {
   try { process.exit(await main()); }
   catch (e) { console.error(`etsdiff: ${e instanceof Error ? e.message : String(e)}`); process.exit(2); }
+}
+
+// The configuration a unit's absolute segments hold, as Busforge's read-back finds it (profiles.ts
+// deviceRelevantRefs): the decoded value of every parameter active under it, on top of `fixed` (values no image
+// shows), until the active set settles. `memory` holds the segments' bytes by address; what it lacks keeps the
+// application's own data.
+export function configurationOfImage(cfg: AppConfig, memory: Map<number, number>, fixed: Map<string, string> = new Map()): Map<string, string> {
+  const model = toAppModel(cfg, { includeUnions: true });
+  const decoded = new Map<string, string>();
+  for (const seg of cfg.absoluteSegments) {
+    if (seg.data.length === 0) continue;
+    const img = Buffer.from(seg.data);
+    for (let i = 0; i < seg.size; i++) { const v = memory.get(seg.address + i); if (v !== undefined) img[i] = v; }
+    for (const [r, v] of decodeAbsoluteImage(model, seg.id, img)) decoded.set(r, v);
+  }
+  let params = new Map(fixed);
+  for (let i = 0; ; i++) {
+    const active = new Set(buildDeviceConfig(cfg, params).imageValues.keys());
+    const next = new Map([...fixed, ...[...decoded].filter(([r]) => active.has(r))]);
+    if (next.size === params.size && [...next].every(([r, v]) => params.get(r) === v)) return params;
+    if (i > 16) throw new Error("the configuration read from the image never settled");
+    params = next;
+  }
 }
