@@ -138,6 +138,9 @@ export interface RunState {
   // Requests the unit did not take: negatively confirmed on the line, or numbered outside a connection
   // (the unit drops them or answers T_Disconnect). Recorded, not compared.
   notTaken: string[];
+  // Allocations with fill the run shows no table reference for: their segment's octets are not known, so
+  // the run's final state cannot be compared (compareRuns refuses it). A run the simulator refused may hold one.
+  unplaced: string[];
   // The requests that change the unit: every one but the reads.
   writes: number;
 }
@@ -146,7 +149,7 @@ const hexOf = (b: Buffer) => b.toString("hex");
 
 // A capture's frames between `tool` and the unit at `device`, as tools/knxproxy.ts logs them.
 export function runState(text: string, tool: string, device: number, mask: string): RunState {
-  const s: RunState = { memory: new Map(), memoryService: new Map(), properties: new Map(), loadControls: new Map(), functionCalls: [], loadStates: new Map(), tableReferences: new Map(), restarts: [], other: [], reads: new Set(), notTaken: [], writes: 0 };
+  const s: RunState = { memory: new Map(), memoryService: new Map(), properties: new Map(), loadControls: new Map(), functionCalls: [], loadStates: new Map(), tableReferences: new Map(), restarts: [], other: [], reads: new Set(), notTaken: [], unplaced: [], writes: 0 };
   const memoryMapped = isMemoryMappedLsm(mask);
   const r: Replay = { s, memoryMapped, order: new Map(), fills: [], mmStates: new Map(), n: 0 };
   // Each request with its confirmation on the line, and the unit's frames, in order.
@@ -194,7 +197,7 @@ export function runState(text: string, tool: string, device: number, mask: strin
   // An allocation with fill sets its whole segment, where the unit reported it, over every earlier write.
   for (const f of r.fills) {
     const ref = s.tableReferences.get(f.lsm);
-    if (ref === undefined) throw new Error(`the run allocates object ${f.lsm} with fill ${f.fill.toString(16).padStart(2, "0")}, but shows no table reference to place it at`);
+    if (ref === undefined) { s.unplaced.push(`object ${f.lsm} allocated with fill ${f.fill.toString(16).padStart(2, "0")}, at no table reference the run shows`); continue; }
     const at = parseInt(ref, 16);
     for (let a = at; a < at + f.size; a++) if ((r.order.get(a) ?? -1) < f.n) { s.memory.set(a, f.fill); s.memoryService.set(a, "allocation fill"); r.order.set(a, f.n); }
   }
@@ -271,6 +274,9 @@ const shown = (v: string | number | undefined) => v === undefined ? "not shown" 
 // Every difference of Busforge's run from ETS's, the first first: memory, property writes, load controls,
 // function-property calls, load states and table references at the end, the restart, other services.
 export function compareRuns(ets: RunState, busforge: RunState): string[] {
+  for (const [who, st] of [["ETS", ets], ["Busforge", busforge]] as const) {
+    if (st.unplaced.length) throw new Error(`${who}'s run cannot be compared: ${st.unplaced.join("; ")}`);
+  }
   const out: string[] = [];
   const at = (n: number) => `0x${n.toString(16).padStart(4, "0")}`;
   const addrs = [...new Set([...ets.memory.keys(), ...busforge.memory.keys()])].sort((a, b) => a - b);
@@ -539,8 +545,9 @@ export function manifestRow(row: Row, r: RowResult): ManifestRow {
   const [first, cause] = v.verdict === "identical" ? [null, null]
     : v.verdict === "differs" ? [diffs[0].difference, diffs[0].cause]
     : v.verdict === "refused" ? [v.code, v.message]
-    : v.verdict === "sim-refused" ? [v.refusals[0], `the simulator refused ${v.run}`]
-    : v.verdict === "busforge-only" ? [`Busforge wrote ${v.busforgeWrites} requests`, v.ets]
+    : v.verdict === "sim-refused" ? [v.refusals[0], `the simulator refused ${v.run}${v.busforge ? `; ${v.busforge}` : ""}`]
+    : v.verdict === "busforge-only" ? [`Busforge wrote ${v.busforgeWrites} requests${v.busforgeRefused ? ` and then refused: ${v.busforgeRefused}` : ""}`, v.ets]
+    : v.verdict === "ets-failed" ? [v.why, v.busforge ? `${v.why}; ${v.busforge}` : v.why]
     : [v.why, v.why];
   const cfg = parseAppConfig(catalogueXml(row.unit.catalogue));
   return {
@@ -581,6 +588,7 @@ async function main(): Promise<number> {
     console.log(`${id}: ${m.verdict}${m.first ? `: ${m.first}` : ""}`);
     for (const d of m.differences) console.log(`  ${d.difference}\n    cause: ${d.cause ?? "NOT EXPLAINED"}`);
     if (m.reads.onlyEts.length || m.reads.onlyBusforge.length) console.log(`  reads only ETS made: ${list(m.reads.onlyEts)}\n  reads only Busforge made: ${list(m.reads.onlyBusforge)}`);
+    if (m.notTaken.ets.length || m.notTaken.busforge.length) console.log(`  not taken by the unit, ETS: ${list(m.notTaken.ets)}\n  not taken by the unit, Busforge: ${list(m.notTaken.busforge)}`);
     console.log(`  LoadedImage: ${m.loadedImage.state}${"why" in m.loadedImage ? ` (${m.loadedImage.why})` : ""}${"bytes" in m.loadedImage ? `, ${m.loadedImage.bytes} bytes` : ""}`);
     if (keep) {
       const out = join(keep, id);

@@ -103,8 +103,10 @@ describe("a sweep row's run", () => {
     expect([...run(true).memory]).toEqual([[0x4000, 0x00], [0x4001, 0x00], [0x4002, 0x00], [0x4003, 0x00]]);
     expect([...run(false).memory]).toEqual([[0x4000, 0xaa], [0x4001, 0x00], [0x4002, 0x00], [0x4003, 0x00]]);
     expect(compareRuns(run(true), run(false))[0]).toBe("memory 0x4000: ETS 00, Busforge aa");
-    // Without the table reference the fill cannot be placed: refused, not dropped.
-    expect(() => runState(capture(line("ETS->BRIDGE", "80"), line("ETS->BRIDGE", "43d704051001030b000000040100")), "ETS", DEV, "MV-07B0")).toThrow(/shows no table reference/);
+    // Without the table reference the fill cannot be placed: the run is read, its comparison refused.
+    const unplaced = runState(capture(line("ETS->BRIDGE", "80"), line("ETS->BRIDGE", "43d704051001030b000000040100")), "ETS", DEV, "MV-07B0");
+    expect(unplaced.unplaced).toEqual(["object 4 allocated with fill 00, at no table reference the run shows"]);
+    expect(() => compareRuns(unplaced, run(true))).toThrow(/ETS's run cannot be compared: object 4 allocated with fill 00/);
   });
 
   test("names every difference both ways, a byte only one side wrote among them", () => {
