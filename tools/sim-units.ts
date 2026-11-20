@@ -65,7 +65,7 @@ export const MEANWELL_KNX40E: SimUnitSpec = {
   },
 };
 
-// The house's KNXnet/IP interface the Theben, OpenKNX and second MEAN WELL captures ran through: tunnels 1.1.253 to
+// The house's KNXnet/IP interface the Theben, OpenKNX and the MEAN WELL's maxtemp captures ran through: tunnels 1.1.253 to
 // 1.1.255, a maximum APDU of 210 in its search response's tunnelling DIB; it confirmed a frame 16 ms after the
 // request at the earliest, negatively after 63 ms (the Theben DALI-Gateway's captures, the only ones with a
 // negative confirmation through it).
@@ -166,7 +166,7 @@ export const THEBEN_MIX2_HMG6T: SimUnitSpec = {
     unloadStopsApplication: null,
     memoryExtendedWrite: true,
     descriptionIndex: "property",
-    clearsAfterRestart: [{ lsm: 4, offset: 39, clear: 0x80 }],
+    clearsAfterRestart: [{ lsm: 4, offset: 39, mask: 0x80, from: 0x80, to: 0x00 }],
     shownWrites: new Map(),
   },
 };
@@ -183,9 +183,9 @@ export const THEBEN_MIX2_HMG6T: SimUnitSpec = {
 //   64-octet writes);
 // - the free key (FFFFFFFF) grants access level 0;
 // - the bridge confirmed a frame 21 ms after the request at the earliest, negatively after 68 to 69 ms;
-// - after its restart it clears the one-byte second block of the application segment (octet 7700), which every
-//   ETS download writes 01: the block's CRC at the start of ETS's next download
-//   (captures/jung-400021se-ets-partial-links.log) is over 00;
+// - after its restart the one-byte second block of the application segment (octet 7700), which every ETS
+//   download writes 01, reads 00: the block's CRC at the start of ETS's next download
+//   (captures/jung-400021se-ets-partial-links.log) is over 00; another value there no capture shows;
 // - a description read by PID is answered with the property's own index (object 2's PID 23 at index 3);
 // - what its device control reads after the application is unloaded it does not show.
 export const JUNG_400021SE: SimUnitSpec = {
@@ -202,7 +202,7 @@ export const JUNG_400021SE: SimUnitSpec = {
     unloadStopsApplication: null,
     memoryExtendedWrite: true,
     descriptionIndex: "property",
-    clearsAfterRestart: [{ lsm: 4, offset: 7700, clear: 0x01 }],
+    clearsAfterRestart: [{ lsm: 4, offset: 7700, mask: 0xff, from: 0x01, to: 0x00 }],
     shownWrites: new Map(),
     stateInCaptures: { properties: { "4/5": "03" }, functionStates: { "17/1/51 0000": "0000" } },
   },
@@ -250,7 +250,8 @@ export const GVS_AMMA: SimUnitSpec = {
 // restart-end-2026-11-19/a3-abb-ia-201to211.log, a4-abb-ia-211to201.log), all through a KNX-USB stick behind
 // Busforge's bridge at 1.1.100:
 // - A_Restart: confirmed by the interface and acknowledged with T_Ack; a frame sent up to 42 ms after it is
-//   confirmed negatively, one 1.04 s after it positively, and one between is refused (no capture shows it);
+//   confirmed negatively (42 ms: a3-abb-ia-201to211.log, a4-abb-ia-211to201.log), one 1.04 s after it
+//   positively, and one between is refused (no capture shows it);
 //   numbered frames on the connection the restart ended are dropped without T_Disconnect (Busforge's probes);
 // - the free key (FFFFFFFF) grants access level 0;
 // - the interface confirmed a frame about 21 ms after the request, negatively after 70 to 90 ms;
@@ -263,10 +264,10 @@ export const ABB_USU42: SimUnitSpec = {
   name: "ABB US/U 4.2",
   collection: "internal/captures/abb-counter-2026-11-20/collect-1.1.201-before.json",
   catalogue: "M-0002_A-A001-13-63C2.xml.gz",
-  interfaceIa: 0x1164,
-  interfaceMaxApdu: 40,
+  interfaceIa: BENCH_BRIDGE.ia,
+  interfaceMaxApdu: BENCH_BRIDGE.maxApdu,
   behaviour: {
-    restart: { basic: { acknowledged: true, tAck: "always" }, line: [{ atMs: 0, up: false }, { atMs: 41, up: false }, { atMs: 1040, up: true }], deadConnection: "nothing", confirmedRestartSeconds: null },
+    restart: { basic: { acknowledged: true, tAck: "always" }, line: [{ atMs: 0, up: false }, { atMs: 42, up: false }, { atMs: 1040, up: true }], deadConnection: "nothing", confirmedRestartSeconds: null },
     authorize: new Map([["ffffffff", 0]]),
     link: { ackMs: 20, nakMs: 70 },
     memoryExtendedWrite: false,
@@ -282,12 +283,12 @@ export const ABB_USU42: SimUnitSpec = {
 // meteodata-busforge-*.log), through the house's KNXnet/IP interface, tunnel 1.1.254, which reported a maximum
 // APDU of 210 to ETS (ETS6.log, InterfaceFeatures):
 // - A_Restart: confirmed by the interface and acknowledged on layer 2, without T_Ack; a frame 41 ms after it
-//   is confirmed positively; numbered frames on the connection the restart ended are dropped without
-//   T_Disconnect (Busforge's probes);
+//   is confirmed positively, and the line is taken as up from the restart on: no capture shows a frame sooner,
+//   and Busforge's restart proof probes 1 ms after it (a refusal there would end its download test); numbered
+//   frames on the connection the restart ended are dropped without T_Disconnect (Busforge's probes);
 // - the free key (FFFFFFFF) grants access level 0;
-// - the interface confirmed a frame about 18 ms after the request; no capture shows it confirm one
-//   negatively, so the negative confirmation of a frame to another address takes the bench stick's 70 ms (the
-//   ABB US/U 4.2's entry);
+// - the interface confirmed a frame about 18 ms after the request; its own captures show it confirm none
+//   negatively, the Theben DALI-Gateway's through the same interface after 63 ms;
 // - no PID 56 (ETS: "Empty response; assuming 15");
 // - of the additional load controls at 0x0104, the absolute segment, the task segment (PEI type 00) and task
 //   control 1;
@@ -304,11 +305,11 @@ export const THEBEN_METEODATA_140S: SimUnitSpec = {
   collection: "collections/meteodata-140s-hc04-2026-10-07/1.1.24-meteodata-collect-vor.json",
   catalogue: "M-0048_A-140C-14-EB70.xml.gz",
   interfaceIa: 0x11fe,
-  interfaceMaxApdu: 210,
+  interfaceMaxApdu: HOUSE_INTERFACE.maxApdu,
   behaviour: {
     restart: { basic: { acknowledged: true, tAck: "never" }, line: [{ atMs: 0, up: true }], deadConnection: "nothing", confirmedRestartSeconds: null },
     authorize: new Map([["ffffffff", 0]]),
-    link: { ackMs: 18, nakMs: 70 },
+    link: { ackMs: 18, nakMs: HOUSE_INTERFACE.link.nakMs },
     memoryExtendedWrite: false,
     descriptionIndex: null,
     shownWrites: new Map(),
@@ -343,7 +344,11 @@ function collectionOf(spec: SimUnitSpec, collectionPath: string): CollectPackage
 
 // A fresh unit as its collection shows it (another collection of the same unit where one is named).
 export function newSimUnit(spec: SimUnitSpec, opts: SimOpts = {}, behaviour: Partial<SystemBBehaviour> = {}, collectionPath = spec.collection): SimUnit {
-  if (spec.memoryMapped) return newSimUnit0701(spec, opts, behaviour, collectionPath);
+  if (spec.memoryMapped) {
+    const systemB = (["unloadStopsApplication", "clearsAfterRestart", "mcb", "stateInCaptures"] as const).filter((k) => k in behaviour);
+    if (systemB.length) throw new Error(`no simulated unit: ${systemB.join(", ")} of a System B unit given for the memory-mapped ${spec.id}`);
+    return newSimUnit0701(spec, opts, behaviour, collectionPath);
+  }
   return new SimUnit(simUnitModel(collectionOf(spec, collectionPath), catalogueXml(spec.catalogue), { ...spec.behaviour, ...behaviour }), spec.interfaceIa, { interfaceMaxApdu: spec.interfaceMaxApdu, ...opts });
 }
 

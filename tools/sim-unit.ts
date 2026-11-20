@@ -121,9 +121,9 @@ export interface SimUnitModel extends SimUnitCoreModel {
   // Whether the unit sets its device control's application-stopped bit (PID 14 bit 0) when its application is
   // unloaded, until its restart.
   unloadStopsApplication: boolean | null;
-  // Bits the unit's application clears in a segment of its own after a restart (`clear` the bit mask at
-  // `offset` from the segment's start).
-  clearsAfterRestart: { lsm: number; offset: number; clear: number }[];
+  // Bits the unit's application changes in a segment of its own after a restart, as its captures show: at `offset`
+  // from the segment's start, the bits of `mask` read `to` where they were `from` (and stay where they were `to`).
+  clearsAfterRestart: { lsm: number; offset: number; mask: number; from: number; to: number }[];
 }
 
 // A segment's bytes, and which of them the unit is known to hold (1): a mode-0 allocation that grows a segment
@@ -171,7 +171,7 @@ export class SimUnit implements KnxTransport {
   constructor(
     // A unit of another load control (tools/sim-unit-0701.ts) has none of System B's segments, memory-control
     // blocks and PID 5 load events, nor what follows from them.
-    private readonly model: SimUnitCoreModel & Partial<Pick<SimUnitModel, "segments" | "crc" | "unloadStopsApplication" | "clearsAfterRestart">>,
+    private readonly model: SimUnitCoreModel & (Pick<SimUnitModel, "segments" | "crc" | "unloadStopsApplication" | "clearsAfterRestart"> | { [K in "segments" | "crc" | "unloadStopsApplication" | "clearsAfterRestart"]?: undefined }),
     // The interface's own individual address: the source of the frames the tool sends through it.
     readonly assignedIa: number,
     // `interfaceMaxApdu`: the longest APDU the interface puts on the line; a longer frame it confirms
@@ -455,13 +455,21 @@ export class SimUnit implements KnxTransport {
     this.restartedAt = this.now();
     this.applicationLoaded = false;
     this.deviceControlUnknown = false;
-    // Only a loaded application clears them; the memory-control block reports the CRC over the segment as it
-    // then holds it.
-    // A unit without System B's segments has none to clear.
-    for (const { lsm, offset, clear } of this.model.clearsAfterRestart ?? []) {
+    // A unit without System B's segments has none. What the application does with other bits, or while it is
+    // not loaded, is not shown: the octet is then unknown. The memory-control block reports the CRC over the
+    // segment as it then holds it.
+    for (const { lsm, offset, mask, from, to } of this.model.clearsAfterRestart ?? []) {
       const seg = this.segments.get(lsm);
-      if (!seg || offset >= seg.size || this.state(lsm) !== STATE.LOADED) continue;
-      seg.bytes[offset] &= ~clear;
+      if (!seg || offset >= seg.size || seg.known[offset] === 0) continue;
+      const bits = seg.bytes[offset] & mask;
+      if (bits === to) continue;
+      if (this.state(lsm) !== STATE.LOADED || bits !== from) {
+        seg.known[offset] = 0;
+        this.mcbKnown.set(lsm, false);
+        this.note(`restart: octet ${offset} of object ${lsm}'s segment holds ${seg.bytes[offset].toString(16)}, what the application leaves there is not shown`);
+        continue;
+      }
+      seg.bytes[offset] = (seg.bytes[offset] & ~mask) | to;
       const mcb = this.property(lsm, PID_MCB);
       const elements = mcb?.elements && this.mcbKnown.get(lsm) ? this.mcbElements(seg, mcb.elements.map((e) => e.subarray(0, 6))) : null;
       if (elements) mcb!.elements = elements;
@@ -537,7 +545,13 @@ export class SimUnit implements KnxTransport {
       return;
     }
     const shown = this.model.shownWrites.get(`${obj}/${pid} ${value.toString("hex")}`);
-    if (shown && shown.length === value.length) { prop.elements = [Buffer.from(value)]; echo(shown); return; }
+    if (shown) {
+      // The unit's answer to a write is what it then holds; a shown answer other than the value is not modelled.
+      if (!shown.equals(value)) { this.refuse(`${what}: the unit answered ${shown.toString("hex")}; what it holds then is not modelled`); return; }
+      prop.elements = [Buffer.from(value)];
+      echo(value);
+      return;
+    }
     if (obj === APPLICATION_LSM && pid === PID_PROGRAM_ID && value.length === prop.elements[0]?.length) {
       if (this.state(obj) !== STATE.LOADING) { this.refuse(`${what} while the application is not loading`); return; }
       prop.elements = [Buffer.from(value)];
@@ -559,8 +573,10 @@ export class SimUnit implements KnxTransport {
   }
 
   // The memory-control-block elements of a segment cut into blocks from its start (each block's size and
-  // control octets given), each with the CRC over its octets; null where the blocks reach past the segment.
+  // control octets given), each with the CRC over its octets; null where the blocks reach past the segment or the
+  // unit's CRC convention is not modelled.
   private mcbElements(seg: Segment, blocks: Buffer[]): Buffer[] | null {
+    if (!this.model.crc) return null;
     const elements: Buffer[] = [];
     let at = 0;
     for (const b of blocks) {

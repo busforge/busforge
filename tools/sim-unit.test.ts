@@ -4,7 +4,7 @@ import { buildDeviceConfig, parseAppConfig, placeComObjOverrides, type ComObjIns
 import { captureText, catalogueXml } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { captureLData, memWriteOf } from "./etsdiff.ts";
-import { replayCapture, replayDifferences } from "./sim-unit-replay.ts";
+import { cemiOfLine, replayCapture, replayDifferences } from "./sim-unit-replay.ts";
 import { busforgeIntoSim, type RowConfiguration } from "./ets-sweep.ts";
 import { SimUnit, type SimProperty, type SimUnitModel } from "./sim-unit.ts";
 import { BENCH_BRIDGE, GVS_AMMA, JUNG_400021SE, MEANWELL_KNX40E, OPENKNX_RAUMCONTROLLER, THEBEN_DALI_GATEWAY, THEBEN_MIX2_HMG6T, newSimUnit, type SimUnitSpec } from "./sim-units.ts";
@@ -212,8 +212,6 @@ describe("a simulated unit", () => {
 // ---- each simulated unit against ETS's captures of the real unit ----
 
 interface Frame { dir: ">>" | "<<"; tpdu: string; con?: "OK" | "NEG"; ctrl?: number; to?: number }
-// The cEMI frame of a capture line's KNXnet/IP frame.
-const cemiOf = (line: string) => { const f = Buffer.from(line.match(/\| ([0-9a-fA-F]+)\s*$/)![1], "hex"); return f.subarray(f[0] + f[f[0]]); };
 // The L_Data frames of a capture between the tool and the unit: the tool's requests with the interface's
 // confirmation, the unit's frames to the interface with their first control field.
 function frames(text: string, tool: string, device: number): Frame[] {
@@ -223,7 +221,7 @@ function frames(text: string, tool: string, device: number): Frame[] {
     if (fr.group) continue;
     if (fr.fromTool && fr.code === 0x11 && fr.dst === device) { const f: Frame = { dir: ">>", tpdu: fr.tpdu.toString("hex") }; out.push(f); pending.push(f); }
     else if (!fr.fromTool && fr.code === 0x2e && fr.dst === device) { const f = pending.shift(); if (f) f.con = fr.line.includes("CON-NEG") ? "NEG" : "OK"; }
-    else if (!fr.fromTool && fr.code === 0x29 && fr.src === device) { const c = cemiOf(fr.line); out.push({ dir: "<<", tpdu: fr.tpdu.toString("hex"), ctrl: c[2 + c[1]], to: fr.dst }); }
+    else if (!fr.fromTool && fr.code === 0x29 && fr.src === device) { const c = cemiOfLine(fr.line); out.push({ dir: "<<", tpdu: fr.tpdu.toString("hex"), ctrl: c[2 + c[1]], to: fr.dst }); }
   }
   return out;
 }

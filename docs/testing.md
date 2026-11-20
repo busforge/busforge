@@ -490,9 +490,9 @@ were not read.
 
 ## A simulated unit
 
-`tools/sim-unit.ts` is one System B unit (MV-07B0) on the `KnxTransport` seam, which
-`KnxIpServer` puts on the network like the USB stick behind the bridge: ETS or Busforge download
-into it over KNXnet/IP as into a real unit, and `tools/knxproxy.ts` in front logs the run as a
+`tools/sim-unit.ts` is one System B unit (MV-07B0), and the transport core of the other masks' units, on the
+`KnxTransport` seam, which `KnxIpServer` puts on the network like the USB stick behind the bridge: ETS or
+Busforge download into it over KNXnet/IP as into a real unit, and `tools/knxproxy.ts` in front logs the run as a
 capture. It is built from a read-only collection of a real unit of the product (identity, every
 property and description the unit answered, where it placed its segments and what they held) and
 checked against the product's application program (mask, declared property compares); what only the
@@ -510,9 +510,10 @@ the confirmed restart. Everything else it refuses: a line in its log and in `ref
 the tool's own timeout ends a run where an invented byte would have let it go on. A behaviour the unit's
 captures do not show is refused the same way: a frame in a time after a restart no capture shows the line
 in, a frame on the connection a restart ended, the device control after an unload, a property write or a
-memory service its captures and collection do not show. One exception is chosen, not shown: the MEAN WELL's
-line, down 0.38 s and up 0.65 s after its restart, is taken back at 0.5 s, where Busforge's restart proof
-probes, so its download test does not hang on the scheduler.
+memory service its captures and collection do not show. Two exceptions are chosen, not shown, both where
+Busforge's restart proof probes, so its download test does not hang on the scheduler or a refusal: the MEAN
+WELL's line, down 0.38 s and up 0.65 s after its restart, is taken back at 0.5 s; the Meteodata 140 S's line,
+shown up 41 ms after its restart, is taken as up from the restart on.
 
 `tools/sim-unit-0701.ts` is a memory-mapped System 7 unit (MV-0701) on the same transport core: its
 load-state machines take their controls as 11-octet memory writes to `0x0104` and report their states at

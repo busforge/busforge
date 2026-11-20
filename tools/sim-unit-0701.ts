@@ -81,6 +81,7 @@ export function simUnit0701Model(collection: CollectPackage, appXml: string, beh
   const refuse = (why: string): never => { throw new Error(`no simulated unit: ${why}`); };
   if (collection.mask !== "MV-0701") refuse(`only the memory-mapped System 7 mask MV-0701 is modelled here, not ${collection.mask}`);
   const { mask, objects, descriptions, functionStates, memoryExtendedRead, records } = collectedUnit(collection, appXml, refuse);
+  if (behaviour.restart.basic?.tAck === "unless-application-loaded") refuse("a T_Ack that depends on the application's PID 5 load events, which this mask does not take");
   if (collection.maxApdu !== null && collection.maxApdu !== mm.maxApdu) refuse(`the unit reports a maximum APDU of ${collection.maxApdu}, the spec ${mm.maxApdu}`);
   const programId = objects.get(APPLICATION_OBJECT)?.get(PID_PROGRAM_ID)?.elements?.[0];
   if (!programId) refuse("the collection did not read the program id (object 3 PID 13)");
