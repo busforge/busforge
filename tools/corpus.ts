@@ -307,6 +307,17 @@ export const CORPUS_FILES: readonly string[] = [
     "theluxa-p300-ets6log-partial-params.txt",
     "theluxa-p300-ets6log-partial-revert.txt",
   ].map((f) => `captures/${f}`),
+  // The collections and captures of the simulated MV-0701 units (tools/sim-units.ts, tools/sim-unit-0701.test.ts)
+  // outside captures/.
+  ...[
+    "abb-counter-2026-11-20/collect-1.1.201-before.json",
+    "abb-counter-2026-11-20/collect-1.1.201-after-ets-restore.json",
+    "abb-counter-2026-11-20/e2-abb-restore-download.log",
+    "abb-fresh-2026-11-20/collect-1.1.201-before.json",
+    "abb-fresh-2026-11-20/e1-abb-fresh-app-download.log",
+    "cap-1004/abb-plain.json",
+  ].map((f) => `internal/captures/${f}`),
+  "collections/meteodata-140s-hc04-2026-10-07/1.1.24-meteodata-collect-vor.json",
   "dca-theben-dali-e64/backup-store.dat",
   "dca-theben-dali-e64/backup-store.expected.json",
   ...IN_SERVICE_COLLECTIONS.map(inServiceCollection),

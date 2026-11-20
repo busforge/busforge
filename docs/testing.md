@@ -504,15 +504,30 @@ services, the load-state machines with their table references and the memory-con
 the restart. Everything else it refuses: a line in its log and in `refusals`, and no answer, so the
 tool's own timeout ends a run where an invented byte would have let it go on.
 
-The units it simulates, and how each is held to its captures (`tools/sim-unit.test.ts`, with the
-private corpus):
+`tools/sim-unit-0701.ts` is a memory-mapped System 7 unit (MV-0701) on the same transport core: its
+load-state machines take their controls as 11-octet memory writes to `0x0104` and report their states at
+`0xB6EA` onwards ([load-procedures.md](load-procedures.md#the-meteodata-140-s-memory-mapped)). Its memory is the
+memory its collection read, octet by octet; a read of an octet the collection did not read is refused,
+naming the read that would close it. The state of each machine comes from its PID 5 in the collection (the
+unit's single-octet read of a state answers the same; a read of more than one state octet is refused, the
+ABB US/U 4.2 answers it otherwise). The additional load controls (absolute segment, task segment, task
+control 1) are taken only where the unit's captures show it taking them, writes only into a segment of a
+machine that is loading: the segments declared since its unload, or the application's for a machine the
+unit holds loaded. What only a unit's captures show besides (whether its tables' PID 7 follows a
+declaration, what its address table's count reads after the declaration, a download marker it clears at
+the restart) is in its entry in `tools/sim-units.ts`.
+
+The units simulated, and how each is held to its captures (`tools/sim-unit.test.ts` and
+`tools/sim-unit-0701.test.ts`, with the private corpus; `tools/sim-unit-replay.ts` replays a capture):
 
 | Unit | ETS's downloads replayed | Busforge's full download |
 |---|---|---|
 | MEAN WELL KNX-40E-1280D power supply | Every request of ETS's six captured downloads (a link, a parameter, the revert, the full download, a parameter that shows an object, on and off), in order into one unit: every frame the simulator answers (its control field too, where the interface reports the frame type) and every confirmation on the line equal the unit's | Through `KnxIpServer` and the proxy, with the server's download task: taken without a refusal and verified; the bracket from the first unload to the restart equals the capture of the same download into the unit in every frame both ways (each TPDU without its sequence number, the unit's control field, every confirmation on the line) but for the order of the segments, which this build writes parameter segment first as ETS's capture of the unit shows and the captured run wrote last (so the run in this order is the simulator's, not the unit's); the session before it and the verification after it differ by Busforge's own changes since that capture, which the test names |
+| ABB US/U 4.2 universal interface (MV-0701) | Every request of ETS's captured downloads onto the loaded unit (the partial form, read and compared): a configuration and the download that undid it, in order into one unit, which then holds every octet the collection after them read; two application downloads at the defaults, each from the collection before it. ETS's first full download and the partial download after it, which no collection precedes, run on the earliest collection, taken after them: every frame and confirmation equal the unit's but for memory reads ETS made before writing, which answer what the unit held before and differ only in octets ETS then wrote | The defaults, from the collection before ETS's application download at the defaults: taken without a refusal and verified; ETS's partial form, its memory writes on the wire exactly ETS's, the unit's memory after it exactly what ETS's download left |
+| Theben Meteodata 140 S weather station (MV-0701) | Every request of ETS's four captured downloads (the full download, a parameter, a link, the revert), in order into one unit from the collection before them: every frame the simulator answers and every confirmation equal the unit's, the full download's 191 memory reads included | The configuration of ETS's full download (the project's parameter values, the links the unit's tables held) from the collection before it: taken without a refusal and verified; the declared form, its memory writes on the wire ETS's two (the address table's count and the download marker), the unit's memory after it exactly what ETS's download left |
 
 ```bash
-BUSFORGE_CORPUS=... bun run tools/sim-unit-serve.ts meanwell-knx40e --tool ETS --log ./capture.log \
+BUSFORGE_CORPUS=... bun run tools/sim-unit-serve.ts <meanwell-knx40e | abb-usu-4.2 | theben-meteodata-140s> --tool ETS --log ./capture.log \
   [--port 3700] [--proxy-port 3701] [--advertise <this host's ip>]
 ```
 

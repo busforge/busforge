@@ -16,17 +16,17 @@ type Target = { object?: number; pid?: number; start?: number; count?: number; a
 const LSMS = [1, 2, 3, 4];
 const PID_DEVICE_CONTROL = 14;
 
-export function simUnitModel(collection: CollectPackage, appXml: string, behaviour: UnitBehaviour): SimUnitModel {
+// What every simulated unit takes from its collection, whatever its mask: its mask (the descriptor it answered,
+// which must be the application's), the interface objects and properties it answered and their descriptions; the
+// application's own pre-flight compares must pass on them. `refuse` throws.
+export function collectedUnit(collection: CollectPackage, appXml: string, refuse: (why: string) => never) {
   const cfg = parseAppConfig(appXml);
-  const refuse = (why: string): never => { throw new Error(`no simulated unit: ${why}`); };
   if (cfg.mask !== collection.mask) refuse(`the application is for ${cfg.mask}, the collected unit is ${collection.mask}`);
-  if (cfg.mask !== "MV-07B0") refuse(`only System B (MV-07B0) is modelled, not ${cfg.mask}`);
   const records = collection.records.map((r) => ({ ...r, target: r.target as Target }));
   const descriptor = records.find((r) => r.space === "descriptor" && r.outcome === "bytes" && (r.target.type ?? 0) === 0);
   if (!descriptor?.bytes) refuse("the collection holds no device descriptor 0");
   const mask = Buffer.from(descriptor!.bytes!, "hex").readUInt16BE(0);
   if (`MV-${mask.toString(16).padStart(4, "0").toUpperCase()}` !== cfg.mask) refuse(`the unit answered descriptor ${descriptor!.bytes}, the application is for ${cfg.mask}`);
-  if (collection.maxApdu === null) refuse("the collection holds no maximum APDU length");
 
   const objects = new Map<number, Map<number, SimProperty>>();
   const prop = (o: number, pid: number) => {
@@ -85,6 +85,14 @@ export function simUnitModel(collection: CollectPackage, appXml: string, behavio
   }
 
   if (!objects.get(0)?.get(PID_DEVICE_CONTROL)?.elements?.[0]) refuse("the collection did not read the device control (object 0 PID 14)");
+  return { mask, objects, descriptions, records };
+}
+
+export function simUnitModel(collection: CollectPackage, appXml: string, behaviour: UnitBehaviour): SimUnitModel {
+  const refuse = (why: string): never => { throw new Error(`no simulated unit: ${why}`); };
+  if (collection.mask !== "MV-07B0") refuse(`only System B (MV-07B0) is modelled here, not ${collection.mask}`);
+  const { mask, objects, descriptions, records } = collectedUnit(collection, appXml, refuse);
+  if (collection.maxApdu === null) refuse("the collection holds no maximum APDU length");
 
   const memory = records.filter((r) => r.space === "memory" && r.outcome === "bytes" && r.target.address !== undefined && r.bytes);
   const segments = new Map<number, { at: number; size: number; bytes: Buffer }>();

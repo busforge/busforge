@@ -24,6 +24,7 @@
 // - the basic restart as the unit's captures show it.
 // Every frame it sends carries the request's priority (system priority on a transport-layer control frame)
 // and is an extended frame where it is longer than a standard one, as the unit's frames in the captures are.
+// tools/sim-unit-0701.ts builds the memory-mapped System 7 unit (MV-0701) on this transport core.
 import {
   APCI, CEMI, cemiLData, numToIa, parseApdu, parseCemiLData, tpAck, tpDisconnect, withMessageCode, crc16Ccitt, crc16CcittFalse,
   type KnxTransport, type PropertyDescription,
@@ -52,8 +53,9 @@ export interface SimProperty {
 
 // How the unit takes a basic A_Restart, from its captures.
 export interface SimRestart {
-  // The unit acknowledges the restart frame itself, on layer 2 and with T_Ack.
+  // The unit acknowledges the restart frame itself, on layer 2 and, unless `transportAck` is false, with T_Ack.
   acknowledged: boolean;
+  transportAck?: boolean;
   // For this long after the restart no frame to it is acknowledged on layer 2.
   linkDownMs: number;
   // What the unit answers a numbered frame on the connection the restart ended, until that partner connects
@@ -72,9 +74,10 @@ export interface SimUnitModel {
   // Per load-state machine: where the unit places its segment (it chose that address on every download its
   // captures show) and the segment it holds at the start.
   segments: Map<number, { at: number; size: number; bytes: Buffer }>;
-  // The two octets of a memory-control-block element between the size and the CRC, as the unit reports them.
-  mcbControl: Buffer;
-  crc: "ccitt" | "ccitt-false";
+  // The two octets of a memory-control-block element between the size and the CRC, as the unit reports them,
+  // and the CRC it computes; absent on a unit that reports no memory-control block.
+  mcbControl?: Buffer;
+  crc?: "ccitt" | "ccitt-false";
   // A_Authorize_Request key (hex) -> the level the unit grants.
   authorize: Map<string, number>;
   restart: SimRestart;
@@ -87,7 +90,7 @@ export interface SimUnitModel {
 // leaves its new octets unknown until they are written.
 interface Segment { at: number; size: number; bytes: Buffer; known: Uint8Array }
 interface Connection { partner: number; recv: number; send: number; pendingAck: ReturnType<typeof setTimeout> | null; idle: ReturnType<typeof setTimeout> | null }
-type Reply = (apci: number, data: Buffer, low?: number) => void;
+export type Reply = (apci: number, data: Buffer, low?: number) => void;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -116,7 +119,7 @@ export class SimUnit implements KnxTransport {
   private stopped = false;
 
   constructor(
-    private readonly model: SimUnitModel,
+    protected readonly model: SimUnitModel,
     // The interface's own individual address: the source of the frames the tool sends through it.
     readonly assignedIa: number,
     private readonly opts: { log?: (line: string) => void; now?: () => number } = {},
@@ -134,8 +137,8 @@ export class SimUnit implements KnxTransport {
   get deviceIa(): number { return this.model.ia; }
 
   private now(): number { return this.opts.now?.() ?? Date.now(); }
-  private note(line: string): void { this.lines.push(line); this.opts.log?.(line); }
-  private refuse(what: string): void { const r = `sim-refused ${what}`; this.refusals.push(r); this.note(r); }
+  protected note(line: string): void { this.lines.push(line); this.opts.log?.(line); }
+  protected refuse(what: string): void { const r = `sim-refused ${what}`; this.refusals.push(r); this.note(r); }
 
   async connect(): Promise<void> { this.stopped = false; }
   async disconnect(): Promise<void> { this.stopped = true; this.close(); await this.line; }
@@ -211,7 +214,7 @@ export class SimUnit implements KnxTransport {
       const why = this.restartRefusal();
       if (why) { this.emit(src, tpAck(seq)); this.refuse(`A_Restart: ${why}`); return; }
       // A unit that restarts at once acknowledges the restart neither on layer 2 nor with T_Ack.
-      if (this.model.restart.acknowledged) this.emit(src, tpAck(seq));
+      if (this.model.restart.acknowledged && this.model.restart.transportAck !== false) this.emit(src, tpAck(seq));
       this.restart(src);
       return;
     }
@@ -332,12 +335,12 @@ export class SimUnit implements KnxTransport {
   }
 
   // Why the unit's restart now is not modelled, or null.
-  private restartRefusal(): string | null {
+  protected restartRefusal(): string | null {
     const loading = [...this.objects.keys()].filter((o) => this.state(o) === STATE.LOADING);
     return loading.length ? `with object ${loading.join(", ")} loading; what the unit holds after that is not shown` : null;
   }
 
-  private restart(partner: number): void {
+  protected restart(partner: number): void {
     this.close();
     this.deadPartner = partner;
     this.restartedAt = this.now();
@@ -347,11 +350,11 @@ export class SimUnit implements KnxTransport {
     this.note("restart");
   }
 
-  private property(obj: number, pid: number): SimProperty | null {
+  protected property(obj: number, pid: number): SimProperty | null {
     return this.objects.get(obj)?.get(pid) ?? null;
   }
 
-  private propertyRead(obj: number, pid: number, count: number, start: number, reply: Reply): void {
+  protected propertyRead(obj: number, pid: number, count: number, start: number, reply: Reply): void {
     const what = `A_PropertyValue_Read ${obj}/${pid} of ${count} from ${start}`;
     const prop = this.property(obj, pid);
     if (!prop) { this.refuse(`${what}: the unit was not read there`); return; }
@@ -381,7 +384,7 @@ export class SimUnit implements KnxTransport {
     reply(APCI.PROPERTY_DESCRIPTION_RESPONSE, Buffer.from([obj, d.pid, d.propertyIndex, (d.writable ? 0x80 : 0) | d.pdt, (d.maxElements >> 8) & 0x0f, d.maxElements & 0xff, (d.readLevel << 4) | d.writeLevel]));
   }
 
-  private propertyWrite(obj: number, pid: number, count: number, start: number, value: Buffer, reply: Reply): void {
+  protected propertyWrite(obj: number, pid: number, count: number, start: number, value: Buffer, reply: Reply): void {
     const prop = this.property(obj, pid);
     const what = `A_PropertyValue_Write ${obj}/${pid} ${value.toString("hex")}`;
     if (!prop || prop.elements === null) { this.refuse(`${what}: the unit holds no such property`); return; }
@@ -428,6 +431,7 @@ export class SimUnit implements KnxTransport {
         const mcb = this.property(obj, PID_MCB);
         if (mcb && mcb.elements !== null) {
           if (!seg || seg.known.some((k) => k === 0)) { this.refuse(`${what}: the segment of object ${obj} holds octets no write set and the unit was not shown to hold, so its CRC is not known`); return null; }
+          if (!this.model.mcbControl || !this.model.crc) { this.refuse(`${what}: the unit's memory-control block of object ${obj} was not shown`); return null; }
           const crc = this.model.crc === "ccitt" ? crc16Ccitt(seg.bytes) : crc16CcittFalse(seg.bytes);
           const size = Buffer.alloc(4); size.writeUInt32BE(seg.size);
           mcb.elements = [Buffer.concat([size, this.model.mcbControl, Buffer.from([crc >> 8, crc & 0xff])])];
@@ -466,7 +470,7 @@ export class SimUnit implements KnxTransport {
     return null;
   }
 
-  private memoryRead(n: number, addr: number, reply: Reply): void {
+  protected memoryRead(n: number, addr: number, reply: Reply): void {
     const what = `A_Memory_Read ${n} at 0x${addr.toString(16)}`;
     if (n === 0) { this.refuse(`${what}: a read of no octet`); return; }
     const hit = this.segmentAt(addr, n);
@@ -475,7 +479,7 @@ export class SimUnit implements KnxTransport {
     reply(APCI.MEMORY_RESPONSE, Buffer.concat([Buffer.from([addr >> 8, addr & 0xff]), hit[1].bytes.subarray(off, off + n)]), n);
   }
 
-  private memoryWrite(n: number, addr: number, data: Buffer, reply: Reply): void {
+  protected memoryWrite(n: number, addr: number, data: Buffer, reply: Reply): void {
     const what = `A_Memory_Write ${n} at 0x${addr.toString(16)}`;
     if (n === 0 || data.length !== n) { this.refuse(`${what}: ${data.length} octets of data`); return; }
     const hit = this.segmentAt(addr, n);
