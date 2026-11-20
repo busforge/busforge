@@ -18,8 +18,8 @@ function PopoverTrigger({
 // Every popover keeps 16 px off each window edge: where its trigger sits near an edge it moves to keep
 // the gap, and it is never wider than the window less the gap on both sides (Radix's available width
 // is the window's less the collision padding). A min width wins over that cap in CSS, so a caller's
-// min width is min(its width, the available width); a caller whose content can be taller than the
-// window caps its height with --radix-popover-content-available-height.
+// min width is min(its width, the available width). The height is the caller's: one whose content can
+// be taller than the window caps it with --radix-popover-content-available-height and scrolls inside.
 function PopoverContent({
   className,
   align = "center",

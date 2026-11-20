@@ -60,7 +60,7 @@ export function CompatibilityBadge({ view, manufacturer }: { view: Pick<DeviceCo
           <Icon /> {t("compat.badge", { summary: t(`compat.summary.${summary}`) })}
         </BadgeButton>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-[28rem] space-y-3 overflow-x-auto text-xs" data-testid="compatibility-detail">
+      <PopoverContent align="start" className="max-h-(--radix-popover-content-available-height) w-[28rem] scroll-shadow-y space-y-3 overflow-auto text-xs" data-testid="compatibility-detail">
         <p className="text-sm font-medium">{t("compat.title")}</p>
         {summary === "tested" && <p data-testid="compatibility-tested-detail">{t("compat.testedDetail")}</p>}
         <CompatibilityTable c={c} />
