@@ -12,13 +12,15 @@
 // KNXPROJ_PASSWORD, and KNXPROJ_PASSWORDS with one per line, every protected project is tried with each):
 //   bun run tools/ets-records.ts <project.knxproj>...
 //   bun run tools/ets-records.ts --missing [<corpus directory>...]
-//   bun run tools/ets-records.ts [--missing [<corpus directory>...]] --dry-run
+//   bun run tools/ets-records.ts <project.knxproj>... --dry-run
+//   bun run tools/ets-records.ts --missing [<corpus directory>...] --dry-run
 // The first replaces those projects' entries in the file. `--missing` records every project of the corpus
 // (or of the named directories) the file lacks and leaves the entries it holds as they are. Either drops the
 // entry of every project no longer in the corpus and keeps the others. When a project cannot be recorded
 // the run names every one that cannot and writes nothing. `--dry-run` names the projects it would record and
 // the entries it would drop, opens nothing and writes nothing.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { isAbsolute, posix } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { loadKnxproj, readAppProgram, appProgramId, decodeLoadedImage, type EtsLoaded } from "../packages/project/src/index.ts";
 import {
@@ -57,19 +59,21 @@ export const corpusProjects = (): string[] => corpusArchives().filter((f) => f.e
 
 // The projects a run records. Without `missing`, `targets` are projects of the corpus. With it, they are
 // directories (none: the whole corpus) and the projects under them that `recorded` lacks. A target that is
-// not what the mode takes, or that names nothing the corpus holds, is refused: a typo records nothing.
+// not what the mode takes, or that names nothing the corpus holds, is refused: a typo records nothing. A
+// directory is a path relative to the corpus root ("." is the root itself), matched by whole components.
 export function projectsToRecord(onDisk: readonly string[], recorded: ReadonlySet<string>, targets: readonly string[], missing: boolean): string[] {
   if (!missing) {
     const unknown = targets.filter((t) => !onDisk.includes(t));
     if (unknown.length) throw new Error(`not a project of the corpus: ${unknown.join(", ")}`);
-    return [...targets];
+    return [...new Set(targets)];
   }
   const found = new Set<string>();
-  for (const target of targets.length ? targets : [""]) {
+  for (const target of targets.length ? targets : ["."]) {
     if (target.endsWith(".knxproj")) throw new Error(`--missing takes corpus directories, not the project ${target}; name the project without --missing to record it again`);
-    const dir = target.replace(/\/+$/, "");
-    const under = onDisk.filter((p) => !dir || p.startsWith(`${dir}/`));
-    if (!under.length) throw new Error(`the corpus holds no project under ${target || "its root"}`);
+    const dir = posix.normalize(target).replace(/\/+$/, "");
+    if (isAbsolute(target) || dir === ".." || dir.startsWith("../")) throw new Error(`${target} is not a directory relative to the corpus root`);
+    const under = onDisk.filter((p) => dir === "." || p.startsWith(`${dir}/`));
+    if (!under.length) throw new Error(`the corpus holds no project under ${target}`);
     for (const p of under) if (!recorded.has(p)) found.add(p);
   }
   return [...found].sort();
@@ -86,21 +90,29 @@ export function tally(paths: readonly string[]): Map<string, number> {
   return n;
 }
 
+// One line per project with a share, sorted by path.
+const sharesOf = (byProject: ReadonlyMap<string, number>): string[] =>
+  [...byProject].filter(([, n]) => n > 0).sort(([a], [b]) => a.localeCompare(b)).map(([p, n]) => `  ${p}: ${n}`);
+
 // Where a pinned count differs from the found one, a message that names the projects whose devices make
 // the found count up, each with its share; none where they agree.
 export function countMismatches(counts: readonly PinnedCount[]): string[] {
   return counts.filter((c) => c.found !== c.pinned).map((c) => {
     const delta = c.found - c.pinned;
-    const shares = [...c.byProject].filter(([, n]) => n > 0).sort(([a], [b]) => a.localeCompare(b)).map(([p, n]) => `  ${p}: ${n}`);
+    const shares = sharesOf(c.byProject);
     return `${c.what}: found ${c.found}, pinned ${c.pinned} (${delta > 0 ? "+" : ""}${delta}). The corpus projects behind the found count, with their share:\n${shares.join("\n") || "  none"}`;
   });
 }
 
+// Each named entry's occurrences, counted, as "<what> (<n> project[s])", sorted: the form a test pins.
+export function counted(entries: readonly string[]): string[] {
+  return [...tally(entries)].map(([e, k]) => `${e} (${k} project${k === 1 ? "" : "s"})`).sort();
+}
+
 const COUNTED = /^(.*) \((\d+) projects?\)$/;
 
-// The named entries of a pinned list ("<what> (<n> project[s])", as the test builds it) held against the
-// entries a run found: for each that differs, the projects whose entries make the found count, each with its
-// number of entries.
+// The named entries of a pinned list (`counted`'s form) held against the entries a run found: for each that
+// differs, the projects whose entries make the found count, each with its number of entries.
 export function countedMismatches(found: readonly { what: string; project: string }[], pinned: readonly string[]): string[] {
   const foundBy = new Map<string, string[]>();
   for (const f of found) foundBy.set(f.what, [...(foundBy.get(f.what) ?? []), f.project]);
@@ -115,7 +127,7 @@ export function countedMismatches(found: readonly { what: string; project: strin
     const projects = foundBy.get(what) ?? [];
     const was = pinnedN.get(what);
     if (projects.length === was) continue;
-    const shares = [...tally(projects)].sort(([a], [b]) => a.localeCompare(b)).map(([p, n]) => `  ${p}: ${n}`);
+    const shares = sharesOf(tally(projects));
     out.push(`${what}: found ${projects.length}, pinned ${was ?? "no such entry"}.${shares.length ? ` The corpus projects behind the found entries, with their number:\n${shares.join("\n")}` : " No project shows it any more."}`);
   }
   return out;
@@ -246,7 +258,7 @@ if (import.meta.main) {
       records.projects = [...records.projects.filter((x) => x.path !== p), entry].sort((a, b) => a.path.localeCompare(b.path));
       console.log(`${p}: ${entry.devices.length} devices, ${entry.devices.filter((d) => d.loadedImage).length} with ETS's download record`);
     } catch (e) {
-      failures.push(`${p}: ${(e as Error).message}`);
+      failures.push(`${p}: ${describeFailure(e)}`);
     }
   }
   if (failures.length) throw new Error(`${failures.length} of ${paths.length} project(s) cannot be recorded, so nothing was written:\n${failures.join("\n")}`);

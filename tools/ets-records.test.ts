@@ -8,7 +8,7 @@ import { corpusPath, captureText } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { parseCapture, memoryImage, etsAllocations, reportedTableReferences, deviceConfiguration, deviceRows } from "./etsdiff.ts";
 import { sha256 } from "./evidence.ts";
-import { corpusProjects, countedMismatches, countMismatches, loadedImageComparison, readEtsRecords, recordedAppXml, tally, type DeviceRecord, type EtsRecords, type PinnedCount } from "./ets-records.ts";
+import { corpusProjects, counted, countedMismatches, countMismatches, loadedImageComparison, readEtsRecords, recordedAppXml, tally, type DeviceRecord, type EtsRecords, type PinnedCount } from "./ets-records.ts";
 
 // ETS's own record of its last download of a device, kept in every project it saves
 // (docs/verification.md, "ETS's download record"), held against Busforge's images offline: for every
@@ -39,13 +39,6 @@ const NOT_COMPARED = [
   "M-0004_A-7072-21-99A7-O000A not loaded: parameters (2 projects)",
   "M-0085_A-0072-30-69AA not loaded: links (12 projects)",
 ];
-
-// Each named deviation's projects, counted, as "<what> (<n> project[s])".
-function counted(entries: string[]): string[] {
-  const n = new Map<string, number>();
-  for (const e of entries) n.set(e, (n.get(e) ?? 0) + 1);
-  return [...n].map(([e, k]) => `${e} (${k} project${k === 1 ? "" : "s"})`).sort();
-}
 
 // A moved count fails naming the corpus projects whose devices make it up (tools/ets-records.ts).
 function expectNoMismatch(messages: string[]): void {
@@ -152,8 +145,9 @@ corpusDescribe("ETS's download record in the corpus projects", () => {
     const named = (k: string) => k.slice(k.indexOf(": ") + 2);
     const pinnedDeviations = KNOWN_DEVIATIONS.map(named);
     expectNoMismatch(countedMismatches(found, pinnedDeviations));
-    expect(counted(found.map((f) => f.what))).toEqual(pinnedDeviations);
     expectNoMismatch(countedMismatches(notCompared, NOT_COMPARED));
+    // The named lists are held to the canonical form too: sorted, one line per entry, the plural right.
+    expect(counted(found.map((f) => f.what))).toEqual(pinnedDeviations);
     expect(counted(notCompared.map((f) => f.what))).toEqual(NOT_COMPARED);
     // 334 records of 30 distinct device states, 42683 bytes ETS marks as its own.
     const pinned: PinnedCount[] = [

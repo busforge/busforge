@@ -111,7 +111,7 @@ the configuration the project stores, never a key) is kept in
 `captures/ets-download-records.json.gz`, written by `tools/ets-records.ts` with the password from the
 environment. The test fails when a corpus project is added, removed or changed without that file
 following it. `--missing` records every project the file lacks, in the whole corpus or under the
-directories named, and leaves the entries the file holds as they are; naming projects records those again
+directories named (relative to the corpus root), and leaves the entries the file holds as they are; naming projects records those again
 (a changed project). Every run also drops the entries of projects no longer in the corpus. A project
 that cannot be recorded (no password opens it, or the import leaves devices out) is named, with every
 other one that cannot, and nothing is written. `--dry-run` lists what a run would record and drop,

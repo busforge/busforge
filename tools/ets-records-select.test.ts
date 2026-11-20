@@ -19,6 +19,11 @@ test("--missing records the projects the file lacks and no recorded one", () => 
 test("--missing with a directory takes only the projects under it", () => {
   expect(projectsToRecord(onDisk, new Set(), ["captures/ets-sweep"], true)).toEqual(["captures/ets-sweep/one/export.knxproj", "captures/ets-sweep/two/export.knxproj"]);
   expect(projectsToRecord(onDisk, new Set(), ["captures/ets-sweep/"], true)).toEqual(["captures/ets-sweep/one/export.knxproj", "captures/ets-sweep/two/export.knxproj"]);
+  // "." and "./captures" are the corpus root and a directory of it; a path outside the corpus is refused.
+  expect(projectsToRecord(onDisk, new Set(), ["."], true)).toEqual(onDisk);
+  expect(projectsToRecord(onDisk, new Set(), ["./captures/ets-sweep"], true)).toEqual(["captures/ets-sweep/one/export.knxproj", "captures/ets-sweep/two/export.knxproj"]);
+  expect(() => projectsToRecord(onDisk, new Set(), ["/"], true)).toThrow("not a directory relative to the corpus root");
+  expect(() => projectsToRecord(onDisk, new Set(), ["../captures"], true)).toThrow("not a directory relative to the corpus root");
   // A directory name is a whole path component: "captures/ets" is not "captures/ets-sweep".
   expect(() => projectsToRecord(onDisk, new Set(), ["captures/ets"], true)).toThrow("holds no project under captures/ets");
 });
@@ -34,6 +39,7 @@ test("--missing refuses a project and a directory without projects", () => {
 
 test("named projects are recorded again, recorded or not, and one the corpus lacks is refused", () => {
   expect(projectsToRecord(onDisk, new Set(onDisk), ["captures/a.knxproj"], false)).toEqual(["captures/a.knxproj"]);
+  expect(projectsToRecord(onDisk, new Set(), ["captures/a.knxproj", "captures/a.knxproj"], false)).toEqual(["captures/a.knxproj"]);
   expect(() => projectsToRecord(onDisk, new Set(), ["captures/typo.knxproj"], false)).toThrow("not a project of the corpus: captures/typo.knxproj");
 });
 
