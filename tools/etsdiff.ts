@@ -52,6 +52,7 @@
 // (ETS's requests) and `... BRIDGE->ETS ... TUNNELLING_REQ ... | <frame-hex>` (the device's answers).
 import { gunzipSync } from "node:zlib";
 import { gaFromLevels, iaToNum, OBJ } from "../packages/knx/src/index.ts";
+import { CEMI, CEMI_CON_ERROR } from "../packages/knx/src/frame.ts";
 import { loadKnxproj, readAppProgram, readZip, type Project, type DeviceParam, type ModuleInstanceData, type DeviceLink, type ComObjInstanceAttrs } from "../packages/project/src/index.ts";
 import {
   parseAppConfig, classify, parseLoadProcedures, isMemoryMappedLsm, buildDeviceConfig, placeComObjOverrides, decodeAbsoluteImage, toAppModel,
@@ -78,7 +79,8 @@ export interface Capture {
   otherDestination: number;     // ETS memory writes addressed to any other device (not compared)
 }
 
-interface LData { code: number; src: number; dst: number; group: boolean; tpdu: Buffer }
+// `ctrl1`: the first control field (frame type, repetition, priority, and on a confirmation its error bit).
+interface LData { code: number; ctrl1: number; src: number; dst: number; group: boolean; tpdu: Buffer }
 
 // One KNXnet/IP TUNNELLING_REQUEST: header (its own length), connection header (its own length),
 // then a cEMI L_Data frame. Anything else returns null.
@@ -92,7 +94,7 @@ export function parseTunnelFrame(hex: string): LData | null {
   const len = cemi[o + 6];
   const tpdu = cemi.subarray(o + 7, o + 8 + len);
   if (tpdu.length !== len + 1) return null;
-  return { code: cemi[0], src: cemi.readUInt16BE(o + 2), dst: cemi.readUInt16BE(o + 4), group: (cemi[o + 1] & 0x80) !== 0, tpdu };
+  return { code: cemi[0], ctrl1: cemi[o], src: cemi.readUInt16BE(o + 2), dst: cemi.readUInt16BE(o + 4), group: (cemi[o + 1] & 0x80) !== 0, tpdu };
 }
 
 const L_DATA_REQ = 0x11, L_DATA_IND = 0x29;
@@ -553,4 +555,30 @@ export function configurationOfImage(cfg: AppConfig, memory: Map<number, number>
     if (i > 16) throw new Error("the configuration read from the image never settled");
     params = next;
   }
+}
+
+// The dialogue between a tool and one unit in a capture, frame by frame: the tool's requests to the unit, each
+// with the line's confirmation (OK/NEG) where the capture holds one for its TPDU (the oldest such request without
+// one), and the unit's frames with their first control field. Two runs of the same download compare by it.
+export function dialogue(text: string, device: number, tool = "ETS"): string[] {
+  const out: string[] = [];
+  const pending: { at: number; tpdu: string }[] = [];
+  for (const fr of captureLData(text, tool)) {
+    if (fr.group) continue;
+    const tpdu = fr.tpdu.toString("hex");
+    if (fr.fromTool && fr.code === CEMI.LDATA_REQ && fr.dst === device) { pending.push({ at: out.length, tpdu }); out.push(`>> ${tpdu}`); }
+    else if (!fr.fromTool && fr.code === CEMI.LDATA_CON && fr.dst === device) {
+      const k = pending.findIndex((p) => p.tpdu === tpdu);
+      if (k >= 0) out[pending.splice(k, 1)[0].at] += fr.ctrl1 & CEMI_CON_ERROR ? " NEG" : " OK";
+    } else if (!fr.fromTool && fr.code === CEMI.LDATA_IND && fr.src === device) out.push(`<< ${tpdu} ctrl ${fr.ctrl1.toString(16)}`);
+  }
+  return out;
+}
+
+// The positions where two captures' dialogues with a unit differ (a frame only one holds counts as different).
+export function dialogueDifferences(a: string, b: string, device: number, tool = "ETS"): string[] {
+  const x = dialogue(a, device, tool), y = dialogue(b, device, tool);
+  const out: string[] = [];
+  for (let i = 0; i < Math.max(x.length, y.length); i++) if (x[i] !== y[i]) out.push(`#${i}: ${x[i] ?? "(none)"} | ${y[i] ?? "(none)"}`);
+  return out;
 }

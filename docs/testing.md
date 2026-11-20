@@ -721,11 +721,11 @@ flowchart LR
 ```
 
 ```bash
-BUSFORGE_CORPUS=... bun run tools/ets-driver.ts up        # display, VNC and ETS, each PID recorded
+bun run tools/ets-driver.ts up        # display, VNC and ETS, each process recorded by PID and start time
 BUSFORGE_CORPUS=... bun run tools/ets-driver.ts row <unit> <variant> --order <order number> \
-  [--simulator <this host's ip>:3701] [--project "Busforge Sweep"] [--configured] [--out <dir>]
+  [--simulator <this host's ip>:3701] [--project "Busforge Sweep"] [--password-env <VAR>] [--configured] [--out <dir>]
 BUSFORGE_CORPUS=... bun run tools/ets-driver.ts same <ets.log> <ets.log> <unit>   # two runs, frame by frame
-bun run tools/ets-driver.ts down                          # closes what `up` started, by PID
+bun run tools/ets-driver.ts down      # closes what `up` started, and nothing else
 ```
 
 One row, step by step:
@@ -742,16 +742,24 @@ One row, step by step:
    toolbar (where the toolbar does not offer it, it is made the project's connection first), and its
    check mark read back. "Automatisch" would let ETS pick an interface itself.
 4. **The application download** by its shortcut; the driver waits for ETS6.log's end of the load
-   task, or the task's exception where it failed.
-5. **The export** of the project (no password) and the row written: `row.json`,
-   `configuration.json` (the device's configuration as the export holds it), the simulator's capture,
+   task, or the exception that ended it (`ETS_TASK_FAILED`; ETS's other warnings of the task, such as
+   falling back to a partial download, do not end the wait).
+5. **The export** of the project (no password; the export's project name is checked) and the row
+   written: `row.json`, `configuration.json` (the device's configuration as the export holds it), the
+   simulator's capture `ets.log` with `ets.log.sim.txt` and its output `ets.log.serve.txt`,
    `ets6.log.txt` from the row's start, `export.knxproj`.
 
+The row is written to `--out`, by default under the system's temporary directory
+(`ets-sweep-rows/<application id>/<variant>/`), never straight into the corpus: `tools/ets-sweep.test.ts`
+reads every row there, and a row belongs there only with its `explained.json`, which is written after
+`tools/ets-sweep.ts` judged it.
+
 Every row is judged by ETS6.log (`etsOutcome` above): a download that connected to anything but the
-simulator is `driver-failed`, whatever ETS made of it. A row the driver cannot finish keeps
-`failure.png` (full resolution), the ETS6.log tail and the simulator's log beside `driver-failed.txt`;
-dialogs it knows are closed (ETS shows them inside its window and dims the rest), else ETS is
-restarted, only the processes `up` started, by PID. Two options exist to check the verdicts on real
+simulator is `driver-failed`, whatever ETS made of it. A row the driver cannot finish gets
+`driver-failed.txt` first, then `failure.png` (full resolution), the ETS6.log tail and the simulator's
+log. Dialogs in ETS's window (ETS dims the rest of it) are closed, cancelling where they offer it, else
+ETS is restarted: only the processes `up` started, each checked by PID and start time, and only where the
+driver runs that ETS. Two options exist to check the verdicts on real
 logs: `--stop-sim-after <n>` stops the simulator once ETS sent it n frames (a download ETS aborts),
 `--wrong-interface <host:port>` sets ETS to another configured connection than the row's simulator.
 

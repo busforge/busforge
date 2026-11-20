@@ -6,9 +6,8 @@ import { parseAppConfig } from "../packages/product/src/index.ts";
 import { iaToNum } from "../packages/knx/src/index.ts";
 import { captureText, corpusPath } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
-import { capturedOnLoadedUnit, deviceConfiguration, deviceRows, parseCapture } from "./etsdiff.ts";
+import { capturedOnLoadedUnit, deviceConfiguration, deviceRows, dialogueDifferences, parseCapture } from "./etsdiff.ts";
 import { compareRuns, etsOutcome, judge, listRows, loadedImageCheck, readRow, ROW_FILES, runRow, runState, simRefusals, SWEEP_DIR, type EtsOutcome, type RowConfiguration, type RowSpec } from "./ets-sweep.ts";
-import { dialogueDifferences } from "./ets-driver.ts";
 import { mismatchLines } from "./sim-unit-product.ts";
 
 // Each row runs Busforge's download into a simulated unit on the wall clock (tools/sim-unit.test.ts: about
@@ -174,6 +173,10 @@ describe("a sweep row's verdict", () => {
       "2026-01-01 08:00:45,000 [20] INFO  Falcon.KnxIp.TCP - Connect(192.168.1.1:3671)",
     ].join("\n");
     expect(etsOutcome(failed, "1.1.20", "10.0.0.5:3701")).toEqual({ kind: "ets-failed", why: "ETS's load task failed: Knx.Ets.Hawk.DeviceManagementException: Verbindungsqualität mit 1.1.20 ist zu schlecht für eine stabile Verbindung" });
+    // A warning of the task that is no exception (ETS goes on and ends the task) is not its failure.
+    const warned = LOG("10.0.0.5:3701").replace("\n2026-01-01 08:00:08,000", "\n2026-01-01 08:00:05,000 [5] WARN  Knx.Ets.Hawk.LoadDeviceTask - Differential Image Stamp does not match, falling back to partial download\n2026-01-01 08:00:08,000");
+    expect(warned).toContain("Differential Image Stamp");
+    expect(etsOutcome(warned, "1.1.20", "10.0.0.5:3701")).toEqual({ kind: "completed" });
     // A connection elsewhere during the failed task still makes the row the driver's failure.
     expect(etsOutcome(failed.replace("Connect(10.0.0.5:3701)", "Connect(10.0.0.5:3711)"), "1.1.20", "10.0.0.5:3701").kind).toBe("driver-failed");
   });

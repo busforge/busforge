@@ -315,7 +315,12 @@ export function compareRuns(ets: RunState, busforge: RunState): string[] {
 
 // ---- ETS's side: did ETS download into the simulator, and only into it ----
 
-export type EtsOutcome = { kind: "completed" } | { kind: "ets-failed"; why: string } | { kind: "driver-failed"; why: string };
+// ETS6.log's line for a load task that failed: its LoadDeviceTask logs the exception that ended it
+// ("WARN  Knx.Ets.Hawk.LoadDeviceTask - Knx.Ets.Hawk.DeviceManagementException: ..."). Its other warnings, such
+// as "Differential Image Stamp does not match, falling back to partial download", are followed by the task's end.
+export const ETS_TASK_FAILED = /\s(?:WARN|ERROR)\s+Knx\.Ets\.Hawk\.LoadDeviceTask - [\w.]+Exception:/;
+
+export type EtsOutcome ={ kind: "completed" } | { kind: "ets-failed"; why: string } | { kind: "driver-failed"; why: string };
 
 // From ETS6.log: the application download of `ia` (from ETS's StartLoadDevice to the end of its load task)
 // connected to the simulator's endpoint alone, and ETS recorded the application, its parameters and group
@@ -325,9 +330,9 @@ export function etsOutcome(ets6log: string, ia: string, endpoint: string): EtsOu
   const starts = lines.flatMap((l, i) => (l.includes(`StartLoadDevice(Application) ${ia} `) ? [i] : []));
   if (starts.length !== 1) return { kind: "driver-failed", why: `ETS6.log holds ${starts.length} application downloads of ${ia}, not one` };
   const end = lines.findIndex((l, i) => i > starts[0] && l.includes(`LoadDeviceTask - End LoadApplicationProgram ${ia} `));
-  // A load task that fails ends without that line: ETS logs the task's exception instead (a WARN or ERROR line
-  // of its LoadDeviceTask) and goes on reconnecting to the interface afterwards.
-  const failed = end >= 0 ? -1 : lines.findIndex((l, i) => i > starts[0] && /\s(WARN|ERROR)\s+Knx\.Ets\.Hawk\.LoadDeviceTask - /.test(l));
+  // A load task that fails ends without that line: ETS logs the task's exception instead and goes on
+  // reconnecting to the interface afterwards.
+  const failed = end >= 0 ? -1 : lines.findIndex((l, i) => i > starts[0] && ETS_TASK_FAILED.test(l));
   const last = end >= 0 ? end : failed;
   const window = lines.slice(starts[0], last < 0 ? undefined : last + 1);
   const connects = window.flatMap((l) => [...l.matchAll(/ - Connect\(([^)]*)\)/g)].map((c) => c[1]));
