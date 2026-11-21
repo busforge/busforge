@@ -37,7 +37,7 @@ const KNOWN_DEVIATIONS = [
 const NOT_COMPARED = [
   "M-0004_A-7072-21-99A7-O000A not loaded: links (1 project)",
   "M-0004_A-7072-21-99A7-O000A not loaded: parameters (2 projects)",
-  "M-0085_A-0072-30-69AA not loaded: links (12 projects)",
+  "M-0085_A-0072-30-69AA not loaded: links (13 projects)",
 ];
 
 // A moved count fails naming the corpus projects whose devices make it up (tools/ets-records.ts).
@@ -72,7 +72,7 @@ corpusDescribe("ETS's download record in the corpus projects", () => {
   test("a device carries a record exactly where its application names LdCtrlLoadImageProp and ETS downloaded it", () => {
     const off = all.filter(({ d }) => !!d.loadedImage !== (d.declaresLoadImageProp === true && d.etsLoaded.application));
     expect(off.map(({ project, d }) => `${project} ${d.ia}`)).toEqual([]);
-    expectNoMismatch(countMismatches([{ what: "devices with ETS's download record", found: withRecord.length, pinned: 401, byProject: tally(withRecord.map((w) => w.project)) }]));
+    expectNoMismatch(countMismatches([{ what: "devices with ETS's download record", found: withRecord.length, pinned: 438, byProject: tally(withRecord.map((w) => w.project)) }]));
     expect(all.filter(({ d }) => !d.loadedImage && d.etsLoaded.application).length).toBeGreaterThan(100);
   });
 
@@ -149,11 +149,11 @@ corpusDescribe("ETS's download record in the corpus projects", () => {
     // The named lists are held to the canonical form too: sorted, one line per entry, the plural right.
     expect(counted(found.map((f) => f.what))).toEqual(pinnedDeviations);
     expect(counted(notCompared.map((f) => f.what))).toEqual(NOT_COMPARED);
-    // 386 records of 35 distinct device states, 51330 bytes ETS marks as its own.
+    // 422 records of 37 distinct device states, 54968 bytes ETS marks as its own.
     const pinned: PinnedCount[] = [
-      { what: "compared records", found: comparedIn.length, pinned: 386, byProject: tally(comparedIn) },
-      { what: "distinct device states, each counted for the first project that shows it", found: distinctIn.length, pinned: 35, byProject: tally(distinctIn) },
-      { what: "bytes ETS marks as its own, over the distinct device states", found: [...bytesIn.values()].reduce((n, b) => n + b, 0), pinned: 51330, byProject: bytesIn },
+      { what: "compared records", found: comparedIn.length, pinned: 422, byProject: tally(comparedIn) },
+      { what: "distinct device states, each counted for the first project that shows it", found: distinctIn.length, pinned: 37, byProject: tally(distinctIn) },
+      { what: "bytes ETS marks as its own, over the distinct device states", found: [...bytesIn.values()].reduce((n, b) => n + b, 0), pinned: 54968, byProject: bytesIn },
     ];
     expectNoMismatch(countMismatches(pinned));
   }, TIMEOUT);

@@ -675,7 +675,8 @@ all, as the unit drops it), and the unit's answers:
 - each load-state machine's load controls (events and allocation records) in order, by property or,
   on MV-0700/0701, by the control register at `0x0104`;
 - every function-property command; the restart form; every other service that is no read, in order;
-- the load state and table reference the unit last reported for each load-state machine.
+- the load state and table reference the unit last reported for each load-state machine, where it
+  reported one to both runs (a state only one run asked for is that run's read).
 
 Reads (descriptions, identity, memory-control blocks, the read before a compare, a function property's
 state, such as the security mode ETS reads of a unit that can run Data Secure) and the requests the unit
@@ -689,9 +690,16 @@ did not take are recorded and listed per side, not compared.
 | `differs` | the differences, the first first; each carries its cause once explained |
 | `refused` | Busforge refuses the download with a coded refusal (its planner's or its server's) where ETS downloads; any other error of its download fails the run instead |
 | `busforge-only` | Busforge writes where ETS failed or the simulator refused ETS |
-| `sim-refused` | the simulator refused a request of either run (its log names it); nothing is compared |
+| `sim-refused` | the simulator refused a request of either run (its log names it); nothing is compared, but for the refusals below |
 | `ets-failed` | ETS's log shows no completed download: its load task failed (ETS logs the task's exception in place of its end; the verdict quotes it), no end of its load task, no load-procedure step executed, or the programming state it records after the last step not all loaded (address, configuration, application, parameters, group addresses) |
 | `driver-failed` | ETS's log shows not exactly one download of the device, or the download connected to nothing or to anything but the simulator |
+
+**A refusal after the restart** leaves the comparison whole where all three hold: it comes after the
+run's last restart, after which the run changed nothing; the refused request changes nothing compared
+(a T_Connect or T_Disconnect, a read, a read on the connection the restart ended); and every request of
+the run the unit did not take changes nothing either (it took every write and load request). Such refusals (a tool's restart proof or closing T_Disconnect at a
+time no capture of the unit shows) stand beside the verdict with their request and time, in the
+manifest and the tool's output; every other refusal makes the row `sim-refused`.
 
 **The second check.** Where a row holds ETS's project export from after its download, Busforge's
 images for the row's configuration are held against ETS's own record of that download
@@ -715,8 +723,11 @@ BUSFORGE_CORPUS=... bun run tools/ets-sweep.ts [<application>/<variant>]... [--k
 **A calibrated row** names in `row.json` ETS's capture of the same configuration downloaded into the
 real unit. ETS's dialogue with the simulated unit (its requests with their line confirmations, the
 unit's frames with their first control field) is held to its dialogue with the real unit position by
-position, and every position that differs is listed with its cause in `explained.json` (`calibration`):
-what such a row's simulator answers is what the real unit answered ETS, or the row names where not.
+position. Where the capture holds steps before its download that the row does not run (ETS's address
+assignment), `row.json` names the position the download begins at (`calibrationFrom`), and the
+comparison starts there. Every position that differs is listed with its cause in `explained.json`
+(`calibration`): what such a row's simulator answers is what the real unit answered ETS, or the row
+names where not.
 
 `tools/ets-sweep.test.ts` runs every row with the private corpus and holds its verdict and its
 differences to `explained.json`: a new difference fails, and so does an explained one that is gone; the
@@ -746,33 +757,40 @@ flowchart LR
 bun run tools/ets-driver.ts up        # display, VNC and ETS, each process recorded by PID and start time
 BUSFORGE_CORPUS=... bun run tools/ets-driver.ts row <unit> <variant> --order <order number> \
   [--simulator <this host's ip>:3701] [--project "Busforge Sweep"] [--password-env <VAR>] [--configured] [--out <dir>]
-BUSFORGE_CORPUS=... bun run tools/ets-driver.ts same <ets.log> <ets.log> <unit>   # two runs, frame by frame
+BUSFORGE_CORPUS=... bun run tools/ets-driver.ts same <ets.log> <ets.log> <unit> [<from>]   # two runs, frame by frame
 bun run tools/ets-driver.ts down      # closes what `up` started, and nothing else
+bun run tools/ets-driver.ts import <project.knxproj> [--password-env <VAR>]   # prints the copy's name
+bun run tools/ets-driver.ts delete <project name>   # only a project `import` brought in
 ```
 
 One row, step by step:
 
 1. **The project.** ETS's own sweep project (no password), or with `--project` another one (its
-   password, where it has one, from the variable `--password-env` names), is brought to the front by its
-   window title; another open project is refused, not closed.
+   password, where it has one, from the variable `--password-env` names), is opened by ETS's project
+   search, which must list exactly that one under that name, and checked by its window title and its tab; another open
+   project is refused, not closed. `import` brings a corpus project in for that: ETS imports it as a
+   copy where it holds one with its id ("Kopie importieren", never over the one it holds), and the copy's
+   name is read from ETS's project store, the one directory the import added; `delete` removes only a
+   project `import` brought in, once ETS's delete question names it.
 2. **Line 1.1 emptied** and the product **inserted from the online catalogue** by its order number.
    Each catalogue row found is selected and its application read back from ETS's properties panel
    (device type, program version, fingerprint, which together are the application id). The row whose
    application is the unit's is inserted; two rows under the order number and the unit's version are
    refused. ETS's question for a project password, which it asks for a product that can run Data Secure,
    is cancelled (the device stays plain). The device then gets the unit's address. `--configured` skips
-   this step and downloads the device the project holds at that address as it is configured there: line 1.1's device list is
-   filtered by ETS's search to the address (a project with many devices shows more than the tree's
-   panel), its one row selected and the address read back from the properties; the search is emptied
-   again after the download.
+   this step and downloads the device the project holds at that address as it is configured there: its
+   row in line 1.1's opened tree, or else line 1.1's device list filtered by ETS's search to the address
+   (a project with many devices shows more than the tree's panel; a device number up to 25, which begins
+   three-digit ones, is never searched for: ETS's highlighting of the overlapping matches throws); the
+   address is read back from the properties, and the search emptied again after the download.
 3. **The interface set explicitly** to the configured connection at the simulator's endpoint, in the
    toolbar (where the toolbar does not offer it, it is made the project's connection first), and its
    check mark read back. "Automatisch" would let ETS pick an interface itself.
 4. **The application download** by its shortcut; the driver waits for ETS6.log's end of the load
    task, or the exception that ended it (`ETS_TASK_FAILED`; ETS's other warnings of the task, such as
    falling back to a partial download, do not end the wait).
-5. **The export** of the project (a project's password stays on its export; the export's project name
-   is checked) and the row written: `row.json`, `configuration.json` (the device's configuration as the export holds it), the
+5. **The export** of the project, from the project's row in ETS's project search (a project's password stays on its export; the export's project name is checked), and
+   the row written: `row.json`, `configuration.json` (the device's configuration as the export holds it), the
    simulator's capture `ets.log` with `ets.log.sim.txt` and its output `ets.log.serve.txt`,
    `ets6.log.txt` from the row's start, `export.knxproj`. Where the project holds the unit's application
    under another build's id (same manufacturer, number and version, another content hash: the OpenKNX

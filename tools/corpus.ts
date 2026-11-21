@@ -324,6 +324,9 @@ export const CORPUS_FILES: readonly string[] = [
     "cap-1004/abb-plain.json",
   ].map((f) => `internal/captures/${f}`),
   "collections/meteodata-140s-hc04-2026-10-07/1.1.24-meteodata-collect-vor.json",
+  // The Meteodata's collection right before ETS's later parameter download (c14 on), which
+  // tools/sim-unit-0701.test.ts replays from it.
+  "internal/release-readiness/22-house/1.1.24/1.1.24-collect-vor-77.json",
   // The collections tools/sim-units.ts builds its MV-0705 units from.
   "internal/captures/cap-1004/mdt-plain.json",
   "collections/gira-m0008-backup-2026-10-05/1.1.1-gira-m0008-collect.json",

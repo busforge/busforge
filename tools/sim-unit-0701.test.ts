@@ -296,6 +296,17 @@ corpusDescribe("the simulated Theben Meteodata 140 S", () => {
     expect(sim.refusals).toEqual([]);
   });
 
+  // ETS 6's parameter download of a later day (one parameter on; off again in a second one). The collections of that
+  // day, right before and right after the two, read only the memory's first 80 octets (0x4000-0x404f, and the load states),
+  // and ETS compares the unit's memory beyond them before it writes: replayed from the one before, every frame equals
+  // the unit's up to ETS's first read past them, which the simulator refuses with the collect read that would close
+  // the gap (no corpus collection of the unit around these downloads holds that memory).
+  test("answers ETS's later parameter download as the unit did until its first read of memory the collection right before it lacks", async () => {
+    const { sim, runs } = await replay(THEBEN_METEODATA_140S, "internal/release-readiness/22-house/1.1.24/1.1.24-collect-vor-77.json", ["captures/meteodata-140s-ets-partial-c14-on.log"], METEODATA);
+    expect(replayDifferences(runs[0].steps)[0]).toStartWith("frame 67: ");
+    expect(sim.refusals[0]).toBe("sim-refused A_Memory_Read 12 at 0x4400: the collection did not read 0x4400-0x440b; a collect read of A_Memory_Read 12 at 0x4400 closes it");
+  });
+
   // Busforge's full download of the configuration ETS downloaded: the parameter values the house project's export
   // holds for the unit (captures/meteodata-140s-config.json), the links its tables held before ETS's downloads.
   test("takes Busforge's full download of the configuration ETS downloaded through the KNXnet/IP server: ETS's writes, ETS's end state", async () => {

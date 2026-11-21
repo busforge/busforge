@@ -575,10 +575,14 @@ export function dialogue(text: string, device: number, tool = "ETS"): string[] {
   return out;
 }
 
-// The positions where two captures' dialogues with a unit differ (a frame only one holds counts as different).
-export function dialogueDifferences(a: string, b: string, device: number, tool = "ETS"): string[] {
-  const x = dialogue(a, device, tool), y = dialogue(b, device, tool);
+// The positions where two captures' dialogues with a unit differ (a frame only one holds counts as different),
+// `a`'s from its position `fromA` on (where `a` holds steps before the dialogue `b` repeats), each named by its
+// position in `a` (`b`'s is that less `fromA`).
+export function dialogueDifferences(a: string, b: string, device: number, tool = "ETS", fromA = 0): string[] {
+  const whole = dialogue(a, device, tool);
+  if (!Number.isInteger(fromA) || fromA < 0 || fromA > whole.length) throw new Error(`the dialogue is compared from position ${fromA}, outside its ${whole.length} frames`);
+  const x = whole.slice(fromA), y = dialogue(b, device, tool);
   const out: string[] = [];
-  for (let i = 0; i < Math.max(x.length, y.length); i++) if (x[i] !== y[i]) out.push(`#${i}: ${x[i] ?? "(none)"} | ${y[i] ?? "(none)"}`);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) if (x[i] !== y[i]) out.push(`#${i + fromA}: ${x[i] ?? "(none)"} | ${y[i] ?? "(none)"}`);
   return out;
 }

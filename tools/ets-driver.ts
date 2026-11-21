@@ -5,8 +5,11 @@
 //   BUSFORGE_CORPUS=... bun run tools/ets-driver.ts row <unit> <variant> --order <order number> \
 //     [--simulator <this host's ip>:3701] [--project "Busforge Sweep"] [--password-env <VAR>] [--configured] \
 //     [--out <dir>] [--stop-sim-after <frames>] [--wrong-interface <host:port>] [--sim-override <object>/<PID>=<hex>]...
-//   BUSFORGE_CORPUS=... bun run tools/ets-driver.ts same <ets.log> <ets.log> <unit>       two runs, frame by frame
+//   BUSFORGE_CORPUS=... bun run tools/ets-driver.ts same <ets.log> <ets.log> <unit> [<from>]   two runs, frame by frame
 //   BUSFORGE_CORPUS=... bun run tools/ets-driver.ts rerun-identity <row dir> <unit>       the identity loop
+//   bun run tools/ets-driver.ts import <project.knxproj> [--password-env <VAR>]   into ETS (as a copy where it
+//                                                                                    holds the project); prints its name
+//   bun run tools/ets-driver.ts delete <project name>                             a project `import` brought in
 //   bun run tools/ets-driver.ts up | down | shot <png> | words [<png>] | xdo <args>... | type <text>
 //
 // THE ROW (runRow). On the bench host ETS runs maximised on the display, German UI, in its own project (no
@@ -56,10 +59,10 @@ const step = (what: string) => console.error(`${new Date().toISOString().slice(1
 // ---- the bench host ----
 
 // One ssh call: `command` as ssh's command line, `input` on its stdin; its stdout.
-function ssh(command: string, input: string, opts: { timeoutMs?: number; allowFail?: boolean } = {}): Buffer {
+function ssh(command: string, input: string | Buffer, opts: { timeoutMs?: number; allowFail?: boolean } = {}): Buffer {
   const r = spawnSync("ssh", ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", HOST, command], { input, timeout: opts.timeoutMs ?? 120_000, maxBuffer: 64 << 20 });
   if (r.error) throw r.error;
-  if (r.status !== 0 && !opts.allowFail) throw new Error(`on ${HOST} (${r.status}): ${r.stderr.toString().trim()}\n${command === "bash -s" ? input : command}`);
+  if (r.status !== 0 && !opts.allowFail) throw new Error(`on ${HOST} (${r.status}): ${r.stderr.toString().trim()}\n${command === "bash -s" ? input.toString() : command}`);
   return r.stdout;
 }
 // A shell script on the bench host; its stdout.
@@ -200,13 +203,27 @@ class Screen {
       await sleep(1500);
     }
   }
+  // The first word `test` accepts in `region`, looked for until `timeoutMs`.
+  async waitWord(test: (w: Word) => boolean, region: Region, timeoutMs: number, what: string): Promise<Word> {
+    const until = Date.now() + timeoutMs;
+    for (;;) {
+      const hit = this.look(region).ws.find(test);
+      if (hit) return hit;
+      if (Date.now() > until) return fail(`${what} did not appear within ${timeoutMs / 1000} s`);
+      await sleep(1500);
+    }
+  }
   clean(): void { for (const f of readdirSync(this.dir)) if (f.startsWith(".screen-")) rmSync(join(this.dir, f), { force: true }); }
 }
 
 // Fixed places of ETS 6.4.1 maximised on the 1920x1200 display, read off its screen; each step reads back what
 // it changed before the next one relies on it.
 const AT = {
-  overviewTab: [100, 20], projectTab: [300, 20],
+  overviewTab: [100, 20], projectTab: [300, 20], projectTabText: { x: 205, y: 4, w: 170, h: 30 },
+  // The overview's project search, and with it filtered: the one row it lists, its Export and its menu, and the
+  // count of the projects it lists.
+  projectSearch: [300, 64], overviewHome: [33, 64], searchedRow: [294, 162], searchedExport: [1450, 192], searchedMenu: [1510, 192],
+  searchedCount: { x: 1590, y: 222, w: 270, h: 26 }, searchedName: { x: 230, y: 150, w: 570, h: 24 },
   panelSelector: [262, 93], toolbarInterface: [1716, 57], gridSearch: [1460, 92],
   leftTree: { x: 0, y: 105, w: 315, h: 525 }, mainTabs: { x: 315, y: 80, w: 500, h: 28 },
   mainGrid: { x: 315, y: 108, w: 1255, h: 515 }, catalogueGrid: { x: 315, y: 695, w: 1255, h: 465 },
@@ -321,26 +338,56 @@ function etsTitle(): string {
 // has one, from the environment variable `passwordEnv`). Another open project is refused, not closed.
 async function openProject(s: Screen, name: string, passwordEnv?: string): Promise<void> {
   const want = `ETS6 - ${name}`;
-  if (etsTitle() === want) return;
-  click(AT.projectTab[0], AT.projectTab[1]);
-  await sleep(1500);
-  const title = etsTitle();
-  if (title === want) return;
-  if (title !== "ETS6 - Übersicht") fail(`ETS has another project open (${title || "no ETS window"}); close it first`);
-  const card = await s.waitText(name, { x: 60, y: 600, w: 1800, h: 600 }, 20_000, "the project's card on ETS's overview");
-  click(card.cx, card.cy);
+  // The overview's project search puts its term into the title too: a project is open where its tab stands.
+  if (projectTabOpen(s)) {
+    click(AT.projectTab[0], AT.projectTab[1]);
+    await sleep(1500);
+    if (etsTitle() === want) return;
+    fail(`ETS has another project open (${etsTitle() || "no ETS window"}); close it first`);
+  }
+  await searchProject(s, name);
+  click(AT.searchedRow[0], AT.searchedRow[1]);
   if (passwordEnv) {
     const pw = process.env[passwordEnv] ?? fail(`the project's password is not in $${passwordEnv}`);
     await s.waitText("Passwort", undefined, 20_000, "the project's password dialog");
     typeText(pw);
     key("Return");
   }
-  // The title names the project exactly: a card of a project whose name only begins so is caught here.
-  for (let i = 0; etsTitle() !== want; i++) {
+  // The title names the project exactly: a project whose name only contains `name` is caught here.
+  for (let i = 0; !(etsTitle() === want && projectTabOpen(s)); i++) {
     if (i === 30) fail(`ETS did not open the project ${name} within 60 s (its title: ${etsTitle()})`);
     await sleep(2000);
   }
   await sleep(3000);
+}
+
+// Whether a project's tab stands beside the overview's tab (its name in it).
+const projectTabOpen = (s: Screen) => s.look(AT.projectTabText).ws.some((w) => /\w{2}/.test(w.text));
+
+// A project's name as OCR compares it: OCR reads an l as i now and then ("Fohimeister"), so those letters are one.
+const nameKey = (v: string) => norm(v.replaceAll("|", "l")).replace(/[i1]/g, "l");
+
+// The overview's project search set to `name`, listing exactly one project (OCR reads a copy's "(2)" on a card
+// unreliably; the search matches names that contain `name`, so a name another one contains is refused).
+async function searchProject(s: Screen, name: string): Promise<void> {
+  click(AT.overviewTab[0], AT.overviewTab[1]);
+  await sleep(1500);
+  click(AT.projectSearch[0], AT.projectSearch[1]);
+  key("ctrl+a");
+  typeText(name);
+  // The list follows the search late: its one row must read as `name` and the device count beside it, its last word
+  // (compared as findText compares), and the count row ("Alle 1", read as one line: sparse OCR drops its lone
+  // digit) say one.
+  let count: number | undefined, shown = "";
+  for (let i = 0; i < 8; i++) {
+    await sleep(1500);
+    const png = s.snap();
+    const line = textLines(png, AT.searchedCount, 3).join(" ").match(/Alle\s+(\d+)\s*$/);
+    count = line ? Number(line[1]) : undefined;
+    shown = textLines(png, AT.searchedName, 3).join(" ");
+    if (count === 1 && nameKey(shown.split(/\s+/).slice(0, -1).join(" ")) === nameKey(name)) return;
+  }
+  fail(`ETS's project search for "${name}" lists ${count ?? "no readable number of"} projects, the first read as "${shown}"`);
 }
 
 // The box of the topology tree's row matching `pattern`.
@@ -413,27 +460,52 @@ function gridRows(s: Screen, prep?: Prep): { y: number; text: string }[] {
   return rows(ws.filter(inside(AT.mainGrid))).filter((r) => r.y > header.y + header.h + 6 && r.words.filter((w) => /[A-Za-z]{3}/.test(w.text)).length >= 2).map((r) => ({ y: Math.round(r.y), text: r.text }));
 }
 
-// The device at `ia` of a configured project selected: line 1.1's device list filtered by ETS's search to that
-// address (a house project's tree holds more devices than the panel shows), its one row clicked, and the
-// address read back from the properties' "Physikalische Adresse" (line and device in two fields).
+// The device at `ia` of a configured project selected, and its address read back from the properties'
+// "Physikalische Adresse" (line and device in two fields). Where line 1.1's tree, opened, shows the device, its row
+// there; otherwise line 1.1's device list filtered by ETS's search to the address (a house project's tree holds
+// more devices than the panel shows). A device number up to 25 is never searched for: it begins other addresses
+// (1.1.1 begins 1.1.10 to 1.1.19 and 1.1.100 to 1.1.199), and ETS's highlighting of the overlapping matches throws
+// (an ArgumentOutOfRangeException dialog).
 async function selectByAddress(s: Screen, ia: string): Promise<void> {
-  await showLineDevices(s);
-  click(AT.gridSearch[0], AT.gridSearch[1]);
-  key("ctrl+a");
-  typeText(ia);
-  await sleep(2500);
-  const found = gridRows(s, "gray");
-  if (found.length !== 1) fail(`ETS's search for ${ia} in line 1.1 lists ${found.length} devices, not one`);
-  // The room, application and manufacturer cells are links that leave the list; the description cell is not.
-  click(560, found[0].y);
-  await sleep(1500);
+  const line = (await treeRow(s, LINE_11)) ?? fail("no line 1.1 in the topology");
+  if (!(await treeRow(s, ANY_DEVICE))) { click(15, line.cy); await sleep(2000); }
+  const dev = await treeRow(s, iaRow(ia));
+  if (dev) {
+    click(dev.cx, dev.cy);
+    await sleep(1500);
+  } else {
+    // A device number up to 25 begins three-digit ones (1.1.2 and 1.1.20 to 1.1.25).
+    if (Number(ia.split(".")[2]) <= 25) fail(`line 1.1's tree shows no ${ia}, and ETS's search for it would also match the addresses it begins`);
+    await showLineDevices(s);
+    click(AT.gridSearch[0], AT.gridSearch[1]);
+    key("ctrl+a");
+    typeText(ia);
+    await sleep(2500);
+    const found = gridRows(s, "gray");
+    if (found.length !== 1) fail(`ETS's search for ${ia} in line 1.1 lists ${found.length} devices, not one`);
+    // The room, application and manufacturer cells are links that leave the list; the description cell is not.
+    click(560, found[0].y);
+    await sleep(1500);
+  }
+  await checkAddress(s, ia);
+}
+
+// The selected device's address read from the properties' "Physikalische Adresse" (line and device in two
+// fields): OCR reads them reliably where it misreads a tree row ("{711.204" for 1.1.204).
+async function checkAddress(s: Screen, ia: string): Promise<void> {
   await showProperties(s);
-  const { ws } = s.look(AT.properties);
-  const label = findText(ws, "Physikalische Adresse")[0] ?? fail("the properties show no 'Physikalische Adresse' for the selected row");
-  const values = ws.filter((w) => w.y > label.y + 8 && w.y < label.y + 40).map((w) => w.text.replace(/[^\d.]/g, "")).filter(Boolean);
-  const [area, line, device] = ia.split(".");
+  const label = await s.waitText("Physikalische Adresse", AT.properties, 10_000, "the selected device's properties");
+  const values = s.look(AT.properties).ws.filter((w) => w.y > label.y + 8 && w.y < label.y + 40).map((w) => w.text.replace(/[^\d.]/g, "")).filter(Boolean);
+  const [area, lineNo, device] = ia.split(".");
   // OCR loses the dot of the line field now and then ("11" for 1.1).
-  if (!values.some((v) => v.replaceAll(".", "") === `${area}${line}`) || !values.includes(device)) fail(`the selected device is not ${ia} (its address fields read ${values.join(" ")})`);
+  if (!values.some((v) => v.replaceAll(".", "") === `${area}${lineNo}`) || !values.includes(device)) fail(`the selected device is not ${ia} (its address fields read ${values.join(" ")})`);
+}
+
+// The tree row right under line 1.1: its one device, in a project the driver filled from the catalogue.
+async function lineDeviceRow(s: Screen): Promise<Box> {
+  const line = (await treeRow(s, LINE_11)) ?? fail("no line 1.1 in the topology");
+  const below = rows(s.look(AT.leftTree).ws.filter(inside(AT.leftTree))).find((r) => r.y > line.cy + 8) ?? fail("line 1.1 shows no device in the tree");
+  return { x: below.words[0].x, y: below.y - 6, w: 200, h: 12, cx: below.words[0].x + 30, cy: Math.round(below.y), text: below.text };
 }
 
 // ETS's search of the device list emptied again, so that a later row of the project lists every device.
@@ -472,7 +544,8 @@ async function readCatalogueEntry(s: Screen): Promise<CatalogueEntry> {
   await showProperties(s);
   const tab = async (name: string) => {
     const { ws } = s.look(AT.properties);
-    const t = findText(ws, name).find((b) => b.y < 165) ?? fail(`the properties panel shows no ${name} tab for the catalogue row`);
+    // A product picture beside the tabs cuts OCR's reading of their names short ("Katal"): found by their start.
+    const t = findText(ws, name.slice(0, 5)).find((b) => b.y < 165) ?? fail(`the properties panel shows no ${name} tab for the catalogue row`);
     click(t.cx, t.cy);
     await sleep(1500);
     // The tab's label/value table, read as one block (word by word, OCR drops the dot in "1.1"), at three times
@@ -520,16 +593,18 @@ async function insertProduct(s: Screen, orderNumber: string, applicationId: stri
   key("Escape");
   await sleep(1000);
   const grid = { x: AT.catalogueGrid.x, y: header.cy + 37, w: AT.catalogueGrid.w, h: 1160 - header.cy - 37 };
-  // Product rows carry a medium and a version cell; the manufacturers' group headers neither. OCR reads a cut
-  // order number and the medium beside it as one word ("4930...TP"), so the medium is the end of the word that
-  // ends in the medium's column; it misreads two media ("TP,IP" as "TRIP"), so a version alone counts too.
-  const products = () => rows(s.look(grid, "binary").ws.filter(inside(grid))).filter((r) => r.words.some((w) =>
-    (w.x + w.w >= 580 && w.x + w.w <= 612 && /(?:^|[^A-Za-z])(TP|IP|RF|PL)$/.test(w.text)) || (w.x >= 740 && w.x <= 830 && /^\d[\d.]*$/.test(w.text))));
+  // Product rows fill the application column; a manufacturer's group header holds its name at the left only. (OCR
+  // misreads the narrow medium and version cells: "4930...TP", "TRIP" for "TP,IP", "T", a version glued to the
+  // application's name.)
+  const products = () => rows(s.look(grid, "binary").ws.filter(inside(grid))).filter((r) => r.words.some((w) => w.x >= 610 && /[A-Za-z]{3}/.test(w.text)));
   let items = products();
   // A manufacturer's header can stand open with its rows still loading, so a click may close it: it is clicked
-  // until its rows show, each time given a while (the online catalogue lists them late).
+  // until its rows show, each time given a while (the online catalogue lists them late). An order number names
+  // one manufacturer; only the topmost row is its header (OCR may split it into several rows).
   for (let toggle = 0; items.length === 0 && toggle < 3; toggle++) {
-    for (const h of rows(s.look(grid).ws.filter(inside(grid)))) { click(326, Math.round(h.y)); await sleep(1000); }
+    const header = rows(s.look(grid).ws.filter(inside(grid)))[0] ?? fail(`the catalogue lists nothing for order number ${orderNumber}`);
+    click(326, Math.round(header.y));
+    await sleep(1000);
     for (let i = 0; i < 3 && (items = products()).length === 0; i++) await sleep(2000);
   }
   if (items.length === 0) fail(`the catalogue holds no product for order number ${orderNumber}`);
@@ -539,14 +614,19 @@ async function insertProduct(s: Screen, orderNumber: string, applicationId: stri
     await sleep(1500);
     entries.push({ ...(await readCatalogueEntry(s)), y: Math.round(r.y) });
   }
-  // OCR breaks a long order number into words ("OpenKnxRau mController"): compared without spaces.
-  const atVersion = entries.filter((e) => e.orderNumber.replace(/\s+/g, "") === orderNumber.replace(/\s+/g, "") && e.version === want.version);
+  // OCR breaks a long order number into words ("OpenKnxRau mController") and confuses O and 0, I, l and 1
+  // ("RO111"): compared without spaces, those taken as one.
+  const orderKey = (n: string) => n.replace(/\s+/g, "").toUpperCase().replace(/O/g, "0").replace(/[IL]/g, "1");
+  const atVersion = entries.filter((e) => orderKey(e.orderNumber) === orderKey(orderNumber) && e.version === want.version);
   if (atVersion.length > 1) fail(`refused: the catalogue holds ${atVersion.length} applications under order number ${orderNumber} and version ${want.version} (${atVersion.map((e) => `${e.deviceType} ${e.fingerprint}`).join(", ")})`);
   // The one row at the unit's device type and version under another fingerprint is another build of its
   // application (an OpenKNX release ETS took from an imported project); writeRow takes it only where it parses
   // as the unit's.
-  const hit = atVersion.find((e) => e.deviceType === want.deviceType && e.fingerprint === want.fingerprint)
-    ?? (atVersion.length === 1 && atVersion[0].deviceType === want.deviceType ? atVersion[0] : undefined)
+  // A device type reads with its "$" as "S" or "3" and an O for a 0 ("SOOB6" for $00B6); a fingerprint the same.
+  const hexKey = (v: string) => v.toUpperCase().replace(/^[$S3](?=[0-9A-FO]{4}$)/, "").replace(/O/g, "0");
+  const sameType = (e: CatalogueEntry) => hexKey(e.deviceType) === hexKey(want.deviceType);
+  const hit = atVersion.find((e) => sameType(e) && hexKey(e.fingerprint) === hexKey(want.fingerprint))
+    ?? (atVersion.length === 1 && sameType(atVersion[0]) ? atVersion[0] : undefined)
     ?? fail(`no catalogue row with order number ${orderNumber} runs ${applicationId} (read: ${entries.map((e) => `${e.orderNumber} ${e.deviceType} ${e.version} ${e.fingerprint}`).join("; ")})`);
   click(500, hit.y);
   await sleep(1500);
@@ -581,7 +661,7 @@ async function insertProduct(s: Screen, orderNumber: string, applicationId: stri
 async function setAddress(s: Screen, ia: string): Promise<void> {
   if (!/^1\.1\.\d+$/.test(ia)) fail(`the driver places devices in line 1.1, not at ${ia}`);
   await showProperties(s);
-  const dev = (await treeRow(s, ANY_DEVICE)) ?? fail("no device in line 1.1");
+  const dev = await lineDeviceRow(s);
   click(dev.cx, dev.cy);
   await sleep(1500);
   const label = await s.waitText("Physikalische Adresse", AT.properties, 10_000, "the device's properties");
@@ -590,7 +670,7 @@ async function setAddress(s: Screen, ia: string): Promise<void> {
   typeText(ia.split(".")[2]);
   key("Tab");
   await sleep(2000);
-  if (!(await treeRow(s, iaRow(ia)))) fail(`the device did not take the address ${ia}`);
+  await checkAddress(s, ia);
 }
 
 // Dialogs ETS shows inside its window dim the rest of it: the window's margins turn grey, and the dialog is
@@ -683,10 +763,9 @@ async function selectInterface(s: Screen, endpoint: string): Promise<void> {
 // its export: `password` opens it); the export is checked to be of that project.
 async function exportProject(s: Screen, project: string, dir: string, password: string | undefined): Promise<void> {
   const h = host();
-  click(AT.overviewTab[0], AT.overviewTab[1]);
-  const card = await s.waitText(project, { x: 60, y: 600, w: 1800, h: 120 }, 20_000, "the project's card");
-  xdo("mousemove", String(card.cx), String(card.y - 80), "sleep", "1", "mousemove", String(card.cx), String(card.y + 84), "sleep", "1");
-  const exp = findText(s.look({ x: card.x - 20, y: card.y + 70, w: 270, h: 30 }).ws, "Export")[0] ?? fail("no Export on the project's card");
+  await searchProject(s, project);
+  xdo("mousemove", "800", String(AT.searchedRow[1] + 14), "sleep", "1");
+  const exp = findText(s.look({ x: AT.searchedExport[0] - 40, y: AT.searchedExport[1] - 12, w: 90, h: 24 }).ws, "Export")[0] ?? fail("no Export on the project's row");
   click(exp.cx, exp.cy);
   const name = await s.waitText("File name", undefined, 20_000, "the export's file dialog");
   const file = `${Date.now()}.knxproj`;
@@ -740,6 +819,130 @@ function writeRow(dir: string, o: RowOptions, applicationId: string, ia: string,
     comObjectOverrides: [...c.comObjectOverrides],
   };
   writeFileSync(join(dir, ROW_FILES.configuration), JSON.stringify(conf, null, 1) + "\n");
+}
+
+// ---- projects the driver imports ----
+
+// ETS's local projects, each by its store directory (ProjectStore/P-xxxx) with its name as ETS keeps it.
+function storedProjects(): Map<string, string> {
+  const store = `${host().prefix}/drive_c/ProgramData/KNX/ETS6/ProjectStore`;
+  const out = remote(`cd ${q(store)} && for d in P-*/; do d=\${d%/}; n=$(grep -ao 'ProjInfo Name="[^"]*"' "$d/P" | head -1 | sed 's/^ProjInfo Name="//; s/"$//'); printf '%s\\t%s\\n' "$d" "$n"; done`);
+  // ETS keeps the name as an XML attribute: its entities decoded.
+  const decode = (v: string) => v.replace(/&(?:(lt|gt|quot|apos|amp)|#(\d+)|#x([0-9a-fA-F]+));/g, (_, e: string | undefined, dec: string | undefined, hex: string | undefined) =>
+    e ? ({ lt: "<", gt: ">", quot: '"', apos: "'", amp: "&" })[e] ?? "" : String.fromCodePoint(dec ? Number(dec) : parseInt(hex!, 16)));
+  return new Map(out.split("\n").filter(Boolean).map((l) => { const [d, n] = l.split("\t"); return [d, decode(n ?? "")]; }));
+}
+
+// The projects this driver imported (and may delete), from its state on the bench host: store directory, name.
+function importedProjects(): Map<string, string> {
+  const out = remote(`f=${q(`${host().state}/imported.txt`)}; [ -r "$f" ] && cat "$f" || true`);
+  return new Map(out.split("\n").filter(Boolean).map((l) => l.split("\t") as [string, string]));
+}
+function writeImported(m: Map<string, string>): void {
+  ssh(`cat > ${q(`${host().state}/imported.txt`)}`, [...m].map(([d, n]) => `${d}\t${n}\n`).join(""));
+}
+
+// A project file imported into ETS as a new project: where ETS holds one with its id, as a copy ("Kopie
+// importieren", never over the one it holds). Its name is read from ETS's store, the one directory the import
+// added, and recorded as the driver's own.
+async function importProject(file: string, passwordEnv?: string): Promise<string> {
+  await up();
+  const h = host();
+  const s = new Screen(join(tmpdir(), "ets-driver-import"));
+  const pw = passwordEnv === undefined ? undefined : process.env[passwordEnv] ?? fail(`the project's password is not in $${passwordEnv}`);
+  const before = storedProjects();
+  const remoteFile = `${h.state}/import/${basename(file)}`;
+  ssh(`mkdir -p ${q(`${h.state}/import`)} && cat > ${q(remoteFile)}`, readFileSync(file));
+  try {
+    await closeDialogs(s);
+    // The overview as it starts, its project search emptied (a search shows a list without the import).
+    click(AT.overviewTab[0], AT.overviewTab[1]);
+    await sleep(1000);
+    click(AT.projectSearch[0], AT.projectSearch[1]);
+    key("ctrl+a", "BackSpace");
+    click(AT.overviewHome[0], AT.overviewHome[1]);
+    const imp = await s.waitText("Projekt importieren", { x: 1300, y: 380, w: 620, h: 50 }, 20_000, "the overview's 'Projekt importieren'");
+    click(imp.cx, imp.cy);
+    const field = await s.waitText("File name", undefined, 20_000, "the import's file dialog");
+    click(field.x + 180, field.cy);
+    key("ctrl+a");
+    typeText(`Z:${remoteFile.replaceAll("/", "\\")}`);
+    key("Return");
+    if (pw !== undefined) {
+      await s.waitText("Passwort", undefined, 30_000, "the project's password dialog");
+      typeText(pw);
+      key("Return");
+    }
+    let asked = 0;
+    for (let i = 0; ; i++) {
+      if (i === 90) fail("ETS did not report the import within 180 s");
+      await sleep(2000);
+      const png = s.snap(), box = dialogBox(png);
+      if (!box) continue;
+      const ws = words(png, box);
+      if (findText(ws, "Import erfolgreich").length) {
+        const ok = findText(dialogButtons(png, box), "OK")[0] ?? fail("no OK under ETS's import result");
+        click(ok.cx, ok.cy);
+        break;
+      }
+      if (findText(ws, "Import-Konflikt").length) {
+        const bar = words(png, { x: box.x, y: box.y + box.h - 45, w: box.w, h: 45 }, { psm: 7 });
+        const copy = findText(bar, "Kopie importieren")[0] ?? fail("no 'Kopie importieren' in ETS's import conflict");
+        click(copy.cx, copy.cy);
+        continue;
+      }
+      if (findText(ws, "Importiere").length) continue;
+      // The password dialog stays only where the password is missing or wrong (it closes on the right one).
+      if (findText(ws, "Passwort").length && ++asked > 2) fail(pw === undefined ? "the project asks for a password: give its variable with --password-env" : "ETS asks for the project's password again: it is not this project's");
+      if (findText(ws, "Passwort").length) continue;
+      fail(`ETS shows a dialog during the import: ${ws.map((w) => w.text).join(" ").slice(0, 160)}`);
+    }
+  } finally {
+    remote(`rm -f ${q(remoteFile)}`);
+    s.clean();
+  }
+  await sleep(2000);
+  const added = [...storedProjects()].filter(([d]) => !before.has(d));
+  if (added.length !== 1) fail(`the import added ${added.length} projects to ETS's store, not one`);
+  if (!added[0][1]) fail(`ETS's store holds no name for the imported project ${added[0][0]}`);
+  const mine = importedProjects();
+  mine.set(added[0][0], added[0][1]);
+  writeImported(mine);
+  return added[0][1];
+}
+
+// A project this driver imported deleted from ETS (its project menu, "Löschen", confirmed); any other refused.
+async function deleteProject(name: string): Promise<void> {
+  await up();
+  const mine = importedProjects(), stored = storedProjects();
+  const dir = [...mine].find(([d, n]) => n === name && stored.get(d) === name)?.[0] ?? fail(`"${name}" is no project this driver imported (${host().state}/imported.txt)`);
+  const s = new Screen(join(tmpdir(), "ets-driver-delete"));
+  try {
+    if (projectTabOpen(s)) fail(`a project is open in ETS (${etsTitle()}); close it first`);
+    await searchProject(s, name);
+    xdo("mousemove", "800", String(AT.searchedRow[1] + 14), "sleep", "1", "mousemove", String(AT.searchedMenu[0]), String(AT.searchedMenu[1]), "sleep", "0.5", "click", "1");
+    // OCR reads the menu's ö as é or a ("Léschen"): the entry is found by the rest of the word.
+    const item = await s.waitWord((w) => /^L.schen$/i.test(w.text), { x: 1200, y: 190, w: 600, h: 250 }, 10_000, "the project menu's 'Löschen'");
+    click(item.x + item.w / 2, item.y + item.h / 2);
+    await sleep(2000);
+    const png = s.snap(), box = dialogBox(png) ?? fail("ETS asked nothing before deleting");
+    // The question must name the project: the search's one row is OCR's reading, the question confirms it.
+    const asked = words(png, box).map((w) => w.text).join(" ");
+    if (!nameKey(asked).includes(nameKey(name))) fail(`ETS's delete question names no "${name}" (it reads: ${asked.slice(0, 160)}); nothing deleted`);
+    // Its OK, framed beside Abbrechen, reads only alone and enlarged ("[oK |"): the box ends 10 px left of the
+    // word "Abbrechen" and holds the OK's 75 px frame (ETS 6.4.1's question at 1920x1200).
+    const cancel = findText(dialogButtons(png, box), "Abbrechen")[0] ?? fail("no Abbrechen in ETS's delete question");
+    const ok = words(png, { x: cancel.x - 95, y: cancel.cy - 13, w: 85, h: 26 }, { scale: 4, psm: 8 }).find((w) => /ok/i.test(w.text)) ?? fail("no OK beside Abbrechen in ETS's delete question");
+    click(ok.x + ok.w / 2, ok.y + ok.h / 2);
+    for (let i = 0; storedProjects().has(dir); i++) {
+      if (i === 30) fail(`ETS still holds ${dir} after the delete`);
+      await sleep(2000);
+    }
+    const gone = [...stored.keys()].filter((d) => d !== dir && !storedProjects().has(d));
+    if (gone.length) fail(`the delete also removed ${gone.map((d) => `${d} (${stored.get(d)})`).join(", ")} from ETS's store`);
+  } finally { s.clean(); }
+  mine.delete(dir);
+  writeImported(mine);
 }
 
 // ---- the simulator on this machine ----
@@ -827,9 +1030,10 @@ async function runRow(o: RowOptions): Promise<RowRun> {
     await selectInterface(s, o.wrongInterface ?? o.simulator);
     if (o.configured) await selectByAddress(s, ia);
     else {
-      const dev = (await treeRow(s, iaRow(ia))) ?? fail(`no device ${ia} in the topology`);
+      const dev = await lineDeviceRow(s);
       click(dev.cx, dev.cy);
       await sleep(1500);
+      await checkAddress(s, ia);
     }
     step("download");
     const started = etsClock();
@@ -914,6 +1118,17 @@ async function main(): Promise<number> {
   const [cmd, ...rest] = process.argv.slice(2);
   if (cmd === "up") { await up(); console.log(owned("display.pids").concat(owned("ets.pids")).map((p) => `${p.name} ${p.pid}`).join("\n")); return 0; }
   if (cmd === "down") { await down(); return 0; }
+  if (cmd === "import") {
+    const [file, flag, env] = rest;
+    if (!file || (flag !== undefined && (flag !== "--password-env" || !env)) || rest.length > 3) throw new Error("usage: bun run tools/ets-driver.ts import <project.knxproj> [--password-env <VAR>]");
+    console.log(await importProject(file, env));
+    return 0;
+  }
+  if (cmd === "delete") {
+    if (rest.length !== 1) throw new Error("usage: bun run tools/ets-driver.ts delete <project name>");
+    await deleteProject(rest[0]);
+    return 0;
+  }
   if (cmd === "shot") { console.log(shot(rest[0] ?? join(tmpdir(), "ets.png"))); return 0; }
   if (cmd === "words") {
     const png = rest[0] ?? shot(join(tmpdir(), "ets.png"));
@@ -923,11 +1138,11 @@ async function main(): Promise<number> {
   if (cmd === "xdo") { process.stdout.write(xdo(...rest)); return 0; }
   if (cmd === "type") { typeText(rest.join(" ")); return 0; }
   if (cmd === "same") {
-    const [a, b, unit] = rest;
-    if (!a || !b || !unit) throw new Error("usage: bun run tools/ets-driver.ts same <ets.log> <ets.log> <unit>");
+    const [a, b, unit, from] = rest;
+    if (!a || !b || !unit || (from !== undefined && !/^\d+$/.test(from))) throw new Error("usage: bun run tools/ets-driver.ts same <ets.log> <ets.log> <unit> [<position in the first to compare from>]");
     const device = newSimUnit(simUnitSpec(unit)).deviceIa;
     const [x, y] = [readFileSync(a, "utf8"), readFileSync(b, "utf8")];
-    const d = dialogueDifferences(x, y, device);
+    const d = dialogueDifferences(x, y, device, "ETS", from === undefined ? 0 : Number(from));
     console.log(`${dialogue(x, device).length} and ${dialogue(y, device).length} frames with ${numToIa(device)}, ${d.length} positions differ`);
     for (const l of d.slice(0, 20)) console.log(`  ${l}`);
     return d.length ? 1 : 0;
