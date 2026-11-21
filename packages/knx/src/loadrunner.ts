@@ -68,11 +68,11 @@ export type LoadStep =
   | { op: "readProp"; obj: number; pid: number; start: number; count?: number; elementSize?: number }
   // Write a whole relative segment at its LSM's table address, resolved AT EXECUTION
   // TIME: a relative segment's address is only assigned by the alloc step, so the
-  // planner cannot precompute it the way absolute writeMem steps can. Always read-back
-  // verified (like every memory write in the engine).
+  // planner cannot precompute it the way absolute writeMem steps can. Read back after the write by
+  // default, as every memory write in the engine.
   // `verify: false` skips the per-write read-back of the whole segment. Only ever correct when
-  // something else proves the bytes (the full download echo-checks every chunk as it writes it and,
-  // after the restart, compares the device's own segment CRCs or reads the segment back); a write
+  // something else proves the bytes (the device's echo of every chunk in verify mode and, after the
+  // restart, the device's own segment CRCs or the segment read back); a write
   // nobody verifies is a write that did not happen. `echo`: the device's answer to each write is this
   // write's check, so the device must be in verify mode (the verifyMode op) or take the confirmed write.
   // `offset`: where in the segment these bytes go. A full download whose procedure declares the filled
@@ -258,7 +258,7 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
   // the confirmed extended write is never put into verify mode, and is not read back before the
   // restart: ETS does neither on such devices, and on thelsing/OpenKNX a read before the commit
   // returns the old bytes. The operation's read-back after the restart proves what was stored.
-  const writes = plan.some((s) => s.op === "writeSegment" || s.op === "writeMem" || s.op === "verifyMode");
+  const writes = plan.some((s) => s.op === "writeSegment" || s.op === "writeSegmentOwned" || s.op === "writeMem" || s.op === "verifyMode");
   let confirmed: boolean | undefined;
   // Whether a verifyMode step asked for verify mode, and whether the device is in it. ETS switches it on
   // right before its first classic A_Memory_Write, not before the A_UserMemory writes past 0xFFFF that

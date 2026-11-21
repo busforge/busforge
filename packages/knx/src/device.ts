@@ -1325,12 +1325,17 @@ export class KnxDevice {
 
   // ---- writes (ported from the proven reference; load procedure in flash.ts) ----
   async propWrite(obj: number, pid: number, data: Buffer, start = 1, count = 1): Promise<Buffer> {
+    return (await this.propWriteCounted(obj, pid, data, start, count)).value;
+  }
+  // A property write with the element count of its answer: the device echoes the written value with the
+  // count it took, or answers with count 0, where the octets after the header are an error code, not a value.
+  async propWriteCounted(obj: number, pid: number, data: Buffer, start = 1, count = 1): Promise<{ count: number; value: Buffer }> {
     const tail = Buffer.concat([Buffer.from([obj, pid, (count << 4) | ((start >> 8) & 0x0f), start & 0xff]), data]);
     const r = await this.request((s) => apdu(s, APCI.PROPERTY_WRITE, tail), true);
     if (r && r.data.length >= 2 && (r.data[0] !== obj || r.data[1] !== pid)) {
       throw new KnxError("PROPERTY_RESPONSE_MISMATCH", `a write of object ${obj} PID ${pid} was answered for object ${r.data[0]} PID ${r.data[1]}`);
     }
-    return r ? r.data.subarray(4) : Buffer.alloc(0); // device echoes the written value
+    return { count: r && r.data.length >= 3 ? r.data[2] >> 4 : 0, value: r ? r.data.subarray(4) : Buffer.alloc(0) };
   }
   // The device-control byte (object 0 PID_DEVICE_CONTROL). An element without its octet is no
   // device-control byte either: taking it as zero would write a FABRICATED device-control byte back,
@@ -1350,10 +1355,11 @@ export class KnxDevice {
   async setVerifyMode(on: boolean): Promise<void> {
     const cur = await this.deviceControl();
     const want = on ? cur | VERIFY_MODE : cur & ~VERIFY_MODE;
-    const answer = await this.propWrite(0, PID.DEVICE_CONTROL, Buffer.from([want]));
-    if (answer.length === 0 || ((answer[0] & VERIFY_MODE) !== 0) !== on) {
+    const answer = await this.propWriteCounted(0, PID.DEVICE_CONTROL, Buffer.from([want]));
+    if (answer.count !== 1 || answer.value.length === 0 || ((answer.value[0] & VERIFY_MODE) !== 0) !== on) {
+      const got = answer.count === 0 ? `a refusal${answer.value.length ? ` (0x${answer.value.toString("hex")})` : ""}` : answer.value.length ? `0x${answer.value[0].toString(16)}` : "no value";
       throw new KnxError("DEVICE_CONTROL_UNREADABLE",
-        `the device did not take verify mode (it answered the write of 0x${want.toString(16)} with ${answer.length ? `0x${answer[0].toString(16)}` : "no value"}); a download would then write blind, so refusing`);
+        `the device did not take verify mode (it answered the write of 0x${want.toString(16)} with ${got}); a download would then write blind, so refusing`);
     }
   }
 

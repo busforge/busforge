@@ -544,7 +544,7 @@ describe("writes in the device's verify mode (what LdCtrlWriteRelMem Verify=true
   // is no proof of storage (VERIFY_MODE); the check after the restart is.
   // `takes`: the bits of the device control the device takes from a write (all by default); it answers the
   // write with what it holds then.
-  const deviceWith = (opts: { control?: number; dropsAt?: number; takes?: number } = {}) => {
+  const deviceWith = (opts: { control?: number; dropsAt?: number; takes?: number; refuses?: number } = {}) => {
     const mem = new Map<number, number>();
     const propWrites: { obj: number; pid: number; data: Buffer }[] = [];
     const controlReads: number[] = [];
@@ -556,10 +556,12 @@ describe("writes in the device's verify mode (what LdCtrlWriteRelMem Verify=true
     };
     dev.propReadIfPresent = async () => null; // no PID_MAX_APDU_LENGTH: the classic write with its verify-mode echo
     dev.routeCrossesCoupler = () => false;
-    dev.propWrite = async (obj: number, pid: number, data: Buffer) => {
+    // `refuses`: the device answers the device control's write with count 0 and this error code.
+    dev.propWriteCounted = async (obj: number, pid: number, data: Buffer) => {
       propWrites.push({ obj, pid, data: Buffer.from(data) });
-      if (obj === 0 && pid === 14) { control = data[0] & (opts.takes ?? 0xff); return Buffer.from([control]); }
-      return Buffer.alloc(0);
+      if (obj === 0 && pid === 14 && opts.refuses !== undefined) return { count: 0, value: Buffer.from([opts.refuses]) };
+      if (obj === 0 && pid === 14) { control = data[0] & (opts.takes ?? 0xff); return { count: 1, value: Buffer.from([control]) }; }
+      return { count: 0, value: Buffer.alloc(0) };
     };
     // The real request machine is what memWrite drives; stub it at the frame level. The echo is built
     // from the mock's memory, as a firmware that reads its memory back would answer; thelsing/knx answers
@@ -602,6 +604,12 @@ describe("writes in the device's verify mode (what LdCtrlWriteRelMem Verify=true
     const err = await d.dev.setVerifyMode(true).then(() => null, (e: KnxError) => e);
     expect([err?.code, err?.message]).toEqual(["DEVICE_CONTROL_UNREADABLE", expect.stringContaining("answered the write of 0x4 with 0x0")]);
     expect(d.controlReads).toEqual([0]);
+  });
+  // A refusal's error code is no device-control value: 07 would read as bit 2 set.
+  test("a device that refuses the write is refused, whatever its error code", async () => {
+    const d = deviceWith({ refuses: 0x07 });
+    const err = await d.dev.setVerifyMode(true).then(() => null, (e: KnxError) => e);
+    expect([err?.code, err?.message]).toEqual(["DEVICE_CONTROL_UNREADABLE", expect.stringContaining("with a refusal (0x07)")]);
   });
 
   test("an echo that differs from the written bytes fails AT that chunk, naming the address", async () => {
@@ -866,6 +874,14 @@ describe("the write service, settled before the bracket", () => {
     await runLoadPlan(dev as unknown as KnxDevice, plan);
     expect(dev.askedAt).toBe(1); // after ["connect"], before anything else
     expect(dev.calls.filter((c) => c[0] === "setVerifyMode").length).toBe(2); // classic: verify mode as planned
+  });
+  test("a plan that writes only the owned bytes of a kept segment asks it before its first load-state event too", async () => {
+    const dev = new RecDev();
+    await runLoadPlan(dev as unknown as KnxDevice, [
+      { op: "connect" }, { op: "load", lsm: 4, assert: false },
+      { op: "writeSegmentOwned", lsm: 4, image: Buffer.from([1]), owned: [0xff], keptAt: 0x4000 },
+    ]);
+    expect(dev.askedAt).toBe(1);
   });
   test("a device written with the confirmed extended write is never put into verify mode", async () => {
     const dev = new RecDev();

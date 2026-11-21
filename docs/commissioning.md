@@ -362,7 +362,9 @@ telegrams away from where it happened. Two mechanisms catch it:
   there (`DEVICE_CONTROL_UNREADABLE`), with its load-state machines unloaded. Every classic write
   then takes the device's answer. The **parameter, group-address and structural flashes** take that
   answer as each write's check and read nothing back before the restart, as ETS
-  (`withVerifyModeEchoed`); so does the declared form of the System B full download
+  (`withVerifyModeEchoed`); their check after the restart reads the written bytes back, all but the
+  download markers the device stamps itself (`Access="None"`), which rest on the device's answer
+  alone, as on ETS. So does the declared form of the System B full download
   (`planSystemBFullDownload`). The full download in its other forms switches it on in the same place
   (`withVerifyMode`) and reads every write back besides. The answer stops the download at a
   dropped chunk but is no proof of storage (thelsing/knx answers with a copy of the request data,

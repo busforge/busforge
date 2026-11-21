@@ -1,18 +1,12 @@
 import { test, expect, describe, setDefaultTimeout } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
-import net from "node:net";
-import { join } from "node:path";
-import { KnxIpServer, cemiLData, cemiLDataGroup, crc16CcittFalse, parseCemiLData, withSource, type PropertyDescription } from "../packages/knx/src/index.ts";
-import { buildDeviceConfig, parseAppConfig, placeComObjOverrides, type ComObjInstanceOverride, type FlashResult, type ModuleInstance } from "../packages/product/src/index.ts";
+import { cemiLData, cemiLDataGroup, crc16CcittFalse, parseCemiLData, withSource, type PropertyDescription } from "../packages/knx/src/index.ts";
+import { buildDeviceConfig, parseAppConfig, placeComObjOverrides, type ComObjInstanceOverride, type ModuleInstance } from "../packages/product/src/index.ts";
 import { flashDeviceParameters } from "../apps/server/src/deviceprofile.ts";
-import type { Connection } from "../apps/server/src/db/connections.ts";
-import { startProxy } from "./knxproxy.ts";
-import { removeTempDir, tempDir } from "./test-temp.ts";
 import { captureText, catalogueXml } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { captureLData, memWriteOf } from "./etsdiff.ts";
 import { cemiOfLine, replayCapture, replayDifferences } from "./sim-unit-replay.ts";
-import { busforgeIntoSim, type RowConfiguration } from "./ets-sweep.ts";
+import { busforgeIntoSim, busforgeSessionIntoSim, type RowConfiguration } from "./ets-sweep.ts";
 import { SimUnit, type SimProperty, type SimUnitModel } from "./sim-unit.ts";
 import { BENCH_BRIDGE, GVS_AMMA, JUNG_400021SE, MEANWELL_KNX40E, OPENKNX_RAUMCONTROLLER, THEBEN_DALI_GATEWAY, THEBEN_MIX2_HMG6T, newSimUnit, type SimUnitSpec } from "./sim-units.ts";
 
@@ -416,10 +410,10 @@ corpusDescribe("the simulated MEAN WELL KNX-40E-1280D", () => {
     const { sim } = await busforgeIntoSim(MEANWELL_KNX40E, fx);
     const params = new Map(fx.params);
     const changed = new Map(params).set("M-0162_A-0004-11-F245_P-29_R-29", "1810"); // the maximum tracking time ETS's capture changes
-    const { result, capture } = await flashIntoSim(sim, (connection, dataDir) => flashDeviceParameters({
+    const { value: result, capture } = await busforgeSessionIntoSim(sim, MEANWELL_KNX40E, (connection, dataDir) => flashDeviceParameters({
       projectId: "sim", deviceId: "row", ia: fx.ia, appXml: catalogueXml(MEANWELL_KNX40E.catalogue), dataDir, connection,
       params: changed, baseParams: params, dryRun: false, neverProgrammed: false,
-    }));
+    }), () => true);
     expect(sim.refusals).toEqual([]);
     expect(result).toMatchObject({ kind: "flashed", verified: true });
     // From the first load-state write to the A_Restart, sequence numbers left out (ETS opens no connection after it).
@@ -442,30 +436,6 @@ corpusDescribe("the simulated MEAN WELL KNX-40E-1280D", () => {
     }
   });
 });
-
-// One write of Busforge's server into a unit already in `sim`, through the KNXnet/IP server and the logging proxy as
-// busforgeIntoSim takes the full download, with the proxy's log of it.
-async function flashIntoSim(sim: SimUnit, run: (connection: Connection, dataDir: string) => Promise<FlashResult>): Promise<{ result: FlashResult; capture: string }> {
-  const dir = tempDir("busforge-sim-flash-");
-  const port = await new Promise<number>((resolve) => { const s = net.createServer().listen(0, "127.0.0.1", () => { const a = s.address(); s.close(() => resolve(typeof a === "object" && a ? a.port : 0)); }); });
-  const server = new KnxIpServer({ transport: sim, maxApdu: MEANWELL_KNX40E.interfaceMaxApdu, port });
-  const log = join(dir, "capture.log");
-  const proxy = startProxy({ port: 0, bridgeHost: "127.0.0.1", bridgePort: port, log, tool: "Busforge" });
-  try {
-    await server.start();
-    await new Promise<void>((r) => proxy.listen(0, "127.0.0.1", () => r()));
-    const proxyPort = (proxy.address() as { port: number }).port;
-    const connection: Connection = { id: "sim", name: "sim", type: "ip", host: "127.0.0.1", port: proxyPort, ipTransport: "tcp", usbVendorId: null, usbProductId: null, usbSerial: null, createdAt: 0 };
-    const result = await run(connection, dir);
-    const ended = () => { const t = existsSync(log) ? readFileSync(log, "utf8") : ""; const n = (svc: string) => t.split("\n").filter((l) => l.includes(`Busforge->BRIDGE ${svc} `)).length; return n("CONNECT_REQ") > 0 && n("DISCONNECT_REQ") >= n("CONNECT_REQ"); };
-    for (let i = 0; !ended() && i < 100; i++) await new Promise((r) => setTimeout(r, 100));
-    return { result, capture: readFileSync(log, "utf8") };
-  } finally {
-    proxy.close();
-    await server.stop();
-    removeTempDir(dir);
-  }
-}
 
 // A download's frames in four parts: the session before the first load-state write, the bracket from it to the
 // A_Restart, the probes after it until the next T_Connect, and the verification from there. Sequence numbers

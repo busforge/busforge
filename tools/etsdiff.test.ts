@@ -1098,7 +1098,7 @@ function unitMemory(cfg: ReturnType<typeof parseAppConfig>, ia: number, ...downl
   for (const d of downloads) for (const [a, b] of d) m.set(a, b);
   return m;
 }
-// The structural flash against the revert: ETS's steps (verify mode aside), every byte Busforge writes
+// The structural flash against the revert: ETS's steps (verify mode included), every byte Busforge writes
 // with ETS's value, and every byte ETS changes on the unit written by Busforge; against ETS's wire exactly
 // ETS's bytes.
 // `etsImage`: ETS's image from its log, where ETS reads the unit and leaves out on the wire what it
@@ -1499,7 +1499,7 @@ corpusDescribe("Gira Tastsensor 3 Komfort (M-0008) against ETS", () => {
   // The unit before "on": the revert's whole image (ETS wrote it without a differential cut), as its stamps show.
   const beforeSperre = () => unitMemory(cfg, ia, revert);
   // Busforge's structural flash against an ETS partial download that cut what the unit held: ETS's steps
-  // (verify mode aside), the whole image (ETS's before its cut), every byte of ETS's image with ETS's value,
+  // (verify mode included), the whole image (ETS's before its cut), every byte of ETS's image with ETS's value,
   // and every other byte the unit's own, so on the unit exactly ETS's changes.
   const expectSperreForm = (plan: LoadPlan, capture: string, log: string, device: Map<number, number>) => {
     expect(planSteps(asRun(plan, cfg.mask))).toEqual(verifyModeAsStep(captureSteps(capture, ia)));
