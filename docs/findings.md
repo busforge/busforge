@@ -52,22 +52,34 @@ caps. The largest project and product databases in the test corpus unpack to und
 the outer ZIP, and its `0.xml` and `project.xml` (`Project.xml` in ETS 4) at that archive's root;
 Busforge reads an inner archive without encryption the same way. An export without a password has no
 inner archive: `P-XXXX/0.xml` and `P-XXXX/project.xml` sit in the outer ZIP, next to the application
-programs `M-XXXX/M-XXXX_A-….xml`. A program whose id ends in `0` (the Theben Meteodata 140 S's
-`M-0048_A-140C-14-EB70`) also ends in `0.xml`, and ETS may list it before the project, so Busforge
+programs `M-XXXX/M-XXXX_A-….xml`. The project's baggage, `BinaryData/` (a DCA's configuration) and
+`UserFiles/`, sits at the inner archive's root; a path below both folders is two files of one name,
+and Busforge refuses the baggage (`ARCHIVE_DUPLICATE_ENTRY`). A program whose id ends in `0` (the Theben
+Meteodata 140 S's `M-0048_A-140C-14-EB70`) also ends in `0.xml`, and ETS may list it before the project, so Busforge
 looks the files up by their place and never by how a name ends. An archive with no `0.xml` at that
-place holds no project (`INVALID_KNXPROJ`). Project files of two `P-XXXX` ids, an inner archive beside
-a `P-XXXX/0.xml` or `P-XXXX/project.xml`, or both `project.xml` and `Project.xml` at the place are more
-than one project, and Busforge refuses them (`KNXPROJ_SEVERAL_PROJECTS`) rather than read one. A ZIP
-with two entries of one name is refused too (`INVALID_KNXPROJ`).
+place holds no project (`INVALID_KNXPROJ`). Project files of two `P-XXXX` ids, or an inner archive beside
+a `P-XXXX/0.xml` or `P-XXXX/project.xml`, are more than one project, and Busforge refuses them
+(`KNXPROJ_SEVERAL_PROJECTS`) rather than read one.
 
-**Where the product data sits.** A `.knxproj` and a `.knxprod` keep each manufacturer's products in
-`M-XXXX/Hardware.xml`, one per manufacturer directory, next to its application programs and its
-`Baggages/`. Busforge reads `Hardware.xml` only there, for a project's device names, the application each
-`Hardware2Program` names and the catalogue's products alike: an entry elsewhere whose name ends in
-`Hardware.xml` (a baggage, a file at the root, a manufacturer directory below another folder) describes none
-of the archive's products. The path is taken in any case, as `project.xml` is, since ETS writes on a file
-system that does not tell case apart; two paths that differ in case only are one manufacturer's product
-data twice, and Busforge refuses the archive (`SEVERAL_HARDWARE_XML`) rather than read one.
+Every place in an archive, the project's and the manufacturers' alike, is compared in any case: ETS
+writes its archives on a file system that does not tell case apart, so `p-0001/0.xml` is the project's
+`0.xml` and `m-0083/hardware.xml` the manufacturer's `Hardware.xml`. Two entries whose paths differ in
+case only (`project.xml` and `Project.xml` side by side) are one entry twice, and so are two entries of
+one name; Busforge refuses such an archive (`ARCHIVE_DUPLICATE_ENTRY`) wherever in it the two sit, rather
+than read one of them. A backslash is no directory separator (the ZIP format writes `/`):
+`M-0083\Hardware.xml` is a file at the root.
+
+**Where the product data sits.** A `.knxproj` and a `.knxprod` keep each manufacturer's product data in its
+manufacturer directory: `M-XXXX/Hardware.xml`, one per directory, `M-XXXX/Baggages.xml` and the files it
+lists below `M-XXXX/Baggages/`, and each application program as `M-XXXX/M-XXXX_A-….xml`, in the directory
+of the manufacturer its id names. Busforge reads them only there, for a project's device names, the
+bus interfaces its programs declare, the application each `Hardware2Program` names, the catalogue's
+products, programs and images alike: an entry elsewhere whose name ends the same (a baggage, a file at the
+root, a manufacturer directory below another folder, another manufacturer's directory) is none of the
+archive's product data. The inner archive of a project holds none of them. A `Hardware.xml` at its place
+that does not parse is refused (`HARDWARE_XML_MALFORMED`), not read as an archive without products. An
+OpenKNX release ZIP holds no manufacturer directory: its product database is the plain manufacturer XML `data/<name>.xml`, which the
+catalogue imports on its own.
 
 Key relations in `0.xml`:
 
