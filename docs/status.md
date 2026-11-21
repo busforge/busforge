@@ -336,7 +336,7 @@ What each row does not show:
   ([load-procedures.md](load-procedures.md#declared-order-system-7-downloads)). Busforge's three
   writes are pinned against those captures (`tools/etsdiff.test.ts`; the parameter values are decoded
   from ETS's own image, the project behind the unit is not in the corpus). The parameter and
-  group-address flash's wire equals ETS's partial downloads, apart from verify mode; the parameter flash
+  group-address flash's wire equals ETS's partial downloads, verify mode included; the parameter flash
   ran writing the changed byte, its plan writes every byte a parameter covers, as ETS does. On the unit, every byte the
   full download planned already equalled the unit as ETS had left it: the sequence (unload, PID 5
   declarations, `LdCtrlTaskCtrl1`, `LoadCompleted`, restart) was accepted and the unit stayed loaded
