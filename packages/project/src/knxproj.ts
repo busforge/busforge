@@ -13,33 +13,22 @@ function deriveWinzipPassword(password: string): string {
 
 // An archive's entries are found by their place, never by how a name ends, and the path is compared in
 // any case: ETS writes its archives on a file system that does not tell case apart (ETS 4 names the project
-// file Project.xml, later versions project.xml). Two entries whose paths differ in case only are one entry
-// twice, refused like two entries of one name (zip.ts).
-const namesByPath = new WeakMap<Map<string, Buffer>, Map<string, string[]>>();
-function namesOf(files: Map<string, Buffer>): Map<string, string[]> {
+// file Project.xml, later versions project.xml). readZip refuses two entries whose names differ in case
+// only, so a path names one entry at most.
+const namesByPath = new WeakMap<Map<string, Buffer>, Map<string, string>>();
+function namesOf(files: Map<string, Buffer>): Map<string, string> {
   let byPath = namesByPath.get(files);
-  if (byPath) return byPath;
-  byPath = new Map();
-  for (const name of files.keys()) {
-    const path = name.toLowerCase();
-    const names = byPath.get(path);
-    if (names) names.push(name); else byPath.set(path, [name]);
+  if (!byPath) {
+    byPath = new Map([...files.keys()].map((name) => [name.toLowerCase(), name]));
+    namesByPath.set(files, byPath);
   }
-  namesByPath.set(files, byPath);
   return byPath;
 }
-const theOne = (names: string[]): string => {
-  if (names.length > 1) throw new KnxprojError("ARCHIVE_DUPLICATE_ENTRY", `the archive holds one entry twice, as ${names.join(" and ")}; Busforge does not pick one`);
-  return names[0];
-};
 // The name of the entry at `path`, undefined where the archive holds none.
-function entryAt(files: Map<string, Buffer>, path: string): string | undefined {
-  const names = namesOf(files).get(path.toLowerCase());
-  return names && theOne(names);
-}
+const entryAt = (files: Map<string, Buffer>, path: string): string | undefined => namesOf(files).get(path.toLowerCase());
 // The names of the entries whose path, in lower case, `place` matches.
 const entriesAt = (files: Map<string, Buffer>, place: RegExp): string[] =>
-  [...namesOf(files)].filter(([path]) => place.test(path)).map(([, names]) => theOne(names));
+  [...namesOf(files)].filter(([path]) => place.test(path)).map(([, name]) => name);
 
 // A project's files: an unencrypted export keeps the application programs (M-XXXX/M-XXXX_A-….xml, whose id
 // may end in 0) next to its P-XXXX/0.xml. An export with an inner archive holds P-XXXX.zip at the outer root
@@ -109,7 +98,6 @@ function projectXmlOf(outer: Map<string, Buffer>, { id, inner }: ProjectEntries)
 // product data.
 const HARDWARE_PLACE = /^m-[^/]+\/hardware\.xml$/;
 const PROGRAM_PLACE = /^(m-[^/_]+)\/\1_a-[^/]+\.xml$/;
-const hardwareXmlsOf = (outer: Map<string, Buffer>): string[] => entriesAt(outer, HARDWARE_PLACE).map((name) => dec.decode(outer.get(name)!));
 
 // A project's 0.xml, decrypted with the project password where the project has one.
 export function readXml0(bytes: Buffer, password: string | undefined): string {
@@ -164,17 +152,21 @@ function parseProductTranslations(hardware: string[]): Map<string, string[]> {
 
 const dec = new TextDecoder("utf-8");
 
-// Extract the project's "baggage": the BinaryData/ and UserFiles/ entries from the
-// inner archive. BinaryData holds DCA configuration blobs (e.g. a DALI gateway's
-// backup-store); UserFiles holds bundled ETS apps. Returned keyed by basename
-// (the leading "BinaryData/"/"UserFiles/" folder is dropped). Empty when absent.
+// Extract the project's "baggage": the entries below BinaryData/ and UserFiles/ at the inner archive's
+// root. BinaryData holds DCA configuration blobs (e.g. a DALI gateway's backup-store); UserFiles holds
+// bundled ETS apps. Returned keyed by their path below that folder (the leading "BinaryData/"/"UserFiles/"
+// is dropped); one path below both folders is two files under one key, and refused. Empty when absent.
 export function readBaggage(bytes: Buffer, password: string | undefined): Map<string, Buffer> {
   const { inner } = projectOf(readZip(bytes), password);
   const out = new Map<string, Buffer>();
   if (!inner) return out;
-  for (const [name, buf] of inner) {
-    const m = /(?:^|\/)(?:BinaryData|UserFiles)\/(.+)$/.exec(name);
-    if (m && buf.length > 0) out.set(m[1], buf);
+  const keys = new Set<string>();
+  for (const name of entriesAt(inner, /^(?:binarydata|userfiles)\/./)) {
+    const key = name.slice(name.indexOf("/") + 1);
+    if (keys.has(key.toLowerCase())) throw new KnxprojError("ARCHIVE_DUPLICATE_ENTRY", `the project's baggage holds ${key} below both BinaryData/ and UserFiles/; Busforge does not pick one`);
+    keys.add(key.toLowerCase());
+    const buf = inner.get(name)!;
+    if (buf.length > 0) out.set(key, buf);
   }
   return out;
 }
@@ -241,8 +233,14 @@ function zipProducts(outer: Map<string, Buffer>): ProductSource & { hardwareXml:
   const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", isArray: () => false });
   // In a zip only Hardware.xml carries the products, and the (huge) application-program entries are
   // read only where a program is asked for.
-  const hardwareXml = hardwareXmlsOf(outer);
-  return { hardwareXml, hardware: hardwareXml.map((xml) => parser.parse(xml) as XmlNode), program: (id) => { const b = programEntry(outer, id); return b ? dec.decode(b) : undefined; } };
+  const names = entriesAt(outer, HARDWARE_PLACE);
+  const hardwareXml = names.map((name) => dec.decode(outer.get(name)!));
+  // A Hardware.xml that does not parse is product data Busforge cannot read, not an archive without products.
+  const parse = (xml: string, i: number): XmlNode => {
+    try { return parser.parse(xml) as XmlNode; }
+    catch (e) { throw new KnxprojError("HARDWARE_XML_MALFORMED", `${names[i]} does not parse as XML: ${(e as Error).message}`); }
+  };
+  return { hardwareXml, hardware: hardwareXml.map(parse), program: (id) => { const b = programEntry(outer, id); return b ? dec.decode(b) : undefined; } };
 }
 
 // One document, one application program: the whole file IS that program's XML, parsed with its body

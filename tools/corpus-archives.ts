@@ -20,8 +20,9 @@ export const NEEDS_PASSWORD = new Set(["PASSWORD_REQUIRED", "BUSFORGE_PASSWORD_R
 // bad entry authenticates as DECRYPT_FAILED too, which is why the last refusal is named when none opens it.
 export const NOT_THIS_PASSWORD = new Set(["WRONG_PASSWORD", "DECRYPT_FAILED", "ZIPCRYPTO_PASSWORD_ENCODING", "BUSFORGE_WRONG_PASSWORD"]);
 
-// Every archive of the corpus, relative to its root, sorted. The corpus's own git directory holds none.
-export function corpusArchives(): string[] {
+// Every archive of the corpus, relative to its root, sorted (or every file `take` takes, by its name and
+// absolute path). The corpus's own git directory holds none.
+export function corpusArchives(take: (name: string, path: string) => boolean = (name) => ARCHIVE.test(name)): string[] {
   const root = corpusRoot()!;
   const found: string[] = [];
   const walk = (dir: string) => {
@@ -29,7 +30,7 @@ export function corpusArchives(): string[] {
       if (e.name === ".git") continue;
       const path = join(dir, e.name);
       if (e.isDirectory()) walk(path);
-      else if (e.isFile() && ARCHIVE.test(e.name)) found.push(relative(root, path));
+      else if (e.isFile() && take(e.name, path)) found.push(relative(root, path));
     }
   };
   walk(root);

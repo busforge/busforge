@@ -256,10 +256,13 @@ export function readZip(buf: Buffer, password?: string): Map<string, Buffer> {
   // entry to its declared size.
   let total = 0;
   // Two entries of one name would leave one of them unread, and which one is the zip writer's accident.
-  const names = new Set<string>();
+  // Names that differ in case only are one name on the file system ETS writes its archives on, which
+  // does not tell case apart; the readers find entries in any case (knxproj.ts).
+  const names = new Map<string, string>();
   for (const e of files) {
-    if (names.has(e.name)) throw new KnxprojError("ARCHIVE_DUPLICATE_ENTRY", `two entries are named ${e.name}; Busforge does not pick one`);
-    names.add(e.name);
+    const other = names.get(e.name.toLowerCase());
+    if (other !== undefined) throw new KnxprojError("ARCHIVE_DUPLICATE_ENTRY", other === e.name ? `two entries are named ${e.name}; Busforge does not pick one` : `two entries are named ${other} and ${e.name}, one name in any case; Busforge does not pick one`);
+    names.set(e.name.toLowerCase(), e.name);
     if (e.size > ZIP_ENTRY_LIMIT) throw new KnxprojError("ARCHIVE_TOO_LARGE", `entry ${e.name} unpacks to ${e.size} bytes, over the ${ZIP_ENTRY_LIMIT}-byte limit per entry`);
     total += e.size;
   }

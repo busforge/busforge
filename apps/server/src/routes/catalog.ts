@@ -52,11 +52,19 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const file = form.get("file");
     if (!(file instanceof Blob)) return err("FILE_MISSING", "missing file");
     const bytes = Buffer.from(await file.arrayBuffer());
-    // A file that is no zip (the zip reader's INVALID_KNXPROJ, or a document that does not parse) or a zip
-    // without manufacturer data is the realistic wrong-file case; report it as "not a product database"
-    // rather than leaking the .knxproj-worded INVALID_KNXPROJ. Every other refusal keeps its own code.
+    // A file that is no zip (a document that does not parse, or one that starts like a zip and is none:
+    // the zip reader's INVALID_KNXPROJ) or a zip without manufacturer data is the realistic wrong-file case;
+    // report it as "not a product database" rather than leaking the .knxproj-worded INVALID_KNXPROJ. An
+    // encrypted zip is refused in the catalogue's words, since the catalogue import takes no password.
+    // Every other refusal keeps its own code.
+    const zip = bytes.length >= 2 && bytes[0] === 0x50 && bytes[1] === 0x4b; // "PK"
     let products: ReturnType<typeof extractCatalogProducts> = [];
-    try { products = extractCatalogProducts(bytes); } catch (e) { const code = errorCode(e); if (code !== undefined && code !== "INVALID_KNXPROJ") throw e; products = []; }
+    try { products = extractCatalogProducts(bytes); } catch (e) {
+      const code = errorCode(e);
+      if (code === "PASSWORD_REQUIRED" || code === "ZIP_ENCRYPTION_UNSUPPORTED") return err("CATALOG_ENCRYPTED", "the product database is encrypted; Busforge does not read an encrypted one");
+      if (zip && code !== "INVALID_KNXPROJ") throw e;
+      products = [];
+    }
     if (products.length === 0) return err("CATALOG_IMPORT_EMPTY", "no manufacturer products found in the archive");
     const programs = extractAppPrograms(bytes, products.map((p) => p.appProgramId));
     // Only keep products whose application program is present, so every catalog

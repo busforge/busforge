@@ -51,6 +51,11 @@ describe("zip reader: offsets and lengths outside the archive", () => {
     expect(thrown(() => readZip(b))).toBe("ARCHIVE_DUPLICATE_ENTRY: two entries are named P-0001/0.xml; Busforge does not pick one");
   });
 
+  test("two entries whose names differ in case only are refused as one name twice", () => {
+    const b = zip([{ name: "M-0083/Hardware.xml", data: Buffer.from("<KNX>a</KNX>") }, { name: "m-0083/hardware.XML", data: Buffer.from("<KNX>b</KNX>") }]);
+    expect(thrown(() => readZip(b))).toBe("ARCHIVE_DUPLICATE_ENTRY: two entries are named M-0083/Hardware.xml and m-0083/hardware.XML, one name in any case; Busforge does not pick one");
+  });
+
   test("a central directory offset past the end record is refused", () => {
     const b = sample();
     b.writeUInt32LE(EOCD(b) + 1, EOCD(b) + 16);

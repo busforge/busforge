@@ -148,6 +148,14 @@ describe("the project's P-XXXX/ in any case", () => {
   });
 });
 
+describe("a Hardware.xml at its place that does not parse", () => {
+  test("is refused with its code, not read as an archive without products", () => {
+    const bytes = storeZip({ [`${M}/Hardware.xml`]: "<KNX><<<", "P-0001/0.xml": xml0 });
+    expect(codeOf(() => extractCatalogProducts(bytes))).toBe("HARDWARE_XML_MALFORMED");
+    expect(codeOf(() => loadKnxproj(bytes, undefined, "x"))).toBe("HARDWARE_XML_MALFORMED");
+  });
+});
+
 describe("a backslash is no directory separator", () => {
   // The ZIP format writes "/"; an entry named with "\" sits at the root, not in a manufacturer directory.
   test("M-XXXX\\Hardware.xml, M-XXXX\\<program>.xml and M-XXXX\\Baggages.xml are not taken", () => {
