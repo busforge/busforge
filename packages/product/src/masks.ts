@@ -75,7 +75,7 @@ export interface MaskInfo {
 }
 
 // The full table. One row per known mask version. `m()` keeps the rows terse.
-const m = (hex: number, medium: Medium, family: SystemFamily, memoryModel: MemoryModel, name: string, propertyMappedLsms = true, verifyMode = false): MaskInfo => ({
+const m = (hex: number, medium: Medium, family: SystemFamily, memoryModel: MemoryModel, name: string, { propertyMappedLsms = true, verifyMode = false } = {}): MaskInfo => ({
   mask: `MV-${hex.toString(16).toUpperCase().padStart(4, "0")}`,
   hex,
   medium,
@@ -93,45 +93,45 @@ export const MASKS: MaskInfo[] = [
   m(0x0011, "TP", "system-1", "bcu1", "System 1 (BCU1)"),
   m(0x0012, "TP", "system-1", "bcu1", "System 1 (BCU1)"),
   m(0x0013, "TP", "system-1", "bcu1", "System 1 (BCU1)"),
-  m(0x0020, "TP", "system-2", "bcu2", "System 2 (BCU2)", true, true),
-  m(0x0021, "TP", "system-2", "bcu2", "System 2 (BCU2)", true, true),
-  m(0x0025, "TP", "system-2", "bcu2", "System 2 (BCU2)", true, true),
+  m(0x0020, "TP", "system-2", "bcu2", "System 2 (BCU2)", { verifyMode: true }),
+  m(0x0021, "TP", "system-2", "bcu2", "System 2 (BCU2)", { verifyMode: true }),
+  m(0x0025, "TP", "system-2", "bcu2", "System 2 (BCU2)", { verifyMode: true }),
   m(0x0300, "TP", "system-300", "system300", "System 300"),
   m(0x0310, "TP", "interface", "none", "TP1 USB interface v1"),
   m(0x0311, "TP", "interface", "none", "TP1 USB interface v2"),
-  m(0x0700, "TP", "system-7", "absolute", "System 7 (BIM M112)", false), // memory-mapped LSMs
-  m(0x0701, "TP", "system-7", "absolute", "System 7 (BIM M112)", false), // memory-mapped LSMs
-  m(0x0705, "TP", "system-7", "absolute", "System 7 (BIM M112)", true, true),
-  m(0x07b0, "TP", "system-b", "relative", "System B", true, true),
+  m(0x0700, "TP", "system-7", "absolute", "System 7 (BIM M112)", { propertyMappedLsms: false }), // memory-mapped LSMs
+  m(0x0701, "TP", "system-7", "absolute", "System 7 (BIM M112)", { propertyMappedLsms: false }), // memory-mapped LSMs
+  m(0x0705, "TP", "system-7", "absolute", "System 7 (BIM M112)", { verifyMode: true }),
+  m(0x07b0, "TP", "system-b", "relative", "System B", { verifyMode: true }),
   m(0x0810, "TP", "ir-decoder", "none", "IR decoder"),
   m(0x0811, "TP", "ir-decoder", "none", "IR decoder"),
   m(0x0900, "TP", "coupler", "none", "Coupler 0900"),
   m(0x0910, "TP", "coupler", "none", "Coupler 1.0"),
   m(0x0911, "TP", "coupler", "none", "Coupler 1.1"),
-  m(0x0912, "TP", "coupler", "none", "Coupler 1.2", true, true),
-  m(0x091a, "TP", "coupler", "none", "KNXnet/IP router", true, true),
+  m(0x0912, "TP", "coupler", "none", "Coupler 1.2", { verifyMode: true }),
+  m(0x091a, "TP", "coupler", "none", "KNXnet/IP router", { verifyMode: true }),
   m(0x0afd, "TP", "unknown", "none", "Unspecified (0AFD)"),
   m(0x0afe, "TP", "unknown", "none", "Unspecified (0AFE)"),
   // --- Powerline (PL110) ---
   m(0x1011, "PL", "system-1", "bcu1", "PL110 System 1"),
   m(0x1012, "PL", "system-1", "bcu1", "PL110 BCU1"),
   m(0x1013, "PL", "system-1", "bcu1", "PL110 BCU1"),
-  m(0x1310, "PL", "interface", "none", "PL110 USB interface v1", true, true),
+  m(0x1310, "PL", "interface", "none", "PL110 USB interface v1", { verifyMode: true }),
   m(0x1311, "PL", "interface", "none", "PL110 USB interface v2"),
-  m(0x17b0, "PL", "system-b", "relative", "System B (PL110)", true, true),
+  m(0x17b0, "PL", "system-b", "relative", "System B (PL110)", { verifyMode: true }),
   m(0x1900, "PL", "media-coupler", "none", "Media coupler PL-TP"),
   // --- Radio frequency (RF) ---
   m(0x2010, "RF", "rf", "none", "RF bidirectional"),
   m(0x2110, "RF", "rf", "none", "RF unidirectional"),
   m(0x2311, "RF", "interface", "none", "RF USB interface v2"),
-  m(0x2705, "RF", "system-7", "absolute", "System 7 (RF)", true, true),
-  m(0x27b0, "RF", "system-b", "relative", "System B (RF)", true, true),
-  m(0x2920, "RF", "media-coupler", "none", "TP1/RF media coupler 2.0", true, true),
+  m(0x2705, "RF", "system-7", "absolute", "System 7 (RF)", { verifyMode: true }),
+  m(0x27b0, "RF", "system-b", "relative", "System B (RF)", { verifyMode: true }),
+  m(0x2920, "RF", "media-coupler", "none", "TP1/RF media coupler 2.0", { verifyMode: true }),
   // --- IP ---
   m(0x3012, "IP", "system-1", "bcu1", "IP BCU1"),
   m(0x4012, "IP", "system-1", "bcu1", "IP BCU1"),
-  m(0x5705, "IP", "system-7", "absolute", "System 7 (IP)", true, true),
-  m(0x57b0, "IP", "system-b", "relative", "System B (IP)", true, true),
+  m(0x5705, "IP", "system-7", "absolute", "System 7 (IP)", { verifyMode: true }),
+  m(0x57b0, "IP", "system-b", "relative", "System B (IP)", { verifyMode: true }),
 ];
 
 const BY_MASK = new Map(MASKS.map((info) => [info.mask, info]));
@@ -172,9 +172,10 @@ export function isMemoryMappedLsm(mask: string): boolean {
   return maskInfo(mask).propertyMappedLsms === false;
 }
 
-// True when the mask declares verify mode (MaskInfo.verifyMode): every System B and property-mapped
-// System 7 mask, not the memory-mapped MV-0700/0701 (ABB US/U 4.2, Theben Meteodata 140 S), into which
-// ETS's downloads write no device control.
+// True when the mask declares verify mode (MaskInfo.verifyMode). Of the masks with an application
+// memory model every System B and property-mapped System 7 one does (besides BCU2 and some couplers and
+// interfaces), the memory-mapped MV-0700/0701 (ABB US/U 4.2, Theben Meteodata 140 S), into which ETS's
+// downloads write no device control, do not.
 export function verifyModeDeclared(mask: string): boolean {
   return maskInfo(mask).verifyMode;
 }

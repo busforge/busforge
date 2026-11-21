@@ -1,7 +1,7 @@
 import { test, expect, describe } from "bun:test";
 import { planSystemBGaFlash, planSystemBFullDownload, appId, compareDeclaredProp, crc16Ccitt, crc16CcittFalse, mcbProves, mcbProvenRegions, readMcbTable, fillAllocatedRuns, FILL_RUN_SKIPPED, STATE } from "../src/flash.ts";
 import { KnxDevice, ERASE, RESTART_MASTER } from "../src/device.ts";
-import { runLoadPlan, leftUnloaded, type LoadPlan, type LoadStep } from "../src/loadrunner.ts";
+import { runLoadPlan, leftUnloaded, withVerifyMode, type LoadPlan, type LoadStep } from "../src/loadrunner.ts";
 import { KnxError } from "../src/errors.ts";
 
 // Recording stub of KnxDevice (the ga-flash.test.ts asDev pattern): every call is
@@ -885,11 +885,33 @@ describe("classic writes in verify mode take the device's answer", () => {
     ]);
     expect(dev.calls.filter((c) => c[0] === "memWrite" || c[0] === "setVerifyMode").map((c) => c.slice(0, 2))).toEqual([["memWrite", 0x10000], ["setVerifyMode", true], ["memWrite", 0x4000]]);
   });
-  test("a write whose check is the device's answer is refused on a device not in verify mode", async () => {
+  test("a plan whose writes are checked by the device's answer, without verify mode, is refused before anything is sent", async () => {
     const dev = new EchoDev();
-    const err = await runLoadPlan(asDev(dev), [{ op: "connect" }, { op: "writeSegment", lsm: 4, bytes: Buffer.from([1]), verify: false, echo: true }]).then(() => null, (e: Error) => e);
-    expect(err?.message).toContain("not in verify mode");
-    expect(dev.echoes).toEqual([]);
+    const err = await runLoadPlan(asDev(dev), [{ op: "connect" }, { op: "unload", lsm: 4 }, { op: "writeSegment", lsm: 4, bytes: Buffer.from([1]), verify: false, echo: true }]).then(() => null, (e: Error) => e);
+    expect(err?.message).toContain("without verify mode");
+    expect(dev.calls.map((c) => c[0])).toEqual(["connect"]);
+  });
+  test("a device that does not report its device control is refused before its first load-state event", async () => {
+    const dev = new EchoDev();
+    (dev as unknown as { deviceControl: () => Promise<number> }).deviceControl = async () => { throw new KnxError("DEVICE_CONTROL_UNREADABLE", "no answer"); };
+    const err = await runLoadPlan(asDev(dev), withVerifyMode([{ op: "connect" }, { op: "unload", lsm: 4 }, { op: "writeMem", address: 0x4000, bytes: Buffer.from([1]) }], true)).then(() => null, (e: KnxError) => e);
+    expect(err?.code).toBe("DEVICE_CONTROL_UNREADABLE");
+    expect(dev.calls.map((c) => c[0])).toEqual(["connect"]);
+  });
+  test("verify mode on memory-mapped load-state machines is refused: their load controls are classic writes nobody awaits", async () => {
+    const dev = new EchoDev();
+    const err = await runLoadPlan(asDev(dev), [{ op: "connect" }, { op: "verifyMode", on: true }, { op: "writeMem", address: 0x4000, bytes: Buffer.from([1]) }], { memMappedLsms: true }).then(() => null, (e: Error) => e);
+    expect(err?.message).toContain("memory-mapped");
+  });
+  test("a master reset ends the device's mode, and the next classic write switches it on again", async () => {
+    const dev = new EchoDev();
+    (dev as unknown as { masterResetAnswered: () => Promise<void> }).masterResetAnswered = async () => { dev.calls.push(["masterReset"]); };
+    await runLoadPlan(asDev(dev), [
+      { op: "connect" }, { op: "verifyMode", on: true }, { op: "writeMem", address: 0x4000, bytes: Buffer.from([1]) },
+      { op: "masterReset", eraseCode: 1, channel: 0, mask: "MV-07B0" }, { op: "writeMem", address: 0x4001, bytes: Buffer.from([2]) },
+    ]);
+    expect(dev.calls.filter((c) => ["setVerifyMode", "memWrite", "masterReset"].includes(c[0] as string)).map((c) => c[0])).toEqual(["setVerifyMode", "memWrite", "masterReset", "setVerifyMode", "memWrite"]);
+    expect(dev.echoes).toEqual([true, true]);
   });
 });
 

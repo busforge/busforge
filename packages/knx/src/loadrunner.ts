@@ -83,8 +83,9 @@ export type LoadStep =
   // so the whole image is written. Every write is read back before the bracket closes.
   | { op: "writeSegmentOwned"; lsm: number; image: Buffer; owned: ReadonlyArray<number>; keptAt: number }
   // Put the device into (or out of) verify mode, in which it answers every memory write (VERIFY_MODE).
-  // On: at the next classic memory write (runSteps), and every classic write after it awaits the answer,
-  // until a restart ends the mode.
+  // On: at the next classic memory write (runSteps), and every classic write after it awaits the answer;
+  // a master reset ends the device's mode and the next classic write switches it on again, the closing
+  // restart ends it. Off: at once, where the device is in it. withVerifyMode places the step.
   | { op: "verifyMode"; on: boolean }
   // Wait for the device to be able to talk again. After a long segment write it commits its flash,
   // and a small MCU can be gone for seconds doing it. See the executor for why this is not
@@ -188,6 +189,20 @@ export function differingRuns(address: number, want: Buffer, have: Buffer, block
   return runs;
 }
 
+// A download's device control as ETS writes it: where the mask declares verify mode (`declared`, the
+// mask's VerifyMode feature in the master data) ETS reads object 0 PID 14 right before its first classic
+// memory write and writes it back with bit 2 set, once, and leaves it to the closing restart to clear (04,
+// or 05 where the unit reports its application stopped; MEAN WELL KNX-40E-1280D, Theben DALI-Gateway, Gira
+// Tastsensor 3, MDT BE-02001.02). Into a unit written with the confirmed extended write (Jung 400021SE,
+// Theben MIX 2, GVS AMMA, OpenKNX) and on the memory-mapped masks (ABB US/U 4.2, Theben Meteodata 140 S)
+// it writes none: the runner leaves the step out on the former, the latter declare no verify mode. The
+// step goes before the plan's first memory write; the runner switches the mode on at the first classic one.
+export function withVerifyMode(plan: LoadPlan, declared: boolean): LoadPlan {
+  if (!declared) return plan;
+  const at = plan.findIndex((st) => st.op === "writeMem" || st.op === "writeSegment" || st.op === "writeSegmentOwned");
+  return at < 0 ? plan : [...plan.slice(0, at), { op: "verifyMode", on: true }, ...plan.slice(at)];
+}
+
 export async function runLoadPlan(dev: KnxDevice, plan: LoadPlan, opts: RunOpts = {}): Promise<void> {
   // The load-state machines this run has sent an UNLOAD or LOAD to and not yet completed. A failure
   // while any is open may leave the device without a complete application: an event that failed
@@ -235,7 +250,8 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
   // right before its first classic A_Memory_Write, not before the A_UserMemory writes past 0xFFFF that
   // may come first (bussard's ETS downloads, tools/bussard-user-memory.test.ts); in it the device answers
   // every classic write, and each write takes its answer, so no answer is left behind for a later request
-  // to take. A restart ends the mode.
+  // to take. A master reset ends the device's mode (it is switched on again at the next classic write), the
+  // closing restart ends it.
   let verifyWanted = false, verifying = false;
   const write = async (address: number, bytes: Buffer, o: { verify: boolean; echoChecked?: boolean; onProgress?: (done: number, total: number) => void }, what: string) => {
     const classic = !confirmed && address + bytes.length - 1 <= 0xffff;
@@ -251,6 +267,16 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
     if (writes && confirmed === undefined && step.op !== "connect" && step.op !== "disconnect") {
       confirmed = await dev.writesConfirmed();
       await dev.interfaceMaxApdu?.(); // asked here, outside the bracket, not at the first write inside it
+      // A device that does not report its device control is refused here, before anything is unloaded,
+      // not at the first write inside the bracket where verify mode is switched on (optional like
+      // interfaceMaxApdu: test doubles of a device leave it out).
+      if (!confirmed && plan.some((s) => s.op === "verifyMode" && s.on)) {
+        if (opts.memMappedLsms) throw new Error("verify mode on a device whose LSMs are memory-mapped: its load controls are classic writes nobody awaits the answer of");
+        await dev.deviceControl?.();
+      }
+      if (!confirmed && !plan.some((s) => s.op === "verifyMode" && s.on) && plan.some((s) => s.op === "writeSegment" && s.echo)) {
+        throw new Error("a plan whose writes are checked by the device's answer, without verify mode, on a device written classic");
+      }
     }
     opts.onStep?.(i, step, plan.length);
     switch (step.op) {
@@ -301,7 +327,7 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
         if (s !== STATE.LOADING) throw await stateRefusal(dev, step.lsm, s, `not LOADING after ${step.op === "taskPtr" ? "TaskPtr" : "TaskCtrl2"}`, opts.memMappedLsms);
         break;
       }
-      case "masterReset": verifyWanted = verifying = false; await dev.masterResetAnswered(step.eraseCode, step.channel, step.mask); break;
+      case "masterReset": verifying = false; await dev.masterResetAnswered(step.eraseCode, step.channel, step.mask); break;
       case "declaredWriteProp": {
         const d = await dev.propertyDescription(step.obj, step.pid, 0);
         const size = genericElementSize(d.pdt);
@@ -343,7 +369,7 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
       case "verifyMode":
         if (confirmed) break;
         if (step.on) verifyWanted = true;
-        else { await dev.setVerifyMode(false); verifyWanted = verifying = false; }
+        else { if (verifying) await dev.setVerifyMode(false); verifyWanted = verifying = false; }
         break;
       // HARDWARE-FOUND, and it cost a device twice before it was understood. After ~21 kB of
       // memory writes an RP2040-class device commits its flash, and while it does that it services

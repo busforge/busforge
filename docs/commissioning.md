@@ -360,8 +360,12 @@ telegrams away from where it happened. Two mechanisms catch it:
   both forms and on both memory models (`withVerifyMode`), and every classic write then takes the
   device's answer: the declared form of the System B full download echo-checks every table and
   every parameter run as it is written instead of reading it back (`planSystemBFullDownload`), its
-  partial form and the System 7 full download read every write back besides. The parameter,
-  group-address and structural flashes do not switch it on. The answer stops the download at a
+  partial form and the System 7 full download read every write back besides. Unlike ETS, Busforge
+  reads the device control once before the first load-state event, so a device that does not
+  report it is refused before anything is unloaded (`DEVICE_CONTROL_UNREADABLE`), and reads it back
+  after its write; a device that reports it but does not take bit 2 stops the download at that
+  point, with its load-state machines unloaded. The parameter, group-address and structural flashes
+  do not switch it on. The answer stops the download at a
   dropped chunk but is no proof of storage (thelsing/knx answers with a copy of the request data,
   [findings.md](findings.md) §5); after the restart the device's CRCs over each segment, or the
   segment read back, prove it ([load-procedures.md](load-procedures.md#full-download-coverage)).

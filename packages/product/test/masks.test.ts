@@ -1,7 +1,6 @@
 import { test, expect, describe } from "bun:test";
 import { MASKS, maskInfo, progModeByProperty, verifyModeDeclared, type MaskInfo } from "../src/masks.ts";
-import { withVerifyMode } from "../src/deviceflash.ts";
-import type { LoadPlan } from "@busforge/knx";
+import { withVerifyMode, type LoadPlan } from "@busforge/knx";
 
 describe("mask registry", () => {
   test("every row is internally consistent (mask string matches hex)", () => {
@@ -91,8 +90,8 @@ describe("verify mode", () => {
       { op: "writeMem", address: 0x4000, bytes: Buffer.from([1]) }, { op: "writeMem", address: 0x4001, bytes: Buffer.from([2]) },
       { op: "loadCompleted", lsm: 1 }, { op: "restart" },
     ];
-    expect(withVerifyMode(plan, "MV-0705").map((st) => st.op)).toEqual(["unload", "load", "verifyMode", "writeMem", "writeMem", "loadCompleted", "restart"]);
-    expect(withVerifyMode(plan, "MV-0701")).toEqual(plan);
-    expect(withVerifyMode([{ op: "restart" }], "MV-07B0")).toEqual([{ op: "restart" }]);
+    expect(withVerifyMode(plan, verifyModeDeclared("MV-0705")).map((st) => st.op)).toEqual(["unload", "load", "verifyMode", "writeMem", "writeMem", "loadCompleted", "restart"]);
+    expect(withVerifyMode(plan, verifyModeDeclared("MV-0701"))).toEqual(plan);
+    expect(withVerifyMode([{ op: "restart" }], true)).toEqual([{ op: "restart" }]);
   });
 });

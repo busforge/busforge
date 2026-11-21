@@ -377,9 +377,12 @@ corpusDescribe("the simulated MEAN WELL KNX-40E-1280D", () => {
     expect(withoutDeviceControl(simPhases.bracket.slice(controlAt, firstWrite))).toEqual([]);
     expect(control(unitPhases.bracket)).toEqual(["d5000e1001", "d6000e100105", "d7000e100101", "d6000e100101", "d5000e1001", "d6000e100101"]);
     // Before it this build also reads the association table's element form (object 2's PID 23 description).
-    const at = simPhases.open.findIndex((f) => f.dir === ">>" && f.tpdu === "43d8021700");
-    expect(simPhases.open.slice(at, at + 4)).toEqual([{ dir: ">>", tpdu: "43d8021700", con: "OK" }, { dir: "<<", tpdu: "c2", ctrl: 0xb0, to: 0x1164 }, { dir: "<<", tpdu: "43d90217031400ffff", ctrl: 0xbc, to: 0x1164 }, { dir: ">>", tpdu: "c2", con: "OK" }]);
-    expect(simPhases.open.toSpliced(at, 4)).toEqual(withoutDeviceControl(unitPhases.open));
+    // And it reads the device control once, before anything is unloaded (the unit answers 00).
+    expect(control(simPhases.open)).toEqual(["d5000e1001", "d6000e100100"]);
+    const simOpen = withoutDeviceControl(simPhases.open);
+    const at = simOpen.findIndex((f) => f.dir === ">>" && f.tpdu === "43d8021700");
+    expect(simOpen.slice(at, at + 4)).toEqual([{ dir: ">>", tpdu: "43d8021700", con: "OK" }, { dir: "<<", tpdu: "c2", ctrl: 0xb0, to: 0x1164 }, { dir: "<<", tpdu: "43d90217031400ffff", ctrl: 0xbc, to: 0x1164 }, { dir: ">>", tpdu: "c2", con: "OK" }]);
+    expect(simOpen.toSpliced(at, 4)).toEqual(withoutDeviceControl(unitPhases.open));
     // After the restart: probes on the dead connection, which the unit leaves without a frame (how many of
     // them its interface confirms negatively depends on the wall clock).
     for (const ph of [simPhases, unitPhases]) {

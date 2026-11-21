@@ -1332,18 +1332,23 @@ export class KnxDevice {
     }
     return r ? r.data.subarray(4) : Buffer.alloc(0); // device echoes the written value
   }
-  // Switch the device's verify mode (PID_DEVICE_CONTROL bit 2) on or off, preserving the other
-  // bits of that byte (it also carries programming mode: clobbering it would silently put the
-  // device into, or out of, programming mode).
-  async setVerifyMode(on: boolean): Promise<void> {
+  // The device-control byte (object 0 PID_DEVICE_CONTROL). An element without its octet is no
+  // device-control byte either: taking it as zero would write a FABRICATED device-control byte back,
+  // clearing programming mode and whatever else lives in it.
+  async deviceControl(): Promise<number> {
     const cur = await this.propRead(0, PID.DEVICE_CONTROL);
-    // An element without its octet is no device-control byte either: taking it as zero would write a
-    // FABRICATED device-control byte back, clearing programming mode and whatever else lives in it.
     if (cur.length === 0) {
       throw new KnxError("DEVICE_CONTROL_UNREADABLE",
         "the device did not answer a read of its device-control property, so its verify mode cannot be set without inventing the rest of that byte");
     }
-    const want = on ? cur[0] | VERIFY_MODE : cur[0] & ~VERIFY_MODE;
+    return cur[0];
+  }
+  // Switch the device's verify mode (PID_DEVICE_CONTROL bit 2) on or off, preserving the other
+  // bits of that byte (it also carries programming mode: clobbering it would silently put the
+  // device into, or out of, programming mode).
+  async setVerifyMode(on: boolean): Promise<void> {
+    const cur = await this.deviceControl();
+    const want = on ? cur | VERIFY_MODE : cur & ~VERIFY_MODE;
     await this.propWrite(0, PID.DEVICE_CONTROL, Buffer.from([want]));
     const back = await this.propRead(0, PID.DEVICE_CONTROL);
     if (back.length === 0 || ((back[0] & VERIFY_MODE) !== 0) !== on) {

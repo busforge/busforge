@@ -1,4 +1,4 @@
-import { KnxDevice, KnxError, OBJECT_TYPE_KNXNETIP, type LoadPlan, type SecurityObjectTables, SENDER_ENTRY, planSystemBGaFlash, planSystemBFullDownload, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, assocFormOf, ASSOC_TABLE_DESCRIPTION, type AssocForm, loadedTableAddr, readMcbTable, mcbProves, mcbProvenRegions, MCB_ELEMENT_BYTES, type McbEntry, GroupTableUnreadable, OBJ, PID, lsmState, STATE } from "@busforge/knx";
+import { KnxDevice, KnxError, OBJECT_TYPE_KNXNETIP, type LoadPlan, type SecurityObjectTables, SENDER_ENTRY, planSystemBGaFlash, planSystemBFullDownload, appId, runLoadPlan, withVerifyMode, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, assocFormOf, ASSOC_TABLE_DESCRIPTION, type AssocForm, loadedTableAddr, readMcbTable, mcbProves, mcbProvenRegions, MCB_ELEMENT_BYTES, type McbEntry, GroupTableUnreadable, OBJ, PID, lsmState, STATE } from "@busforge/knx";
 import { toAppModel, unmappedParamRefs } from "./application.ts";
 import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, differingFF, leaveUnreadUnchanged, verifyMaskedBytes, confirmedMatch, type ConfirmedOnlyRange, buildAbsoluteSegmentTargets, wholeBytes, refuseColorWrites, refuseCalculationWrites, differingConstants, type ConstantDifference } from "./deviceimage.ts";
 import { refuseRawDataWrites } from "./rawdata.ts";
@@ -9,8 +9,8 @@ import { buildDeviceConfig, type DeviceCapabilities, type CfgComObjImage, type D
 import { decodeParameterImage, decodeAbsoluteImage, imageValueForm } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
 import { assessParCoverage, fullDownloadParCoverage, systemBMasterResets, declaredPropChecks, relParamFillByte, relParamFullMode, declaredMcbWrites, unrunGrpSteps, lsmIdx, stepAddress, type ParCoverage, type LoadProcedures, type McbWrite } from "./loadproc.ts";
-import { planAbsoluteParFlash, buildAbsoluteParFlash, absoluteStructuralBuild, planRelativeParFlash, planRelativeStructuralFlash, planRelativePartialFullDownload, changedOwned, differentialMask, declaredMcbRegions, type McbRegion, planAbsoluteStructuralFlash, absoluteStructuralImages, differingBytes, planAbsoluteFullDownload, absoluteFullStepRefusal, fullDownloadSegmentRefusal, absoluteFullForm, withClosing, withConfirmedRestart, withVerifyMode, planSystem7GaFlash, planSystem7TableBrackets, fullDownloadImageDigest, procedureSizeRefusal, relativeFullDownloadRefusal, type AbsFullSegment } from "./deviceflash.ts";
-import { maskInfo, isMemoryMappedLsm, type MemoryModel, type SystemFamily } from "./masks.ts";
+import { planAbsoluteParFlash, buildAbsoluteParFlash, absoluteStructuralBuild, planRelativeParFlash, planRelativeStructuralFlash, planRelativePartialFullDownload, changedOwned, differentialMask, declaredMcbRegions, type McbRegion, planAbsoluteStructuralFlash, absoluteStructuralImages, differingBytes, planAbsoluteFullDownload, absoluteFullStepRefusal, fullDownloadSegmentRefusal, absoluteFullForm, withClosing, withConfirmedRestart, planSystem7GaFlash, planSystem7TableBrackets, fullDownloadImageDigest, procedureSizeRefusal, relativeFullDownloadRefusal, type AbsFullSegment } from "./deviceflash.ts";
+import { maskInfo, isMemoryMappedLsm, verifyModeDeclared, type MemoryModel, type SystemFamily } from "./masks.ts";
 import { type AppConfig, type ModuleInstance } from "./appconfig.ts";
 import type { AppModel } from "./application.ts";
 import { ProductError } from "./errors.ts";
@@ -1292,7 +1292,7 @@ export class SystemBProfile extends DeviceProfile {
     // secure procedure closes with the confirmed restart (IsSecureEnabled), the plain one with A_Restart.
     const plan = withVerifyMode(withClosing(withConfirmedRestart(planSystemBFullDownload({
       params: target.bytes, paramsInImage: fullDownloadImageCoverage(cfg, target.owned), comObj, addr, assoc, programId: programIdStamp(cfg),
-    }, fillByte, requireReboot, declaredMcbWrites(proc, target.size), security, true, closesAtOnce(cfg), filled, systemBMasterResets(proc, cfg.mask)), proc.secureEnabled), proc, "full"), cfg.mask);
+    }, fillByte, requireReboot, declaredMcbWrites(proc, target.size), security, true, closesAtOnce(cfg), filled, systemBMasterResets(proc, cfg.mask)), proc.secureEnabled), proc, "full"), verifyModeDeclared(cfg.mask));
     const imageBytes = target.size + comObj.length + addr.length + assoc.length;
 
     return {
@@ -1335,7 +1335,7 @@ export class SystemBProfile extends DeviceProfile {
       params: writes(paramsWrite) ? { image, owned: paramsWrite, keptAt: unit.paramsAt } : null,
       comObj: writes(comObjWrite) ? { image: comObj, owned: comObjWrite, keptAt: unit.comObjAt } : null,
       addr, assoc,
-    }, programIdStamp(cfg), !persistsOnLoadCompleted(cfg), mcb, security), proc.secureEnabled), proc, "full"), cfg.mask);
+    }, programIdStamp(cfg), !persistsOnLoadCompleted(cfg), mcb, security), proc.secureEnabled), proc, "full"), verifyModeDeclared(cfg.mask));
     const changedBytes = writes(paramsWrite) + writes(comObjWrite) + addr.length + assoc.length;
     return {
       plan, imageBytes: image.length + comObj.length + addr.length + assoc.length, params: image, target, comObj, addr, assoc, security, changedBytes,
@@ -2452,7 +2452,7 @@ export class System7Profile extends DeviceProfile {
     const { plan, segments, imageBytes, tableRefs } = planAbsoluteFullDownload(cfg, ctx.params, ctx.links, iaToNum(ctx.ia), proc, { moduleInstances: instances, requireReboot: false, propertyMapped, comObjectTable, form });
     if (imageBytes === 0) throw new ProductError("EMPTY_IMAGE", "built an empty download image; refusing to commission nothing");
 
-    return { plan: withVerifyMode(plan, cfg.mask), segments, imageBytes, ...(tableRefs ? { tableRefs } : {}) };
+    return { plan: withVerifyMode(plan, verifyModeDeclared(cfg.mask)), segments, imageBytes, ...(tableRefs ? { tableRefs } : {}) };
   }
 
   // Commission an absolute-segment (System 7) device from its declared load procedure: author the
