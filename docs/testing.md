@@ -696,7 +696,7 @@ did not take are recorded and listed per side, not compared.
 
 **A refusal after the restart** leaves the comparison whole where all three hold: it comes after the
 run's last restart, after which the run changed nothing; the refused request changes nothing compared (a
-T_Disconnect, a read, a read on the connection the restart ended); and every request of the run the unit
+T_Connect or T_Disconnect, a read, a read on the connection the restart ended); and every request of the run the unit
 did not take changes nothing either. Such refusals (a tool's restart proof or closing T_Disconnect at a
 time no capture of the unit shows) stand beside the verdict with their request and time, in the
 manifest and the tool's output; every other refusal makes the row `sim-refused`.

@@ -181,6 +181,13 @@ describe("a refusal after the restart", () => {
     const sim = lines("restart", `2026-01-01T00:00:01.000Z sim-refused 81 1275 ms after the restart: ${NOT_SHOWN}`, `sim-refused 4b00 0 ms after the restart: ${NOT_SHOWN}`, `sim-refused numbered frame 4b00 from 1.1.255 on the connection the restart ended: ${DEAD}`);
     const r = refusalsAfterRestart(sim, run(line("ETS->BRIDGE", "81"), con("81", true)));
     expect(r).toEqual({ after: [`sim-refused 81 1275 ms after the restart: ${NOT_SHOWN}`, `sim-refused 4b00 0 ms after the restart: ${NOT_SHOWN}`, `sim-refused numbered frame 4b00 from 1.1.255 on the connection the restart ended: ${DEAD}`], others: [] });
+    // A T_Connect the line confirmed negatively after the restart (a restart proof opening a probe's connection).
+    const connect = `sim-refused 80 3002 ms after the restart: ${NOT_SHOWN}`;
+    const proof = runState(capture(
+      line("ETS->BRIDGE", "80"), con("80"), line("ETS->BRIDGE", "4282400001"), con("4282400001"), line("ETS->BRIDGE", "4780"), con("4780"),
+      line("ETS->BRIDGE", "80"), con("80", true),
+    ), "ETS", DEV, "MV-07B0");
+    expect(refusalsAfterRestart(lines("restart", connect), proof)).toEqual({ after: [connect], others: [] });
   });
 
   test("does not: a refusal before the restart, of a write, in a run without a restart or that changed the unit after it, or that the unit did not take a write of", () => {
@@ -193,6 +200,9 @@ describe("a refusal after the restart", () => {
     const otherForm = "sim-refused A_Restart: how the unit takes a basic restart is not shown";
     expect(refusalsAfterRestart(lines("restart", otherForm), run()).others).toEqual([otherForm]);
     const disconnect = `sim-refused 81 10 ms after the restart: ${NOT_SHOWN}`;
+    // A T_Connect after the restart, with a write on the connection it opened: the run changed the unit after it.
+    const connect = `sim-refused 80 3002 ms after the restart: ${NOT_SHOWN}`;
+    expect(refusalsAfterRestart(lines("restart", connect), run(line("ETS->BRIDGE", "80"), line("ETS->BRIDGE", "4282400002"))).others).toEqual([connect]);
     expect(refusalsAfterRestart(lines(disconnect), run()).others).toEqual([disconnect]);
     // A write after the restart, on a new connection.
     expect(refusalsAfterRestart(lines("restart", disconnect), run(line("ETS->BRIDGE", "80"), line("ETS->BRIDGE", "4282400002"))).others).toEqual([disconnect]);

@@ -384,16 +384,17 @@ export function simRefusals(simLines: string): string[] {
   return simLines.split("\n").flatMap((l) => { const m = l.match(/(?:^|\s)(sim-refused .*)$/); return m ? [m[1]] : []; });
 }
 
-// Whether a request changes nothing a comparison covers: a T_Disconnect or a read (as request() reads them).
+// Whether a request changes nothing a comparison covers: a T_Connect or T_Disconnect (it opens or closes a transport
+// connection, nothing of the unit's state hangs on it) or a read (as request() reads them).
 function changesNothing(hex: string): boolean {
   const t = Buffer.from(hex, "hex");
-  if (t.length === 1) return isDisconnect(t);
+  if (t.length === 1) return isDisconnect(t) || (t[0] & 0xc3) === 0x80;
   return t.length >= 2 && (t[0] & 0xc0) !== 0x80 && isRead(((t[0] & 0x03) << 8) | t[1]);
 }
 
 // The simulator's refusals of one run that leave the comparison whole, and the others. A refusal leaves it whole
 // only where (a) it comes after the run's last restart, after which the run changed nothing, (b) the refused
-// request changes nothing compared (a T_Disconnect, a read, a read on the connection the restart ended), and (c)
+// request changes nothing compared (a T_Connect or T_Disconnect, a read, a read on the connection the restart ended), and (c)
 // every request of the run the unit did not take changes nothing either. Such refusals stand beside the verdict;
 // one of `others` makes the row sim-refused.
 export function refusalsAfterRestart(simLines: string, run: RunState): { after: string[]; others: string[] } {
