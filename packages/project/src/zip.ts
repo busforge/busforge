@@ -255,7 +255,11 @@ export function readZip(buf: Buffer, password?: string): Map<string, Buffer> {
   // Admitted before anything is unpacked, on the sizes the directory declares; decompress holds each
   // entry to its declared size.
   let total = 0;
+  // Two entries of one name would leave one of them unread, and which one is the zip writer's accident.
+  const names = new Set<string>();
   for (const e of files) {
+    if (names.has(e.name)) throw malformed(`two entries are named ${e.name}`);
+    names.add(e.name);
     if (e.size > ZIP_ENTRY_LIMIT) throw new KnxprojError("ARCHIVE_TOO_LARGE", `entry ${e.name} unpacks to ${e.size} bytes, over the ${ZIP_ENTRY_LIMIT}-byte limit per entry`);
     total += e.size;
   }

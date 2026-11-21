@@ -48,6 +48,18 @@ refused; one declared over 512 MiB, or an archive over 1 GiB in all, is refused 
 unpacked (`ARCHIVE_TOO_LARGE`). A project's inner `P-XXXX.zip` is an archive of its own under the same
 caps. The largest project and product databases in the test corpus unpack to under 100 MiB.
 
+**Where the project sits.** A password-protected export holds the inner `P-XXXX.zip` at the root of
+the outer ZIP, and its `0.xml` and `project.xml` (`Project.xml` in ETS 4) at that archive's root;
+Busforge reads an inner archive without encryption the same way. An export without a password has no
+inner archive: `P-XXXX/0.xml` and `P-XXXX/project.xml` sit in the outer ZIP, next to the application
+programs `M-XXXX/M-XXXX_A-….xml`. A program whose id ends in `0` (the Theben Meteodata 140 S's
+`M-0048_A-140C-14-EB70`) also ends in `0.xml`, and ETS may list it before the project, so Busforge
+looks the files up by their place and never by how a name ends. An archive with no `0.xml` at that
+place holds no project (`INVALID_KNXPROJ`). Project files of two `P-XXXX` ids, an inner archive beside
+a `P-XXXX/0.xml` or `P-XXXX/project.xml`, or both `project.xml` and `Project.xml` at the place are more
+than one project, and Busforge refuses them (`KNXPROJ_SEVERAL_PROJECTS`) rather than read one. A ZIP
+with two entries of one name is refused too (`INVALID_KNXPROJ`).
+
 Key relations in `0.xml`:
 
 - `GroupAddress Id="…_GA-n" Address="<16-bit>"`.
