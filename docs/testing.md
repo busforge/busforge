@@ -695,9 +695,9 @@ did not take are recorded and listed per side, not compared.
 | `driver-failed` | ETS's log shows not exactly one download of the device, or the download connected to nothing or to anything but the simulator |
 
 **A refusal after the restart** leaves the comparison whole where all three hold: it comes after the
-run's last restart, after which the run changed nothing; the refused request changes nothing compared (a
-T_Disconnect, a read, a read on the connection the restart ended); and every request of the run the unit
-did not take changes nothing either. Such refusals (a tool's restart proof or closing T_Disconnect at a
+run's last restart, after which the run changed nothing; the refused request changes nothing compared
+(a T_Connect or T_Disconnect, a read, a read on the connection the restart ended); and every request of
+the run the unit did not take changes nothing either (it took every write and load request). Such refusals (a tool's restart proof or closing T_Disconnect at a
 time no capture of the unit shows) stand beside the verdict with their request and time, in the
 manifest and the tool's output; every other refusal makes the row `sim-refused`.
 
@@ -719,6 +719,24 @@ of their own. The tool writes the verdicts into `internal/ets-sweep/manifest.jso
 ```bash
 BUSFORGE_CORPUS=... bun run tools/ets-sweep.ts [<application>/<variant>]... [--keep=<dir>]
 ```
+
+**Rejudging rows** after a change to the comparison or to Busforge is one command:
+
+```bash
+BUSFORGE_CORPUS=... bun run tools/ets-sweep.ts --rejudge [<application>/<variant>]... [--out <dir> | --in-place]
+```
+
+It reruns the rows as above and writes, in the corpus's layout, the manifest with their entries and
+the `explained.json` of each row whose verdict or differences moved (a row where nothing moved keeps
+its file). A difference or calibrated position that stays keeps its cause; a new one gets cause `null`,
+never an invented one, and the command exits 1 naming it, so the row stays red until it is explained.
+It exits 1 as well where the verdict moved to a refusal or a failure, whose reason `explained.json`
+does not hold, and names each explained difference that is gone with the cause it had. `notes.md` is
+not written: the output names what moved since the manifest for it (the verdict and its first
+difference or refusal, differences, calibrated positions, refusals beside the verdict, reads, the
+requests the unit did not take, the second check). The output goes to `--out`, an empty directory
+outside the corpus (by default a new one under the system's temporary directory), to be checked before
+it is copied in; it goes straight into the corpus only with `--in-place`.
 
 **A calibrated row** names in `row.json` ETS's capture of the same configuration downloaded into the
 real unit. ETS's dialogue with the simulated unit (its requests with their line confirmations, the

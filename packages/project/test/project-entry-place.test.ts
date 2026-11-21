@@ -72,8 +72,9 @@ describe("a project with an inner archive: P-XXXX.zip at the outer root", () => 
     const two = storeZip({ "P-0001.zip": storeZip({ "0.xml": xml0 }), "P-0002.zip": storeZip({ "0.xml": xml0 }) });
     expect(codeOf(() => loadKnxproj(two, undefined, "x"))).toBe("KNXPROJ_SEVERAL_PROJECTS");
     expect(codeOf(() => readBaggage(two, undefined))).toBe("KNXPROJ_SEVERAL_PROJECTS");
+    // project.xml and Project.xml differ in case only: one entry twice.
     const names = storeZip({ "P-0001.zip": storeZip({ "0.xml": xml0, "project.xml": projectXml("a"), "Project.xml": projectXml("b") }) });
-    expect(codeOf(() => loadKnxproj(names, undefined, "x"))).toBe("KNXPROJ_SEVERAL_PROJECTS");
+    expect(codeOf(() => loadKnxproj(names, undefined, "x"))).toBe("ARCHIVE_DUPLICATE_ENTRY");
   });
 
   test("an inner archive beside another project's P-XXXX/0.xml, or beside its own, is refused", () => {
@@ -81,5 +82,32 @@ describe("a project with an inner archive: P-XXXX.zip at the outer root", () => 
     expect(codeOf(() => loadKnxproj(storeZip({ "P-0001.zip": inner, "P-0002/0.xml": xml0 }), undefined, "x"))).toBe("KNXPROJ_SEVERAL_PROJECTS");
     expect(codeOf(() => readXml0(storeZip({ "P-0001.zip": inner, "P-0001/0.xml": xml0 }), undefined))).toBe("KNXPROJ_SEVERAL_PROJECTS");
     expect(codeOf(() => loadKnxproj(storeZip({ "P-0001.zip": inner, "P-0001/Project.xml": projectXml("b") }), undefined, "x"))).toBe("KNXPROJ_SEVERAL_PROJECTS");
+  });
+});
+
+describe("a project's baggage: BinaryData/ and UserFiles/ at the inner archive's root", () => {
+  const store = Buffer.from("real-store"), other = Buffer.from("decoy-store");
+  for (const order of ["before", "after"] as const) {
+    test(`a folder of that name below the root, listed ${order} the project's, is not read`, () => {
+      const files = order === "before" ? { "Other/BinaryData/store.bin": other, "BinaryData/store.bin": store } : { "BinaryData/store.bin": store, "Other/BinaryData/store.bin": other };
+      const baggage = readBaggage(storeZip({ "P-0001.zip": storeZip({ "0.xml": xml0, ...files }) }), undefined);
+      expect([...baggage]).toEqual([["store.bin", store]]);
+    });
+  }
+
+  test("one path below both folders is refused, not one of the two files kept", () => {
+    expect(codeOf(() => readBaggage(storeZip({ "P-0001.zip": storeZip({ "0.xml": xml0, "BinaryData/store.bin": store, "UserFiles/store.bin": other }) }), undefined))).toBe("ARCHIVE_DUPLICATE_ENTRY");
+  });
+
+  test("the folders in another case are the project's", () => {
+    const baggage = readBaggage(storeZip({ "P-0001.zip": storeZip({ "0.xml": xml0, "binarydata/store.bin": store, "USERFILES/app.zip": other }) }), undefined);
+    expect([...baggage]).toEqual([["store.bin", store], ["app.zip", other]]);
+  });
+});
+
+describe("two entries whose names differ in case only", () => {
+  test("are refused wherever they sit in the archive, not only at a place Busforge reads", () => {
+    expect(codeOf(() => loadKnxproj(storeZip({ "P-0001/0.xml": xml0, "README.txt": "a", "readme.TXT": "b" }), undefined, "x"))).toBe("ARCHIVE_DUPLICATE_ENTRY");
+    expect(codeOf(() => readBaggage(storeZip({ "P-0001.zip": storeZip({ "0.xml": xml0, "UserFiles/a.bin": "a", "userfiles/A.BIN": "b" }) }), undefined))).toBe("ARCHIVE_DUPLICATE_ENTRY");
   });
 });

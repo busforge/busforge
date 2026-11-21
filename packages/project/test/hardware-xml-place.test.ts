@@ -74,17 +74,17 @@ describe("Hardware.xml is read only at M-XXXX/Hardware.xml", () => {
 });
 
 describe("two Hardware.xml at one place are refused", () => {
-  // A zip with two entries of one name is refused by the zip reader already; paths that differ in case
-  // only are the same file on the file system ETS writes on.
+  // Paths that differ in case only are the same file on the file system ETS writes on, refused like two
+  // entries of one name.
   for (const other of [`${M}/hardware.xml`, `${M.toLowerCase()}/Hardware.xml`]) {
     const bytes = storeZip({ [`${M}/Hardware.xml`]: real, [other]: decoy, "P-0001/0.xml": xml0 });
     test(`beside ${other}, by the catalogue readers`, () => {
-      expect(codeOf(() => extractCatalogProducts(bytes))).toBe("SEVERAL_HARDWARE_XML");
-      expect(codeOf(() => hardwareApplications(bytes))).toBe("SEVERAL_HARDWARE_XML");
-      expect(codeOf(() => readAppProgram(bytes, HP))).toBe("SEVERAL_HARDWARE_XML");
+      expect(codeOf(() => extractCatalogProducts(bytes))).toBe("ARCHIVE_DUPLICATE_ENTRY");
+      expect(codeOf(() => hardwareApplications(bytes))).toBe("ARCHIVE_DUPLICATE_ENTRY");
+      expect(codeOf(() => readAppProgram(bytes, HP))).toBe("ARCHIVE_DUPLICATE_ENTRY");
     });
     test(`beside ${other}, by the project reader`, () => {
-      expect(codeOf(() => loadKnxproj(bytes, undefined, "x"))).toBe("SEVERAL_HARDWARE_XML");
+      expect(codeOf(() => loadKnxproj(bytes, undefined, "x"))).toBe("ARCHIVE_DUPLICATE_ENTRY");
     });
   }
   test("a lone Hardware.xml in another case is the manufacturer's", () => {

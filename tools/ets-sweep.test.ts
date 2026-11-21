@@ -1,14 +1,15 @@
 import { describe, expect, test, setDefaultTimeout } from "bun:test";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { appProgramId, loadKnxproj, readAppProgram } from "../packages/project/src/index.ts";
 import { parseAppConfig } from "../packages/product/src/index.ts";
 import { iaToNum } from "../packages/knx/src/index.ts";
-import { captureText, corpusPath } from "./corpus.ts";
+import { captureText, corpusPath, corpusRoot } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { capturedOnLoadedUnit, deviceConfiguration, deviceRows, dialogueDifferences, parseCapture } from "./etsdiff.ts";
-import { compareRuns, etsOutcome, judge, listRows, loadedImageCheck, readRow, refusalsAfterRestart, ROW_FILES, runRow, runState, simRefusals, SWEEP_DIR, type EtsOutcome, type RowConfiguration, type RowSpec } from "./ets-sweep.ts";
+import { causes, compareRuns, etsOutcome, inCorpus, judge, listRows, loadedImageCheck, MANIFEST, MANIFEST_FORMAT, movedSince, readRow, refusalsAfterRestart, rejudge, ROW_FILES, runRow, runState, simRefusals, SWEEP_DIR, updateManifest, writeRejudged, type EtsOutcome, type Explained, type Manifest, type ManifestRow, type RowConfiguration, type RowSpec, withCause } from "./ets-sweep.ts";
 import { mismatchLines } from "./sim-unit-product.ts";
+import { tempDir } from "./test-temp.ts";
 
 // Each row runs Busforge's download into a simulated unit on the wall clock (tools/sim-unit.test.ts: about
 // 15 s alone, twenty times that under a loaded full check).
@@ -181,6 +182,19 @@ describe("a refusal after the restart", () => {
     const sim = lines("restart", `2026-01-01T00:00:01.000Z sim-refused 81 1275 ms after the restart: ${NOT_SHOWN}`, `sim-refused 4b00 0 ms after the restart: ${NOT_SHOWN}`, `sim-refused numbered frame 4b00 from 1.1.255 on the connection the restart ended: ${DEAD}`);
     const r = refusalsAfterRestart(sim, run(line("ETS->BRIDGE", "81"), con("81", true)));
     expect(r).toEqual({ after: [`sim-refused 81 1275 ms after the restart: ${NOT_SHOWN}`, `sim-refused 4b00 0 ms after the restart: ${NOT_SHOWN}`, `sim-refused numbered frame 4b00 from 1.1.255 on the connection the restart ended: ${DEAD}`], others: [] });
+    // A T_Connect the line confirmed negatively after the restart (a restart proof opening a probe's connection).
+    const connect = `sim-refused 80 3002 ms after the restart: ${NOT_SHOWN}`;
+    const proof = runState(capture(
+      line("ETS->BRIDGE", "80"), con("80"), line("ETS->BRIDGE", "4282400001"), con("4282400001"), line("ETS->BRIDGE", "4780"), con("4780"),
+      line("ETS->BRIDGE", "80"), con("80", true),
+    ), "ETS", DEV, "MV-07B0");
+    expect(refusalsAfterRestart(lines("restart", connect), proof)).toEqual({ after: [connect], others: [] });
+    // (b) alone: the T_Connect refused by the simulator, confirmed on the line, nothing left untaken.
+    const confirmed = runState(capture(line("ETS->BRIDGE", "80"), con("80"), line("ETS->BRIDGE", "4282400001"), con("4282400001"), line("ETS->BRIDGE", "4780"), con("4780"), line("ETS->BRIDGE", "80"), con("80")), "ETS", DEV, "MV-07B0");
+    expect(refusalsAfterRestart(lines("restart", connect), confirmed)).toEqual({ after: [connect], others: [] });
+    // (c) alone: the untaken T_Connect is no write or load request; the refusal is the T_Disconnect.
+    const disconnect = `sim-refused 81 1275 ms after the restart: ${NOT_SHOWN}`;
+    expect(refusalsAfterRestart(lines("restart", disconnect), proof)).toEqual({ after: [disconnect], others: [] });
   });
 
   test("does not: a refusal before the restart, of a write, in a run without a restart or that changed the unit after it, or that the unit did not take a write of", () => {
@@ -193,6 +207,9 @@ describe("a refusal after the restart", () => {
     const otherForm = "sim-refused A_Restart: how the unit takes a basic restart is not shown";
     expect(refusalsAfterRestart(lines("restart", otherForm), run()).others).toEqual([otherForm]);
     const disconnect = `sim-refused 81 10 ms after the restart: ${NOT_SHOWN}`;
+    // A T_Connect after the restart, with a write on the connection it opened: the run changed the unit after it.
+    const connect = `sim-refused 80 3002 ms after the restart: ${NOT_SHOWN}`;
+    expect(refusalsAfterRestart(lines("restart", connect), run(line("ETS->BRIDGE", "80"), line("ETS->BRIDGE", "4282400002"))).others).toEqual([connect]);
     expect(refusalsAfterRestart(lines(disconnect), run()).others).toEqual([disconnect]);
     // A write after the restart, on a new connection.
     expect(refusalsAfterRestart(lines("restart", disconnect), run(line("ETS->BRIDGE", "80"), line("ETS->BRIDGE", "4282400002"))).others).toEqual([disconnect]);
@@ -257,8 +274,115 @@ describe("a sweep row's verdict", () => {
   });
 });
 
+describe("rejudging a row (--rejudge)", () => {
+  const ID = "M-0000_A-0000-00-0000/defaults";
+  // A row's manifest entry as manifestRow gives it after a rerun that found `found` (and the calibration positions
+  // `positions`): the causes are looked up in the row's explained.json `old`.
+  const entry = (old: Explained, verdict: ManifestRow["verdict"], found: string[], extra: Partial<ManifestRow> & { positions?: string[] } = {}): ManifestRow => {
+    const { positions, ...rest } = extra;
+    const differences = causes(verdict === "differs" ? { verdict, differences: found } : { verdict: "identical" }, old);
+    return {
+      application: "M-0000_A-0000-00-0000", variant: "defaults", unit: "u", product: "p", mask: "MV-07B0", manufacturer: "M-0000", etsBuild: "ETS",
+      verdict, first: differences[0]?.difference ?? null, cause: differences[0]?.cause ?? null, differences,
+      reads: { onlyEts: [], onlyBusforge: [] }, notTaken: { ets: [], busforge: [] }, loadedImage: { state: "no export" },
+      calibration: positions === undefined ? null : { capture: "c.log", differences: positions.map((p) => withCause(p, old.calibration)) },
+      refusalsAfterRestart: [], files: [],
+      ...rest,
+    };
+  };
+  const manifest = (...rows: ManifestRow[]): Manifest => ({ format: MANIFEST_FORMAT, busforgeRevision: null, rows });
+  const olds = (old: Explained) => new Map([[ID, old]]);
+  const explainedAt = (root: string) => join(root, SWEEP_DIR, ID, ROW_FILES.explained);
+  const manifestAt = (root: string) => JSON.parse(readFileSync(join(root, MANIFEST), "utf8")) as Manifest;
+
+  test("an unchanged row: explained.json is not written, the manifest is, the exit is 0", () => {
+    const root = tempDir("ets-sweep-rejudge-");
+    const old: Explained = { verdict: "differs", differences: [{ difference: "memory 0x4000: ETS 01, Busforge 02", cause: "c" }] };
+    const now = entry(old, "differs", ["memory 0x4000: ETS 01, Busforge 02"]);
+    expect(rejudge(old, now)).toEqual({ explained: old, moved: false, unexplained: [], gone: [] });
+    const { report, exit } = writeRejudged(root, [now], olds(old), manifest(now), updateManifest(manifest(now), [now], [ID]));
+    expect(exit).toBe(0);
+    expect(existsSync(explainedAt(root))).toBe(false);
+    expect(manifestAt(root).rows).toEqual([now]);
+    expect(report).toContain("  nothing moved since the manifest (notes.md stays)");
+    // A calibrated row without positions keeps the form its explained.json has; so does a refused row whose verdict stays.
+    const identical: Explained = { verdict: "identical", differences: [] };
+    expect(rejudge(identical, entry(identical, "identical", [], { positions: [] }))).toEqual({ explained: identical, moved: false, unexplained: [], gone: [] });
+    const refused: Explained = { verdict: "sim-refused", differences: [] };
+    expect(rejudge(refused, entry(refused, "sim-refused", [], { first: "sim-refused x" }))).toEqual({ explained: refused, moved: false, unexplained: [], gone: [] });
+  });
+
+  test("a moved verdict and a moved list of differences: the differences that stay keep their causes", () => {
+    const root = tempDir("ets-sweep-rejudge-");
+    // sim-refused before, identical now (a refusal rule of the comparison changed).
+    const refused: Explained = { verdict: "sim-refused", differences: [] };
+    const before = entry(refused, "sim-refused", [], { first: "sim-refused 81 33 ms after the restart: x", cause: "the simulator refused ETS" });
+    const identical = entry(refused, "identical", [], { refusalsAfterRestart: [{ run: "ETS", refusal: "sim-refused 81 33 ms after the restart: x" }] });
+    expect(rejudge(refused, identical)).toEqual({ explained: { verdict: "identical", differences: [] }, moved: true, unexplained: [], gone: [] });
+    const { report, exit } = writeRejudged(root, [identical], olds(refused), manifest(before), updateManifest(manifest(before), [identical], [ID]));
+    expect(exit).toBe(0);
+    expect(JSON.parse(readFileSync(explainedAt(root), "utf8"))).toEqual({ verdict: "identical", differences: [] });
+    expect(report).toEqual(expect.arrayContaining([
+      "    verdict: sim-refused -> identical",
+      "    first: sim-refused 81 33 ms after the restart: x -> none",
+      "    refusal after the restart new: ETS: sim-refused 81 33 ms after the restart: x",
+    ]));
+    // A refusal whose time after the restart alone moved (Busforge's run is on the wall clock), and a repeated item.
+    const at = (ms: number, notTaken: string[]) => entry(refused, "sim-refused", [], { first: `sim-refused 80 ${ms} ms after the restart: x`, refusalsAfterRestart: [{ run: "Busforge", refusal: `sim-refused 80 ${ms} ms after the restart: x` }], notTaken: { ets: [], busforge: notTaken } });
+    expect(movedSince(at(3002, ["outside a connection: 4300"]), at(3003, ["outside a connection: 4300", "outside a connection: 4300"]))).toEqual([
+      "first: only its time after the restart moved",
+      "refusals after the restart: only their times after the restart moved",
+      "not taken by the unit, Busforge 1 -> 2 times: outside a connection: 4300",
+    ]);
+    // Two explained differences, one of them gone (named with the cause it had); a calibration position that stays.
+    const two: Explained = { verdict: "differs", differences: [{ difference: "d1", cause: "c1" }, { difference: "d2", cause: "c2" }], calibration: [{ difference: "p1", cause: "k1" }] };
+    expect(rejudge(two, entry(two, "differs", ["d1"], { positions: ["p1"] }))).toEqual({
+      explained: { verdict: "differs", differences: [{ difference: "d1", cause: "c1" }], calibration: [{ difference: "p1", cause: "k1" }] }, moved: true, unexplained: [], gone: ["difference: d2\n      cause it had: c2"],
+    });
+  });
+
+  test("a new difference: cause null, the exit 1 naming it, no cause written", () => {
+    const root = tempDir("ets-sweep-rejudge-");
+    const old: Explained = { verdict: "differs", differences: [{ difference: "d1", cause: "c1" }] };
+    const now = entry(old, "differs", ["d1", "d3"], { positions: ["p2"] });
+    const { report, exit } = writeRejudged(root, [now], olds(old), manifest(entry(old, "differs", ["d1"])), updateManifest(null, [now], [ID]));
+    expect(exit).toBe(1);
+    expect(JSON.parse(readFileSync(explainedAt(root), "utf8"))).toEqual({ verdict: "differs", differences: [{ difference: "d1", cause: "c1" }, { difference: "d3", cause: null }], calibration: [{ difference: "p2", cause: null }] });
+    expect(report.slice(-3)).toEqual(["2 unexplained (a difference in explained.json, a verdict in notes.md):", `  ${ID}: difference: d3`, `  ${ID}: calibration: p2`]);
+    expect(report).toEqual(expect.arrayContaining(["    difference new: d3", "    calibration position new: p2"]));
+    // An empty cause explains nothing either, as the corpus test holds it.
+    const blank: Explained = { verdict: "differs", differences: [{ difference: "d1", cause: " " }] };
+    expect(rejudge(blank, entry(blank, "differs", ["d1"])).unexplained).toEqual(["difference: d1"]);
+  });
+
+  test("a verdict moved to a refusal or a failure: the exit 1, the dropped causes named", () => {
+    const root = tempDir("ets-sweep-rejudge-");
+    const old: Explained = { verdict: "differs", differences: [{ difference: "d1", cause: "c1" }] };
+    const now = entry(old, "sim-refused", [], { first: "sim-refused 4282400001: outside an allocated segment" });
+    const { report, exit } = writeRejudged(root, [now], olds(old), manifest(entry(old, "differs", ["d1"])), updateManifest(null, [now], [ID]));
+    expect(exit).toBe(1);
+    expect(JSON.parse(readFileSync(explainedAt(root), "utf8"))).toEqual({ verdict: "sim-refused", differences: [] });
+    expect(report).toEqual(expect.arrayContaining([
+      "  NOT EXPLAINED: verdict: differs -> sim-refused: sim-refused 4282400001: outside an allocated segment",
+      "  gone: difference: d1\n      cause it had: c1",
+    ]));
+  });
+});
+
 // Busforge's current plan against every ETS row in the corpus. A row's explained.json names its verdict and
 // every difference with its cause; a new difference fails, and so does an explained one that is gone.
+// Where --rejudge and --keep may write: nothing here writes into the corpus, the alias lies in a test directory.
+corpusDescribe("a rejudge's output outside the corpus", () => {
+  test("a directory in the corpus is refused, also by a name that begins with two dots and behind a symlink", () => {
+    const root = corpusRoot()!;
+    expect([inCorpus(root), inCorpus(join(root, "captures", "new")), inCorpus(join(root, "..rejudge"))]).toEqual([true, true, true]);
+    expect([inCorpus(join(root, "..", "elsewhere")), inCorpus(tempDir("ets-sweep-out-"))]).toEqual([false, false]);
+    const alias = join(tempDir("ets-sweep-alias-"), "corpus");
+    symlinkSync(root, alias);
+    expect(inCorpus(join(alias, "new", "deeper"))).toBe(true);
+  });
+});
+
 corpusDescribe("the ETS sweep rows", () => {
   const rows = listRows();
   test("the corpus holds rows", () => {
@@ -270,7 +394,7 @@ corpusDescribe("the ETS sweep rows", () => {
       const r = await runRow(row);
       const found = r.verdict.verdict === "differs" ? r.verdict.differences : [];
       expect({ verdict: r.verdict.verdict, differences: found }).toEqual({ verdict: row.explained.verdict, differences: row.explained.differences.map((d) => d.difference) });
-      expect(row.explained.differences.every((d) => d.cause.trim().length > 0)).toBe(true);
+      expect(row.explained.differences.filter((d) => !d.cause?.trim()).map((d) => d.difference)).toEqual([]);
     });
   }
 
@@ -283,7 +407,7 @@ corpusDescribe("the ETS sweep rows", () => {
       const real = readFileSync(corpusPath(row.spec.calibration), "utf8");
       const found = dialogueDifferences(real, readFileSync(join(row.dir, ROW_FILES.ets), "utf8"), iaToNum(row.conf.ia), "ETS", row.spec.calibrationFrom);
       expect(found).toEqual((row.explained.calibration ?? []).map((d) => d.difference));
-      expect((row.explained.calibration ?? []).every((d) => d.cause.trim().length > 0)).toBe(true);
+      expect((row.explained.calibration ?? []).filter((d) => !d.cause?.trim()).map((d) => d.difference)).toEqual([]);
     });
   }
 
