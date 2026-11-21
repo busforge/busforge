@@ -46,6 +46,11 @@ describe("zip reader: offsets and lengths outside the archive", () => {
     expect(files.get("d.xml")!.toString()).toBe("<x>deflated entry</x>".repeat(20));
   });
 
+  test("two entries of one name are refused, not one of them read", () => {
+    const b = zip([{ name: "P-0001/0.xml", data: Buffer.from("<KNX>a</KNX>") }, { name: "P-0001/0.xml", data: Buffer.from("<KNX>b</KNX>") }]);
+    expect(thrown(() => readZip(b))).toBe("INVALID_KNXPROJ: malformed zip: two entries are named P-0001/0.xml");
+  });
+
   test("a central directory offset past the end record is refused", () => {
     const b = sample();
     b.writeUInt32LE(EOCD(b) + 1, EOCD(b) + 16);
