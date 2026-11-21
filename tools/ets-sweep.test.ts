@@ -188,6 +188,12 @@ describe("a refusal after the restart", () => {
       line("ETS->BRIDGE", "80"), con("80", true),
     ), "ETS", DEV, "MV-07B0");
     expect(refusalsAfterRestart(lines("restart", connect), proof)).toEqual({ after: [connect], others: [] });
+    // (b) alone: the T_Connect refused by the simulator, confirmed on the line, nothing left untaken.
+    const confirmed = runState(capture(line("ETS->BRIDGE", "80"), con("80"), line("ETS->BRIDGE", "4282400001"), con("4282400001"), line("ETS->BRIDGE", "4780"), con("4780"), line("ETS->BRIDGE", "80"), con("80")), "ETS", DEV, "MV-07B0");
+    expect(refusalsAfterRestart(lines("restart", connect), confirmed)).toEqual({ after: [connect], others: [] });
+    // (c) alone: the untaken T_Connect is no write or load request; the refusal is the T_Disconnect.
+    const disconnect = `sim-refused 81 1275 ms after the restart: ${NOT_SHOWN}`;
+    expect(refusalsAfterRestart(lines("restart", disconnect), proof)).toEqual({ after: [disconnect], others: [] });
   });
 
   test("does not: a refusal before the restart, of a write, in a run without a restart or that changed the unit after it, or that the unit did not take a write of", () => {

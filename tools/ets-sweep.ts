@@ -138,8 +138,10 @@ const READ_SERVICES = new Set([
   0x2c5, // A_UserManufacturerInfo_Read
 ]);
 const READ_GROUPS = new Set([APCI.MEMORY_READ, APCI.DEVICE_DESCRIPTOR_READ, 0x180 /* A_ADC_Read */]);
-// Whether a request's APCI is a read, a service of a read group by its high bits; a one-octet TPDU a T_Disconnect.
+// Whether a request's APCI is a read, a service of a read group by its high bits; a one-octet TPDU a T_Connect or a
+// T_Disconnect.
 const isRead = (raw: number) => READ_SERVICES.has(raw) || READ_GROUPS.has(raw & 0x3c0);
+const isConnect = (t: Buffer) => t.length === 1 && (t[0] & 0xc3) === 0x80;
 const isDisconnect = (t: Buffer) => t.length === 1 && (t[0] & 0xc3) === 0x81;
 
 export interface RunState {
@@ -206,7 +208,7 @@ export function runState(text: string, tool: string, device: number, mask: strin
     // once acknowledges it on no layer (tools/sim-units.ts) and the tool sees it confirmed negatively.
     if (it.neg && !restart) { s.notTaken.push(`not confirmed: ${hexOf(t)}`); continue; }
     if (t.length === 1) {
-      if ((tpci & 0xc3) === 0x80 && !connected) { connected = true; lastSeq = null; }
+      if (isConnect(t) && !connected) { connected = true; lastSeq = null; }
       if (isDisconnect(t)) connected = false;
       continue;
     }
@@ -385,17 +387,18 @@ export function simRefusals(simLines: string): string[] {
 }
 
 // Whether a request changes nothing a comparison covers: a T_Connect or T_Disconnect (it opens or closes a transport
-// connection, nothing of the unit's state hangs on it) or a read (as request() reads them).
+// connection, which no compared item holds) or a read (as request() reads them).
 function changesNothing(hex: string): boolean {
   const t = Buffer.from(hex, "hex");
-  if (t.length === 1) return isDisconnect(t) || (t[0] & 0xc3) === 0x80;
+  if (t.length === 1) return isConnect(t) || isDisconnect(t);
   return t.length >= 2 && (t[0] & 0xc0) !== 0x80 && isRead(((t[0] & 0x03) << 8) | t[1]);
 }
 
 // The simulator's refusals of one run that leave the comparison whole, and the others. A refusal leaves it whole
 // only where (a) it comes after the run's last restart, after which the run changed nothing, (b) the refused
-// request changes nothing compared (a T_Connect or T_Disconnect, a read, a read on the connection the restart ended), and (c)
-// every request of the run the unit did not take changes nothing either. Such refusals stand beside the verdict;
+// request changes nothing compared (a T_Connect or T_Disconnect, a read, a read on the connection the restart
+// ended), and (c) every request of the run the unit did not take changes nothing either (no write or load request
+// among them; a T_Connect it did not take leaves the connection closed, so a write after it is not taken either). Such refusals stand beside the verdict;
 // one of `others` makes the row sim-refused.
 export function refusalsAfterRestart(simLines: string, run: RunState): { after: string[]; others: string[] } {
   // Every refusal simRefusals finds is classified; one of another form is one of `others`.

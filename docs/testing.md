@@ -695,9 +695,9 @@ did not take are recorded and listed per side, not compared.
 | `driver-failed` | ETS's log shows not exactly one download of the device, or the download connected to nothing or to anything but the simulator |
 
 **A refusal after the restart** leaves the comparison whole where all three hold: it comes after the
-run's last restart, after which the run changed nothing; the refused request changes nothing compared (a
-T_Connect or T_Disconnect, a read, a read on the connection the restart ended); and every request of the run the unit
-did not take changes nothing either. Such refusals (a tool's restart proof or closing T_Disconnect at a
+run's last restart, after which the run changed nothing; the refused request changes nothing compared
+(a T_Connect or T_Disconnect, a read, a read on the connection the restart ended); and every request of
+the run the unit did not take changes nothing either (it took every write and load request). Such refusals (a tool's restart proof or closing T_Disconnect at a
 time no capture of the unit shows) stand beside the verdict with their request and time, in the
 manifest and the tool's output; every other refusal makes the row `sim-refused`.
 
