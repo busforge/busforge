@@ -74,18 +74,22 @@ describe("Hardware.xml is read only at M-XXXX/Hardware.xml", () => {
 });
 
 describe("two Hardware.xml at one place are refused", () => {
-  // A zip with two entries of one name is refused by the zip reader already; names that differ in case
+  // A zip with two entries of one name is refused by the zip reader already; paths that differ in case
   // only are the same file on the file system ETS writes on.
-  const bytes = storeZip({ [`${M}/Hardware.xml`]: real, [`${M}/hardware.xml`]: decoy, "P-0001/0.xml": xml0 });
-  test("by the catalogue readers", () => {
-    expect(codeOf(() => extractCatalogProducts(bytes))).toBe("SEVERAL_HARDWARE_XML");
-    expect(codeOf(() => hardwareApplications(bytes))).toBe("SEVERAL_HARDWARE_XML");
-    expect(codeOf(() => readAppProgram(bytes, HP))).toBe("SEVERAL_HARDWARE_XML");
-  });
-  test("by the project reader", () => {
-    expect(codeOf(() => loadKnxproj(bytes, undefined, "x"))).toBe("SEVERAL_HARDWARE_XML");
-  });
-  test("a lone hardware.xml in another case is the manufacturer's", () => {
-    expect(extractCatalogProducts(storeZip({ [`${M}/hardware.xml`]: real })).map((p) => p.name)).toEqual(["Real unit"]);
+  for (const other of [`${M}/hardware.xml`, `${M.toLowerCase()}/Hardware.xml`]) {
+    const bytes = storeZip({ [`${M}/Hardware.xml`]: real, [other]: decoy, "P-0001/0.xml": xml0 });
+    test(`beside ${other}, by the catalogue readers`, () => {
+      expect(codeOf(() => extractCatalogProducts(bytes))).toBe("SEVERAL_HARDWARE_XML");
+      expect(codeOf(() => hardwareApplications(bytes))).toBe("SEVERAL_HARDWARE_XML");
+      expect(codeOf(() => readAppProgram(bytes, HP))).toBe("SEVERAL_HARDWARE_XML");
+    });
+    test(`beside ${other}, by the project reader`, () => {
+      expect(codeOf(() => loadKnxproj(bytes, undefined, "x"))).toBe("SEVERAL_HARDWARE_XML");
+    });
+  }
+  test("a lone Hardware.xml in another case is the manufacturer's", () => {
+    for (const name of [`${M}/hardware.xml`, `${M.toLowerCase()}/HARDWARE.XML`]) {
+      expect(extractCatalogProducts(storeZip({ [name]: real })).map((p) => p.name)).toEqual(["Real unit"]);
+    }
   });
 });

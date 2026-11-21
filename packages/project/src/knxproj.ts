@@ -68,28 +68,30 @@ function xml0Of(outer: Map<string, Buffer>, { id, inner }: ProjectEntries): stri
 // The project's project.xml: at the inner archive's root where it has one, in the outer archive's P-XXXX/
 // where it has none; undefined where there is none (the name then comes from 0.xml).
 function projectXmlOf(outer: Map<string, Buffer>, { id, inner }: ProjectEntries): string | undefined {
-  const at = (files: Map<string, Buffer>, dir: string): string | undefined =>
-    textAt(files, dir, isProjectXml, (names) => severalProjects(`${names.length} project.xml files (${names.join(", ")})`));
+  const at = (files: Map<string, Buffer>, dir: string): string | undefined => {
+    const names = [...files.keys()].filter((n) => n.startsWith(dir) && isProjectXml(n.slice(dir.length)));
+    if (names.length > 1) throw severalProjects(`${names.length} project.xml files (${names.join(", ")})`);
+    return names.length ? dec.decode(files.get(names[0])!) : undefined;
+  };
   return inner ? at(inner, "") : id === undefined ? undefined : at(outer, `${id}/`);
-}
-
-// The text of the one entry directly in `dir` ("" for the root, else ending in "/") whose name `is` takes,
-// undefined where there is none. Two there are refused with `several`, never one of them read.
-function textAt(files: Map<string, Buffer>, dir: string, is: (name: string) => boolean, several: (names: string[]) => KnxprojError): string | undefined {
-  const names = [...files.keys()].filter((n) => n.startsWith(dir) && is(n.slice(dir.length)));
-  if (names.length > 1) throw several(names);
-  return names.length ? dec.decode(files.get(names[0])!) : undefined;
 }
 
 // The manufacturers' Hardware.xml documents, found by their place like the project's files: one in each
 // manufacturer directory, M-XXXX/Hardware.xml, in a .knxproj and a .knxprod alike. An entry elsewhere whose
-// name ends in Hardware.xml (a baggage, a user file) describes none of the archive's products. The name is
-// taken in any case, as project.xml is; two that differ in case only are refused.
-const isHardwareXml = (name: string) => name.toLowerCase() === "hardware.xml";
+// name ends in Hardware.xml (a baggage, a file at the root, a manufacturer directory below another folder)
+// describes none of the archive's products. The path is taken in any case, as project.xml is, since ETS
+// writes on a file system that does not tell case apart; two paths that differ in case only are one
+// manufacturer's product data twice, and refused.
 function hardwareXmlsOf(outer: Map<string, Buffer>): string[] {
-  const dirs = new Set([...outer.keys()].flatMap((n) => /^(M-[^/]+)\//.exec(n)?.[1] ?? []));
-  return [...dirs].flatMap((dir) => textAt(outer, `${dir}/`, isHardwareXml, (names) =>
-    new KnxprojError("SEVERAL_HARDWARE_XML", `${dir} holds ${names.length} Hardware.xml files (${names.join(", ")}); Busforge does not pick one`)) ?? []);
+  const byDir = new Map<string, string[]>();
+  for (const name of outer.keys()) {
+    const dir = /^(m-[^/]+)\/hardware\.xml$/.exec(name.toLowerCase())?.[1];
+    if (dir !== undefined) byDir.set(dir, [...(byDir.get(dir) ?? []), name]);
+  }
+  return [...byDir.values()].map((names) => {
+    if (names.length > 1) throw new KnxprojError("SEVERAL_HARDWARE_XML", `the archive holds one manufacturer's Hardware.xml ${names.length} times (${names.join(", ")}); Busforge does not pick one`);
+    return dec.decode(outer.get(names[0])!);
+  });
 }
 
 // A project's 0.xml, decrypted with the project password where the project has one.

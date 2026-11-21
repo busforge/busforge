@@ -65,9 +65,9 @@ with two entries of one name is refused too (`INVALID_KNXPROJ`).
 `Baggages/`. Busforge reads `Hardware.xml` only there, for a project's device names, the application each
 `Hardware2Program` names and the catalogue's products alike: an entry elsewhere whose name ends in
 `Hardware.xml` (a baggage, a file at the root, a manufacturer directory below another folder) describes none
-of the archive's products. The name is taken in any case, as `project.xml` is; two names in one directory
-that differ in case only are one manufacturer's product data twice, and Busforge refuses the archive
-(`SEVERAL_HARDWARE_XML`) rather than read one.
+of the archive's products. The path is taken in any case, as `project.xml` is, since ETS writes on a file
+system that does not tell case apart; two paths that differ in case only are one manufacturer's product
+data twice, and Busforge refuses the archive (`SEVERAL_HARDWARE_XML`) rather than read one.
 
 Key relations in `0.xml`:
 
