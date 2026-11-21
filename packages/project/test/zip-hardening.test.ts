@@ -48,7 +48,12 @@ describe("zip reader: offsets and lengths outside the archive", () => {
 
   test("two entries of one name are refused, not one of them read", () => {
     const b = zip([{ name: "P-0001/0.xml", data: Buffer.from("<KNX>a</KNX>") }, { name: "P-0001/0.xml", data: Buffer.from("<KNX>b</KNX>") }]);
-    expect(thrown(() => readZip(b))).toBe("INVALID_KNXPROJ: malformed zip: two entries are named P-0001/0.xml");
+    expect(thrown(() => readZip(b))).toBe("ARCHIVE_DUPLICATE_ENTRY: two entries are named P-0001/0.xml; Busforge does not pick one");
+  });
+
+  test("two entries whose names differ in case only are refused as one name twice", () => {
+    const b = zip([{ name: "M-0083/Hardware.xml", data: Buffer.from("<KNX>a</KNX>") }, { name: "m-0083/hardware.XML", data: Buffer.from("<KNX>b</KNX>") }]);
+    expect(thrown(() => readZip(b))).toBe("ARCHIVE_DUPLICATE_ENTRY: two entries are named M-0083/Hardware.xml and m-0083/hardware.XML, one name in any case; Busforge does not pick one");
   });
 
   test("a central directory offset past the end record is refused", () => {

@@ -50,15 +50,14 @@ describe("malformed input surfaces coded errors", () => {
 describe("readBaggage", () => {
   // Actual contract from the implementation (readBaggage): unzip the outer
   // archive, resolve/decrypt the inner P-*.zip via projectOf, then collect
-  // inner entries under BinaryData/ or UserFiles/ keyed by the path after that
+  // inner entries under BinaryData/ or UserFiles/ at its root, keyed by the path after that
   // folder, skipping zero-length blobs (buf.length > 0). Always
   // returns a Map; empty when there is no inner archive or no baggage entries.
   test("returns a Map for the encrypted fixture with the correct password", () => {
     const baggage = readBaggage(fix("sample-encrypted.knxproj"), "tester12");
     expect(baggage).toBeInstanceOf(Map);
     // Contract-derived invariants that hold whatever the fixture contains: keys
-    // are the path AFTER the BinaryData/UserFiles folder (the regex group in
-    // readBaggage starts past the folder's slash) and values are non-empty
+    // are the path AFTER the BinaryData/UserFiles folder and values are non-empty
     // (zero-length blobs are filtered out). We deliberately do not
     // assert emptiness: no existing test documents whether this fixture carries
     // baggage, and guessing either way would be a fabricated expectation.
