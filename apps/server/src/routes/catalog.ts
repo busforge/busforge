@@ -52,12 +52,11 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const file = form.get("file");
     if (!(file instanceof Blob)) return err("FILE_MISSING", "missing file");
     const bytes = Buffer.from(await file.arrayBuffer());
-    // A non-zip (or a zip without manufacturer data) is the realistic wrong-file
-    // case; report it as "not a product database" rather than leaking the
-    // .knxproj-worded INVALID_KNXPROJ from the zip reader. Product data Busforge refuses to pick from
-    // keeps its own code.
+    // A file that is no zip (the zip reader's INVALID_KNXPROJ, or a document that does not parse) or a zip
+    // without manufacturer data is the realistic wrong-file case; report it as "not a product database"
+    // rather than leaking the .knxproj-worded INVALID_KNXPROJ. Every other refusal keeps its own code.
     let products: ReturnType<typeof extractCatalogProducts> = [];
-    try { products = extractCatalogProducts(bytes); } catch (e) { if (errorCode(e) === "SEVERAL_HARDWARE_XML") throw e; products = []; }
+    try { products = extractCatalogProducts(bytes); } catch (e) { const code = errorCode(e); if (code !== undefined && code !== "INVALID_KNXPROJ") throw e; products = []; }
     if (products.length === 0) return err("CATALOG_IMPORT_EMPTY", "no manufacturer products found in the archive");
     const programs = extractAppPrograms(bytes, products.map((p) => p.appProgramId));
     // Only keep products whose application program is present, so every catalog

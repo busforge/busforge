@@ -4,7 +4,7 @@ import { storeZip } from "../../../packages/project/test/ziputil.ts";
 import { tempDir } from "../../../tools/test-temp.ts";
 
 // An archive holding one manufacturer's Hardware.xml twice under paths that differ in case only is refused
-// by SEVERAL_HARDWARE_XML on every import, the catalogue's included: it is not reported as a file without
+// by ARCHIVE_DUPLICATE_ENTRY on every import, the catalogue's included: it is not reported as a file without
 // products.
 const M = "M-0083";
 const hardware = (text: string) => `<?xml version="1.0" encoding="utf-8"?>
@@ -36,11 +36,11 @@ const code = async (path: string, bytes: Buffer, name: string) => {
 
 describe("two Hardware.xml in one manufacturer directory", () => {
   test("a .knxprod is refused by the catalogue import with its code", async () => {
-    expect(await code("/api/catalog/import", storeZip(twice), "two.knxprod")).toEqual({ status: 400, code: "SEVERAL_HARDWARE_XML" });
+    expect(await code("/api/catalog/import", storeZip(twice), "two.knxprod")).toEqual({ status: 400, code: "ARCHIVE_DUPLICATE_ENTRY" });
   });
   for (const path of ["/api/projects/analyze", "/api/projects/import"]) {
     test(`a .knxproj is refused by ${path} with its code`, async () => {
-      expect(await code(path, storeZip({ ...twice, "P-0001/0.xml": xml0 }), "two.knxproj")).toEqual({ status: 400, code: "SEVERAL_HARDWARE_XML" });
+      expect(await code(path, storeZip({ ...twice, "P-0001/0.xml": xml0 }), "two.knxproj")).toEqual({ status: 400, code: "ARCHIVE_DUPLICATE_ENTRY" });
     });
   }
   test("a .knxprod with one is imported", async () => {

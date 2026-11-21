@@ -11,24 +11,52 @@ function deriveWinzipPassword(password: string): string {
   return pbkdf2Sync(Buffer.from(password, "utf16le"), Buffer.from("21.project.ets.knx.org"), 65536, 32, "sha256").toString("base64");
 }
 
-// A project's files are found by their place, never by how a name ends: an unencrypted export keeps
-// the application programs (M-XXXX/M-XXXX_A-….xml, whose id may end in 0) next to its P-XXXX/0.xml.
-// An export with an inner archive holds P-XXXX.zip at the outer root and 0.xml and project.xml at that
-// archive's root; one without holds P-XXXX/0.xml and P-XXXX/project.xml in the outer archive. ETS 4
-// writes Project.xml, later versions project.xml.
-const isProjectXml = (name: string) => name.toLowerCase() === "project.xml";
+// An archive's entries are found by their place, never by how a name ends, and the path is compared in
+// any case: ETS writes its archives on a file system that does not tell case apart (ETS 4 names the project
+// file Project.xml, later versions project.xml). Two entries whose paths differ in case only are one entry
+// twice, refused like two entries of one name (zip.ts).
+const namesByPath = new WeakMap<Map<string, Buffer>, Map<string, string[]>>();
+function namesOf(files: Map<string, Buffer>): Map<string, string[]> {
+  let byPath = namesByPath.get(files);
+  if (byPath) return byPath;
+  byPath = new Map();
+  for (const name of files.keys()) {
+    const path = name.toLowerCase();
+    const names = byPath.get(path);
+    if (names) names.push(name); else byPath.set(path, [name]);
+  }
+  namesByPath.set(files, byPath);
+  return byPath;
+}
+const theOne = (names: string[]): string => {
+  if (names.length > 1) throw new KnxprojError("ARCHIVE_DUPLICATE_ENTRY", `the archive holds one entry twice, as ${names.join(" and ")}; Busforge does not pick one`);
+  return names[0];
+};
+// The name of the entry at `path`, undefined where the archive holds none.
+function entryAt(files: Map<string, Buffer>, path: string): string | undefined {
+  const names = namesOf(files).get(path.toLowerCase());
+  return names && theOne(names);
+}
+// The names of the entries whose path, in lower case, `place` matches.
+const entriesAt = (files: Map<string, Buffer>, place: RegExp): string[] =>
+  [...namesOf(files)].filter(([path]) => place.test(path)).map(([, names]) => theOne(names));
+
+// A project's files: an unencrypted export keeps the application programs (M-XXXX/M-XXXX_A-….xml, whose id
+// may end in 0) next to its P-XXXX/0.xml. An export with an inner archive holds P-XXXX.zip at the outer root
+// and 0.xml and project.xml at that archive's root; one without holds P-XXXX/0.xml and P-XXXX/project.xml in
+// the outer archive.
 const severalProjects = (what: string) => new KnxprojError("KNXPROJ_SEVERAL_PROJECTS", `the archive holds ${what}; Busforge does not pick one`);
 
 // The id of the one project the outer archive holds files of (P-XXXX.zip, P-XXXX/0.xml, P-XXXX/project.xml),
-// undefined where it holds none. Files of two ids are two projects.
+// as its first file writes it, undefined where it holds none. Files of two ids are two projects.
 function projectIdOf(outer: Map<string, Buffer>): string | undefined {
-  const ids = new Set<string>();
-  for (const name of outer.keys()) {
-    const m = /^(P-[^/]+)(?:\.zip|\/([^/]+))$/.exec(name);
-    if (m && (m[2] === undefined || m[2] === "0.xml" || isProjectXml(m[2]))) ids.add(m[1]);
+  const ids = new Map<string, string>();
+  for (const name of entriesAt(outer, /^p-[^/]+?(?:\.zip|\/0\.xml|\/project\.xml)$/)) {
+    const id = /^[^/]+?(?=\.zip$|\/)/i.exec(name)![0];
+    if (!ids.has(id.toLowerCase())) ids.set(id.toLowerCase(), id);
   }
-  if (ids.size > 1) throw severalProjects(`files of ${ids.size} projects (${[...ids].join(", ")})`);
-  return [...ids][0];
+  if (ids.size > 1) throw severalProjects(`files of ${ids.size} projects (${[...ids.values()].join(", ")})`);
+  return [...ids.values()][0];
 }
 
 // The project an archive holds: its id, and its inner archive where it has one, decrypted with the project
@@ -38,10 +66,11 @@ function projectIdOf(outer: Map<string, Buffer>): string | undefined {
 interface ProjectEntries { id: string | undefined; inner: Map<string, Buffer> | undefined }
 function projectOf(outer: Map<string, Buffer>, password: string | undefined): ProjectEntries {
   const id = projectIdOf(outer);
-  const innerBuf = id === undefined ? undefined : outer.get(`${id}.zip`);
-  if (id === undefined || !innerBuf) return { id, inner: undefined };
-  const besides = [...outer.keys()].filter((n) => n === `${id}/0.xml` || (n.startsWith(`${id}/`) && isProjectXml(n.slice(id.length + 1))));
-  if (besides.length) throw severalProjects(`the project twice, as ${id}.zip and as ${besides.join(", ")}`);
+  const innerName = id === undefined ? undefined : entryAt(outer, `${id}.zip`);
+  if (id === undefined || innerName === undefined) return { id, inner: undefined };
+  const innerBuf = outer.get(innerName)!;
+  const besides = [entryAt(outer, `${id}/0.xml`), entryAt(outer, `${id}/project.xml`)].filter((n) => n !== undefined);
+  if (besides.length) throw severalProjects(`the project twice, as ${innerName} and as ${besides.join(", ")}`);
   const encryption = zipEncryption(innerBuf);
   if (encryption === "none") return { id, inner: readZip(innerBuf) };
   if (!password) throw new KnxprojError("PASSWORD_REQUIRED", "project is password-protected");
@@ -54,13 +83,14 @@ export function loadKnxproj(bytes: Buffer, password: string | undefined, fallbac
   const outer = readZip(bytes);
   const project = projectOf(outer, password);
   const xml0 = xml0Of(outer, project);
-  const programs = [...outer].filter(([k]) => /\/M-[^/]+_A-[^/]+\.xml$/.test(k)).map(([, b]) => dec.decode(b));
+  const programs = entriesAt(outer, PROGRAM_PLACE).map((name) => dec.decode(outer.get(name)!));
   const products = zipProducts(outer);
   return parseProject(xml0, projectXmlOf(outer, project), fallbackName, parseProductNames(products.hardwareXml), busInterfaceIndexes(programs), parseProductTranslations(products.hardwareXml), hardwareApplicationsOf(products));
 }
 
 function xml0Of(outer: Map<string, Buffer>, { id, inner }: ProjectEntries): string {
-  const b = inner ? inner.get("0.xml") : id === undefined ? undefined : outer.get(`${id}/0.xml`);
+  const name = inner ? entryAt(inner, "0.xml") : id === undefined ? undefined : entryAt(outer, `${id}/0.xml`);
+  const b = name === undefined ? undefined : (inner ?? outer).get(name);
   if (!b) throw new KnxprojError("INVALID_KNXPROJ", `the archive holds no project: no ${inner ? `0.xml at the root of ${id}.zip` : "P-XXXX/0.xml"}`);
   return dec.decode(b);
 }
@@ -68,31 +98,18 @@ function xml0Of(outer: Map<string, Buffer>, { id, inner }: ProjectEntries): stri
 // The project's project.xml: at the inner archive's root where it has one, in the outer archive's P-XXXX/
 // where it has none; undefined where there is none (the name then comes from 0.xml).
 function projectXmlOf(outer: Map<string, Buffer>, { id, inner }: ProjectEntries): string | undefined {
-  const at = (files: Map<string, Buffer>, dir: string): string | undefined => {
-    const names = [...files.keys()].filter((n) => n.startsWith(dir) && isProjectXml(n.slice(dir.length)));
-    if (names.length > 1) throw severalProjects(`${names.length} project.xml files (${names.join(", ")})`);
-    return names.length ? dec.decode(files.get(names[0])!) : undefined;
-  };
-  return inner ? at(inner, "") : id === undefined ? undefined : at(outer, `${id}/`);
+  const name = inner ? entryAt(inner, "project.xml") : id === undefined ? undefined : entryAt(outer, `${id}/project.xml`);
+  return name === undefined ? undefined : dec.decode((inner ?? outer).get(name)!);
 }
 
-// The manufacturers' Hardware.xml documents, found by their place like the project's files: one in each
-// manufacturer directory, M-XXXX/Hardware.xml, in a .knxproj and a .knxprod alike. An entry elsewhere whose
-// name ends in Hardware.xml (a baggage, a file at the root, a manufacturer directory below another folder)
-// describes none of the archive's products. The path is taken in any case, as project.xml is, since ETS
-// writes on a file system that does not tell case apart; two paths that differ in case only are one
-// manufacturer's product data twice, and refused.
-function hardwareXmlsOf(outer: Map<string, Buffer>): string[] {
-  const byDir = new Map<string, string[]>();
-  for (const name of outer.keys()) {
-    const dir = /^(m-[^/]+)\/hardware\.xml$/.exec(name.toLowerCase())?.[1];
-    if (dir !== undefined) byDir.set(dir, [...(byDir.get(dir) ?? []), name]);
-  }
-  return [...byDir.values()].map((names) => {
-    if (names.length > 1) throw new KnxprojError("SEVERAL_HARDWARE_XML", `the archive holds one manufacturer's Hardware.xml ${names.length} times (${names.join(", ")}); Busforge does not pick one`);
-    return dec.decode(outer.get(names[0])!);
-  });
-}
+// A manufacturer's product data, in a .knxproj and a .knxprod alike, sits in its manufacturer directory:
+// M-XXXX/Hardware.xml, M-XXXX/Baggages.xml, and each application program as M-XXXX/M-XXXX_A-….xml under its
+// own manufacturer's id. An entry elsewhere whose name ends the same (a baggage, a file at the root, a
+// manufacturer directory below another folder, another manufacturer's directory) is none of the archive's
+// product data.
+const HARDWARE_PLACE = /^m-[^/]+\/hardware\.xml$/;
+const PROGRAM_PLACE = /^(m-[^/_]+)\/\1_a-[^/]+\.xml$/;
+const hardwareXmlsOf = (outer: Map<string, Buffer>): string[] => entriesAt(outer, HARDWARE_PLACE).map((name) => dec.decode(outer.get(name)!));
 
 // A project's 0.xml, decrypted with the project password where the project has one.
 export function readXml0(bytes: Buffer, password: string | undefined): string {
@@ -173,10 +190,11 @@ export function readAppProgram(bytes: Buffer, appRef: string): string | null {
   return (id && products.program(id)) || null;
 }
 
-// The archive entry of application program `id`: "<id>.xml", at the root or in a folder (M-XXXX/).
+// The archive entry of application program `id` (M-XXXX_A-…): M-XXXX/<id>.xml.
 const programEntry = (outer: Map<string, Buffer>, id: string): Buffer | undefined => {
-  const key = [...outer.keys()].find((n) => n === `${id}.xml` || n.endsWith(`/${id}.xml`));
-  return key ? outer.get(key) : undefined;
+  const path = `${id.split("_")[0]}/${id}.xml`;
+  const name = PROGRAM_PLACE.test(path.toLowerCase()) ? entryAt(outer, path) : undefined;
+  return name === undefined ? undefined : outer.get(name);
 };
 
 
@@ -296,7 +314,7 @@ export function extractAppPrograms(bytes: Buffer, ids: Iterable<string>): Map<st
 }
 
 // The images a product's TypePicture parameters show, for each given application program: the
-// program's TypePicture RefIds, looked up in its manufacturer's Baggages.xml (Id -> TargetPath and
+// program's TypePicture RefIds, looked up in its manufacturer's M-XXXX/Baggages.xml (Id -> TargetPath and
 // Name) and read from M-XXXX/Baggages/<TargetPath>/<Name> in the archive. A .knxproj and a .knxprod
 // carry the same layout. A plain manufacturer XML lists its baggage but carries no file, so it yields
 // none; a picture whose file the archive lacks is left out, and the catalogue then has no image for it.
@@ -311,8 +329,8 @@ export function extractPictureBaggage(bytes: Buffer, programs: Map<string, strin
     if (m) return m;
     m = new Map();
     index.set(manufacturer, m);
-    const key = [...outer.keys()].find((n) => n === `${manufacturer}/Baggages.xml` || n.endsWith(`/${manufacturer}/Baggages.xml`));
-    if (!key) return m;
+    const key = /^M-[^/]+$/i.test(manufacturer) ? entryAt(outer, `${manufacturer}/Baggages.xml`) : undefined;
+    if (key === undefined) return m;
     const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", isArray: () => false });
     // A Baggages.xml that does not parse gives no images; the rows then say the image is not in the catalogue.
     let doc: XmlNode;
@@ -332,10 +350,11 @@ export function extractPictureBaggage(bytes: Buffer, programs: Map<string, strin
     const refs = new Set([...xml.matchAll(/<TypePicture\b[^>]*\bRefId="([^"]+)"/g)].map((m) => m[1]));
     for (const ref of refs) {
       const path = indexOf(ref.split("_")[0]).get(ref);
-      const data = path ? outer.get(path) : undefined;
-      if (!path || !data?.length) continue;
+      const name = path === undefined ? undefined : entryAt(outer, path);
+      const data = name === undefined ? undefined : outer.get(name);
+      if (name === undefined || !data?.length) continue;
       if (!out.has(pid)) out.set(pid, new Map());
-      out.get(pid)!.set(ref, { name: path.slice(path.lastIndexOf("/") + 1), data });
+      out.get(pid)!.set(ref, { name: name.slice(name.lastIndexOf("/") + 1), data });
     }
   }
   return out;

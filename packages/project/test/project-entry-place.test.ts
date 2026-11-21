@@ -72,8 +72,9 @@ describe("a project with an inner archive: P-XXXX.zip at the outer root", () => 
     const two = storeZip({ "P-0001.zip": storeZip({ "0.xml": xml0 }), "P-0002.zip": storeZip({ "0.xml": xml0 }) });
     expect(codeOf(() => loadKnxproj(two, undefined, "x"))).toBe("KNXPROJ_SEVERAL_PROJECTS");
     expect(codeOf(() => readBaggage(two, undefined))).toBe("KNXPROJ_SEVERAL_PROJECTS");
+    // project.xml and Project.xml differ in case only: one entry twice.
     const names = storeZip({ "P-0001.zip": storeZip({ "0.xml": xml0, "project.xml": projectXml("a"), "Project.xml": projectXml("b") }) });
-    expect(codeOf(() => loadKnxproj(names, undefined, "x"))).toBe("KNXPROJ_SEVERAL_PROJECTS");
+    expect(codeOf(() => loadKnxproj(names, undefined, "x"))).toBe("ARCHIVE_DUPLICATE_ENTRY");
   });
 
   test("an inner archive beside another project's P-XXXX/0.xml, or beside its own, is refused", () => {

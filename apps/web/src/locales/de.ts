@@ -181,7 +181,7 @@ const de: Messages = {
     PASSWORD_REQUIRED: "Dieses Projekt ist passwortgeschützt. Bitte das Passwort eingeben.",
     INVALID_KNXPROJ: "Diese Datei ist keine gültige .knxproj.",
     KNXPROJ_SEVERAL_PROJECTS: "Diese Datei enthält mehr als ein Projekt. Ein ETS-Export enthält eines; Busforge wählt keines davon aus. Es wurde nichts importiert.",
-    SEVERAL_HARDWARE_XML: "Diese Datei enthält die Produktdaten (Hardware.xml) eines Herstellers zweimal. Busforge wählt keine davon aus. Es wurde nichts importiert.",
+    ARCHIVE_DUPLICATE_ENTRY: "Diese Datei enthält einen Eintrag zweimal, unter einem Namen oder unter Namen, die sich nur in Groß- und Kleinschreibung unterscheiden. Busforge wählt keinen davon aus. Es wurde nichts importiert.",
     ARCHIVE_TOO_LARGE: "Die Datei entpackt sich zu mehr, als Busforge akzeptiert: 512 MiB für eine enthaltene Datei und 1 GiB für ein Archiv, wobei ein Archiv in der Datei für sich zählt. Es wurde nichts importiert.",
     ZIP64_UNSUPPORTED: "Die Datei ist ein ZIP64-Archiv, das Busforge nicht liest. Es wurde nichts importiert.",
     FILE_MISSING: "Es wurde keine Datei übergeben.",

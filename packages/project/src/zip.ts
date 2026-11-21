@@ -258,7 +258,7 @@ export function readZip(buf: Buffer, password?: string): Map<string, Buffer> {
   // Two entries of one name would leave one of them unread, and which one is the zip writer's accident.
   const names = new Set<string>();
   for (const e of files) {
-    if (names.has(e.name)) throw malformed(`two entries are named ${e.name}`);
+    if (names.has(e.name)) throw new KnxprojError("ARCHIVE_DUPLICATE_ENTRY", `two entries are named ${e.name}; Busforge does not pick one`);
     names.add(e.name);
     if (e.size > ZIP_ENTRY_LIMIT) throw new KnxprojError("ARCHIVE_TOO_LARGE", `entry ${e.name} unpacks to ${e.size} bytes, over the ${ZIP_ENTRY_LIMIT}-byte limit per entry`);
     total += e.size;
