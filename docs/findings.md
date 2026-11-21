@@ -60,6 +60,15 @@ a `P-XXXX/0.xml` or `P-XXXX/project.xml`, or both `project.xml` and `Project.xml
 than one project, and Busforge refuses them (`KNXPROJ_SEVERAL_PROJECTS`) rather than read one. A ZIP
 with two entries of one name is refused too (`INVALID_KNXPROJ`).
 
+**Where the product data sits.** A `.knxproj` and a `.knxprod` keep each manufacturer's products in
+`M-XXXX/Hardware.xml`, one per manufacturer directory, next to its application programs and its
+`Baggages/`. Busforge reads `Hardware.xml` only there, for a project's device names, the application each
+`Hardware2Program` names and the catalogue's products alike: an entry elsewhere whose name ends in
+`Hardware.xml` (a baggage, a file at the root, a manufacturer directory below another folder) describes none
+of the archive's products. The name is taken in any case, as `project.xml` is; two names in one directory
+that differ in case only are one manufacturer's product data twice, and Busforge refuses the archive
+(`SEVERAL_HARDWARE_XML`) rather than read one.
+
 Key relations in `0.xml`:
 
 - `GroupAddress Id="…_GA-n" Address="<16-bit>"`.

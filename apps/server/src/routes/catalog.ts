@@ -4,6 +4,7 @@ import { putAppProgram, putCatalogProduct, putCatalogBaggage, getCatalogBaggage,
 import { loadCatalogApp } from "../deviceservice.ts";
 import { checkBaggageSize } from "../db/baggage.ts";
 import { json, err } from "../httputil.ts";
+import { errorCode } from "../errors.ts";
 import type { AppState } from "../app.ts";
 
 // /api/catalog/...  -> browsable device catalog for placing into projects
@@ -53,9 +54,10 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const bytes = Buffer.from(await file.arrayBuffer());
     // A non-zip (or a zip without manufacturer data) is the realistic wrong-file
     // case; report it as "not a product database" rather than leaking the
-    // .knxproj-worded INVALID_KNXPROJ from the zip reader.
+    // .knxproj-worded INVALID_KNXPROJ from the zip reader. Product data Busforge refuses to pick from
+    // keeps its own code.
     let products: ReturnType<typeof extractCatalogProducts> = [];
-    try { products = extractCatalogProducts(bytes); } catch { products = []; }
+    try { products = extractCatalogProducts(bytes); } catch (e) { if (errorCode(e) === "SEVERAL_HARDWARE_XML") throw e; products = []; }
     if (products.length === 0) return err("CATALOG_IMPORT_EMPTY", "no manufacturer products found in the archive");
     const programs = extractAppPrograms(bytes, products.map((p) => p.appProgramId));
     // Only keep products whose application program is present, so every catalog
