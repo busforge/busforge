@@ -50,12 +50,11 @@ async function download(xml: string, opts: { until?: (plan: LoadPlan) => number;
 }
 
 // The frames that drive the download, ETS's and Busforge's alike: the load controls (PID 5 writes, the 0x0104
-// control), every other property write and description read, A_Restart, T_Connect and T_Disconnect. Left out: the
-// device control (PID 14), which ETS writes on MV-0705 to have every write answered and Busforge does not (it reads
-// each write back), and Busforge sets on MV-07B0 where ETS does not; reads and data writes (the memory images are
-// compared on their own).
+// control), every other property write (the device control's, verify mode, included) and description read,
+// A_Restart, T_Connect and T_Disconnect. Left out: reads and data writes (the memory images are compared on their
+// own).
 const controls = (frames: DownloadFrame[]): string[] => frames.filter((f) => f.from === "tool"
-  && /^(connect|disconnect|028b0104|03d7|03d8|038)/.test(f.tpdu) && !f.tpdu.startsWith("03d7000e")).map((f) => f.tpdu);
+  && /^(connect|disconnect|028b0104|03d7|03d8|038)/.test(f.tpdu)).map((f) => f.tpdu);
 // Every frame, both ways, from the first `from` frame to the first `to` frame after it (exclusive).
 const window = (frames: DownloadFrame[], from: string, to: (f: DownloadFrame) => boolean): string[] => {
   const at = frames.findIndex((f) => f.from === "tool" && f.tpdu === from);
@@ -156,8 +155,8 @@ corpusDescribe("bussard's synthetic captures: a master reset in a System B full 
       expect(fromAlloc(sim.frames)).toEqual(fromAlloc(ets));
       const reset = (frames: DownloadFrame[]) => window(frames, `0381${code}00`, (f) => f.from === "tool" && f.tpdu.startsWith("03d7"));
       expect(reset(ets)).toEqual([`> 0381${code}00`, "< 03a1000000", "> disconnect", "> connect", "> 0300", "< 034007b0", "> 03d500381001", "< 03d6003810010042"]);
-      // Busforge reads the device control before it sets verify mode again (the restart may have cleared it).
-      expect(reset(sim.frames)).toEqual([...reset(ets), "> 03d5000e1001", "< 03d6000e100104"]);
+      // Verify mode follows the reset, right before the first memory write, in both.
+      expect(reset(sim.frames)).toEqual(reset(ets));
     });
   }
 });

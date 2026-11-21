@@ -1,7 +1,7 @@
 import { test, expect, jest, afterEach } from "bun:test";
 import { KnxDevice, PID, VERIFY_MODE } from "../src/device.ts";
 import { planSystemBFullDownload, appId, STATE } from "../src/flash.ts";
-import { runLoadPlan } from "../src/loadrunner.ts";
+import { runLoadPlan, withVerifyMode } from "../src/loadrunner.ts";
 import { apdu, parseApdu, tpAck, tpDisconnect, APCI, type KnxTransport } from "../src/index.ts";
 
 // The close of a thelsing/OpenKNX full download (planSystemBFullDownload without closeAtOnce): its
@@ -139,7 +139,7 @@ test("the download ends without a connection the unit closes for idleness or ref
   jest.useFakeTimers();
   const unit = new ThelsingUnit();
   const dev = new KnxDevice(unit, "1.2.3");
-  const plan = planSystemBFullDownload(tables, 0, true, [], undefined, false, false);
+  const plan = withVerifyMode(planSystemBFullDownload(tables, 0, true, [], undefined, false, false), true);
   await onFakeClock((async () => {
     await dev.connect();
     await runLoadPlan(dev, plan);

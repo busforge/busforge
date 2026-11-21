@@ -1,4 +1,4 @@
-import { KnxDevice, KnxError, OBJECT_TYPE_KNXNETIP, type LoadPlan, type SecurityObjectTables, SENDER_ENTRY, planSystemBGaFlash, planSystemBFullDownload, appId, runLoadPlan, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, assocFormOf, ASSOC_TABLE_DESCRIPTION, type AssocForm, loadedTableAddr, readMcbTable, mcbProves, mcbProvenRegions, MCB_ELEMENT_BYTES, type McbEntry, GroupTableUnreadable, OBJ, PID, lsmState, STATE } from "@busforge/knx";
+import { KnxDevice, KnxError, OBJECT_TYPE_KNXNETIP, type LoadPlan, type SecurityObjectTables, SENDER_ENTRY, planSystemBGaFlash, planSystemBFullDownload, appId, runLoadPlan, withVerifyMode, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, assocFormOf, ASSOC_TABLE_DESCRIPTION, type AssocForm, loadedTableAddr, readMcbTable, mcbProves, mcbProvenRegions, MCB_ELEMENT_BYTES, type McbEntry, GroupTableUnreadable, OBJ, PID, lsmState, STATE } from "@busforge/knx";
 import { toAppModel, unmappedParamRefs } from "./application.ts";
 import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, differingFF, leaveUnreadUnchanged, verifyMaskedBytes, confirmedMatch, type ConfirmedOnlyRange, buildAbsoluteSegmentTargets, wholeBytes, refuseColorWrites, refuseCalculationWrites, differingConstants, type ConstantDifference } from "./deviceimage.ts";
 import { refuseRawDataWrites } from "./rawdata.ts";
@@ -10,7 +10,7 @@ import { decodeParameterImage, decodeAbsoluteImage, imageValueForm } from "./ima
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
 import { assessParCoverage, fullDownloadParCoverage, systemBMasterResets, declaredPropChecks, relParamFillByte, relParamFullMode, declaredMcbWrites, unrunGrpSteps, lsmIdx, stepAddress, type ParCoverage, type LoadProcedures, type McbWrite } from "./loadproc.ts";
 import { planAbsoluteParFlash, buildAbsoluteParFlash, absoluteStructuralBuild, planRelativeParFlash, planRelativeStructuralFlash, planRelativePartialFullDownload, changedOwned, differentialMask, declaredMcbRegions, type McbRegion, planAbsoluteStructuralFlash, absoluteStructuralImages, differingBytes, planAbsoluteFullDownload, absoluteFullStepRefusal, fullDownloadSegmentRefusal, absoluteFullForm, withClosing, withConfirmedRestart, planSystem7GaFlash, planSystem7TableBrackets, fullDownloadImageDigest, procedureSizeRefusal, relativeFullDownloadRefusal, type AbsFullSegment } from "./deviceflash.ts";
-import { maskInfo, isMemoryMappedLsm, type MemoryModel, type SystemFamily } from "./masks.ts";
+import { maskInfo, isMemoryMappedLsm, verifyModeDeclared, type MemoryModel, type SystemFamily } from "./masks.ts";
 import { type AppConfig, type ModuleInstance } from "./appconfig.ts";
 import type { AppModel } from "./application.ts";
 import { ProductError } from "./errors.ts";
@@ -1290,9 +1290,9 @@ export class SystemBProfile extends DeviceProfile {
     const requireReboot = !persistsOnLoadCompleted(cfg);
     // The mask's full download unloads the PEI program first (MV-07B0 Load ap1); the application's
     // secure procedure closes with the confirmed restart (IsSecureEnabled), the plain one with A_Restart.
-    const plan = withClosing(withConfirmedRestart(planSystemBFullDownload({
+    const plan = withVerifyMode(withClosing(withConfirmedRestart(planSystemBFullDownload({
       params: target.bytes, paramsInImage: fullDownloadImageCoverage(cfg, target.owned), comObj, addr, assoc, programId: programIdStamp(cfg),
-    }, fillByte, requireReboot, declaredMcbWrites(proc, target.size), security, true, closesAtOnce(cfg), filled, systemBMasterResets(proc, cfg.mask)), proc.secureEnabled), proc, "full");
+    }, fillByte, requireReboot, declaredMcbWrites(proc, target.size), security, true, closesAtOnce(cfg), filled, systemBMasterResets(proc, cfg.mask)), proc.secureEnabled), proc, "full"), verifyModeDeclared(cfg.mask));
     const imageBytes = target.size + comObj.length + addr.length + assoc.length;
 
     return {
@@ -1331,11 +1331,11 @@ export class SystemBProfile extends DeviceProfile {
     const paramsWrite = differentialMask(changedOwned(image, unit.params, target.owned), target.owned, declaredMcbRegions(mcb) ?? unit.paramsMcb);
     const comObjWrite = differentialMask(differingBytes(comObj, unit.comObj), new Array<number>(comObj.length).fill(0xff), unit.comObjMcb);
     const writes = (m: number[]) => m.filter((x) => x !== 0).length;
-    const plan = withClosing(withConfirmedRestart(planRelativePartialFullDownload(LSM, {
+    const plan = withVerifyMode(withClosing(withConfirmedRestart(planRelativePartialFullDownload(LSM, {
       params: writes(paramsWrite) ? { image, owned: paramsWrite, keptAt: unit.paramsAt } : null,
       comObj: writes(comObjWrite) ? { image: comObj, owned: comObjWrite, keptAt: unit.comObjAt } : null,
       addr, assoc,
-    }, programIdStamp(cfg), !persistsOnLoadCompleted(cfg), mcb, security), proc.secureEnabled), proc, "full");
+    }, programIdStamp(cfg), !persistsOnLoadCompleted(cfg), mcb, security), proc.secureEnabled), proc, "full"), verifyModeDeclared(cfg.mask));
     const changedBytes = writes(paramsWrite) + writes(comObjWrite) + addr.length + assoc.length;
     return {
       plan, imageBytes: image.length + comObj.length + addr.length + assoc.length, params: image, target, comObj, addr, assoc, security, changedBytes,
@@ -2452,7 +2452,7 @@ export class System7Profile extends DeviceProfile {
     const { plan, segments, imageBytes, tableRefs } = planAbsoluteFullDownload(cfg, ctx.params, ctx.links, iaToNum(ctx.ia), proc, { moduleInstances: instances, requireReboot: false, propertyMapped, comObjectTable, form });
     if (imageBytes === 0) throw new ProductError("EMPTY_IMAGE", "built an empty download image; refusing to commission nothing");
 
-    return { plan, segments, imageBytes, ...(tableRefs ? { tableRefs } : {}) };
+    return { plan: withVerifyMode(plan, verifyModeDeclared(cfg.mask)), segments, imageBytes, ...(tableRefs ? { tableRefs } : {}) };
   }
 
   // Commission an absolute-segment (System 7) device from its declared load procedure: author the
@@ -2468,10 +2468,8 @@ export class System7Profile extends DeviceProfile {
     refuse(this.operationRefusals().fullDownload);
     // Property-mapped System 7 (MV-0705) authors its com-object table (L3); memory-mapped MV-0700/0701
     // writes L3 as the manufacturer's static <Data>. The two paths share planAbsoluteFullDownload; the
-    // difference is whether `comObjectTable` is supplied (see deviceflash.ts). ETS puts these devices
-    // into verify mode (DeviceControl obj0/PID14 |= VERIFY_MODE) so the device echoes each write; we do
-    // not need it — planAbsoluteFullDownload's writeMem reads every write back instead, the mechanism
-    // the MV-0705 par flash is hardware-proven on for this device family (docs/commissioning.md).
+    // difference is whether `comObjectTable` is supplied (see deviceflash.ts). The plan switches verify
+    // mode on where the mask declares it, as ETS does (withVerifyMode), and reads every write back besides.
     const propertyMapped = !isMemoryMappedLsm(mask);
     if (propertyMapped && !cfg.groupTables.comObjectSegment) {
       throw new ProductError("FULL_DOWNLOAD_UNSUPPORTED",

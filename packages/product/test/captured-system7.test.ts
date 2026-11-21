@@ -30,6 +30,8 @@ class GiraDevice {
   level = 0;
   async authorizeFreeKey() { return this.level; }
   async restart() { this.ops.push("restart"); }
+  // Verify mode, as the captures show ETS switching it on before its first memory write.
+  async setVerifyMode(on: boolean) { this.ops.push(on ? "verifyMode" : "verifyMode off"); }
   async writesConfirmed() { return false; }
   confirmedWrites() { return []; }
   clearConfirmedWrites() {}
@@ -92,7 +94,7 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
     // address table: count 3 (own address + 2), 1.2.7, 2/1/7, 2/1/8, 14/7/200 -> 9 bytes at 0x4000
     expect(dev.ops.slice(0, dev.ops.indexOf("restart") + 1)).toEqual([
       "unload:1", "unload:2",
-      "load:1", "absSegment:1@16384+9", "write", "taskSegment:1@16384", "loadCompleted:1",
+      "load:1", "absSegment:1@16384+9", "verifyMode", "write", "taskSegment:1@16384", "loadCompleted:1",
       "load:2", "absSegment:2@16393+475", "write", "taskSegment:2@16393", "loadCompleted:2",
       "load:3", "write", "loadCompleted:3", ...STAMPS, "restart",
     ]);
@@ -477,7 +479,7 @@ corpusDescribe("the declared-order M-0081_A-FE01-11-75D9 downloads, run against 
     expect(r).toMatchObject({ kind: "flashed", verified: true });
     expect(dev.ops.slice(0, dev.ops.indexOf("restart") + 1)).toEqual([
       "unload:1", "unload:2", "unload:3",
-      "load:1", "absSegment:1@16384+47", "write", "taskSegment:1@16384", "loadCompleted:1",
+      "load:1", "absSegment:1@16384+47", "verifyMode", "write", "taskSegment:1@16384", "loadCompleted:1",
       "load:2", "absSegment:2@16431+45", "write", "taskSegment:2@16431", "loadCompleted:2",
       "load:3", "absSegment:3@1792+250", "absSegment:3@16476+91", "write", "absSegment:3@16896+256", "write",
       "taskSegment:3@16567", "taskCtrl1:3=0000000000000000", "loadCompleted:3", "restart",
@@ -632,7 +634,7 @@ corpusDescribe("the declared-order M-0048_A-107E-12-5B58 (TheLuxa P300) full dow
     expect(r).toMatchObject({ kind: "flashed", verified: true });
     expect(dev.ops.slice(0, dev.ops.indexOf("restart") + 1)).toEqual([
       "unload:1", "unload:2", "unload:3",
-      "load:1", "absSegment:1@16384+9", "write", "taskSegment:1@16384", "loadCompleted:1",
+      "load:1", "absSegment:1@16384+9", "verifyMode", "write", "taskSegment:1@16384", "loadCompleted:1",
       "load:2", "absSegment:2@16393+1011", "write", "taskSegment:2@16393", "loadCompleted:2",
       "load:3", "absSegment:3@1792+248", "absSegment:3@17404+500", "write", "absSegment:3@18432+576", "write",
       "taskSegment:3@17894", "taskCtrl1:3=45d3010000000000", "loadCompleted:3", "restart",

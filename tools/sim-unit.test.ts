@@ -357,12 +357,32 @@ corpusDescribe("the simulated MEAN WELL KNX-40E-1280D", () => {
     expect(writeOrder(simPhases.bracket)).toEqual([4, 3, 2, 1]);
     expect(writeOrder(unitPhases.bracket)).toEqual([3, 2, 1, 4]);
     // From the first unload to the A_Restart: every request, every answer and every confirmation the unit's, the
-    // parameter segment's run (object 4's two PID 7 reads and the segment's memory writes) taken before the tables'.
-    expect(simPhases.bracket).toEqual(parameterSegmentFirst(unitPhases.bracket));
+    // parameter segment's run (object 4's two PID 7 reads and the segment's memory writes) taken before the tables',
+    // the device control aside.
+    expect(withoutDeviceControl(simPhases.bracket)).toEqual(parameterSegmentFirst(withoutDeviceControl(unitPhases.bracket)));
+    // The device control: the captured build switched verify mode on before the bracket and off at its end; this
+    // build switches it on as ETS does, right after the parameter segment's PID 7 read before its first memory write,
+    // and leaves it to the restart. The unit answers it as it answered ETS (meanwell-ets-fulldownload.log): 01 after the
+    // unload, 05 to the write. Busforge besides reads it back.
+    const control = (fs: Frame[]) => fs.filter((f) => f.tpdu.length > 2 && /^4[23]d[567]000e/.test(f.tpdu)).map((f) => f.tpdu.slice(2));
+    const etsControl = frames(captureText("meanwell-ets-fulldownload.log"), "ETS", MEANWELL_DEVICE).map((f) => ({ ...f, tpdu: Buffer.from([Buffer.from(f.tpdu, "hex")[0] & 0xc3]).toString("hex") + f.tpdu.slice(2) }));
+    expect(control(etsControl)).toEqual(["d5000e1001", "d6000e100101", "d7000e100105", "d6000e100105"]);
+    expect(control(simPhases.bracket)).toEqual([...control(etsControl), "d5000e1001", "d6000e100105"]);
+    const firstWrite = simPhases.bracket.findIndex((f) => {
+      const t = Buffer.from(f.tpdu, "hex");
+      return f.dir === ">>" && t.length >= 2 && memWriteOf(t, ((t[0] & 0x03) << 8) | t[1]) !== null;
+    });
+    const controlAt = simPhases.bracket.findIndex((f) => f.dir === ">>" && f.tpdu === "43d5000e1001");
+    expect(simPhases.bracket.slice(0, controlAt).findLast((f) => f.dir === ">>" && f.tpdu.length > 2)?.tpdu).toBe("43d504071001");
+    expect(withoutDeviceControl(simPhases.bracket.slice(controlAt, firstWrite))).toEqual([]);
+    expect(control(unitPhases.bracket)).toEqual(["d5000e1001", "d6000e100105", "d7000e100101", "d6000e100101", "d5000e1001", "d6000e100101"]);
     // Before it this build also reads the association table's element form (object 2's PID 23 description).
-    const at = simPhases.open.findIndex((f) => f.dir === ">>" && f.tpdu === "43d8021700");
-    expect(simPhases.open.slice(at, at + 4)).toEqual([{ dir: ">>", tpdu: "43d8021700", con: "OK" }, { dir: "<<", tpdu: "c2", ctrl: 0xb0, to: 0x1164 }, { dir: "<<", tpdu: "43d90217031400ffff", ctrl: 0xbc, to: 0x1164 }, { dir: ">>", tpdu: "c2", con: "OK" }]);
-    expect(simPhases.open.toSpliced(at, 4)).toEqual(unitPhases.open);
+    // And it reads the device control once, before anything is unloaded (the unit answers 00).
+    expect(control(simPhases.open)).toEqual(["d5000e1001", "d6000e100100"]);
+    const simOpen = withoutDeviceControl(simPhases.open);
+    const at = simOpen.findIndex((f) => f.dir === ">>" && f.tpdu === "43d8021700");
+    expect(simOpen.slice(at, at + 4)).toEqual([{ dir: ">>", tpdu: "43d8021700", con: "OK" }, { dir: "<<", tpdu: "c2", ctrl: 0xb0, to: 0x1164 }, { dir: "<<", tpdu: "43d90217031400ffff", ctrl: 0xbc, to: 0x1164 }, { dir: ">>", tpdu: "c2", con: "OK" }]);
+    expect(simOpen.toSpliced(at, 4)).toEqual(withoutDeviceControl(unitPhases.open));
     // After the restart: probes on the dead connection, which the unit leaves without a frame (how many of
     // them its interface confirms negatively depends on the wall clock).
     for (const ph of [simPhases, unitPhases]) {
@@ -392,6 +412,18 @@ function phases(fs: Frame[]): { open: Frame[]; bracket: Frame[]; probes: Frame[]
   const reconnect = bare.findIndex((f, i) => i > restart && f.dir === ">>" && f.tpdu === "80");
   if (start < 0 || restart < start || reconnect < restart) throw new Error("the download has no bracket, restart and reconnection");
   return { open: bare.slice(0, start), bracket: bare.slice(start, restart + 1), probes: bare.slice(restart + 1, reconnect), verify: bare.slice(reconnect) };
+}
+
+// Frames without the device-control exchanges (object 0 PID 14): each request, the unit's T_ACK, its answer, ours.
+function withoutDeviceControl(fs: Frame[]): Frame[] {
+  const out: Frame[] = [];
+  for (let i = 0; i < fs.length; i++) {
+    if (!(fs[i].dir === ">>" && /^43d[57]000e/.test(fs[i].tpdu))) { out.push(fs[i]); continue; }
+    const answer = fs.findIndex((f, j) => j > i && f.dir === "<<" && /^43d6000e/.test(f.tpdu));
+    if (answer < 0 || fs.slice(i + 1, answer).some((f) => f.tpdu !== "c2") || fs[answer + 1]?.tpdu !== "c2") throw new Error(`a device-control request at frame ${i} without its answer and acknowledgements`);
+    i = answer + 1;
+  }
+  return out;
 }
 
 // A bracket that writes the three tables before the parameter segment, with the parameter segment's run moved

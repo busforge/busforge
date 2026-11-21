@@ -1,7 +1,7 @@
 import { test, expect, describe } from "bun:test";
 import { planSystemBGaFlash, planSystemBFullDownload, appId, compareDeclaredProp, crc16Ccitt, crc16CcittFalse, mcbProves, mcbProvenRegions, readMcbTable, fillAllocatedRuns, FILL_RUN_SKIPPED, STATE } from "../src/flash.ts";
 import { KnxDevice, ERASE, RESTART_MASTER } from "../src/device.ts";
-import { runLoadPlan, leftUnloaded, type LoadPlan, type LoadStep } from "../src/loadrunner.ts";
+import { runLoadPlan, leftUnloaded, withVerifyMode, type LoadPlan, type LoadStep } from "../src/loadrunner.ts";
 import { KnxError } from "../src/errors.ts";
 
 // Recording stub of KnxDevice (the ga-flash.test.ts asDev pattern): every call is
@@ -692,8 +692,8 @@ describe("planSystemBFullDownload: the parameter fill byte is threaded end to en
 
   test("the close: a pause and a fresh link before the restart by default, the restart at once with closeAtOnce", () => {
     const tail = (plan: ReturnType<typeof planSystemBFullDownload>) => plan.slice(plan.findLastIndex((s) => s.op === "loadCompleted") + 1).map((s) => s.op);
-    expect(tail(planSystemBFullDownload(tables()))).toEqual(["awaitReady", "assertLoaded", "assertLoaded", "assertLoaded", "assertLoaded", "verifyMode", "disconnect", "settle", "connect", "restart"]);
-    expect(tail(planSystemBFullDownload(tables(), 0, true, [], undefined, true, true))).toEqual(["assertLoaded", "assertLoaded", "assertLoaded", "verifyMode", "restart"]);
+    expect(tail(planSystemBFullDownload(tables()))).toEqual(["awaitReady", "assertLoaded", "assertLoaded", "assertLoaded", "assertLoaded", "disconnect", "settle", "connect", "restart"]);
+    expect(tail(planSystemBFullDownload(tables(), 0, true, [], undefined, true, true))).toEqual(["assertLoaded", "assertLoaded", "assertLoaded", "restart"]);
   });
 
   // ETS writes the parameter segment first (every MV-07B0 capture); thelsing/knx, which does not close at once, takes
@@ -852,6 +852,72 @@ describe("the write service, settled before the bracket", () => {
     dev.confirmed = true;
     await runLoadPlan(dev as unknown as KnxDevice, plan);
     expect(dev.calls.some((c) => c[0] === "setVerifyMode")).toBe(false);
+  });
+});
+
+describe("classic writes in verify mode take the device's answer", () => {
+  class EchoDev extends RecDev {
+    echoes: (boolean | null)[] = [];
+    override async memWrite(addr: number, data: Buffer, opts: { verify?: boolean; echo?: boolean } = {}) {
+      this.echoes.push(opts.echo ?? null);
+      await super.memWrite(addr, data, opts);
+    }
+  }
+  test("every memory write after the mode is on awaits its answer, until a restart ends the mode", async () => {
+    const dev = new EchoDev();
+    await runLoadPlan(asDev(dev), [
+      { op: "connect" }, { op: "writeMem", address: 0x4000, bytes: Buffer.from([1]) },
+      { op: "verifyMode", on: true },
+      { op: "writeMem", address: 0x4001, bytes: Buffer.from([2]) },
+      { op: "writeSegment", lsm: 4, bytes: Buffer.from([3]) },
+      { op: "writeSegmentOwned", lsm: 4, image: Buffer.from([4]), owned: [0xff], keptAt: 0x4000 },
+      { op: "restart" },
+      { op: "writeMem", address: 0x4002, bytes: Buffer.from([5]) },
+    ]);
+    expect(dev.echoes).toEqual([false, true, true, true, false]);
+  });
+  test("the mode goes on right before the first classic write, after the A_UserMemory writes past 0xFFFF before it", async () => {
+    const dev = new EchoDev();
+    await runLoadPlan(asDev(dev), [
+      { op: "connect" }, { op: "verifyMode", on: true },
+      { op: "writeMem", address: 0x10000, bytes: Buffer.from([1]) },
+      { op: "writeMem", address: 0x4000, bytes: Buffer.from([2]) },
+    ]);
+    expect(dev.calls.filter((c) => c[0] === "memWrite" || c[0] === "setVerifyMode").map((c) => c.slice(0, 2))).toEqual([["memWrite", 0x10000], ["setVerifyMode", true], ["memWrite", 0x4000]]);
+  });
+  test("a classic write whose check is the device's answer is refused on a device not in verify mode", async () => {
+    const dev = new EchoDev();
+    const err = await runLoadPlan(asDev(dev), [{ op: "connect" }, { op: "writeSegment", lsm: 4, bytes: Buffer.from([1]), verify: false, echo: true }]).then(() => null, (e: Error) => e);
+    expect(err?.message).toContain("not in verify mode");
+    expect(dev.echoes).toEqual([]);
+  });
+  test("an A_UserMemory write past 0xFFFF checked by its answer needs no verify mode", async () => {
+    const dev = new EchoDev();
+    dev.addrOf[4] = 0x10000;
+    await runLoadPlan(asDev(dev), [{ op: "connect" }, { op: "writeSegment", lsm: 4, bytes: Buffer.from([1]), verify: false, echo: true }]);
+    expect(dev.echoes).toEqual([false]);
+  });
+  test("a device that does not report its device control is refused before its first load-state event", async () => {
+    const dev = new EchoDev();
+    (dev as unknown as { deviceControl: () => Promise<number> }).deviceControl = async () => { throw new KnxError("DEVICE_CONTROL_UNREADABLE", "no answer"); };
+    const err = await runLoadPlan(asDev(dev), withVerifyMode([{ op: "connect" }, { op: "unload", lsm: 4 }, { op: "writeMem", address: 0x4000, bytes: Buffer.from([1]) }], true)).then(() => null, (e: KnxError) => e);
+    expect(err?.code).toBe("DEVICE_CONTROL_UNREADABLE");
+    expect(dev.calls.map((c) => c[0])).toEqual(["connect"]);
+  });
+  test("verify mode on memory-mapped load-state machines is refused: their load controls are classic writes nobody awaits", async () => {
+    const dev = new EchoDev();
+    const err = await runLoadPlan(asDev(dev), [{ op: "connect" }, { op: "verifyMode", on: true }, { op: "writeMem", address: 0x4000, bytes: Buffer.from([1]) }], { memMappedLsms: true }).then(() => null, (e: Error) => e);
+    expect(err?.message).toContain("memory-mapped");
+  });
+  test("a master reset ends the device's mode, and the next classic write switches it on again", async () => {
+    const dev = new EchoDev();
+    (dev as unknown as { masterResetAnswered: () => Promise<void> }).masterResetAnswered = async () => { dev.calls.push(["masterReset"]); };
+    await runLoadPlan(asDev(dev), [
+      { op: "connect" }, { op: "verifyMode", on: true }, { op: "writeMem", address: 0x4000, bytes: Buffer.from([1]) },
+      { op: "masterReset", eraseCode: 1, channel: 0, mask: "MV-07B0" }, { op: "writeMem", address: 0x4001, bytes: Buffer.from([2]) },
+    ]);
+    expect(dev.calls.filter((c) => ["setVerifyMode", "memWrite", "masterReset"].includes(c[0] as string)).map((c) => c[0])).toEqual(["setVerifyMode", "memWrite", "masterReset", "setVerifyMode", "memWrite"]);
+    expect(dev.echoes).toEqual([true, true]);
   });
 });
 

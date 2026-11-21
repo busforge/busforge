@@ -761,10 +761,8 @@ memory there without the option.
 - **Each write is answered** by an `A_UserMemory_Response` with the same three octets and data. ETS
   reads no device-control property (verify mode) before these writes; whether a real device answers
   only in verify mode the capture cannot show. Busforge awaits the answer for every write and refuses
-  one for another address or with other bytes (`FLASH_VERIFY_MISMATCH`). It deviates from ETS here:
-  a System B full download switches verify mode on before its unload, so these writes go out in
-  verify mode, where ETS reads that property only after them, before its first classic write. The
-  answer is awaited either way.
+  one for another address or with other bytes (`FLASH_VERIFY_MISMATCH`). The full download switches
+  verify mode on as ETS does, after these writes, right before its first classic write.
 - **Not read.** No capture shows `A_UserMemory_Read`, so a read past `0xFFFF` on such an application,
   and a write that would be read back, are refused before any request (`USER_MEMORY_UNSUPPORTED`): a
   backup, a comparison, a parameter or structural flash and the partial form of the full download read
