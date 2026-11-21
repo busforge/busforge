@@ -12,8 +12,8 @@
 //
 // reruns the rows the same way after a change to the comparison or to Busforge and writes, in the corpus's layout,
 // the manifest with their entries and the explained.json of each row whose verdict or differences moved (rejudge):
-// a difference that stays keeps its cause, a new one gets cause null and the command exits 1 naming it. notes.md
-// is not written; the output names what moved for it. It writes to --out (an empty directory outside the corpus,
+// a difference that stays keeps its cause, a new one gets cause null and the command exits 1 naming it, as it does
+// for a verdict moved to a refusal or a failure. notes.md is not written; the output names what moved for it. It writes to --out (an empty directory outside the corpus,
 // by default a new one under the system's temporary directory), into the corpus only with --in-place.
 //
 // A ROW lives in the corpus under captures/ets-sweep/<application id>/<variant>/ (ROW_FILES):
@@ -46,7 +46,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync, copyFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import net from "node:net";
 import { gunzipSync } from "node:zlib";
 import { APCI, KnxIpServer, MM_CTRL_ADDR, MM_STATUS_BASE, PID, iaToNum } from "../packages/knx/src/index.ts";
@@ -609,7 +609,7 @@ export async function runRow(row: Row): Promise<RowResult> {
   const calibration = row.spec.calibration === undefined ? null : {
     capture: row.spec.calibration,
     differences: dialogueDifferences(readFileSync(corpusPath(row.spec.calibration), "utf8"), etsText, sim.deviceIa, "ETS", row.spec.calibrationFrom)
-      .map((d) => ({ difference: d, cause: row.explained.calibration?.find((e) => e.difference === d)?.cause ?? null })),
+      .map((d) => withCause(d, row.explained.calibration)),
   };
   const refusals = [...etsRefusals.after.map((r) => ({ run: "ETS" as const, refusal: r })), ...bfRefusals.after.map((r) => ({ run: "Busforge" as const, refusal: r }))];
   return {
@@ -618,10 +618,13 @@ export async function runRow(row: Row): Promise<RowResult> {
   };
 }
 
+// A difference found, with the cause `given` (explained.json's list) names for it; null where it names none.
+export const withCause = (difference: string, given: Explained["differences"] | undefined) => ({ difference, cause: given?.find((e) => e.difference === difference)?.cause ?? null });
+
 // The differences of a verdict, with the cause explained.json gives each; null where none is given.
 export function causes(verdict: Verdict, explained: Explained): { difference: string; cause: string | null }[] {
   if (verdict.verdict !== "differs") return [];
-  return verdict.differences.map((d) => ({ difference: d, cause: explained.differences.find((e) => e.difference === d)?.cause ?? null }));
+  return verdict.differences.map((d) => withCause(d, explained.differences));
 }
 
 // ---- the manifest ----
@@ -684,10 +687,16 @@ export function updateManifest(old: Manifest | null, results: ManifestRow[], pre
 
 // ---- rejudging a row ----
 
-// A row's explained.json after a rerun (its manifest entry `m`, whose causes are the ones `old` gives): the verdict
-// and the differences as the run found them, a difference that stays with its cause, a new one with cause null
-// (none is invented); the same for a calibrated row's positions. `moved` where it is not `old` again.
-export function rejudge(old: Explained, m: ManifestRow): { explained: Explained; moved: boolean; unexplained: string[] } {
+// Whether a cause explains nothing, as tools/ets-sweep.test.ts holds explained.json to it.
+const noCause = (cause: string | null) => !cause?.trim();
+
+// A row's explained.json after a rerun (its manifest entry `m`, whose causes are the ones `old` gives, manifestRow):
+// the verdict and the differences as the run found them, a difference that stays with its cause, a new one with
+// cause null (none is invented); the same for a calibrated row's positions. `moved` where it is not `old` again.
+// `unexplained`: each difference or position without a cause, and a verdict that moved to one explained.json holds
+// no cause of (a refusal or a failure: its reason is said in notes.md). `gone`: the explained ones the run no longer
+// finds, with the cause they had.
+export function rejudge(old: Explained, m: ManifestRow): { explained: Explained; moved: boolean; unexplained: string[]; gone: string[] } {
   const calibration = m.calibration?.differences;
   const explained: Explained = {
     verdict: m.verdict, differences: m.differences,
@@ -695,10 +704,14 @@ export function rejudge(old: Explained, m: ManifestRow): { explained: Explained;
   };
   const same = (e: Explained) => JSON.stringify([e.verdict, e.differences, e.calibration ?? []]);
   const unexplained = [
-    ...explained.differences.filter((d) => d.cause === null).map((d) => `difference: ${d.difference}`),
-    ...(explained.calibration ?? []).filter((d) => d.cause === null).map((d) => `calibration: ${d.difference}`),
+    ...(old.verdict !== m.verdict && m.verdict !== "identical" && m.verdict !== "differs" ? [`verdict: ${old.verdict} -> ${m.verdict}: ${m.first ?? ""}`] : []),
+    ...explained.differences.filter((d) => noCause(d.cause)).map((d) => `difference: ${d.difference}`),
+    ...(explained.calibration ?? []).filter((d) => noCause(d.cause)).map((d) => `calibration: ${d.difference}`),
   ];
-  return { explained, moved: same(explained) !== same(old), unexplained };
+  const left = (what: string, was: Explained["differences"] | undefined, now: Explained["differences"] | undefined) =>
+    (was ?? []).filter((d) => !(now ?? []).some((n) => n.difference === d.difference)).map((d) => `${what}: ${d.difference}\n      cause it had: ${d.cause ?? "none"}`);
+  const gone = [...left("difference", old.differences, explained.differences), ...left("calibration", old.calibration, explained.calibration)];
+  return { explained, moved: same(explained) !== same(old), unexplained, gone };
 }
 
 // What moved in a row's entry since the manifest's `before`, for its notes.md, which --rejudge does not write.
@@ -706,7 +719,9 @@ export function movedSince(before: ManifestRow | undefined, m: ManifestRow): str
   if (before === undefined) return ["the manifest has no entry of the row yet"];
   const out: string[] = [];
   if (before.verdict !== m.verdict) out.push(`verdict: ${before.verdict} -> ${m.verdict}`);
-  if (before.first !== m.first) out.push(`first: ${before.first ?? "none"} -> ${m.first ?? "none"}`);
+  // Busforge's run is timed by the wall clock, so a refusal's time after the restart moves from run to run.
+  const timeless = (x: string | null) => x?.replace(/ \d+ ms after the restart:/, " <n> ms after the restart:") ?? "none";
+  if (before.first !== m.first) out.push(timeless(before.first) === timeless(m.first) ? "first: only its time after the restart moved" : `first: ${before.first ?? "none"} -> ${m.first ?? "none"}`);
   // Each item whose count moved.
   const items = (what: string, a: string[], b: string[]) => {
     const n = (xs: string[], x: string) => xs.filter((y) => y === x).length;
@@ -718,10 +733,9 @@ export function movedSince(before: ManifestRow | undefined, m: ManifestRow): str
   const named = (xs: { difference: string }[] | undefined) => (xs ?? []).map((d) => d.difference);
   items("difference", named(before.differences), named(m.differences));
   items("calibration position", named(before.calibration?.differences), named(m.calibration?.differences));
-  // Busforge's run is timed by the wall clock, so a refusal's time after the restart moves from run to run.
   const refusals = (e: ManifestRow) => (e.refusalsAfterRestart ?? []).map((x) => `${x.run}: ${x.refusal}`);
-  const timeless = (xs: string[]) => JSON.stringify(xs.map((x) => x.replace(/ \d+ ms after the restart:/, " <n> ms after the restart:")));
-  if (timeless(refusals(before)) !== timeless(refusals(m))) items("refusal after the restart", refusals(before), refusals(m));
+  const timelessAll = (xs: string[]) => JSON.stringify(xs.map(timeless));
+  if (timelessAll(refusals(before)) !== timelessAll(refusals(m))) items("refusal after the restart", refusals(before), refusals(m));
   else if (JSON.stringify(refusals(before)) !== JSON.stringify(refusals(m))) out.push("refusals after the restart: only their times after the restart moved");
   items("read only ETS made", before.reads.onlyEts, m.reads.onlyEts);
   items("read only Busforge made", before.reads.onlyBusforge, m.reads.onlyBusforge);
@@ -732,11 +746,14 @@ export function movedSince(before: ManifestRow | undefined, m: ManifestRow): str
 }
 
 // Writes under `root` (the corpus root with --in-place, else a directory outside it, in the corpus's layout) the
-// explained.json of each row whose explained.json moved and the manifest `manifest`; returns what it reports and
-// the exit code: 1 where a difference or calibration position is new (cause null), else 0.
-export function writeRejudged(root: string, rows: { id: string; explained: Explained; entry: ManifestRow }[], before: Manifest | null, manifest: Manifest): { report: string[]; exit: number } {
+// explained.json of each rerun row (`results`, its explained.json before in `olds`) whose explained.json moved and
+// the manifest `manifest`; returns what it reports and the exit code: 1 where anything is unexplained (rejudge),
+// else 0.
+export function writeRejudged(root: string, results: ManifestRow[], olds: Map<string, Explained>, before: Manifest | null, manifest: Manifest): { report: string[]; exit: number } {
   const report: string[] = [], unexplained: string[] = [];
-  for (const { id, explained, entry } of rows) {
+  for (const entry of results) {
+    const id = entryId(entry), explained = olds.get(id);
+    if (explained === undefined) throw new Error(`row ${id}: no explained.json before the rerun`);
     const r = rejudge(explained, entry);
     report.push(`${id}: explained.json ${r.moved ? "moved" : "unchanged, not written"}`);
     if (r.moved) {
@@ -745,36 +762,46 @@ export function writeRejudged(root: string, rows: { id: string; explained: Expla
       writeFileSync(path, JSON.stringify(r.explained, null, 2) + "\n");
       report.push(`  written: ${path}`);
     }
-    for (const u of r.unexplained) { unexplained.push(`${id}: ${u}`); report.push(`  NOT EXPLAINED (cause null): ${u}`); }
+    for (const u of r.unexplained) { unexplained.push(`${id}: ${u}`); report.push(`  NOT EXPLAINED: ${u}`); }
+    for (const g of r.gone) report.push(`  gone: ${g}`);
     const moved = movedSince(before?.rows.find((b) => entryId(b) === id), entry);
     report.push(moved.length ? "  moved since the manifest (for notes.md):" : "  nothing moved since the manifest (notes.md stays)", ...moved.map((x) => `    ${x}`));
   }
   const path = join(root, MANIFEST);
-  mkdirSync(join(path, ".."), { recursive: true });
+  mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, JSON.stringify(manifest, null, 2) + "\n");
   report.push(`manifest: ${path} (${manifest.rows.length} rows)`);
-  if (unexplained.length) report.push(`${unexplained.length} new difference(s) without a cause; explain each in explained.json:`, ...unexplained.map((u) => `  ${u}`));
+  if (unexplained.length) report.push(`${unexplained.length} unexplained (a difference in explained.json, a verdict in notes.md):`, ...unexplained.map((u) => `  ${u}`));
   return { report, exit: unexplained.length ? 1 : 0 };
 }
 
 const USAGE = "usage: bun run tools/ets-sweep.ts [<application>/<variant>]... [--keep=<dir>] [--rejudge [--out <dir> | --in-place]]";
 
+// Whether `dir` lies in the corpus, as written and with the symlinks of the part of it that exists resolved.
+export function inCorpus(dir: string): boolean {
+  const corpus = corpusUnlistedPath("");
+  let at = resolve(dir), rest = "";
+  while (!existsSync(at)) { rest = join(basename(at), rest); at = dirname(at); }
+  return [resolve(dir), join(realpathSync(at), rest)].some((d) => [corpus, realpathSync(corpus)].some((c) => {
+    const rel = relative(c, d);
+    return !isAbsolute(rel) && rel.split(sep)[0] !== "..";
+  }));
+}
+
 // Where --rejudge writes: the corpus root with --in-place, else `out` (a new directory under the system's temporary
 // directory where none is given), which must lie outside the corpus and be empty.
 function rejudgeRoot(out: string | undefined, inPlace: boolean): string {
-  const corpus = corpusUnlistedPath("");
-  if (inPlace) { if (out !== undefined) throw new Error("--out and --in-place exclude each other"); return corpus; }
+  if (inPlace) { if (out !== undefined) throw new Error("--out and --in-place exclude each other"); return corpusUnlistedPath(""); }
   if (out === undefined) return mkdtempSync(join(tmpdir(), "ets-sweep-rejudge-"));
-  const inside = (dir: string) => [corpus, realpathSync(corpus)].some((c) => { const rel = relative(c, dir); return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel)); });
-  if (inside(resolve(out))) throw new Error(`--out ${out} lies in the corpus; write into the corpus only with --in-place`);
+  if (inCorpus(out)) throw new Error(`--out ${out} lies in the corpus; write into the corpus only with --in-place`);
   mkdirSync(out, { recursive: true });
-  if (inside(realpathSync(out))) throw new Error(`--out ${out} lies in the corpus; write into the corpus only with --in-place`);
   if (readdirSync(out).length) throw new Error(`--out ${out} is not empty`);
   return out;
 }
 
 async function main(): Promise<number> {
   const args = process.argv.slice(2);
+  if (args.filter((a) => a === "--out" || a.startsWith("--out=")).length > 1) throw new Error(`--out is given more than once; ${USAGE}`);
   const outAt = args.indexOf("--out");
   const out = outAt >= 0 ? args[outAt + 1] : args.find((a) => a.startsWith("--out="))?.slice(6);
   if (outAt >= 0 && (out === undefined || out.startsWith("--"))) throw new Error(`--out takes a directory; ${USAGE}`);
@@ -785,20 +812,21 @@ async function main(): Promise<number> {
   const rejudging = rest.includes("--rejudge"), inPlace = rest.includes("--in-place");
   if (!rejudging && (out !== undefined || inPlace)) throw new Error(`--out and --in-place go with --rejudge; ${USAGE}`);
   const keep = rest.find((a) => a.startsWith("--keep="))?.slice(7);
+  if (keep !== undefined && inCorpus(keep)) throw new Error(`--keep=${keep} lies in the corpus`);
   const present = listRows();
   const ids = rest.filter((a) => !a.startsWith("--"));
-  const todo = ids.length ? ids : present;
+  const todo = ids.length ? [...new Set(ids)] : present;
   if (todo.length === 0) throw new Error(`no row under ${SWEEP_DIR}`);
   // Before the rows run, so a wrong --out is refused at once.
   const root = rejudging ? rejudgeRoot(out, inPlace) : null;
   const results: ManifestRow[] = [];
-  const rejudged: { id: string; explained: Explained; entry: ManifestRow }[] = [];
+  const olds = new Map<string, Explained>();
   for (const id of todo) {
     const row = readRow(id);
     const r = await runRow(row);
     const m = manifestRow(row, r);
     results.push(m);
-    rejudged.push({ id, explained: row.explained, entry: m });
+    olds.set(id, row.explained);
     console.log(`${id}: ${m.verdict}${m.first ? `: ${m.first}` : ""}`);
     for (const d of m.differences) console.log(`  ${d.difference}\n    cause: ${d.cause ?? "NOT EXPLAINED"}`);
     if (m.reads.onlyEts.length || m.reads.onlyBusforge.length) console.log(`  reads only ETS made: ${list(m.reads.onlyEts)}\n  reads only Busforge made: ${list(m.reads.onlyBusforge)}`);
@@ -817,7 +845,7 @@ async function main(): Promise<number> {
   const before = readManifest();
   const manifest = updateManifest(before, results, present);
   if (root !== null) {
-    const { report, exit } = writeRejudged(root, rejudged, before, manifest);
+    const { report, exit } = writeRejudged(root, results, olds, before, manifest);
     for (const l of report) console.log(l);
     return exit;
   }
