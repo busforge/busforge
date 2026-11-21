@@ -12,8 +12,9 @@ import { loadedTableAddr } from "./grouptable-read.ts";
 //
 // Every load/loadCompleted asserts the resulting LSM state, so a refused or desynced
 // transition stops before the next step instead of writing into a half-open machine.
-// Memory writes verify by read-back (memWrite default). On any throw the device is left
-// addressable and recoverable (re-run, or ETS full download); the caller backs up first.
+// Memory writes verify by read-back (memWrite default) unless their step takes the device's answer
+// in verify mode instead (withVerifyModeEchoed). On any throw the device is left addressable and
+// recoverable (re-run, or ETS full download); the caller backs up first.
 
 export type LoadStep =
   | { op: "connect" }
@@ -33,8 +34,9 @@ export type LoadStep =
   | { op: "alloc"; lsm: number; size: number; fill?: boolean; fillByte?: number } // relative-segment allocate; `fill` pre-fills it with `fillByte` (default 0): a full download whose procedure declares the filled allocation does, a par download does not
   // absolute addr, or relative resolved by the planner. `opens`/`closes`: the write stops / lets run again an
   // application outside any load-state machine (a System 1 run error), so a failure between the two leaves
-  // the device without a running application, as an open load-state machine does.
-  | { op: "writeMem"; address: number; bytes: Buffer; opens?: string; closes?: string }
+  // the device without a running application, as an open load-state machine does. `verify` and `echo` as
+  // on writeSegment.
+  | { op: "writeMem"; address: number; bytes: Buffer; opens?: string; closes?: string; verify?: boolean; echo?: boolean }
   // Declare an absolute segment to an LSM (LdCtrlAbsSegment): the segment must be declared to the LSM
   // before its data is written. Written to the memory-mapped control 0x0104, or with `viaProperty` as
   // the LSM's PID 5 write (a property-mapped mask); asserts the LSM stays LOADING (a rejected declaration is an ERROR, and must stop the bracket).
@@ -80,8 +82,9 @@ export type LoadStep =
   // A parameter download after a reallocation without fill: if the segment is still where it was
   // (`keptAt`), the device kept its bytes and only those holding an owned bit are written (`owned`,
   // a bit mask per byte), as ETS does; if the allocation moved it, nothing there is the old content,
-  // so the whole image is written. Every write is read back before the bracket closes.
-  | { op: "writeSegmentOwned"; lsm: number; image: Buffer; owned: ReadonlyArray<number>; keptAt: number }
+  // so the whole image is written. Every write is read back before the bracket closes, or with `verify:
+  // false` and `echo` taken on the device's answer in verify mode, as on writeSegment.
+  | { op: "writeSegmentOwned"; lsm: number; image: Buffer; owned: ReadonlyArray<number>; keptAt: number; verify?: boolean; echo?: boolean }
   // Put the device into (or out of) verify mode, in which it answers every memory write (VERIFY_MODE).
   // On: at the next classic memory write (runSteps), and every classic write after it awaits the answer;
   // a master reset ends the device's mode and the next classic write switches it on again, the closing
@@ -203,6 +206,17 @@ export function withVerifyMode(plan: LoadPlan, declared: boolean): LoadPlan {
   return at < 0 ? plan : [...plan.slice(0, at), { op: "verifyMode", on: true }, ...plan.slice(at)];
 }
 
+// A partial download (the parameter, group-address and structural flash) as ETS writes it where the mask
+// declares verify mode: the mode switched on as in withVerifyMode, and every memory write taken on the
+// device's answer to it alone, not read back (ETS's captures of these downloads: MEAN WELL KNX-40E-1280D
+// and Theben DALI-Gateway on System B; Gira Tastsensor 3, MDT BE-02001.02 and BE-06001.02, Theben TheLuxa
+// P300 and the Auro presence detector on System 7). Into a unit written with the confirmed extended write
+// each chunk's answer is the check, as without this. Where the mask declares none, the plan as it is.
+export function withVerifyModeEchoed(plan: LoadPlan, declared: boolean): LoadPlan {
+  if (!declared) return plan;
+  return withVerifyMode(plan.map((st): LoadStep => (st.op === "writeMem" || st.op === "writeSegment" || st.op === "writeSegmentOwned" ? { ...st, verify: false, echo: true } : st)), true);
+}
+
 export async function runLoadPlan(dev: KnxDevice, plan: LoadPlan, opts: RunOpts = {}): Promise<void> {
   // The load-state machines this run has sent an UNLOAD or LOAD to and not yet completed. A failure
   // while any is open may leave the device without a complete application: an event that failed
@@ -267,12 +281,11 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
     if (writes && confirmed === undefined && step.op !== "connect" && step.op !== "disconnect") {
       confirmed = await dev.writesConfirmed();
       await dev.interfaceMaxApdu?.(); // asked here, outside the bracket, not at the first write inside it
-      // A device that does not report its device control is refused here, before anything is unloaded,
-      // not at the first write inside the bracket where verify mode is switched on (optional like
-      // interfaceMaxApdu: test doubles of a device leave it out).
-      if (!confirmed && plan.some((s) => s.op === "verifyMode" && s.on)) {
-        if (opts.memMappedLsms) throw new Error("verify mode on a device whose LSMs are memory-mapped: its load controls are classic writes nobody awaits the answer of");
-        await dev.deviceControl?.();
+      // The device control is read where ETS reads it, right before the first classic write inside the
+      // bracket, not before: a device that does not report it stops the download there, with its
+      // load-state machines unloaded.
+      if (!confirmed && opts.memMappedLsms && plan.some((s) => s.op === "verifyMode" && s.on)) {
+        throw new Error("verify mode on a device whose LSMs are memory-mapped: its load controls are classic writes nobody awaits the answer of");
       }
     }
     opts.onStep?.(i, step, plan.length);
@@ -355,10 +368,11 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
       }
       case "writeMem": {
         if (step.opens) open.add(step.opens);
-        if (!opts.readCompare) { await write(step.address, step.bytes, { verify: true }, `memory at 0x${step.address.toString(16)}`); opts.onWritten?.(step.bytes.length); if (step.closes) open.delete(step.closes); break; }
+        const checked = { verify: step.verify ?? true, echoChecked: step.echo };
+        if (!opts.readCompare) { await write(step.address, step.bytes, checked, `memory at 0x${step.address.toString(16)}`); opts.onWritten?.(step.bytes.length); if (step.closes) open.delete(step.closes); break; }
         const block = await dev.classicReadChunk();
         const have = await dev.memRead(step.address, step.bytes.length, block);
-        for (const r of differingRuns(step.address, step.bytes, have, block)) { await write(r.address, r.bytes, { verify: true }, `memory at 0x${r.address.toString(16)}`); opts.onWritten?.(r.bytes.length); }
+        for (const r of differingRuns(step.address, step.bytes, have, block)) { await write(r.address, r.bytes, checked, `memory at 0x${r.address.toString(16)}`); opts.onWritten?.(r.bytes.length); }
         if (step.closes) open.delete(step.closes);
         break;
       }
@@ -406,7 +420,7 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
       case "writeSegmentOwned": {
         const at = await loadedTableAddr(dev, step.lsm, `load-state machine ${step.lsm}`);
         const runs = at === step.keptAt ? ownedRuns(step.image, step.owned) : [{ offset: 0, bytes: step.image }];
-        for (const r of runs) await write(at + r.offset, r.bytes, { verify: true, onProgress: opts.onWrite }, `LSM ${step.lsm}`);
+        for (const r of runs) await write(at + r.offset, r.bytes, { verify: step.verify ?? true, echoChecked: step.echo, onProgress: opts.onWrite }, `LSM ${step.lsm}`);
         break;
       }
       case "writeSegment": await write((await loadedTableAddr(dev, step.lsm, `load-state machine ${step.lsm}`)) + (step.offset ?? 0), step.bytes, { verify: step.verify ?? true, echoChecked: step.echo, onProgress: opts.onWrite }, `LSM ${step.lsm}`); break;

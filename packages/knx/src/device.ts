@@ -1345,15 +1345,15 @@ export class KnxDevice {
   }
   // Switch the device's verify mode (PID_DEVICE_CONTROL bit 2) on or off, preserving the other
   // bits of that byte (it also carries programming mode: clobbering it would silently put the
-  // device into, or out of, programming mode).
+  // device into, or out of, programming mode). As ETS does: one read, the write, and the device's
+  // answer to the write as its check, no read after it.
   async setVerifyMode(on: boolean): Promise<void> {
     const cur = await this.deviceControl();
     const want = on ? cur | VERIFY_MODE : cur & ~VERIFY_MODE;
-    await this.propWrite(0, PID.DEVICE_CONTROL, Buffer.from([want]));
-    const back = await this.propRead(0, PID.DEVICE_CONTROL);
-    if (back.length === 0 || ((back[0] & VERIFY_MODE) !== 0) !== on) {
+    const answer = await this.propWrite(0, PID.DEVICE_CONTROL, Buffer.from([want]));
+    if (answer.length === 0 || ((answer[0] & VERIFY_MODE) !== 0) !== on) {
       throw new KnxError("DEVICE_CONTROL_UNREADABLE",
-        `the device did not take verify mode (device control reads 0x${(back[0] ?? 0).toString(16)}); a download would then write blind, so refusing`);
+        `the device did not take verify mode (it answered the write of 0x${want.toString(16)} with ${answer.length ? `0x${answer[0].toString(16)}` : "no value"}); a download would then write blind, so refusing`);
     }
   }
 

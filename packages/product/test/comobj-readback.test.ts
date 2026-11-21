@@ -164,6 +164,8 @@ corpusDescribe("a System B unit holding a flag the project does not record", () 
     async tableAddr(obj: number) { return this.addr.get(obj) ?? 0; }
     async memRead(addr: number, len: number) { const b = Buffer.alloc(len); for (let i = 0; i < len; i++) b[i] = this.mem.get(addr + i) ?? 0; return b; }
     async writesConfirmed() { return false; }
+    // Verify mode, as ETS switches it on in its group-address download into a unit written classic (MV-07B0).
+    async setVerifyMode() {}
     confirmedWrites() { return []; }
     clearConfirmedWrites() {}
     setExtendedMemoryServices() {}

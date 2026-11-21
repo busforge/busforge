@@ -39,8 +39,12 @@ class GiraDevice {
   acceptUnprovenRestart() {}
   async tableAddr(obj: number) { return this.tableRef.get(obj) ?? 0; }
   async memRead(addr: number, len: number) { return Buffer.from(Array.from({ length: len }, (_, i) => this.mem.get(addr + i) ?? 0)); }
-  async memWrite(addr: number, data: Buffer) {
+  // How each memory write is checked: "echo" where it takes the device's answer in verify mode alone, "read-back" where
+  // it is read back after it.
+  checks: string[] = [];
+  async memWrite(addr: number, data: Buffer, opts: { verify?: boolean; echo?: boolean } = {}) {
     if (this.ops.at(-1) !== "write") this.ops.push("write");
+    this.checks.push(opts.echo && opts.verify === false ? "echo" : (opts.verify ?? true) ? "read-back" : "unchecked");
     data.forEach((b, i) => this.mem.set(addr + i, b));
   }
   async propRead(obj: number, pid: number) { return refusedIfEmpty(await this.propertyAnswer(obj, pid), obj, pid); }
@@ -160,15 +164,18 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
     await classify(cfg).downloadFull(asDev(dev), cfg.mask, { ...base, links: twoObjects });
     dev.ops = [];
     const more = [...twoObjects, { comObjNum: 4, gaRaws: [0x77c9] }];
+    dev.checks = [];
     const r = await classify(cfg).flashGroupTables(asDev(dev), cfg.mask, { ...base, links: more, baseParams: new Map() });
     expect(r).toMatchObject({ kind: "flashed", verified: true });
+    // Verify mode as ETS switches it on in its group-address download, every write taken on the device's answer.
     expect(dev.ops.slice(0, dev.ops.indexOf("restart") + 1)).toEqual([
       "unload:1", "unload:2",
-      "load:1", "absSegment:1@16384+11", "write", "taskSegment:1@16384", "loadCompleted:1",
+      "load:1", "absSegment:1@16384+11", "verifyMode", "write", "taskSegment:1@16384", "loadCompleted:1",
       "load:2", "absSegment:2@16395+473", "write", "taskSegment:2@16395", "loadCompleted:2",
       "load:3", "write", "loadCompleted:3", ...STAMPS, "restart",
     ]);
     expect(dev.tableRef.get(2)).toBe(0x400b);
+    expect(new Set(dev.checks)).toEqual(new Set(["echo"]));
   }, 130_000);
 
   // ETS's image of its group-address download (gira-m0008-ets6log-partial-links.txt) leaves out the
@@ -296,7 +303,8 @@ corpusDescribe("the captured M-0008 downloads, run against an emulated device", 
     expect(cfg.params.has("M-0008_A-10D7-11-2783-O000A_P-3764")).toBe(true);
     const r = await classify(cfg).flashParameters(asDev(dev), cfg.mask, { ...base, params: new Map([[ref, "40"]]), baseParams: new Map() });
     expect(r).toMatchObject({ kind: "flashed", verified: true });
-    expect(dev.ops.slice(0, dev.ops.indexOf("restart") + 1)).toEqual(["load:3", "write", "loadCompleted:3", ...STAMPS, "restart"]);
+    expect(dev.ops.slice(0, dev.ops.indexOf("restart") + 1)).toEqual(["load:3", "verifyMode", "write", "loadCompleted:3", ...STAMPS, "restart"]);
+    expect(new Set(dev.checks)).toEqual(new Set(["echo"]));
     expect(dev.mem.get(0x435c + 3)).toBe(40);
   }, 70_000);
 
@@ -509,14 +517,16 @@ corpusDescribe("the declared-order M-0081_A-FE01-11-75D9 downloads, run against 
     dev.mem.set(0x4001, 0x12).set(0x4002, 0x03);
     dev.ops = [];
     const more: ComObjectLink[] = [{ comObjNum: 0, gaRaws: [0x1107, 0x2a01, 0x77c8] }];
+    dev.checks = [];
     const r = await classify(cfg).flashGroupTables(asDev(dev), cfg.mask, { ...base, links: more, baseParams: new Map() });
     expect(r).toMatchObject({ kind: "flashed", verified: true });
     expect(dev.ops.slice(0, dev.ops.indexOf("restart") + 1)).toEqual([
       "unload:1", "unload:2",
-      "load:1", "absSegment:1@16384+47", "write", "taskSegment:1@16384", "loadCompleted:1",
+      "load:1", "absSegment:1@16384+47", "verifyMode", "write", "taskSegment:1@16384", "loadCompleted:1",
       "load:2", "absSegment:2@16431+45", "write", "taskSegment:2@16431", "loadCompleted:2",
       "load:3", "write", "loadCompleted:3", "restart",
     ]);
+    expect(new Set(dev.checks)).toEqual(new Set(["echo"]));
     expect((await dev.memRead(0x4000, 9)).toString("hex")).toBe("04120311072a0177c8");
     expect((await dev.memRead(0x402f, 7)).toString("hex")).toBe("03010002000300");
   }, 130_000);
@@ -564,7 +574,8 @@ corpusDescribe("the declared-order M-0081_A-FE01-11-75D9 downloads, run against 
     expect(cfg.params.has("M-0081_A-FE01-11-75D9_P-10")).toBe(true);
     const r = await classify(cfg).flashParameters(asDev(dev), cfg.mask, { ...base, params: new Map([[led, "0"]]), baseParams: new Map() });
     expect(r).toMatchObject({ kind: "flashed", verified: true });
-    expect(dev.ops.slice(0, dev.ops.indexOf("restart") + 1)).toEqual(["load:3", "write", "loadCompleted:3", "restart"]);
+    expect(dev.ops.slice(0, dev.ops.indexOf("restart") + 1)).toEqual(["load:3", "verifyMode", "write", "loadCompleted:3", "restart"]);
+    expect(new Set(dev.checks)).toEqual(new Set(["echo"]));
     expect(dev.mem.get(0x4207)).toBe(0);
   }, 70_000);
 

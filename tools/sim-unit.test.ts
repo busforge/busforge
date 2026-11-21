@@ -1,6 +1,13 @@
 import { test, expect, describe, setDefaultTimeout } from "bun:test";
-import { cemiLData, cemiLDataGroup, crc16CcittFalse, parseCemiLData, withSource, type PropertyDescription } from "../packages/knx/src/index.ts";
-import { buildDeviceConfig, parseAppConfig, placeComObjOverrides, type ComObjInstanceOverride, type ModuleInstance } from "../packages/product/src/index.ts";
+import { existsSync, readFileSync } from "node:fs";
+import net from "node:net";
+import { join } from "node:path";
+import { KnxIpServer, cemiLData, cemiLDataGroup, crc16CcittFalse, parseCemiLData, withSource, type PropertyDescription } from "../packages/knx/src/index.ts";
+import { buildDeviceConfig, parseAppConfig, placeComObjOverrides, type ComObjInstanceOverride, type FlashResult, type ModuleInstance } from "../packages/product/src/index.ts";
+import { flashDeviceParameters } from "../apps/server/src/deviceprofile.ts";
+import type { Connection } from "../apps/server/src/db/connections.ts";
+import { startProxy } from "./knxproxy.ts";
+import { removeTempDir, tempDir } from "./test-temp.ts";
 import { captureText, catalogueXml } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { captureLData, memWriteOf } from "./etsdiff.ts";
@@ -363,11 +370,11 @@ corpusDescribe("the simulated MEAN WELL KNX-40E-1280D", () => {
     // The device control: the captured build switched verify mode on before the bracket and off at its end; this
     // build switches it on as ETS does, right after the parameter segment's PID 7 read before its first memory write,
     // and leaves it to the restart. The unit answers it as it answered ETS (meanwell-ets-fulldownload.log): 01 after the
-    // unload, 05 to the write. Busforge besides reads it back.
+    // unload, 05 to the write. Busforge reads and writes it as ETS does, nothing before or after.
     const control = (fs: Frame[]) => fs.filter((f) => f.tpdu.length > 2 && /^4[23]d[567]000e/.test(f.tpdu)).map((f) => f.tpdu.slice(2));
     const etsControl = frames(captureText("meanwell-ets-fulldownload.log"), "ETS", MEANWELL_DEVICE).map((f) => ({ ...f, tpdu: Buffer.from([Buffer.from(f.tpdu, "hex")[0] & 0xc3]).toString("hex") + f.tpdu.slice(2) }));
     expect(control(etsControl)).toEqual(["d5000e1001", "d6000e100101", "d7000e100105", "d6000e100105"]);
-    expect(control(simPhases.bracket)).toEqual([...control(etsControl), "d5000e1001", "d6000e100105"]);
+    expect(control(simPhases.bracket)).toEqual(control(etsControl));
     const firstWrite = simPhases.bracket.findIndex((f) => {
       const t = Buffer.from(f.tpdu, "hex");
       return f.dir === ">>" && t.length >= 2 && memWriteOf(t, ((t[0] & 0x03) << 8) | t[1]) !== null;
@@ -376,9 +383,9 @@ corpusDescribe("the simulated MEAN WELL KNX-40E-1280D", () => {
     expect(simPhases.bracket.slice(0, controlAt).findLast((f) => f.dir === ">>" && f.tpdu.length > 2)?.tpdu).toBe("43d504071001");
     expect(withoutDeviceControl(simPhases.bracket.slice(controlAt, firstWrite))).toEqual([]);
     expect(control(unitPhases.bracket)).toEqual(["d5000e1001", "d6000e100105", "d7000e100101", "d6000e100101", "d5000e1001", "d6000e100101"]);
-    // Before it this build also reads the association table's element form (object 2's PID 23 description).
-    // And it reads the device control once, before anything is unloaded (the unit answers 00).
-    expect(control(simPhases.open)).toEqual(["d5000e1001", "d6000e100100"]);
+    // Before it this build also reads the association table's element form (object 2's PID 23 description), and not the
+    // device control.
+    expect(control(simPhases.open)).toEqual([]);
     const simOpen = withoutDeviceControl(simPhases.open);
     const at = simOpen.findIndex((f) => f.dir === ">>" && f.tpdu === "43d8021700");
     expect(simOpen.slice(at, at + 4)).toEqual([{ dir: ">>", tpdu: "43d8021700", con: "OK" }, { dir: "<<", tpdu: "c2", ctrl: 0xb0, to: 0x1164 }, { dir: "<<", tpdu: "43d90217031400ffff", ctrl: 0xbc, to: 0x1164 }, { dir: ">>", tpdu: "c2", con: "OK" }]);
@@ -400,7 +407,65 @@ corpusDescribe("the simulated MEAN WELL KNX-40E-1280D", () => {
     expect(shared).toEqual(["4300", "43d5041b1001"]);
     for (const r of shared) expect([r, answer(simPhases.verify, r)]).toEqual([r, answer(unitPhases.verify, r)]);
   });
+
+  // Busforge's parameter flash into the unit its full download left, against ETS's parameter download into the unit
+  // (meanwell-ets-params.log): the device control read and written back with bit 2 right before the first memory
+  // write, the unit's answers as it answered ETS, and no memory read from there to the restart, as ETS reads none.
+  test("takes Busforge's parameter flash with the device control as ETS's parameter download, no memory read back before the restart", async () => {
+    const fx = JSON.parse(captureText("meanwell-project.json")) as { ia: string; params: [string, string][]; links: { comObjNum: number; gaRaws: number[] }[] };
+    const { sim } = await busforgeIntoSim(MEANWELL_KNX40E, fx);
+    const params = new Map(fx.params);
+    const changed = new Map(params).set("M-0162_A-0004-11-F245_P-29_R-29", "1810"); // the maximum tracking time ETS's capture changes
+    const { result, capture } = await flashIntoSim(sim, (connection, dataDir) => flashDeviceParameters({
+      projectId: "sim", deviceId: "row", ia: fx.ia, appXml: catalogueXml(MEANWELL_KNX40E.catalogue), dataDir, connection,
+      params: changed, baseParams: params, dryRun: false, neverProgrammed: false,
+    }));
+    expect(sim.refusals).toEqual([]);
+    expect(result).toMatchObject({ kind: "flashed", verified: true });
+    // From the first load-state write to the A_Restart, sequence numbers left out (ETS opens no connection after it).
+    const bracket = (fs: Frame[]) => {
+      const bare = fs.map((f) => ({ ...f, tpdu: Buffer.from([Buffer.from(f.tpdu, "hex")[0] & 0xc3]).toString("hex") + f.tpdu.slice(2) }));
+      return bare.slice(bare.findIndex((f) => f.dir === ">>" && /^43d7..05/.test(f.tpdu)), bare.findIndex((f) => f.dir === ">>" && /^4380/.test(f.tpdu)) + 1);
+    };
+    const ours = bracket(frames(capture, "Busforge", MEANWELL_DEVICE));
+    const ets = bracket(frames(captureText("meanwell-ets-params.log"), "ETS", MEANWELL_DEVICE));
+    expect([ours.length > 0, ets.length > 0, ours.at(-1)?.tpdu, ets.at(-1)?.tpdu]).toEqual([true, true, "4380", "4380"]);
+    const control = (fs: Frame[]) => fs.filter((f) => /^4[23]d[567]000e/.test(f.tpdu)).map((f) => f.tpdu.slice(2));
+    const memoryWrite = (f: Frame) => { const t = Buffer.from(f.tpdu, "hex"); return f.dir === ">>" && t.length >= 2 && memWriteOf(t, ((t[0] & 0x03) << 8) | t[1]) !== null; };
+    const memoryRead = (f: Frame) => { const t = Buffer.from(f.tpdu, "hex"); return f.dir === ">>" && t.length >= 4 && (((t[0] & 0x03) << 8) | (t[1] & 0xc0)) === 0x200; }; // A_Memory_Read
+    expect(control(ets)).toEqual(["d5000e1001", "d6000e100101", "d7000e100105", "d6000e100105"]);
+    expect(control(ours)).toEqual(control(ets));
+    for (const [tool, fs] of [["ETS", ets], ["Busforge", ours]] as const) {
+      const at = fs.findIndex(memoryWrite);
+      const write = fs.findLastIndex((f) => f.dir === ">>" && f.tpdu === "43d7000e100105");
+      expect([tool, write < at, fs.slice(at).filter(memoryRead)]).toEqual([tool, true, []]);
+    }
+  });
 });
+
+// One write of Busforge's server into a unit already in `sim`, through the KNXnet/IP server and the logging proxy as
+// busforgeIntoSim takes the full download, with the proxy's log of it.
+async function flashIntoSim(sim: SimUnit, run: (connection: Connection, dataDir: string) => Promise<FlashResult>): Promise<{ result: FlashResult; capture: string }> {
+  const dir = tempDir("busforge-sim-flash-");
+  const port = await new Promise<number>((resolve) => { const s = net.createServer().listen(0, "127.0.0.1", () => { const a = s.address(); s.close(() => resolve(typeof a === "object" && a ? a.port : 0)); }); });
+  const server = new KnxIpServer({ transport: sim, maxApdu: MEANWELL_KNX40E.interfaceMaxApdu, port });
+  const log = join(dir, "capture.log");
+  const proxy = startProxy({ port: 0, bridgeHost: "127.0.0.1", bridgePort: port, log, tool: "Busforge" });
+  try {
+    await server.start();
+    await new Promise<void>((r) => proxy.listen(0, "127.0.0.1", () => r()));
+    const proxyPort = (proxy.address() as { port: number }).port;
+    const connection: Connection = { id: "sim", name: "sim", type: "ip", host: "127.0.0.1", port: proxyPort, ipTransport: "tcp", usbVendorId: null, usbProductId: null, usbSerial: null, createdAt: 0 };
+    const result = await run(connection, dir);
+    const ended = () => { const t = existsSync(log) ? readFileSync(log, "utf8") : ""; const n = (svc: string) => t.split("\n").filter((l) => l.includes(`Busforge->BRIDGE ${svc} `)).length; return n("CONNECT_REQ") > 0 && n("DISCONNECT_REQ") >= n("CONNECT_REQ"); };
+    for (let i = 0; !ended() && i < 100; i++) await new Promise((r) => setTimeout(r, 100));
+    return { result, capture: readFileSync(log, "utf8") };
+  } finally {
+    proxy.close();
+    await server.stop();
+    removeTempDir(dir);
+  }
+}
 
 // A download's frames in four parts: the session before the first load-state write, the bracket from it to the
 // A_Restart, the probes after it until the next T_Connect, and the verification from there. Sequence numbers

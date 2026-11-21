@@ -34,6 +34,7 @@ corpusDescribe("the MV-0705 parameter flash against the real M-0081 application"
     async restart() {}
     async memRead(addr: number, len: number) { const b = Buffer.alloc(len); for (let i = 0; i < len; i++) b[i] = this.mem.get(addr + i) ?? 0xff; return b; }
     async writesConfirmed() { return false; } // no PID_MAX_APDU_LENGTH: the classic write
+    async setVerifyMode() {} // switched on before the first classic write, as ETS does on MV-0705 and MV-07B0
     confirmedWrites() { return []; }
     clearConfirmedWrites() {}
     setExtendedMemoryServices() {}
