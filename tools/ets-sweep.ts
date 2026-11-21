@@ -80,6 +80,9 @@ export interface RowSpec {
   // corpus root. ETS's dialogue with the simulator is held to it position by position (tools/etsdiff.ts
   // dialogueDifferences), every position that differs explained in explained.json's `calibration`.
   calibration?: string;
+  // Where in the calibration capture's dialogue the download this row's ETS run repeats begins: the frames before it
+  // are ETS's steps the row does not run (an address assignment before the application download).
+  calibrationFrom?: number;
   // The application id the export gives the device where it is another build of the unit's (same manufacturer,
   // number and version) that parses as the unit's: configuration.json names the unit's parameter and module ids,
   // its appRef the export's build (tools/ets-driver.ts).
@@ -589,7 +592,7 @@ export async function runRow(row: Row): Promise<RowResult> {
   })();
   const calibration = row.spec.calibration === undefined ? null : {
     capture: row.spec.calibration,
-    differences: dialogueDifferences(readFileSync(corpusPath(row.spec.calibration), "utf8"), etsText, sim.deviceIa)
+    differences: dialogueDifferences(readFileSync(corpusPath(row.spec.calibration), "utf8"), etsText, sim.deviceIa, "ETS", row.spec.calibrationFrom)
       .map((d) => ({ difference: d, cause: row.explained.calibration?.find((e) => e.difference === d)?.cause ?? null })),
   };
   const refusals = [...etsRefusals.after.map((r) => ({ run: "ETS" as const, refusal: r })), ...bfRefusals.after.map((r) => ({ run: "Busforge" as const, refusal: r }))];

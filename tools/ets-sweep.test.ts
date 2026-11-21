@@ -281,7 +281,7 @@ corpusDescribe("the ETS sweep rows", () => {
       const row = readRow(id);
       if (row.spec.calibration === undefined) { expect(row.explained.calibration).toBeUndefined(); return; }
       const real = readFileSync(corpusPath(row.spec.calibration), "utf8");
-      const found = dialogueDifferences(real, readFileSync(join(row.dir, ROW_FILES.ets), "utf8"), iaToNum(row.conf.ia));
+      const found = dialogueDifferences(real, readFileSync(join(row.dir, ROW_FILES.ets), "utf8"), iaToNum(row.conf.ia), "ETS", row.spec.calibrationFrom);
       expect(found).toEqual((row.explained.calibration ?? []).map((d) => d.difference));
       expect((row.explained.calibration ?? []).every((d) => d.cause.trim().length > 0)).toBe(true);
     });

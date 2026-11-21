@@ -723,8 +723,9 @@ BUSFORGE_CORPUS=... bun run tools/ets-sweep.ts [<application>/<variant>]... [--k
 **A calibrated row** names in `row.json` ETS's capture of the same configuration downloaded into the
 real unit. ETS's dialogue with the simulated unit (its requests with their line confirmations, the
 unit's frames with their first control field) is held to its dialogue with the real unit position by
-position, and every position that differs is listed with its cause in `explained.json` (`calibration`):
-what such a row's simulator answers is what the real unit answered ETS, or the row names where not.
+position (where the capture holds steps of ETS's the row does not run before its download, such as an
+address assignment, from the position `calibrationFrom` names on), and every position that differs is
+listed with its cause in `explained.json` (`calibration`): what such a row's simulator answers is what the real unit answered ETS, or the row names where not.
 
 `tools/ets-sweep.test.ts` runs every row with the private corpus and holds its verdict and its
 differences to `explained.json`: a new difference fails, and so does an explained one that is gone; the
