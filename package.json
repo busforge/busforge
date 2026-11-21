@@ -12,8 +12,9 @@
     "lint": "oxlint --type-aware --deny-warnings packages apps plugins tools",
     "test": "bun run --filter='*' test",
     "build": "bun run --filter='*' build",
-    "check": "bun run typecheck && bun run lint && bun run test && bun run build && bun run corpus:status",
+    "check": "bun run image-context && bun run typecheck && bun run lint && bun run test && bun run build && bun run corpus:status",
     "corpus:status": "bun run tools/corpus-status.ts",
+    "image-context": "bun run tools/image-context.ts",
     "smoke": "bun run tools/smoke/runner.ts --report"
   },
   "devDependencies": {
