@@ -55,7 +55,8 @@ export function loadKnxproj(bytes: Buffer, password: string | undefined, fallbac
   const project = projectOf(outer, password);
   const xml0 = xml0Of(outer, project);
   const programs = [...outer].filter(([k]) => /\/M-[^/]+_A-[^/]+\.xml$/.test(k)).map(([, b]) => dec.decode(b));
-  return parseProject(xml0, projectXmlOf(outer, project), fallbackName, parseProductNames(outer), busInterfaceIndexes(programs), parseProductTranslations(outer), hardwareApplicationsOf(zipProducts(outer)));
+  const products = zipProducts(outer);
+  return parseProject(xml0, projectXmlOf(outer, project), fallbackName, parseProductNames(products.hardwareXml), busInterfaceIndexes(programs), parseProductTranslations(products.hardwareXml), hardwareApplicationsOf(products));
 }
 
 function xml0Of(outer: Map<string, Buffer>, { id, inner }: ProjectEntries): string {
@@ -73,6 +74,24 @@ function projectXmlOf(outer: Map<string, Buffer>, { id, inner }: ProjectEntries)
     return names.length ? dec.decode(files.get(names[0])!) : undefined;
   };
   return inner ? at(inner, "") : id === undefined ? undefined : at(outer, `${id}/`);
+}
+
+// The manufacturers' Hardware.xml documents, found by their place like the project's files: one in each
+// manufacturer directory, M-XXXX/Hardware.xml, in a .knxproj and a .knxprod alike. An entry elsewhere whose
+// name ends in Hardware.xml (a baggage, a file at the root, a manufacturer directory below another folder)
+// describes none of the archive's products. The path is taken in any case, as project.xml is, since ETS
+// writes on a file system that does not tell case apart; two paths that differ in case only are one
+// manufacturer's product data twice, and refused.
+function hardwareXmlsOf(outer: Map<string, Buffer>): string[] {
+  const byDir = new Map<string, string[]>();
+  for (const name of outer.keys()) {
+    const dir = /^(m-[^/]+)\/hardware\.xml$/.exec(name.toLowerCase())?.[1];
+    if (dir !== undefined) byDir.set(dir, [...(byDir.get(dir) ?? []), name]);
+  }
+  return [...byDir.values()].map((names) => {
+    if (names.length > 1) throw new KnxprojError("SEVERAL_HARDWARE_XML", `the archive holds one manufacturer's Hardware.xml ${names.length} times (${names.join(", ")}); Busforge does not pick one`);
+    return dec.decode(outer.get(names[0])!);
+  });
 }
 
 // A project's 0.xml, decrypted with the project password where the project has one.
@@ -99,11 +118,9 @@ export function busInterfaceIndexes(programXmls: string[]): Map<string, number> 
 // files (plaintext in the outer zip). Used as the device-name fallback, matching
 // ETS, when a device instance has no user-given name. A device's ProductRefId
 // equals the <Product Id="..."> it references.
-function parseProductNames(outer: Map<string, Buffer>): Map<string, string> {
+function parseProductNames(hardware: string[]): Map<string, string> {
   const names = new Map<string, string>();
-  for (const [key, buf] of outer) {
-    if (!key.endsWith("Hardware.xml")) continue;
-    const xml = dec.decode(buf);
+  for (const xml of hardware) {
     for (const m of xml.matchAll(/<Product\b[^>]*>/g)) {
       const tag = m[0];
       const id = /\bId="([^"]+)"/.exec(tag)?.[1];
@@ -115,11 +132,10 @@ function parseProductNames(outer: Map<string, Buffer>): Map<string, string> {
 }
 
 // A product's catalogue text in the catalogue's other languages (Hardware.xml TranslationUnit), by product id.
-function parseProductTranslations(outer: Map<string, Buffer>): Map<string, string[]> {
+function parseProductTranslations(hardware: string[]): Map<string, string[]> {
   const out = new Map<string, string[]>();
-  for (const [key, buf] of outer) {
-    if (!key.endsWith("Hardware.xml")) continue;
-    for (const m of dec.decode(buf).matchAll(/<TranslationElement RefId="([^"]+_P-[^"]+)">([\s\S]*?)<\/TranslationElement>/g)) {
+  for (const xml of hardware) {
+    for (const m of xml.matchAll(/<TranslationElement RefId="([^"]+_P-[^"]+)">([\s\S]*?)<\/TranslationElement>/g)) {
       const raw = /<Translation AttributeName="Text" Text="([^"]*)"/.exec(m[2])?.[1];
       const ent: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
       const text = raw?.replace(/&(amp|lt|gt|quot|apos);/g, (_, e: string) => ent[e]);
@@ -203,12 +219,12 @@ export function appProgramName(xml: string, id: string): string {
 // the program documents it carries, by application-program id (undefined where it carries none).
 interface ProductSource { hardware: XmlNode[]; program: (id: string) => string | undefined }
 
-function zipProducts(outer: Map<string, Buffer>): ProductSource {
+function zipProducts(outer: Map<string, Buffer>): ProductSource & { hardwareXml: string[] } {
   const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", isArray: () => false });
   // In a zip only Hardware.xml carries the products, and the (huge) application-program entries are
   // read only where a program is asked for.
-  const hardware = [...outer].filter(([key]) => key.endsWith("Hardware.xml")).map(([, buf]) => parser.parse(dec.decode(buf)) as XmlNode);
-  return { hardware, program: (id) => { const b = programEntry(outer, id); return b ? dec.decode(b) : undefined; } };
+  const hardwareXml = hardwareXmlsOf(outer);
+  return { hardwareXml, hardware: hardwareXml.map((xml) => parser.parse(xml) as XmlNode), program: (id) => { const b = programEntry(outer, id); return b ? dec.decode(b) : undefined; } };
 }
 
 // One document, one application program: the whole file IS that program's XML, parsed with its body
