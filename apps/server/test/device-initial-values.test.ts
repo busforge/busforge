@@ -163,7 +163,7 @@ function loadedUnitReadingFF() {
     async memRead(addr: number, len: number) { return Buffer.from(Array.from({ length: len }, (_, i) => unit.mem.get(addr + i) ?? 0xff)); },
     async memWrite(addr: number, data: Buffer) { data.forEach((b, i) => unit.mem.set(addr + i, b)); },
     async writesConfirmed() { return false; }, confirmedWrites() { return []; }, clearConfirmedWrites() {},
-    setExtendedMemoryServices() {}, async setVerifyMode() {},
+    setExtendedMemoryServices() {}, async setVerifyMode() {}, async interfaceMaxApdu() { return null; },
     answer(obj: number, pid: number): Buffer | null {
       if (pid === 5) return Buffer.from([unit.state.get(obj) ?? STATE.UNLOADED]);
       if (pid === 7) return Buffer.from([0, 0, (obj === 4 ? SEGMENT : 0x100 * obj) >> 8, 0]);

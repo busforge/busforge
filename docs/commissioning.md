@@ -348,24 +348,25 @@ sparsely.
 A dropped write is silent, and without confirmation it surfaces (if at all) a thousand
 telegrams away from where it happened. Two mechanisms catch it:
 
-- **Read-back verify**: `memWrite` reads every write back. This is what every surgical flash and
-  the System 7 full download do, on both memory models, and it is the mechanism those proven
-  flash paths rest on.
+- **Read-back verify**: `memWrite` reads every write back. This is what the System 7 full download
+  and the partial form of the System B full download do, and what every flash does on a mask that
+  declares no verify mode (the memory-mapped MV-0700/0701, System 1).
 - **Verify mode**: `PID_DEVICE_CONTROL` bit 2, in which the device answers every memory write.
-  ETS switches it on in its downloads on every mask whose master data declares it (the mask's
-  `VerifyMode` feature: System B and the property-mapped System 7 masks, not the memory-mapped
-  MV-0700/0701): it reads the device control right before its first classic `A_Memory_Write` and
-  writes it back with bit 2 set (`04`, or `05` where the device reports its application stopped),
-  once, and leaves it to the closing restart to clear. The **full download** does the same, in
-  both forms and on both memory models (`withVerifyMode`), and every classic write then takes the
-  device's answer: the declared form of the System B full download echo-checks every table and
-  every parameter run as it is written instead of reading it back (`planSystemBFullDownload`), its
-  partial form and the System 7 full download read every write back besides. Unlike ETS, Busforge
-  reads the device control once before the first load-state event, so a device that does not
-  report it is refused before anything is unloaded (`DEVICE_CONTROL_UNREADABLE`), and reads it back
-  after its write; a device that reports it but does not take bit 2 stops the download at that
-  point, with its load-state machines unloaded. The parameter, group-address and structural flashes
-  do not switch it on. The answer stops the download at a
+  ETS switches it on in its full and its partial downloads on every mask whose master data declares
+  it (the mask's `VerifyMode` feature: System B and the property-mapped System 7 masks, not the
+  memory-mapped MV-0700/0701): it reads the device control right before its first classic
+  `A_Memory_Write` and writes it back with bit 2 set (`04`, or `05` where the device reports its
+  application stopped), takes the device's answer to that write, once, and leaves it to the closing
+  restart to clear. Busforge's downloads do the same, and read and write the device control nowhere
+  else: a device that does not report it, or answers the write without bit 2, stops the download
+  there (`DEVICE_CONTROL_UNREADABLE`), with its load-state machines unloaded. Every classic write
+  then takes the device's answer. The **parameter, group-address and structural flashes** take that
+  answer as each write's check and read nothing back before the restart, as ETS
+  (`withVerifyModeEchoed`); their check after the restart reads the written bytes back, all but the
+  download markers the device stamps itself (`Access="None"`), which rest on the device's answer
+  alone, as on ETS. So does the declared form of the System B full download
+  (`planSystemBFullDownload`). The full download in its other forms switches it on in the same place
+  (`withVerifyMode`) and reads every write back besides. The answer stops the download at a
   dropped chunk but is no proof of storage (thelsing/knx answers with a copy of the request data,
   [findings.md](findings.md) §5); after the restart the device's CRCs over each segment, or the
   segment read back, prove it ([load-procedures.md](load-procedures.md#full-download-coverage)).

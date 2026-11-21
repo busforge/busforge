@@ -1,7 +1,7 @@
 import { test, expect, describe } from "bun:test";
 import { planSystemBGaFlash, planSystemBFullDownload, appId, compareDeclaredProp, crc16Ccitt, crc16CcittFalse, mcbProves, mcbProvenRegions, readMcbTable, fillAllocatedRuns, FILL_RUN_SKIPPED, STATE } from "../src/flash.ts";
 import { KnxDevice, ERASE, RESTART_MASTER } from "../src/device.ts";
-import { runLoadPlan, leftUnloaded, withVerifyMode, type LoadPlan, type LoadStep } from "../src/loadrunner.ts";
+import { runLoadPlan, leftUnloaded, withVerifyMode, withVerifyModeEchoed, type LoadPlan, type LoadStep } from "../src/loadrunner.ts";
 import { KnxError } from "../src/errors.ts";
 
 // Recording stub of KnxDevice (the ga-flash.test.ts asDev pattern): every call is
@@ -542,18 +542,26 @@ describe("writes in the device's verify mode (what LdCtrlWriteRelMem Verify=true
   // happened, by which point the device had given up on its own configuration. In verify mode the
   // device answers every write, so a drop fails immediately, at the chunk, with its address. The answer
   // is no proof of storage (VERIFY_MODE); the check after the restart is.
-  const deviceWith = (opts: { control?: number; dropsAt?: number } = {}) => {
+  // `takes`: the bits of the device control the device takes from a write (all by default); it answers the
+  // write with what it holds then.
+  const deviceWith = (opts: { control?: number; dropsAt?: number; takes?: number; refuses?: number } = {}) => {
     const mem = new Map<number, number>();
     const propWrites: { obj: number; pid: number; data: Buffer }[] = [];
+    const controlReads: number[] = [];
     let control = opts.control ?? 0;
     const dev = Object.create(KnxDevice.prototype);
-    dev.propRead = async (obj: number, pid: number) => (obj === 0 && pid === 14 ? Buffer.from([control]) : Buffer.alloc(1));
+    dev.propRead = async (obj: number, pid: number) => {
+      if (obj === 0 && pid === 14) { controlReads.push(control); return Buffer.from([control]); }
+      return Buffer.alloc(1);
+    };
     dev.propReadIfPresent = async () => null; // no PID_MAX_APDU_LENGTH: the classic write with its verify-mode echo
     dev.routeCrossesCoupler = () => false;
-    dev.propWrite = async (obj: number, pid: number, data: Buffer) => {
+    // `refuses`: the device answers the device control's write with count 0 and this error code.
+    dev.propWriteCounted = async (obj: number, pid: number, data: Buffer) => {
       propWrites.push({ obj, pid, data: Buffer.from(data) });
-      if (obj === 0 && pid === 14) control = data[0];
-      return Buffer.alloc(0);
+      if (obj === 0 && pid === 14 && opts.refuses !== undefined) return { count: 0, value: Buffer.from([opts.refuses]) };
+      if (obj === 0 && pid === 14) { control = data[0] & (opts.takes ?? 0xff); return { count: 1, value: Buffer.from([control]) }; }
+      return { count: 0, value: Buffer.alloc(0) };
     };
     // The real request machine is what memWrite drives; stub it at the frame level. The echo is built
     // from the mock's memory, as a firmware that reads its memory back would answer; thelsing/knx answers
@@ -573,7 +581,7 @@ describe("writes in the device's verify mode (what LdCtrlWriteRelMem Verify=true
       for (let i = 0; i < len; i++) b[i] = mem.get(a + i) ?? 0xff;
       return b;
     };
-    return { dev: dev as KnxDevice, mem, propWrites, control: () => control };
+    return { dev: dev as KnxDevice, mem, propWrites, controlReads, control: () => control };
   };
 
   test("setVerifyMode keeps the other bits of PID_DEVICE_CONTROL (programming mode lives in that byte)", async () => {
@@ -582,6 +590,26 @@ describe("writes in the device's verify mode (what LdCtrlWriteRelMem Verify=true
     expect(d.control()).toBe(0x05); // verify mode added, programming mode untouched
     await d.dev.setVerifyMode(false);
     expect(d.control()).toBe(0x01); // and removed again, still not touching programming mode
+  });
+
+  // ETS reads the device control once, writes it back with bit 2 set and takes the device's answer to the
+  // write (MDT BE-02001.02: answer 01, write 05, answer 05); it reads nothing after it.
+  test("setVerifyMode reads the device control once and takes the answer to its write, as ETS does", async () => {
+    const d = deviceWith({ control: 0x01 });
+    await d.dev.setVerifyMode(true);
+    expect([d.controlReads, d.propWrites.map((w) => w.data.toString("hex"))]).toEqual([[0x01], ["05"]]);
+  });
+  test("a device that answers the write without verify mode is refused", async () => {
+    const d = deviceWith({ takes: 0xfb });
+    const err = await d.dev.setVerifyMode(true).then(() => null, (e: KnxError) => e);
+    expect([err?.code, err?.message]).toEqual(["DEVICE_CONTROL_UNREADABLE", expect.stringContaining("answered the write of 0x4 with 0x0")]);
+    expect(d.controlReads).toEqual([0]);
+  });
+  // A refusal's error code is no device-control value: 07 would read as bit 2 set.
+  test("a device that refuses the write is refused, whatever its error code", async () => {
+    const d = deviceWith({ refuses: 0x07 });
+    const err = await d.dev.setVerifyMode(true).then(() => null, (e: KnxError) => e);
+    expect([err?.code, err?.message]).toEqual(["DEVICE_CONTROL_UNREADABLE", expect.stringContaining("with a refusal (0x07)")]);
   });
 
   test("an echo that differs from the written bytes fails AT that chunk, naming the address", async () => {
@@ -847,6 +875,14 @@ describe("the write service, settled before the bracket", () => {
     expect(dev.askedAt).toBe(1); // after ["connect"], before anything else
     expect(dev.calls.filter((c) => c[0] === "setVerifyMode").length).toBe(2); // classic: verify mode as planned
   });
+  test("a plan that writes only the owned bytes of a kept segment asks it before its first load-state event too", async () => {
+    const dev = new RecDev();
+    await runLoadPlan(dev as unknown as KnxDevice, [
+      { op: "connect" }, { op: "load", lsm: 4, assert: false },
+      { op: "writeSegmentOwned", lsm: 4, image: Buffer.from([1]), owned: [0xff], keptAt: 0x4000 },
+    ]);
+    expect(dev.askedAt).toBe(1);
+  });
   test("a device written with the confirmed extended write is never put into verify mode", async () => {
     const dev = new RecDev();
     dev.confirmed = true;
@@ -897,12 +933,44 @@ describe("classic writes in verify mode take the device's answer", () => {
     await runLoadPlan(asDev(dev), [{ op: "connect" }, { op: "writeSegment", lsm: 4, bytes: Buffer.from([1]), verify: false, echo: true }]);
     expect(dev.echoes).toEqual([false]);
   });
-  test("a device that does not report its device control is refused before its first load-state event", async () => {
+  // ETS reads the device control right before its first classic write, inside the bracket, and nowhere before.
+  test("a device that does not report its device control stops the download where ETS reads it, before the first classic write", async () => {
     const dev = new EchoDev();
-    (dev as unknown as { deviceControl: () => Promise<number> }).deviceControl = async () => { throw new KnxError("DEVICE_CONTROL_UNREADABLE", "no answer"); };
+    dev.setVerifyMode = async () => { throw new KnxError("DEVICE_CONTROL_UNREADABLE", "no answer"); };
     const err = await runLoadPlan(asDev(dev), withVerifyMode([{ op: "connect" }, { op: "unload", lsm: 4 }, { op: "writeMem", address: 0x4000, bytes: Buffer.from([1]) }], true)).then(() => null, (e: KnxError) => e);
-    expect(err?.code).toBe("DEVICE_CONTROL_UNREADABLE");
-    expect(dev.calls.map((c) => c[0])).toEqual(["connect"]);
+    expect([err?.code, leftUnloaded(err)]).toEqual(["DEVICE_CONTROL_UNREADABLE", true]);
+    expect(dev.calls.map((c) => c[0])).toEqual(["connect", "propWrite"]);
+  });
+  // A partial download as ETS writes it: verify mode before the first memory write, every write taken on the
+  // device's answer and none read back.
+  const partial: LoadPlan = [
+    { op: "connect" }, { op: "load", lsm: 4, assert: false },
+    { op: "writeSegmentOwned", lsm: 4, image: Buffer.from([1, 2]), owned: [0xff, 0], keptAt: 0x4000 },
+    { op: "writeMem", address: 0x4100, bytes: Buffer.from([3]) },
+    { op: "writeSegment", lsm: 3, bytes: Buffer.from([4]) },
+    { op: "loadCompleted", lsm: 4, assert: false }, { op: "restart" },
+  ];
+  test("a partial download where the mask declares verify mode: the mode on once before the first write, every write on its answer, none read back", async () => {
+    const dev = new EchoDev();
+    await runLoadPlan(asDev(dev), withVerifyModeEchoed(partial, true));
+    expect(dev.calls.filter((c) => c[0] === "memWrite" || c[0] === "setVerifyMode").map((c) => (c[0] === "memWrite" ? `write ${c[1]} verify=${c[3]}` : "verify mode"))).toEqual([
+      "verify mode", `write ${0x4000} verify=false`, `write ${0x4100} verify=false`, `write ${0x3000} verify=false`,
+    ]);
+    expect(dev.echoes).toEqual([true, true, true]);
+  });
+  test("a partial download where the mask declares no verify mode is the plan as it is, every write read back", async () => {
+    expect(withVerifyModeEchoed(partial, false)).toBe(partial);
+    const dev = new EchoDev();
+    await runLoadPlan(asDev(dev), partial);
+    expect(dev.calls.filter((c) => c[0] === "memWrite").map((c) => c[3])).toEqual([true, true, true]);
+    expect(dev.calls.some((c) => c[0] === "setVerifyMode")).toBe(false);
+  });
+  test("a partial download into a unit written with the confirmed extended write switches on no verify mode", async () => {
+    const dev = new EchoDev();
+    dev.confirmed = true;
+    await runLoadPlan(asDev(dev), withVerifyModeEchoed(partial, true));
+    expect(dev.calls.some((c) => c[0] === "setVerifyMode")).toBe(false);
+    expect(dev.calls.filter((c) => c[0] === "memWrite").length).toBe(3);
   });
   test("verify mode on memory-mapped load-state machines is refused: their load controls are classic writes nobody awaits", async () => {
     const dev = new EchoDev();

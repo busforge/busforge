@@ -2,8 +2,8 @@ import { test, expect, describe, setDefaultTimeout } from "bun:test";
 import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
-import { iaToNum, numToIa, gaToNum, LSM, planSecurityObjectLoad, GROUP_KEY_ENTRY, ownedRuns, planSystemBGaFlash, fillAllocatedRuns, differingRuns, type LoadPlan } from "../packages/knx/src/index.ts";
-import { parseAppConfig, classify, parseLoadProcedures, relParamFillByte, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, differingFF, leaveUnreadUnchanged, buildDeviceConfig, buildComObjectTable, buildGroupTables, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosing, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, withInstanceOverrides, fullDownloadImageCoverage, planSystem1Download, MV0012_DEFAULT_LOAD, absoluteBuildInstances, checkedStamps, buildSecurityObject, writtenGroupKeys, relativeParWriteSet, relativeComObjWriteSet, constantParams, differingConstants, comObjectTableChanges, decodeParameterImage, fullDownloadImageDigest, type KnxIpDevice, type ModuleInstance, type ComObjInstanceOverride, type ImageStamp } from "../packages/product/src/index.ts";
+import { iaToNum, numToIa, gaToNum, LSM, planSecurityObjectLoad, GROUP_KEY_ENTRY, ownedRuns, planSystemBGaFlash, fillAllocatedRuns, differingRuns, withVerifyModeEchoed, type LoadPlan } from "../packages/knx/src/index.ts";
+import { parseAppConfig, classify, parseLoadProcedures, relParamFillByte, flattenSteps, buildRelativeSegmentTarget, mergeRelativeTarget, differingFF, leaveUnreadUnchanged, buildDeviceConfig, buildComObjectTable, buildGroupTables, resolveModuleInstances, absoluteStructuralImages, planAbsoluteStructuralFlash, planRelativeStructuralFlash, declaredMcbWrites, planRelativeParFlash, withClosing, toAppModel, decodeAbsoluteImage, decodeGroupTablesMv0705, buildGroupTablesMv0705, buildAbsoluteSegmentTargets, parameterMemoryBytes, planAbsoluteParFlash, withLinkedCommFlags, planSystem7GaFlash, comObjInstanceOverride, placeComObjOverrides, withConfirmedRestart, withInstanceOverrides, fullDownloadImageCoverage, planSystem1Download, MV0012_DEFAULT_LOAD, absoluteBuildInstances, checkedStamps, buildSecurityObject, writtenGroupKeys, relativeParWriteSet, relativeComObjWriteSet, constantParams, differingConstants, comObjectTableChanges, decodeParameterImage, fullDownloadImageDigest, verifyModeDeclared, type KnxIpDevice, type ModuleInstance, type ComObjInstanceOverride, type ImageStamp } from "../packages/product/src/index.ts";
 import { catalogueDir, catalogueXml, captureText, capturePath, listCatalogue } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { giraM0008Configuration } from "./gira-m0008-config.ts";
@@ -580,7 +580,7 @@ corpusDescribe("structural flash against ETS's partial download", () => {
     expect(changedByEts.filter(([a]) => !ours.has(a))).toEqual([]);
     expect(lsms).toEqual([1, 2, 3]);
     // ETS's sequence: both tables unloaded and declared again, the application loaded without either.
-    expect(planSteps(plan)).toEqual(withoutVerifyMode(captureSteps("mdt-be02001-ets-partial-structure.log", ia)));
+    expect(planSteps(asRun(plan, cfg.mask))).toEqual(verifyModeAsStep(captureSteps("mdt-be02001-ets-partial-structure.log", ia)));
     // Input A's idle union (offsets 48-49 of AS-4468, no active member) is in ETS's image at the segment's
     // <Data>, 00 00, whatever the unit holds: a unit holding 00 0a there gets 00 00 where the project is known
     // to hold the values of its parameters without memory (as ETS's own project does), and the flash is refused,
@@ -984,19 +984,17 @@ function planSteps(plan: LoadPlan, propDataMax = 10): string[] {
 // ETS switches the device into verify mode before its first memory write (reads device control,
 // object 0 PID 14, and writes it back with bit 0x04 set: 04, or 05 where the read showed the application
 // stopped, as on the MDT BE-06001.02 with LSM 3 unloaded or loading) and takes the device's echo of each
-// write. Busforge's full download does the same (withVerifyMode: its verifyMode step stands where ETS's
-// read and write stand, verifyModeAsStep); its partial flashes read every write back instead
-// (KnxDevice.memWrite), the proof the MV-0705 parameter flash is hardware-proven on, and leave the step out.
+// write, in its full and in its partial downloads. Busforge's downloads do the same: its verifyMode step stands
+// where ETS's read and write stand (verifyModeAsStep), in the full download (withVerifyMode) and in the
+// parameter, group-address and structural flash, which take every write on the device's answer and read none
+// back (withVerifyModeEchoed, as the profile runs them: asRun).
+const asRun = (plan: LoadPlan, mask: string) => withVerifyModeEchoed(plan, verifyModeDeclared(mask));
 const VERIFY_READ = "read 0/14#1";
 const isVerifyWrite = (s: string) => /^prop 0\/14=[0-9a-f]{2}$/.test(s) && (Number.parseInt(s.slice(-2), 16) & 0x04) !== 0;
 const verifyModeAt = (steps: string[]) => {
   const at = steps.findIndex(isVerifyWrite);
   expect([steps.filter((s) => s === VERIFY_READ || isVerifyWrite(s)).length, steps[at - 1], steps[at + 1]]).toEqual([2, VERIFY_READ, "write"]);
   return at;
-};
-const withoutVerifyMode = (steps: string[]) => {
-  verifyModeAt(steps);
-  return steps.filter((s) => s !== VERIFY_READ && !isVerifyWrite(s));
 };
 const verifyModeAsStep = (steps: string[]) => {
   const at = verifyModeAt(steps);
@@ -1100,16 +1098,17 @@ function unitMemory(cfg: ReturnType<typeof parseAppConfig>, ia: number, ...downl
   for (const d of downloads) for (const [a, b] of d) m.set(a, b);
   return m;
 }
-// The structural flash against the revert: ETS's steps (verify mode aside), every byte Busforge writes
+// The structural flash against the revert: ETS's steps (verify mode included), every byte Busforge writes
 // with ETS's value, and every byte ETS changes on the unit written by Busforge; against ETS's wire exactly
 // ETS's bytes.
 // `etsImage`: ETS's image from its log, where ETS reads the unit and leaves out on the wire what it
 // already holds (Meteodata 140 S); the steps are then compared without their writes.
 // Against ETS's wire the bytes are ETS's exactly; against ETS's logged image (a read-compare unit) every byte
 // written has ETS's value and every byte ETS changed is written.
-function expectRevertForm(plan: LoadPlan, file: string, ia: number, device: Map<number, number>, etsImage?: Map<number, number>) {
+function expectRevertForm(plan: LoadPlan, mask: string, file: string, ia: number, device: Map<number, number>, etsImage?: Map<number, number>) {
   const steps = (x: string[]) => (etsImage ? x.filter((s) => s !== "write") : x);
-  expect(steps(planSteps(plan))).toEqual(steps(etsImage ? captureSteps(file, ia) : withoutVerifyMode(captureSteps(file, ia))));
+  const captured = captureSteps(file, ia);
+  expect(steps(planSteps(asRun(plan, mask)))).toEqual(steps(verifyModeDeclared(mask) ? verifyModeAsStep(captured) : captured));
   const ets = etsImage ?? memoryImage(parseCapture(captureText(file), ia).writes);
   const ours = bytesOf(plan);
   expect([...ours].filter(([a, b]) => ets.get(a) !== b)).toEqual([]);
@@ -1371,7 +1370,7 @@ corpusDescribe("Gira Tastsensor 3 Komfort (M-0008) against ETS", () => {
     const current = new Map(buildAbsoluteSegmentTargets(cfg, baseline.params).map((t) => [t.id, t.bytes]));
     const { plan, changedBytes } = planAbsoluteParFlash(cfg, after, proc, current);
     expect(changedBytes).toBe(1);
-    expect(planSteps(plan)).toEqual(withoutVerifyMode(etsSteps("gira-m0008-ets-partial-params.log")));
+    expect(planSteps(asRun(plan, cfg.mask))).toEqual(verifyModeAsStep(etsSteps("gira-m0008-ets-partial-params.log")));
     const ets = memoryImage(parseCapture(captureText("gira-m0008-ets-partial-params.log"), ia).writes);
     const ours = bytesOf(plan);
     expect([...ours].filter(([a, b]) => ets.get(a) !== undefined && ets.get(a) !== b)).toEqual([]);
@@ -1397,7 +1396,7 @@ corpusDescribe("Gira Tastsensor 3 Komfort (M-0008) against ETS", () => {
   test("group-address flash: tables re-declared where ETS puts them, exactly the bytes of ETS's image, the com-object table with the new link bit", () => {
     const { plan, assocAt, comObjWrites } = gaFlash(withTestLink, heldComObj(revert));
     expect(assocAt).toBe(0x4013);
-    expect(planSteps(plan)).toEqual(withoutVerifyMode(etsSteps("gira-m0008-ets-partial-links.log")));
+    expect(planSteps(asRun(plan, cfg.mask))).toEqual(verifyModeAsStep(etsSteps("gira-m0008-ets-partial-links.log")));
     const ets = memoryImage(parseCapture(captureText("gira-m0008-ets-partial-links.log"), ia).writes);
     const log = etsLog("gira-m0008-ets6log-partial-links.txt");
     const ours = bytesOf(plan);
@@ -1433,7 +1432,7 @@ corpusDescribe("Gira Tastsensor 3 Komfort (M-0008) against ETS", () => {
     const ref = [...baseline.params.keys()].find((k) => k.includes("_P-3764_"))!;
     const device = unitMemory(cfg, ia, revert, memoryImage(parseCapture(captureText("gira-m0008-ets-partial-params.log"), ia).writes), memoryImage(parseCapture(captureText("gira-m0008-ets-partial-links.log"), ia).writes));
     const { plan } = system7StructuralFlash({ cfg, proc, ia, device, params: baseline.params, baseParams: new Map(baseline.params).set(ref, "40"), links: baseline.links, overrides: object64Read });
-    expectRevertForm(plan, "gira-m0008-ets-partial-revert.log", ia, device);
+    expectRevertForm(plan, cfg.mask, "gira-m0008-ets-partial-revert.log", ia, device);
   });
 
   // Two partial downloads: "Sperrfunktion?" (P-3848, no memory location) switched from "Nein" (0, the
@@ -1500,10 +1499,10 @@ corpusDescribe("Gira Tastsensor 3 Komfort (M-0008) against ETS", () => {
   // The unit before "on": the revert's whole image (ETS wrote it without a differential cut), as its stamps show.
   const beforeSperre = () => unitMemory(cfg, ia, revert);
   // Busforge's structural flash against an ETS partial download that cut what the unit held: ETS's steps
-  // (verify mode aside), the whole image (ETS's before its cut), every byte of ETS's image with ETS's value,
+  // (verify mode included), the whole image (ETS's before its cut), every byte of ETS's image with ETS's value,
   // and every other byte the unit's own, so on the unit exactly ETS's changes.
   const expectSperreForm = (plan: LoadPlan, capture: string, log: string, device: Map<number, number>) => {
-    expect(planSteps(plan)).toEqual(withoutVerifyMode(captureSteps(capture, ia)));
+    expect(planSteps(asRun(plan, cfg.mask))).toEqual(verifyModeAsStep(captureSteps(capture, ia)));
     const ours = bytesOf(plan), ets = memoryImage(parseCapture(captureText(capture), ia).writes), l = etsLog(log);
     expect(span(ours)).toEqual(GIRA_IMAGE);
     expect(ours.size).toBe(l.image.size + l.removed);
@@ -1621,7 +1620,7 @@ corpusDescribe("Auro presence detector (M-0081_A-FE01-11-75D9) against ETS", () 
     const after = new Map(baseline.params).set(led, "0");
     const { plan, changedBytes, unplaceable } = planAbsoluteParFlash(cfg, after, proc, new Map([[paramSeg.id, held]]));
     expect([changedBytes, unplaceable]).toEqual([1, []]);
-    expect(planSteps(plan)).toEqual(withoutVerifyMode(captureSteps(PARTIAL, ia)));
+    expect(planSteps(asRun(plan, cfg.mask))).toEqual(verifyModeAsStep(captureSteps(PARTIAL, ia)));
     expect(planSteps(plan)).toEqual(["load:3", "write", "loadCompleted:3", "restart"]);
     const ets = memoryImage(parseCapture(captureText(PARTIAL), ia).writes);
     expect([...bytesOf(plan)].sort(([a], [b]) => a - b)).toEqual([...ets].sort(([a], [b]) => a - b));
@@ -1647,7 +1646,7 @@ corpusDescribe("Auro presence detector (M-0081_A-FE01-11-75D9) against ETS", () 
   test("group-address flash: ETS's partial download, the tables in their declared brackets, the com-object table to its counted entries", () => {
     expect(tableOf(memoryImage(parseCapture(captureText(LINKS), ia).writes))).toEqual([...tableOf(written), TEST_GA].sort((a, b) => a - b));
     const { plan, writes, comObjWrites } = gaFlash(second);
-    expect(planSteps(plan)).toEqual(withoutVerifyMode(captureSteps(LINKS, ia)));
+    expect(planSteps(asRun(plan, cfg.mask))).toEqual(verifyModeAsStep(captureSteps(LINKS, ia)));
     expect(planSteps(plan)).toEqual(TABLE_BRACKETS("taskSegment:%=000081fe0111"));
     const ets = memoryImage(parseCapture(captureText(LINKS), ia).writes);
     const ours = bytesOf(plan);
@@ -1665,7 +1664,7 @@ corpusDescribe("Auro presence detector (M-0081_A-FE01-11-75D9) against ETS", () 
     // ETS carries the parameter bytes in the same LSM 3 bracket as the com-object table; Busforge runs
     // the group-address flash and the parameter flash, each its own bracket and restart. The sequence
     // of the group-address flash is ETS's, its writes on LSM 3 aside.
-    expect(planSteps(plan)).toEqual(withoutVerifyMode(captureSteps(REVERT, ia)));
+    expect(planSteps(asRun(plan, cfg.mask))).toEqual(verifyModeAsStep(captureSteps(REVERT, ia)));
     const ets = memoryImage(parseCapture(captureText(REVERT), ia).writes);
     const ga = bytesOf(plan);
     expect([...ga].filter(([a, b]) => ets.get(a) !== b)).toEqual([]);
@@ -1686,7 +1685,7 @@ corpusDescribe("Auro presence detector (M-0081_A-FE01-11-75D9) against ETS", () 
     const led = [...baseline.params.keys()].find((k) => k.startsWith(`${LED}_`))!;
     const device = unitMemory(cfg, ia, written, memoryImage(parseCapture(captureText(PARTIAL), ia).writes), memoryImage(parseCapture(captureText(LINKS), ia).writes));
     const { plan } = system7StructuralFlash({ cfg, proc, ia, device, params: baseline.params, baseParams: new Map(baseline.params).set(led, "0"), links: baseline.links });
-    expectRevertForm(plan, REVERT, ia, device);
+    expectRevertForm(plan, cfg.mask, REVERT, ia, device);
   });
 
   test("a table that shrinks leaves its old bytes behind it, in ETS's download and in Busforge's", () => {
@@ -1719,7 +1718,7 @@ corpusDescribe("Auro presence detector (M-0081_A-FE01-11-75D9) against ETS", () 
 
   test("group-address flash that unlinks object 9: ETS's partial download, the linked bit cleared and nothing else", () => {
     const { plan } = gaFlash(without9);
-    expect(planSteps(plan)).toEqual(withoutVerifyMode(captureSteps(UNLINK, ia)));
+    expect(planSteps(asRun(plan, cfg.mask))).toEqual(verifyModeAsStep(captureSteps(UNLINK, ia)));
     expect(planSteps(plan)).toEqual(TABLE_BRACKETS("taskSegment:%=000081fe0111"));
     const ets = memoryImage(parseCapture(captureText(UNLINK), ia).writes);
     const ours = bytesOf(plan);
@@ -1735,7 +1734,7 @@ corpusDescribe("Auro presence detector (M-0081_A-FE01-11-75D9) against ETS", () 
     const unlinked = comObjOf(memoryImage(parseCapture(captureText(UNLINK), ia).writes));
     expect(configByte(unlinked, 9)).toBe(0x43);
     const { plan } = gaFlash(baseline.links, unlinked);
-    expect(planSteps(plan)).toEqual(withoutVerifyMode(captureSteps(RELINK, ia)));
+    expect(planSteps(asRun(plan, cfg.mask))).toEqual(verifyModeAsStep(captureSteps(RELINK, ia)));
     const ets = memoryImage(parseCapture(captureText(RELINK), ia).writes);
     const ours = bytesOf(plan);
     expect([...ours].sort(([a], [b]) => a - b)).toEqual([...ets].sort(([a], [b]) => a - b));
@@ -1796,7 +1795,7 @@ corpusDescribe("Auro presence detector (M-0081_A-FE01-11-75D9) against ETS", () 
     const device = beforeHeat();
     expect(device.get(0x4229)).toBe(0x00);
     const { plan } = system7StructuralFlash({ cfg, proc, ia, device, params: heatOn, baseParams: baseline.params, links: baseline.links });
-    expectRevertForm(plan, HEAT_ON, ia, device);
+    expectRevertForm(plan, cfg.mask, HEAT_ON, ia, device);
     expect(planSteps(plan)).toEqual(TABLE_BRACKETS("taskSegment:%=000081fe0111"));
     // The tables, the com-object table to its counted entries, every parameter-owned byte (offsets 3 and 36 own none).
     expect(span(bytesOf(plan))).toEqual(["4000-4000", "4003-4006", "402f-4033", "405c-40b6", "4200-4202", "4204-4223", "4225-4231"]);
@@ -1807,7 +1806,7 @@ corpusDescribe("Auro presence detector (M-0081_A-FE01-11-75D9) against ETS", () 
     const device = unitMemory(cfg, ia, beforeHeat(), memoryImage(parseCapture(captureText(HEAT_ON), ia).writes));
     expect(device.get(0x4229)).toBe(0x01);
     const { plan } = system7StructuralFlash({ cfg, proc, ia, device, params: baseline.params, baseParams: heatOn, links: baseline.links });
-    expectRevertForm(plan, HEAT_OFF, ia, device);
+    expectRevertForm(plan, cfg.mask, HEAT_OFF, ia, device);
     expect(planSteps(plan)).toEqual(TABLE_BRACKETS("taskSegment:%=000081fe0111"));
     // The tables, the com-object table to its counted entries, every parameter-owned byte (offsets 3 and 36 own none).
     expect(span(bytesOf(plan))).toEqual(["4000-4000", "4003-4006", "402f-4033", "405c-40b6", "4200-4202", "4204-4223", "4225-4231"]);
@@ -1928,7 +1927,7 @@ corpusDescribe("Theben TheLuxa P300 (M-0048_A-107E-12-5B58) against ETS", () => 
     const after = new Map(baseline.params).set(tempRef(), "1");
     const { plan, changedBytes, unplaceable } = planAbsoluteParFlash(cfg, after, proc, new Map([[paramSeg.id, onUnit]]));
     expect([changedBytes, unplaceable]).toEqual([2, []]);
-    expect(planSteps(plan)).toEqual(withoutVerifyMode(captureSteps(PARTIAL, ia)));
+    expect(planSteps(asRun(plan, cfg.mask))).toEqual(verifyModeAsStep(captureSteps(PARTIAL, ia)));
     expect(planSteps(plan)).toEqual(["load:3", "write", "loadCompleted:3", "restart"]);
     const ets = memoryImage(parseCapture(captureText(PARTIAL), ia).writes);
     expect([...bytesOf(plan)].sort(([a], [b]) => a - b)).toEqual([...ets].sort(([a], [b]) => a - b));
@@ -1958,7 +1957,7 @@ corpusDescribe("Theben TheLuxa P300 (M-0048_A-107E-12-5B58) against ETS", () => 
   test("group-address flash: tables re-declared where ETS puts them, exactly the bytes of ETS's image, the com-object table to its 117 entries with the new link bit", () => {
     const { plan, assocAt, comObjWrites } = gaFlash(withTestLink, heldComObj);
     expect(assocAt).toBe(0x400b);
-    expect(planSteps(plan)).toEqual(withoutVerifyMode(captureSteps(LINKS, ia)));
+    expect(planSteps(asRun(plan, cfg.mask))).toEqual(verifyModeAsStep(captureSteps(LINKS, ia)));
     expect(planSteps(plan)).toEqual(TABLES(11));
     const ets = memoryImage(parseCapture(captureText(LINKS), ia).writes);
     const log = etsLog("theluxa-p300-ets6log-partial-links.txt");
@@ -1979,7 +1978,7 @@ corpusDescribe("Theben TheLuxa P300 (M-0048_A-107E-12-5B58) against ETS", () => 
     const linksWritten = memoryImage(parseCapture(captureText(LINKS), ia).writes);
     const { plan, assocAt } = gaFlash(baseline.links, segOf(comObjSeg, new Map([...written, ...linksWritten])));
     expect(assocAt).toBe(0x4009);
-    expect(planSteps(plan)).toEqual(withoutVerifyMode(captureSteps(REVERT, ia)));
+    expect(planSteps(asRun(plan, cfg.mask))).toEqual(verifyModeAsStep(captureSteps(REVERT, ia)));
     expect(planSteps(plan)).toEqual(TABLES(9));
     const ours = bytesOf(plan);
     const revert = memoryImage(parseCapture(captureText(REVERT), ia).writes);
@@ -2001,7 +2000,7 @@ corpusDescribe("Theben TheLuxa P300 (M-0048_A-107E-12-5B58) against ETS", () => 
     const cleared = new Map([[0x4800, 0x00]]);
     const device = unitMemory(cfg, ia, written, cleared, memoryImage(parseCapture(captureText(PARTIAL), ia).writes), cleared, memoryImage(parseCapture(captureText(LINKS), ia).writes), cleared);
     const { plan } = system7StructuralFlash({ cfg, proc, ia, device, params: baseline.params, baseParams: new Map(baseline.params).set(tempRef(), "1"), links: baseline.links });
-    expectRevertForm(plan, REVERT, ia, device);
+    expectRevertForm(plan, cfg.mask, REVERT, ia, device);
   });
 
   test("a table that shrinks leaves its old bytes behind it, in ETS's download and in Busforge's", () => {
@@ -2235,7 +2234,7 @@ corpusDescribe("Theben Meteodata 140 S (M-0048_A-140C-14-EB70) against ETS", () 
     const cleared = new Map([[0x4800, 0x00]]);
     const device = unitMemory(cfg, ia, fullLog.image, cleared, wire(PARTIAL), cleared, wire(LINKS), cleared);
     const { plan } = system7StructuralFlash({ cfg, proc, ia, device, params: baseline.params, baseParams: new Map(baseline.params).set(tempRef(), "1"), links: baseline.links });
-    expectRevertForm(plan, REVERT, ia, device, etsLog("meteodata-140s-ets6log-partial-revert.txt").image);
+    expectRevertForm(plan, cfg.mask, REVERT, ia, device, etsLog("meteodata-140s-ets6log-partial-revert.txt").image);
   });
 
   test("a table that shrinks leaves its old bytes behind it, in ETS's download and in Busforge's", () => {
@@ -2286,7 +2285,7 @@ corpusDescribe("Theben Meteodata 140 S (M-0048_A-140C-14-EB70) against ETS", () 
 
   test("structural flash switching channel C14 on: ETS's steps, its texts and the project's values of the hidden channel, the bytes ETS writes", () => {
     const { plan } = system7StructuralFlash({ cfg, proc, ia, device: beforeC14, params: c14On, baseParams: projectParams, links: baseline.links });
-    expectRevertForm(plan, C14_ON, ia, beforeC14, c14OnLog.image);
+    expectRevertForm(plan, cfg.mask, C14_ON, ia, beforeC14, c14OnLog.image);
     const ours = bytesOf(plan);
     const params = (m: Map<number, number>) => sorted(m).filter(([a]) => a >= 0x4800);
     expect(params(ours)).toEqual(params(c14OnLog.image));
@@ -2302,7 +2301,7 @@ corpusDescribe("Theben Meteodata 140 S (M-0048_A-140C-14-EB70) against ETS", () 
   test("structural flash switching channel C14 off: ETS's steps, the channel's parameters back at the segment's <Data>, the bytes ETS writes", () => {
     const device = unitMemory(cfg, ia, beforeC14, wire(C14_ON), new Map([[0x4800, 0x00]]));
     const { plan } = system7StructuralFlash({ cfg, proc, ia, device, params: projectParams, baseParams: c14On, links: baseline.links });
-    expectRevertForm(plan, C14_OFF, ia, device, c14OffLog.image);
+    expectRevertForm(plan, cfg.mask, C14_OFF, ia, device, c14OffLog.image);
     const ours = bytesOf(plan);
     const params = (m: Map<number, number>) => sorted(m).filter(([a]) => a >= 0x4800);
     expect(params(ours)).toEqual(params(c14OffLog.image));
@@ -2491,7 +2490,7 @@ corpusDescribe("Theben MIX 2 (M-0048_A-493B-21-B471) against ETS", () => {
         const { ours, plan } = parFlash(changed, held);
         expect(sorted(ours)).toEqual(sorted(log("partial-params").get(4)!));
         expect([...ours].filter(([o, b]) => held[o] !== b).map(([o]) => o)).toEqual([DOWNLOADED, p.par.offset]);
-        expect(systemBPlanBracket(plan)).toEqual(systemBCaptureBracket(file("partial-params"), ia));
+        expect(systemBPlanBracket(confirmedRun(asRun(plan, cfg.mask)))).toEqual(systemBCaptureBracket(file("partial-params"), ia));
       });
 
       // The unit as ETS's full download left it, under the configuration of that download: its image
@@ -2512,7 +2511,7 @@ corpusDescribe("Theben MIX 2 (M-0048_A-493B-21-B471) against ETS", () => {
         for (const lsm of [3, 2, 1]) expect([lsm, sorted(asMap(segment(linked, lsm)))]).toEqual([lsm, sorted(ets.get(lsm)!)]);
         expect(ets.get(4)?.size).toBe(0); // the application's range is listed with no byte in it
         const plan = withClosing(withConfirmedRestart(planSystemBGaFlash({ addr: segment(linked, 1), assoc: segment(linked, 2), comObj: segment(linked, 3) }, true, false), proc.secureEnabled), proc, "grp");
-        expect(systemBPlanBracket(plan)).toEqual(systemBCaptureBracket(file("partial-links"), ia));
+        expect(systemBPlanBracket(confirmedRun(asRun(plan, cfg.mask)))).toEqual(systemBCaptureBracket(file("partial-links"), ia));
       });
 
       // ETS reverts both changes in one partial download, one bracket over all four objects (the
@@ -2551,7 +2550,7 @@ corpusDescribe("Theben MIX 2 (M-0048_A-493B-21-B471) against ETS", () => {
           comObj: { image: comObj, owned: relativeComObjWriteSet(comObj, unitComObj, record, check), keptAt: 0x3000 },
           addr: segment(full, 1), assoc: segment(full, 2),
         }, Buffer.from("0048493b21", "hex"), true, mcb), proc.secureEnabled), proc, "par");
-        expect(systemBPlanBracket(plan)).toEqual(systemBCaptureBracket(file("partial-revert"), ia));
+        expect(systemBPlanBracket(confirmedRun(asRun(plan, cfg.mask)))).toEqual(systemBCaptureBracket(file("partial-revert"), ia));
         const ets = log("partial-revert");
         const written = (lsm: number) => new Map(plan.flatMap((st) => (st.op === "writeSegmentOwned" && st.lsm === lsm
           ? ownedRuns(st.image, st.owned).flatMap((r) => [...r.bytes].map((b, i) => [r.offset + i, b] as [number, number])) : [])));
@@ -2648,7 +2647,7 @@ corpusDescribe("Theben MIX 2 (M-0048_A-493B-21-B471) against ETS", () => {
           : st.op === "writeSegment" && st.lsm === lsm ? [...st.bytes].map((b, i) => [at.get(lsm)! + (st.offset ?? 0) + i, b] as [number, number]) : []));
       const expectShowsForm = (plan: LoadPlan, capture: string, l: string, unit: Map<number, number>) => {
         const at = kept(capture);
-        expect(systemBPlanBracket(plan)).toEqual(systemBCaptureBracket(capture, ia));
+        expect(systemBPlanBracket(confirmedRun(asRun(plan, cfg.mask)))).toEqual(systemBCaptureBracket(capture, ia));
         // Busforge besides reads the load states of the three tables there, as after its full download.
         expect(closingExtras(plan)).toEqual(["assertLoaded", "assertLoaded", "assertLoaded"]);
         const ets = memoryImage(parseCapture(captureText(capture), ia).writes);
@@ -2710,10 +2709,10 @@ corpusDescribe("Theben DALI-Gateway KNX plus (M-0048_A-9071-20-F258-O00EF) again
   const unit = (lsm: number) => Buffer.from(fx.segments[lsm].hex, "hex");
   // The test group address the links download added: the one address of its image's table no project link uses.
   const withLink = [...fx.links, { comObjNum: LINKED, gaRaws: [addedGa(tableGas((o) => relImage("dali-ets6log-partial-links.txt").get(1)!.get(o), "systemB"), fx.links)] }];
-  // ETS switches the unit into verify mode (object 0 PID 14 = 04) before its first memory write; Busforge's full
-  // download does the same (its verifyMode step, in the bracket where ETS's write stands), its partial flashes read
-  // each write back (withoutVerifyMode above), so their brackets are held to ETS's without it.
-  const etsBracket = (file: string) => systemBCaptureBracket(file, ia).filter((st) => st !== "prop 0/14");
+  // ETS switches the unit into verify mode (object 0 PID 14 = 04) before its first memory write, in its full and in
+  // its partial downloads; Busforge's downloads do the same (its verifyMode step, in the bracket where ETS's write
+  // stands, asRun above).
+  const etsBracket = (file: string) => systemBCaptureBracket(file, ia);
 
   test("the configuration is the project's: the parameter changed is at ETS's value before it, the object unlinked", () => {
     expect(buildDeviceConfig(cfg, params, undefined, fx.instances).imageValues.get(TIME_FOR_DIMMING.ref)).toBe(TIME_FOR_DIMMING.from);
@@ -2782,7 +2781,7 @@ corpusDescribe("Theben DALI-Gateway KNX plus (M-0048_A-9071-20-F258-O00EF) again
     expect([...ours].filter(([o, b]) => held[o] !== b)).toEqual(sorted(ets));
     const wire = memoryImage(parseCapture(captureText("dali-ets-partial-params.log"), ia).writes);
     expect(sorted(wire)).toEqual([[APP_AT + TIME_FOR_DIMMING.offset, 12]]);
-    expect(systemBPlanBracket(plan)).toEqual(etsBracket("dali-ets-partial-params.log"));
+    expect(systemBPlanBracket(asRun(plan, cfg.mask))).toEqual(etsBracket("dali-ets-partial-params.log"));
   });
 
   test("group-address flash: ETS's tables and com-object table, in ETS's bracket", () => {
@@ -2790,7 +2789,7 @@ corpusDescribe("Theben DALI-Gateway KNX plus (M-0048_A-9071-20-F258-O00EF) again
     const ets = relImage("dali-ets6log-partial-links.txt");
     for (const lsm of [3, 2, 1]) expect([lsm, sorted(asMap(segment(linked, lsm)))]).toEqual([lsm, sorted(ets.get(lsm)!)]);
     const plan = withClosing(withConfirmedRestart(planSystemBGaFlash({ addr: segment(linked, 1), assoc: segment(linked, 2), comObj: segment(linked, 3) }, true, false), proc.secureEnabled), proc, "grp");
-    expect(systemBPlanBracket(plan)).toEqual(etsBracket("dali-ets-partial-links.log"));
+    expect(systemBPlanBracket(asRun(plan, cfg.mask))).toEqual(etsBracket("dali-ets-partial-links.log"));
   });
 
   // ETS reverts both changes in one partial download, one bracket over all four objects; Busforge reverts them with its
@@ -2823,7 +2822,7 @@ corpusDescribe("Theben DALI-Gateway KNX plus (M-0048_A-9071-20-F258-O00EF) again
       comObj: { image: comObj, owned: relativeComObjWriteSet(comObj, unitComObj, record, check), keptAt: 0x4000 },
       addr: segment(full, 1), assoc: segment(full, 2),
     }, PROGRAM_ID, true, mcb), proc.secureEnabled), proc, "par");
-    expect(systemBPlanBracket(plan)).toEqual(etsBracket("dali-ets-partial-revert.log"));
+    expect(systemBPlanBracket(asRun(plan, cfg.mask))).toEqual(etsBracket("dali-ets-partial-revert.log"));
     const ets = relImage("dali-ets6log-partial-revert.txt");
     const written = (lsm: number) => new Map(plan.flatMap((st) => (st.op === "writeSegmentOwned" && st.lsm === lsm
       ? ownedRuns(st.image, st.owned).flatMap((r) => [...r.bytes].map((b, i) => [r.offset + i, b] as [number, number])) : [])));
@@ -2884,9 +2883,9 @@ corpusDescribe("MEAN WELL KNX-40E-1280D (M-0162_A-0004-11-F245) against ETS", ()
     }
     return m;
   };
-  // ETS switches the unit into verify mode (object 0 PID 14) before its first memory write; Busforge's full download does
-  // the same (its verifyMode step, in the bracket where ETS's write stands), its partial flashes read each write back.
-  const etsBracket = (kind: string) => systemBCaptureBracket(file(kind), ia).filter((st) => st !== "prop 0/14");
+  // ETS switches the unit into verify mode (object 0 PID 14) before its first memory write, in its full and in its partial
+  // downloads; Busforge's downloads do the same (its verifyMode step, in the bracket where ETS's write stands, asRun above).
+  const etsBracket = (kind: string) => systemBCaptureBracket(file(kind), ia);
   const parFlash = (values: Map<string, string>, current: Buffer, record?: { before: string; file: string }) => {
     const target = buildRelativeSegmentTarget(cfg, values, 4, { ownIdleUnionDefaults: true })!;
     const { image } = mergeRelativeTarget(current, target);
@@ -2979,7 +2978,7 @@ corpusDescribe("MEAN WELL KNX-40E-1280D (M-0162_A-0004-11-F245) against ETS", ()
     expect(sorted(ours)).toEqual(sorted(wire("params")));
     expect(sorted(new Map([...relImage(log("params")).get(4)!].map(([o, b]) => [AT[4] + o, b])))).toEqual(sorted(ours));
     expect([...ours].filter(([a, b]) => unitApp[a - AT[4]] !== b)).toEqual([[AT[4] + MAX_TRACKING.offset + 1, 0x12]]);
-    expect(systemBPlanBracket(plan)).toEqual(etsBracket("params"));
+    expect(systemBPlanBracket(asRun(plan, cfg.mask))).toEqual(etsBracket("params"));
     expect(etsBracket("params")[0]).toBe("unload:4");
   });
 
@@ -3000,7 +2999,7 @@ corpusDescribe("MEAN WELL KNX-40E-1280D (M-0162_A-0004-11-F245) against ETS", ()
     expect(check.equal).toBe(true);
     const plan = gaFlash(linked, unitComObj, record, check);
     expect(sorted(planBytes(plan))).toEqual(sorted(wire("links")));
-    expect(systemBPlanBracket(plan)).toEqual(etsBracket("links"));
+    expect(systemBPlanBracket(asRun(plan, cfg.mask))).toEqual(etsBracket("links"));
     // Without a record, with one the unit's stamps do not equal, or with one of a download that did not write the table,
     // the table goes whole: ETS's form when its stamps do not match (Theben MIX 2, "the stamp record" below) and in the
     // revert below.
@@ -3049,7 +3048,7 @@ corpusDescribe("MEAN WELL KNX-40E-1280D (M-0162_A-0004-11-F245) against ETS", ()
       comObj: { image: comObj, owned: relativeComObjWriteSet(comObj, unitLinkedComObj, record, check), keptAt: AT[3] },
       addr: segment(full, 1), assoc: segment(full, 2),
     }, PROGRAM_ID, true, mcb), proc.secureEnabled), proc, "par");
-    expect(systemBPlanBracket(plan)).toEqual(etsBracket("revert"));
+    expect(systemBPlanBracket(asRun(plan, cfg.mask))).toEqual(etsBracket("revert"));
     expect(sorted(planBytes(plan))).toEqual(sorted(wire("revert")));
   });
 
@@ -3126,7 +3125,7 @@ corpusDescribe("MEAN WELL KNX-40E-1280D (M-0162_A-0004-11-F245) against ETS", ()
       comObj: { image: comObj, owned: relativeComObjWriteSet(comObj, unitComObj, written, check), keptAt: AT[3] },
       addr: segment(b, 1), assoc: segment(b, 2),
     }, PROGRAM_ID, true, mcb), proc.secureEnabled), proc, "par");
-    expect(systemBPlanBracket(plan)).toEqual(etsBracket(kind));
+    expect(systemBPlanBracket(asRun(plan, cfg.mask))).toEqual(etsBracket(kind));
     expect(sorted(planBytes(plan))).toEqual(sorted(wire(kind)));
     return { plan, image, comObj };
   };
@@ -3405,7 +3404,7 @@ corpusDescribe("MDT IP Interface/Router (M-0083_A-0137-20-7EB2) against ETS", ()
       expect(sorted(ets)[0][0]).toBe(NAME.offset + 4);
       const wire = innerWrites(file);
       expect([...wire.values()]).toEqual(sorted(ets).map(([, b]) => b));
-      expect(systemBPlanBracket(plan)).toEqual(logBracket(file));
+      expect(systemBPlanBracket(confirmedRun(asRun(plan, cfg.mask)))).toEqual(logBracket(file));
     });
   }
 });
@@ -3631,7 +3630,7 @@ corpusDescribe("MDT BE-06001.02 (M-0083_A-00B4-32-3919) against ETS", () => {
     const pseg = segmentHeld(0x44c8);
     const { plan, changedBytes, unplaceable } = planAbsoluteParFlash(cfg, after, proc, new Map([[pseg.seg.id, pseg.bytes]]), { moduleInstances: fx.instances });
     expect([changedBytes, unplaceable]).toEqual([2, []]);
-    expect(planSteps(plan)).toEqual(withoutVerifyMode(captureSteps(PARTIAL, ia)));
+    expect(planSteps(asRun(plan, cfg.mask))).toEqual(verifyModeAsStep(captureSteps(PARTIAL, ia)));
     expect(planSteps(plan)).toEqual(["load:3", "write", "loadCompleted:3", "restart"]);
     const ets = wire(PARTIAL);
     expect([...bytesOf(plan)].sort(([a], [b]) => a - b)).toEqual([...ets].sort(([a], [b]) => a - b));
@@ -3645,7 +3644,7 @@ corpusDescribe("MDT BE-06001.02 (M-0083_A-00B4-32-3919) against ETS", () => {
   test("group-address flash: ETS's partial download, the tables in their declared brackets, the com-object table to its counted entries with the new link bit", () => {
     expect(tableOf(wire(LINKS))).toEqual([...new Set(fx.links.flatMap((l) => l.gaRaws)), TEST_GA].sort((a, b) => a - b));
     const { plan } = gaFlash(withLink);
-    expect(planSteps(plan)).toEqual(withoutVerifyMode(captureSteps(LINKS, ia)));
+    expect(planSteps(asRun(plan, cfg.mask))).toEqual(verifyModeAsStep(captureSteps(LINKS, ia)));
     expect(planSteps(plan)).toEqual(TABLE_BRACKETS);
     const ets = wire(LINKS);
     const ours = bytesOf(plan);
@@ -3674,7 +3673,7 @@ corpusDescribe("MDT BE-06001.02 (M-0083_A-00B4-32-3919) against ETS", () => {
 
   test("structural flash of the revert: ETS's bracket set, and every byte ETS changed with ETS's value", () => {
     const device = beforeRevert();
-    expectRevertForm(structural(device).plan, REVERT, ia, device);
+    expectRevertForm(structural(device).plan, cfg.mask, REVERT, ia, device);
     // ETS's revert changes the two table counts, object 48's linked bit and the long keypress, nothing else.
     expect([...wire(REVERT)].filter(([a, b]) => device.get(a) !== b).map(([a]) => a.toString(16))).toEqual(["4000", "4201", "44c5", "44cc", "44cd"]);
   });

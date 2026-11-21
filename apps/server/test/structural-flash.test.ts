@@ -34,6 +34,7 @@ corpusDescribe("the structural flash against real applications", () => {
     async tableAddr(obj: number) { return this.addr.get(obj) ?? 0; }
     async memRead(addr: number, len: number) { const b = Buffer.alloc(len); for (let i = 0; i < len; i++) b[i] = this.mem.get(addr + i) ?? 0; return b; }
     async writesConfirmed() { return false; }
+    async setVerifyMode() {} // switched on before the first classic write, as ETS does on MV-0705 and MV-07B0
     confirmedWrites() { return []; }
     clearConfirmedWrites() {}
     setExtendedMemoryServices() {}

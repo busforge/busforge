@@ -1,4 +1,4 @@
-import { KnxDevice, KnxError, OBJECT_TYPE_KNXNETIP, type LoadPlan, type SecurityObjectTables, SENDER_ENTRY, planSystemBGaFlash, planSystemBFullDownload, appId, runLoadPlan, withVerifyMode, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, assocFormOf, ASSOC_TABLE_DESCRIPTION, type AssocForm, loadedTableAddr, readMcbTable, mcbProves, mcbProvenRegions, MCB_ELEMENT_BYTES, type McbEntry, GroupTableUnreadable, OBJ, PID, lsmState, STATE } from "@busforge/knx";
+import { KnxDevice, KnxError, OBJECT_TYPE_KNXNETIP, type LoadPlan, type SecurityObjectTables, SENDER_ENTRY, planSystemBGaFlash, planSystemBFullDownload, appId, runLoadPlan, withVerifyMode, withVerifyModeEchoed, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, assocFormOf, ASSOC_TABLE_DESCRIPTION, type AssocForm, loadedTableAddr, readMcbTable, mcbProves, mcbProvenRegions, MCB_ELEMENT_BYTES, type McbEntry, GroupTableUnreadable, OBJ, PID, lsmState, STATE } from "@busforge/knx";
 import { toAppModel, unmappedParamRefs } from "./application.ts";
 import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, differingFF, leaveUnreadUnchanged, verifyMaskedBytes, confirmedMatch, type ConfirmedOnlyRange, buildAbsoluteSegmentTargets, wholeBytes, refuseColorWrites, refuseCalculationWrites, differingConstants, type ConstantDifference } from "./deviceimage.ts";
 import { refuseRawDataWrites } from "./rawdata.ts";
@@ -1729,7 +1729,7 @@ export class SystemBProfile extends DeviceProfile {
       stamps: parStamps.stamps,
       write: () => runLoadPlan(
         dev,
-        withClosing(withConfirmedRestart(planRelativeParFlash(LSM, movedImage, written, addr, appId(model.manufacturer, model.appNumber, model.version), !persistsOnLoadCompleted(cfg), mcb), proc.secureEnabled), proc, "par"),
+        withVerifyModeEchoed(withClosing(withConfirmedRestart(planRelativeParFlash(LSM, movedImage, written, addr, appId(model.manufacturer, model.appNumber, model.version), !persistsOnLoadCompleted(cfg), mcb), proc.secureEnabled), proc, "par"), verifyModeDeclared(mask)),
         { onWrite: (d, t) => ctx.onProgress?.("write", d, t), onRead: parStamps.onRead },
       ),
       // The device restarts after load-completed. Every bit is checked: the owned ones against the
@@ -1844,7 +1844,7 @@ export class SystemBProfile extends DeviceProfile {
         // business making, and its assertLoaded would then fail AFTER the tables were written). Any
         // family that needs it but is not listed still cannot fail silently: the guard below refuses.
         // The steps the application closes every download with (closingSteps) close this one too.
-        await runLoadPlan(dev, withClosing(withConfirmedRestart(planSystemBGaFlash({ addr, assoc, comObj, comObjKept }, !persistsOnLoadCompleted(cfg), appBefore === STATE.LOADED && holdsApplicationOnGaFlash(cfg), security), cfg.loadProcedures.secureEnabled), cfg.loadProcedures, "grp")); // rebuilt L3 carries the correct comm flags for the new link set
+        await runLoadPlan(dev, withVerifyModeEchoed(withClosing(withConfirmedRestart(planSystemBGaFlash({ addr, assoc, comObj, comObjKept }, !persistsOnLoadCompleted(cfg), appBefore === STATE.LOADED && holdsApplicationOnGaFlash(cfg), security), cfg.loadProcedures.secureEnabled), cfg.loadProcedures, "grp"), verifyModeDeclared(mask))); // rebuilt L3 carries the correct comm flags for the new link set
       },
       verify: async () => {
         ctx.onProgress?.("verify");
@@ -1948,7 +1948,7 @@ export class SystemBProfile extends DeviceProfile {
       comObj: { image: comObj, owned: relativeComObjWriteSet(comObj, cur.comObj, ctx.stampRecord, check), keptAt: comObjAt },
       addr, assoc,
     }, appId(model.manufacturer, model.appNumber, model.version), !persistsOnLoadCompleted(cfg), mcb, security);
-    const closed = withClosing(withConfirmedRestart(plan, proc.secureEnabled), proc, "par");
+    const closed = withVerifyModeEchoed(withClosing(withConfirmedRestart(plan, proc.secureEnabled), proc, "par"), verifyModeDeclared(mask));
     const structureStamps = stampCollector([LSM, OBJ.COMOBJ_TABLE, OBJ.ASSOC_TABLE, OBJ.ADDR_TABLE]);
     return structural(runFlashOp(dev, mask, ctx, {
       extendedMemory: this.requireCfg("structural flash").loadProcedures.extendedMemoryServices,
@@ -2193,7 +2193,7 @@ export class System7Profile extends DeviceProfile {
         // a surgical param flash needs the same transport the full download does, or it would talk
         // to a dead property interface (hardware: the ABB US/U 4.2 flash never acked otherwise).
         const sent = sentBytes(isMemoryMappedLsm(mask));
-        await runLoadPlan(dev, plan, { memMappedLsms: isMemoryMappedLsm(mask), readCompare: isMemoryMappedLsm(mask), onWritten: sent.add, onStep: (_i, step) => { if (step.op === "writeMem") ctx.onProgress?.("write", (wrote += step.bytes.length), writeBytes); } });
+        await runLoadPlan(dev, withVerifyModeEchoed(plan, verifyModeDeclared(mask)), { memMappedLsms: isMemoryMappedLsm(mask), readCompare: isMemoryMappedLsm(mask), onWritten: sent.add, onStep: (_i, step) => { if (step.op === "writeMem") ctx.onProgress?.("write", (wrote += step.bytes.length), writeBytes); } });
         return sent.total();
       },
       verify: async (confirmedOnly) => {
@@ -2307,7 +2307,7 @@ export class System7Profile extends DeviceProfile {
       write: async () => {
         ctx.onProgress?.("write");
         const sent = sentBytes(isMemoryMappedLsm(mask));
-        await runLoadPlan(dev, ga.plan, { memMappedLsms: isMemoryMappedLsm(mask), readCompare: isMemoryMappedLsm(mask), onWritten: sent.add }); // same memory-mapped transport as the param flash / download on MV-0700/0701
+        await runLoadPlan(dev, withVerifyModeEchoed(ga.plan, verifyModeDeclared(mask)), { memMappedLsms: isMemoryMappedLsm(mask), readCompare: isMemoryMappedLsm(mask), onWritten: sent.add }); // same memory-mapped transport as the param flash / download on MV-0700/0701
         return sent.total();
       },
       verify: async () => {
@@ -2382,7 +2382,7 @@ export class System7Profile extends DeviceProfile {
       backups: ctx.dryRun ? [] : images.map((r) => ({ file: `${ctx.deviceId}-structure-${stamp}-${r.id.split("_").pop()}.bin`, bytes: current.get(r.address)! })),
       write: async () => {
         const sent = sentBytes(memMapped);
-        await runLoadPlan(dev, plan, { memMappedLsms: memMapped, readCompare: memMapped, onWritten: sent.add, onStep: (_i, step) => { if (step.op === "writeMem") ctx.onProgress?.("write"); } });
+        await runLoadPlan(dev, withVerifyModeEchoed(plan, verifyModeDeclared(mask)), { memMappedLsms: memMapped, readCompare: memMapped, onWritten: sent.add, onStep: (_i, step) => { if (step.op === "writeMem") ctx.onProgress?.("write"); } });
         return sent.total();
       },
       // Every written segment is read back, and every load-state machine it concerns must be LOADED.

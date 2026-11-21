@@ -457,8 +457,31 @@ export function judge(ets: { outcome: EtsOutcome; refusals: string[] }, busforge
 // Busforge's full download of `conf` into a fresh unit of `spec`, through the KNXnet/IP server ETS connects
 // to and the logging proxy ETS's capture is taken with: the server's own download task.
 export async function busforgeIntoSim(spec: SimUnitSpec, conf: RowConfiguration): Promise<BusforgeRun & { sim: SimUnit }> {
-  const dir = tempDir("busforge-ets-sweep-");
   const sim = newSimUnit(spec);
+  const { value, capture } = await busforgeSessionIntoSim(sim, spec, async (connection, dataDir) => {
+    let result: FlashResult | null = null, refused: BusforgeRun["refused"] = null, error: string | null = null;
+    try {
+      result = await downloadDeviceFull({
+        projectId: "sweep", deviceId: "row", ia: conf.ia, appXml: catalogueXml(spec.catalogue), dataDir, connection,
+        params: new Map(conf.params), links: conf.links, moduleInstances: conf.moduleInstances, comObjectOverrides: new Map(conf.comObjectOverrides ?? []), dryRun: false,
+      });
+    } catch (e) {
+      if (e instanceof ProductError || e instanceof ApiError) refused = { code: e.code, message: e.message };
+      else if (sim.refusals.length) error = e instanceof Error ? e.message : String(e);
+      else throw e;
+    }
+    return { result, refused, error };
+  }, ({ result }) => result !== null);
+  return { capture, refusals: [...sim.refusals], ...value, sim };
+}
+
+// One task of Busforge's server (`run`, given the connection and a data directory) into the unit `sim`, through
+// the KNXnet/IP server ETS connects to and the logging proxy ETS's capture is taken with, and the proxy's log of
+// it. The capture is complete once every KNXnet/IP connection Busforge opened is closed (its T_Disconnect goes
+// before the tunnel's DISCONNECT_REQ); a session that does not end within 10 s of a result that `succeeded`
+// says the task wrote is refused, after a refusal the session may end otherwise.
+export async function busforgeSessionIntoSim<T>(sim: SimUnit, spec: SimUnitSpec, run: (connection: Connection, dataDir: string) => Promise<T>, succeeded: (value: T) => boolean): Promise<{ value: T; capture: string }> {
+  const dir = tempDir("busforge-ets-sweep-");
   const port = await freePort();
   const server = new KnxIpServer({ transport: sim, maxApdu: spec.interfaceMaxApdu, port });
   const log = join(dir, "capture.log");
@@ -468,25 +491,13 @@ export async function busforgeIntoSim(spec: SimUnitSpec, conf: RowConfiguration)
     await new Promise<void>((r) => proxy.listen(0, "127.0.0.1", () => r()));
     const proxyPort = (proxy.address() as { port: number }).port;
     const connection: Connection = { id: "sim", name: "sim", type: "ip", host: "127.0.0.1", port: proxyPort, ipTransport: "tcp", usbVendorId: null, usbProductId: null, usbSerial: null, createdAt: 0 };
-    let result: FlashResult | null = null, refused: BusforgeRun["refused"] = null, error: string | null = null;
-    try {
-      result = await downloadDeviceFull({
-        projectId: "sweep", deviceId: "row", ia: conf.ia, appXml: catalogueXml(spec.catalogue), dataDir: dir, connection,
-        params: new Map(conf.params), links: conf.links, moduleInstances: conf.moduleInstances, comObjectOverrides: new Map(conf.comObjectOverrides ?? []), dryRun: false,
-      });
-    } catch (e) {
-      if (e instanceof ProductError || e instanceof ApiError) refused = { code: e.code, message: e.message };
-      else if (sim.refusals.length) error = e instanceof Error ? e.message : String(e);
-      else throw e;
-    }
-    // The capture is complete once every KNXnet/IP connection Busforge opened is closed (its T_Disconnect
-    // goes before the tunnel's DISCONNECT_REQ). After a refusal the session may end otherwise.
+    const value = await run(connection, dir);
     const ended = () => { const t = existsSync(log) ? readFileSync(log, "utf8") : ""; const n = (svc: string) => t.split("\n").filter((l) => l.includes(`Busforge->BRIDGE ${svc} `)).length; return n("CONNECT_REQ") > 0 && n("DISCONNECT_REQ") >= n("CONNECT_REQ"); };
     for (let i = 0; !ended(); i++) {
-      if (i === 100) { if (result) throw new Error("Busforge's session did not end within 10 s of the download's result"); break; }
+      if (i === 100) { if (succeeded(value)) throw new Error("Busforge's session did not end within 10 s of the task's result"); break; }
       await new Promise((r) => setTimeout(r, 100));
     }
-    return { capture: existsSync(log) ? readFileSync(log, "utf8") : "", refusals: [...sim.refusals], refused, error, result, sim };
+    return { value, capture: existsSync(log) ? readFileSync(log, "utf8") : "" };
   } finally {
     proxy.close();
     await server.stop();
