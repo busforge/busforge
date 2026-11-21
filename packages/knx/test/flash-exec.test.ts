@@ -885,11 +885,17 @@ describe("classic writes in verify mode take the device's answer", () => {
     ]);
     expect(dev.calls.filter((c) => c[0] === "memWrite" || c[0] === "setVerifyMode").map((c) => c.slice(0, 2))).toEqual([["memWrite", 0x10000], ["setVerifyMode", true], ["memWrite", 0x4000]]);
   });
-  test("a plan whose writes are checked by the device's answer, without verify mode, is refused before anything is sent", async () => {
+  test("a classic write whose check is the device's answer is refused on a device not in verify mode", async () => {
     const dev = new EchoDev();
-    const err = await runLoadPlan(asDev(dev), [{ op: "connect" }, { op: "unload", lsm: 4 }, { op: "writeSegment", lsm: 4, bytes: Buffer.from([1]), verify: false, echo: true }]).then(() => null, (e: Error) => e);
-    expect(err?.message).toContain("without verify mode");
-    expect(dev.calls.map((c) => c[0])).toEqual(["connect"]);
+    const err = await runLoadPlan(asDev(dev), [{ op: "connect" }, { op: "writeSegment", lsm: 4, bytes: Buffer.from([1]), verify: false, echo: true }]).then(() => null, (e: Error) => e);
+    expect(err?.message).toContain("not in verify mode");
+    expect(dev.echoes).toEqual([]);
+  });
+  test("an A_UserMemory write past 0xFFFF checked by its answer needs no verify mode", async () => {
+    const dev = new EchoDev();
+    dev.addrOf[4] = 0x10000;
+    await runLoadPlan(asDev(dev), [{ op: "connect" }, { op: "writeSegment", lsm: 4, bytes: Buffer.from([1]), verify: false, echo: true }]);
+    expect(dev.echoes).toEqual([false]);
   });
   test("a device that does not report its device control is refused before its first load-state event", async () => {
     const dev = new EchoDev();

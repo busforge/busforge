@@ -274,9 +274,6 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
         if (opts.memMappedLsms) throw new Error("verify mode on a device whose LSMs are memory-mapped: its load controls are classic writes nobody awaits the answer of");
         await dev.deviceControl?.();
       }
-      if (!confirmed && !plan.some((s) => s.op === "verifyMode" && s.on) && plan.some((s) => s.op === "writeSegment" && s.echo)) {
-        throw new Error("a plan whose writes are checked by the device's answer, without verify mode, on a device written classic");
-      }
     }
     opts.onStep?.(i, step, plan.length);
     switch (step.op) {
