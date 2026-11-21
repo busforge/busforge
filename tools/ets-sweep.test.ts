@@ -7,7 +7,7 @@ import { iaToNum } from "../packages/knx/src/index.ts";
 import { captureText, corpusPath } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { capturedOnLoadedUnit, deviceConfiguration, deviceRows, dialogueDifferences, parseCapture } from "./etsdiff.ts";
-import { compareRuns, etsOutcome, judge, listRows, loadedImageCheck, readRow, ROW_FILES, runRow, runState, simRefusals, SWEEP_DIR, type EtsOutcome, type RowConfiguration, type RowSpec } from "./ets-sweep.ts";
+import { compareRuns, etsOutcome, judge, listRows, loadedImageCheck, readRow, refusalsAfterRestart, ROW_FILES, runRow, runState, simRefusals, SWEEP_DIR, type EtsOutcome, type RowConfiguration, type RowSpec } from "./ets-sweep.ts";
 import { mismatchLines } from "./sim-unit-product.ts";
 
 // Each row runs Busforge's download into a simulated unit on the wall clock (tools/sim-unit.test.ts: about
@@ -122,6 +122,15 @@ describe("a sweep row's run", () => {
     expect(() => compareRuns(unplaced, run(true))).toThrow(/ETS's run cannot be compared: object 4 allocated with fill 00/);
   });
 
+  test("takes a state the unit reported to one run only for that run's read, not for a difference", () => {
+    const ets = runState(capture(line("ETS->BRIDGE", "80"), line("ETS->BRIDGE", "43d505051001"), line("BRIDGE->ETS", "43d60505100100")), "ETS", DEV, "MV-07B0");
+    const bf = runState(capture(line("ETS->BRIDGE", "80"), line("ETS->BRIDGE", "43d504071001"), line("BRIDGE->ETS", "43d60407100100005000")), "ETS", DEV, "MV-07B0");
+    expect([[...ets.loadStates], [...bf.tableReferences]]).toEqual([[[5, 0]], [[4, "00005000"]]]);
+    expect(compareRuns(ets, bf)).toEqual([]);
+    const other = runState(capture(line("ETS->BRIDGE", "80"), line("ETS->BRIDGE", "43d505051001"), line("BRIDGE->ETS", "43d60505100101")), "ETS", DEV, "MV-07B0");
+    expect(compareRuns(ets, other)).toEqual(["load state of object 5 at the end: ETS 0, Busforge 1"]);
+  });
+
   test("names every difference both ways, a byte only one side wrote among them", () => {
     const ets = runState(capture(line("ETS->BRIDGE", "80"), line("ETS->BRIDGE", "4284400001020304"), line("BRIDGE->ETS", "43d60405100101")), "ETS", DEV, "MV-07B0");
     // Busforge: two of the four octets, a key write and a master reset (erase code 1, channel 0).
@@ -129,7 +138,6 @@ describe("a sweep row's run", () => {
     expect(compareRuns(ets, ets)).toEqual([]);
     expect(compareRuns(ets, bf)).toEqual([
       "memory 0x4002-0x4003: ETS 0304, Busforge ----",
-      "load state of object 4 at the end: ETS 1, Busforge not shown",
       "restart: ETS none, Busforge 03810100",
       "other services: ETS none, Busforge A_Key_Write ff00000000",
     ]);
@@ -159,6 +167,40 @@ const LOG = (connect: string, done = true) => [
   ...(done ? ["2026-01-01 08:00:09,000 [1] INFO  Knx.Ets.Sdk.DataProvider.ProjectData - UpdateProgramingState: Adr=True, Cfg=True, App=True, Par=True, Grp=True"] : []),
   "2026-01-01 08:00:10,000 [5] INFO  Knx.Ets.Hawk.LoadDeviceTask - End LoadApplicationProgram 1.1.20 (LoadApplicationProgram)",
 ].join("\n");
+
+describe("a refusal after the restart", () => {
+  const NOT_SHOWN = "whether the unit acknowledges a frame then is not shown";
+  const DEAD = "what the unit answers it is not shown";
+  // ETS's session: a write, the restart, its T_Disconnect; then Busforge-like probes on the ended connection.
+  const run = (...extra: string[]) => runState(capture(
+    line("ETS->BRIDGE", "80"), line("ETS->BRIDGE", "4282400001"), line("ETS->BRIDGE", "4780"), ...extra,
+  ), "ETS", DEV, "MV-07B0");
+  const lines = (...l: string[]) => ["connected to 1.1.255", ...l].join("\n");
+
+  test("leaves the comparison whole: a T_Disconnect, a read and a read on the ended connection, after the last change", () => {
+    const sim = lines("restart", `2026-01-01T00:00:01.000Z sim-refused 81 1275 ms after the restart: ${NOT_SHOWN}`, `sim-refused 4b00 0 ms after the restart: ${NOT_SHOWN}`, `sim-refused numbered frame 4b00 from 1.1.255 on the connection the restart ended: ${DEAD}`);
+    const r = refusalsAfterRestart(sim, run(line("ETS->BRIDGE", "81"), con("81", true)));
+    expect(r).toEqual({ after: [`sim-refused 81 1275 ms after the restart: ${NOT_SHOWN}`, `sim-refused 4b00 0 ms after the restart: ${NOT_SHOWN}`, `sim-refused numbered frame 4b00 from 1.1.255 on the connection the restart ended: ${DEAD}`], others: [] });
+  });
+
+  test("does not: a refusal before the restart, of a write, in a run without a restart or that changed the unit after it, or that the unit did not take a write of", () => {
+    const before = `sim-refused 4282400001 from 1.1.255: outside an allocated segment`;
+    expect(refusalsAfterRestart(lines(before, "restart"), run()).others).toEqual([before]);
+    const write = `sim-refused 4b82400001 10 ms after the restart: ${NOT_SHOWN}`;
+    expect(refusalsAfterRestart(lines("restart", write), run()).others).toEqual([write]);
+    const deadWrite = `sim-refused numbered frame 4b82400001 from 1.1.255 on the connection the restart ended: ${DEAD}`;
+    expect(refusalsAfterRestart(lines("restart", deadWrite), run()).others).toEqual([deadWrite]);
+    const otherForm = "sim-refused A_Restart: how the unit takes a basic restart is not shown";
+    expect(refusalsAfterRestart(lines("restart", otherForm), run()).others).toEqual([otherForm]);
+    const disconnect = `sim-refused 81 10 ms after the restart: ${NOT_SHOWN}`;
+    expect(refusalsAfterRestart(lines(disconnect), run()).others).toEqual([disconnect]);
+    // A write after the restart, on a new connection.
+    expect(refusalsAfterRestart(lines("restart", disconnect), run(line("ETS->BRIDGE", "80"), line("ETS->BRIDGE", "4282400002"))).others).toEqual([disconnect]);
+    // A write the line confirmed negatively: the unit did not take it.
+    const neg = runState(capture(line("ETS->BRIDGE", "80"), line("ETS->BRIDGE", "4282400001"), con("4282400001", true), line("ETS->BRIDGE", "4680"), con("4680")), "ETS", DEV, "MV-07B0");
+    expect(refusalsAfterRestart(lines("restart", disconnect), neg).others).toEqual([disconnect]);
+  });
+});
 
 describe("a sweep row's verdict", () => {
   test("ETS's side from ETS6.log: the download connected to the simulator alone and ETS recorded it loaded", () => {

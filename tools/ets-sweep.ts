@@ -135,6 +135,9 @@ const READ_SERVICES = new Set([
   0x2c5, // A_UserManufacturerInfo_Read
 ]);
 const READ_GROUPS = new Set([APCI.MEMORY_READ, APCI.DEVICE_DESCRIPTOR_READ, 0x180 /* A_ADC_Read */]);
+// Whether a request's APCI is a read, a service of a read group by its high bits; a one-octet TPDU a T_Disconnect.
+const isRead = (raw: number) => READ_SERVICES.has(raw) || READ_GROUPS.has(raw & 0x3c0);
+const isDisconnect = (t: Buffer) => t.length === 1 && (t[0] & 0xc3) === 0x81;
 
 export interface RunState {
   // Every octet the run left in the unit's segments: its writes, a later one winning, and the fill of an
@@ -161,13 +164,15 @@ export interface RunState {
   unplaced: string[];
   // The requests that change the unit: every one but the reads.
   writes: number;
+  // How many of them the unit took after its last restart (the restart not counted); null without a restart.
+  changesAfterRestart: number | null;
 }
 
 const hexOf = (b: Buffer) => b.toString("hex");
 
 // A capture's frames between `tool` and the unit at `device`, as tools/knxproxy.ts logs them.
 export function runState(text: string, tool: string, device: number, mask: string): RunState {
-  const s: RunState = { memory: new Map(), memoryService: new Map(), properties: new Map(), loadControls: new Map(), functionCalls: [], loadStates: new Map(), tableReferences: new Map(), restarts: [], other: [], reads: new Set(), notTaken: [], unplaced: [], writes: 0 };
+  const s: RunState = { memory: new Map(), memoryService: new Map(), properties: new Map(), loadControls: new Map(), functionCalls: [], loadStates: new Map(), tableReferences: new Map(), restarts: [], other: [], reads: new Set(), notTaken: [], unplaced: [], writes: 0, changesAfterRestart: null };
   const memoryMapped = isMemoryMappedLsm(mask);
   const r: Replay = { s, memoryMapped, order: new Map(), fills: [], mmStates: new Map(), n: 0 };
   // Each request with its confirmation on the line, and the unit's frames, in order.
@@ -189,7 +194,7 @@ export function runState(text: string, tool: string, device: number, mask: strin
   for (const it of items) {
     const t = it.t, tpci = t[0];
     if (!it.request) {
-      if (t.length === 1 && (tpci & 0xc3) === 0x81) connected = false;
+      if (isDisconnect(t)) connected = false;
       else if (t.length >= 2) answer(r, t);
       continue;
     }
@@ -199,7 +204,7 @@ export function runState(text: string, tool: string, device: number, mask: strin
     if (it.neg && !restart) { s.notTaken.push(`not confirmed: ${hexOf(t)}`); continue; }
     if (t.length === 1) {
       if ((tpci & 0xc3) === 0x80 && !connected) { connected = true; lastSeq = null; }
-      if ((tpci & 0xc3) === 0x81) connected = false;
+      if (isDisconnect(t)) connected = false;
       continue;
     }
     if ((tpci & 0xc0) === 0x40) {
@@ -249,6 +254,8 @@ function request(r: Replay, t: Buffer): void {
   // The services of a group carry a count or a type in the APCI's low six bits.
   if (READ_GROUPS.has(raw & 0x3c0)) { s.reads.add(`${apciName(raw)} ${hexOf(Buffer.concat([Buffer.from([raw & 0x3f]), data]))}`); return; }
   s.writes++;
+  if (isRestart(t)) s.changesAfterRestart = 0;
+  else if (s.changesAfterRestart !== null) s.changesAfterRestart++;
   const mem = memWriteOf(t, raw);
   if (mem && memoryMapped && mem.addr === MM_CTRL_ADDR) { push(s.loadControls, mem.data[0] >> 4, hexOf(mem.data)); return; }
   if (mem) { mem.data.forEach((b, i) => { s.memory.set(mem.addr + i, b); s.memoryService.set(mem.addr + i, mem.service); r.order.set(mem.addr + i, n); }); return; }
@@ -287,7 +294,6 @@ function octets(hex: string): string {
   return hex.length <= 32 ? hex : `${hex.slice(0, 32)}... (${hex.length / 2} octets, sha256 ${createHash("sha256").update(hex).digest("hex").slice(0, 16)})`;
 }
 const list = (xs: string[] | undefined) => xs === undefined || xs.length === 0 ? "none" : xs.map(octets).join(", ");
-const shown = (v: string | number | undefined) => v === undefined ? "not shown" : String(v);
 
 // Every difference of Busforge's run from ETS's, the first first: memory, property writes, load controls,
 // function-property commands, load states and table references at the end, the restart, other services.
@@ -321,9 +327,11 @@ export function compareRuns(ets: RunState, busforge: RunState): string[] {
   keyed("property write", ets.properties, busforge.properties, (x, y) => x.localeCompare(y, "en", { numeric: true }));
   keyed("load controls of object", ets.loadControls, busforge.loadControls, (x, y) => x - y);
   if (JSON.stringify(ets.functionCalls) !== JSON.stringify(busforge.functionCalls)) out.push(`function-property calls: ETS ${list(ets.functionCalls)}, Busforge ${list(busforge.functionCalls)}`);
+  // A state the unit reported to one run only is that run's read, not compared: the load controls both runs sent
+  // are, above. (A memory-mapped machine reports its state only to a run that reads it.)
   for (const [what, a, b] of [["load state", ets.loadStates, busforge.loadStates], ["table reference", ets.tableReferences, busforge.tableReferences]] as const) {
     for (const k of [...new Set([...a.keys(), ...b.keys()])].sort((x, y) => x - y)) {
-      if (a.get(k) !== b.get(k)) out.push(`${what} of object ${k} at the end: ETS ${shown(a.get(k))}, Busforge ${shown(b.get(k))}`);
+      if (a.has(k) && b.has(k) && a.get(k) !== b.get(k)) out.push(`${what} of object ${k} at the end: ETS ${String(a.get(k))}, Busforge ${String(b.get(k))}`);
     }
   }
   if (JSON.stringify(ets.restarts) !== JSON.stringify(busforge.restarts)) out.push(`restart: ETS ${list(ets.restarts)}, Busforge ${list(busforge.restarts)}`);
@@ -371,6 +379,33 @@ export function etsOutcome(ets6log: string, ia: string, endpoint: string): EtsOu
 // The simulator's refusals among its lines (tools/sim-unit.ts writes each as "sim-refused ...").
 export function simRefusals(simLines: string): string[] {
   return simLines.split("\n").flatMap((l) => { const m = l.match(/(?:^|\s)(sim-refused .*)$/); return m ? [m[1]] : []; });
+}
+
+// Whether a request changes nothing a comparison covers: a T_Disconnect or a read (as request() reads them).
+function changesNothing(hex: string): boolean {
+  const t = Buffer.from(hex, "hex");
+  if (t.length === 1) return isDisconnect(t);
+  return t.length >= 2 && (t[0] & 0xc0) !== 0x80 && isRead(((t[0] & 0x03) << 8) | t[1]);
+}
+
+// The simulator's refusals of one run that leave the comparison whole, and the others. A refusal leaves it whole
+// only where (a) it comes after the run's last restart, after which the run changed nothing, (b) the refused
+// request changes nothing compared (a T_Disconnect, a read, a read on the connection the restart ended), and (c)
+// every request of the run the unit did not take changes nothing either. Such refusals stand beside the verdict;
+// one of `others` makes the row sim-refused.
+export function refusalsAfterRestart(simLines: string, run: RunState): { after: string[]; others: string[] } {
+  // Every refusal simRefusals finds is classified; one of another form is one of `others`.
+  const lines = simLines.split("\n");
+  const restart = lines.findLastIndex((l) => /(?:^|\s)restart\s*$/.test(l));
+  const whole = restart >= 0 && run.changesAfterRestart === 0 && run.notTaken.every((n) => changesNothing(n.replace(/^.*: /, "")));
+  const after: string[] = [], others: string[] = [];
+  lines.forEach((l, i) => {
+    const r = simRefusals(l)[0];
+    if (r === undefined) return;
+    const m = r.match(/^sim-refused (?:([0-9a-f]+) \d+ ms after the restart: |numbered frame ([0-9a-f]+) from \S+ on the connection the restart ended: )/);
+    (whole && i > restart && m && changesNothing(m[1] ?? m[2]) ? after : others).push(r);
+  });
+  return { after, others };
 }
 
 // ---- the verdict ----
@@ -517,6 +552,9 @@ export interface RowResult {
   loadedImage: LoadedImageCheck;
   // The requests the unit did not take, per run (recorded, not compared).
   notTaken: { ets: string[]; busforge: string[] };
+  // The simulator's refusals after a run's restart that leave the comparison whole (refusalsAfterRestart), each
+  // with its request and its time after the restart.
+  refusalsAfterRestart: { run: "ETS" | "Busforge"; refusal: string }[];
   // Where the row is calibrated: each position ETS's dialogue with the simulator differs from its dialogue with
   // the real unit, with the cause explained.json gives it (null where none).
   calibration: { capture: string; differences: { difference: string; cause: string | null }[] } | null;
@@ -532,9 +570,12 @@ export async function runRow(row: Row): Promise<RowResult> {
   const etsRun = runState(etsText, "ETS", sim.deviceIa, mask);
   const busforge = await busforgeIntoSim(row.unit, row.conf);
   const bfRun = runState(busforge.capture, "Busforge", sim.deviceIa, mask);
+  const etsRefusals = refusalsAfterRestart(read(ROW_FILES.etsSim), etsRun);
+  // A Busforge download that ended in an error leaves no comparison whole, whatever was refused.
+  const bfRefusals = busforge.error === null ? refusalsAfterRestart(busforge.sim.lines.join("\n"), bfRun) : { after: [], others: busforge.refusals };
   const verdict = judge(
-    { outcome: etsOutcome(readFileSync(join(row.dir, ROW_FILES.ets6log), "latin1"), row.conf.ia, row.spec.simulator), refusals: simRefusals(read(ROW_FILES.etsSim)) },
-    { refusals: busforge.refusals, refused: busforge.refused, writes: bfRun.writes },
+    { outcome: etsOutcome(readFileSync(join(row.dir, ROW_FILES.ets6log), "latin1"), row.conf.ia, row.spec.simulator), refusals: etsRefusals.others },
+    { refusals: bfRefusals.others, refused: busforge.refused, writes: bfRun.writes },
     () => compareRuns(etsRun, bfRun),
   );
   const exportFile = row.spec.export;
@@ -551,8 +592,9 @@ export async function runRow(row: Row): Promise<RowResult> {
     differences: dialogueDifferences(readFileSync(corpusPath(row.spec.calibration), "utf8"), etsText, sim.deviceIa)
       .map((d) => ({ difference: d, cause: row.explained.calibration?.find((e) => e.difference === d)?.cause ?? null })),
   };
+  const refusals = [...etsRefusals.after.map((r) => ({ run: "ETS" as const, refusal: r })), ...bfRefusals.after.map((r) => ({ run: "Busforge" as const, refusal: r }))];
   return {
-    verdict, loadedImage, busforge, calibration, notTaken: { ets: etsRun.notTaken, busforge: bfRun.notTaken },
+    verdict, loadedImage, busforge, calibration, refusalsAfterRestart: refusals, notTaken: { ets: etsRun.notTaken, busforge: bfRun.notTaken },
     reads: { onlyEts: [...etsRun.reads].filter((r) => !bfRun.reads.has(r)).sort(), onlyBusforge: [...bfRun.reads].filter((r) => !etsRun.reads.has(r)).sort() },
   };
 }
@@ -576,7 +618,9 @@ export interface ManifestRow {
   reads: RowResult["reads"];
   notTaken: RowResult["notTaken"];
   loadedImage: LoadedImageCheck;
-  calibration: RowResult["calibration"];
+  // Both absent in an entry kept from a manifest the tool wrote before it recorded them.
+  calibration?: RowResult["calibration"];
+  refusalsAfterRestart?: RowResult["refusalsAfterRestart"];
   files: string[];
 }
 export interface Manifest { format: typeof MANIFEST_FORMAT; busforgeRevision: string | null; rows: ManifestRow[] }
@@ -596,7 +640,7 @@ export function manifestRow(row: Row, r: RowResult): ManifestRow {
     application: row.application, variant: row.variant, unit: row.unit.id, product: row.unit.name, mask: cfg.mask,
     manufacturer: row.application.split("_")[0], etsBuild: row.spec.etsBuild, verdict: v.verdict, first, cause, differences: diffs,
     reads: r.reads, notTaken: r.notTaken, loadedImage: r.loadedImage,
-    calibration: r.calibration,
+    calibration: r.calibration, refusalsAfterRestart: r.refusalsAfterRestart,
     files: readdirSync(row.dir).sort().map((f) => `${SWEEP_DIR}/${row.id}/${f}`),
   };
 }
@@ -632,6 +676,7 @@ async function main(): Promise<number> {
     for (const d of m.differences) console.log(`  ${d.difference}\n    cause: ${d.cause ?? "NOT EXPLAINED"}`);
     if (m.reads.onlyEts.length || m.reads.onlyBusforge.length) console.log(`  reads only ETS made: ${list(m.reads.onlyEts)}\n  reads only Busforge made: ${list(m.reads.onlyBusforge)}`);
     if (m.notTaken.ets.length || m.notTaken.busforge.length) console.log(`  not taken by the unit, ETS: ${list(m.notTaken.ets)}\n  not taken by the unit, Busforge: ${list(m.notTaken.busforge)}`);
+    for (const x of m.refusalsAfterRestart ?? []) console.log(`  after the restart, refused (comparison whole): ${x.run}: ${x.refusal}`);
     console.log(`  LoadedImage: ${m.loadedImage.state}${"why" in m.loadedImage ? ` (${m.loadedImage.why})` : ""}${"bytes" in m.loadedImage ? `, ${m.loadedImage.bytes} bytes` : ""}`);
     if (keep) {
       const out = join(keep, id);
