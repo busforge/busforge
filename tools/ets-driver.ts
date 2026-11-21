@@ -911,15 +911,20 @@ async function deleteProject(name: string): Promise<void> {
     if (projectTabOpen(s)) fail(`a project is open in ETS (${etsTitle()}); close it first`);
     await searchProject(s, name);
     xdo("mousemove", "800", String(AT.searchedRow[1] + 14), "sleep", "1", "mousemove", String(AT.searchedMenu[0]), String(AT.searchedMenu[1]), "sleep", "0.5", "click", "1");
-    const del = await s.waitText("Löschen", { x: 1200, y: 190, w: 600, h: 250 }, 10_000, "the project menu's 'Löschen'");
-    click(del.cx, del.cy);
+    // OCR reads the menu's ö as é or a ("Léschen"): the entry is found by the rest of the word.
+    let del: Word | undefined;
+    for (let i = 0; i < 6 && !del; i++) { await sleep(1000); del = s.look({ x: 1200, y: 190, w: 600, h: 250 }).ws.find((w) => /^L.schen$/i.test(w.text)); }
+    const item = del ?? fail("the project menu shows no 'Löschen'");
+    click(item.x + item.w / 2, item.y + item.h / 2);
     await sleep(2000);
     const png = s.snap(), box = dialogBox(png) ?? fail("ETS asked nothing before deleting");
     // The question must name the project: the search's one row is OCR's reading, the question confirms it.
     const asked = words(png, box).map((w) => w.text).join(" ");
     if (!nameKey(asked).includes(nameKey(name))) fail(`ETS's delete question names no "${name}" (it reads: ${asked.slice(0, 160)}); nothing deleted`);
-    const yes = ["Löschen", "Ja", "OK"].map((b) => findText(dialogButtons(png, box), b)[0]).find(Boolean) ?? fail("no confirming button in ETS's delete question");
-    click(yes.cx, yes.cy);
+    // Its OK, framed beside Abbrechen, reads only alone and enlarged ("[oK |").
+    const cancel = findText(dialogButtons(png, box), "Abbrechen")[0] ?? fail("no Abbrechen in ETS's delete question");
+    const ok = words(png, { x: cancel.x - 95, y: cancel.cy - 13, w: 85, h: 26 }, { scale: 4, psm: 8 }).find((w) => /ok/i.test(w.text)) ?? fail("no OK beside Abbrechen in ETS's delete question");
+    click(ok.x + ok.w / 2, ok.y + ok.h / 2);
     for (let i = 0; storedProjects().has(dir); i++) {
       if (i === 30) fail(`ETS still holds ${dir} after the delete`);
       await sleep(2000);
