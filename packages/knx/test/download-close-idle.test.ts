@@ -139,7 +139,10 @@ test("the download ends without a connection the unit closes for idleness or ref
   jest.useFakeTimers();
   const unit = new ThelsingUnit();
   const dev = new KnxDevice(unit, "1.2.3");
-  const plan = planSystemBFullDownload(tables, 0, true, [], undefined, false, false);
+  // Verify mode before the first memory write, where the product's plan switches it on (withVerifyMode).
+  const bare = planSystemBFullDownload(tables, 0, true, [], undefined, false, false);
+  const first = bare.findIndex((s) => s.op === "writeSegment");
+  const plan = [...bare.slice(0, first), { op: "verifyMode", on: true } as const, ...bare.slice(first)];
   await onFakeClock((async () => {
     await dev.connect();
     await runLoadPlan(dev, plan);

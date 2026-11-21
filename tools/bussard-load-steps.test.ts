@@ -156,8 +156,8 @@ corpusDescribe("bussard's synthetic captures: a master reset in a System B full 
       expect(fromAlloc(sim.frames)).toEqual(fromAlloc(ets));
       const reset = (frames: DownloadFrame[]) => window(frames, `0381${code}00`, (f) => f.from === "tool" && f.tpdu.startsWith("03d7"));
       expect(reset(ets)).toEqual([`> 0381${code}00`, "< 03a1000000", "> disconnect", "> connect", "> 0300", "< 034007b0", "> 03d500381001", "< 03d6003810010042"]);
-      // Busforge reads the device control before it sets verify mode again (the restart may have cleared it).
-      expect(reset(sim.frames)).toEqual([...reset(ets), "> 03d5000e1001", "< 03d6000e100104"]);
+      // Verify mode follows the reset, right before the first memory write, in both.
+      expect(reset(sim.frames)).toEqual(reset(ets));
     });
   }
 });

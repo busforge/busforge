@@ -692,8 +692,8 @@ describe("planSystemBFullDownload: the parameter fill byte is threaded end to en
 
   test("the close: a pause and a fresh link before the restart by default, the restart at once with closeAtOnce", () => {
     const tail = (plan: ReturnType<typeof planSystemBFullDownload>) => plan.slice(plan.findLastIndex((s) => s.op === "loadCompleted") + 1).map((s) => s.op);
-    expect(tail(planSystemBFullDownload(tables()))).toEqual(["awaitReady", "assertLoaded", "assertLoaded", "assertLoaded", "assertLoaded", "verifyMode", "disconnect", "settle", "connect", "restart"]);
-    expect(tail(planSystemBFullDownload(tables(), 0, true, [], undefined, true, true))).toEqual(["assertLoaded", "assertLoaded", "assertLoaded", "verifyMode", "restart"]);
+    expect(tail(planSystemBFullDownload(tables()))).toEqual(["awaitReady", "assertLoaded", "assertLoaded", "assertLoaded", "assertLoaded", "disconnect", "settle", "connect", "restart"]);
+    expect(tail(planSystemBFullDownload(tables(), 0, true, [], undefined, true, true))).toEqual(["assertLoaded", "assertLoaded", "assertLoaded", "restart"]);
   });
 
   // ETS writes the parameter segment first (every MV-07B0 capture); thelsing/knx, which does not close at once, takes
@@ -852,6 +852,44 @@ describe("the write service, settled before the bracket", () => {
     dev.confirmed = true;
     await runLoadPlan(dev as unknown as KnxDevice, plan);
     expect(dev.calls.some((c) => c[0] === "setVerifyMode")).toBe(false);
+  });
+});
+
+describe("classic writes in verify mode take the device's answer", () => {
+  class EchoDev extends RecDev {
+    echoes: (boolean | null)[] = [];
+    override async memWrite(addr: number, data: Buffer, opts: { verify?: boolean; echo?: boolean } = {}) {
+      this.echoes.push(opts.echo ?? null);
+      await super.memWrite(addr, data, opts);
+    }
+  }
+  test("every memory write after the mode is on awaits its answer, until a restart ends the mode", async () => {
+    const dev = new EchoDev();
+    await runLoadPlan(asDev(dev), [
+      { op: "connect" }, { op: "writeMem", address: 0x4000, bytes: Buffer.from([1]) },
+      { op: "verifyMode", on: true },
+      { op: "writeMem", address: 0x4001, bytes: Buffer.from([2]) },
+      { op: "writeSegment", lsm: 4, bytes: Buffer.from([3]) },
+      { op: "writeSegmentOwned", lsm: 4, image: Buffer.from([4]), owned: [0xff], keptAt: 0x4000 },
+      { op: "restart" },
+      { op: "writeMem", address: 0x4002, bytes: Buffer.from([5]) },
+    ]);
+    expect(dev.echoes).toEqual([false, true, true, true, false]);
+  });
+  test("the mode goes on right before the first classic write, after the A_UserMemory writes past 0xFFFF before it", async () => {
+    const dev = new EchoDev();
+    await runLoadPlan(asDev(dev), [
+      { op: "connect" }, { op: "verifyMode", on: true },
+      { op: "writeMem", address: 0x10000, bytes: Buffer.from([1]) },
+      { op: "writeMem", address: 0x4000, bytes: Buffer.from([2]) },
+    ]);
+    expect(dev.calls.filter((c) => c[0] === "memWrite" || c[0] === "setVerifyMode").map((c) => c.slice(0, 2))).toEqual([["memWrite", 0x10000], ["setVerifyMode", true], ["memWrite", 0x4000]]);
+  });
+  test("a write whose check is the device's answer is refused on a device not in verify mode", async () => {
+    const dev = new EchoDev();
+    const err = await runLoadPlan(asDev(dev), [{ op: "connect" }, { op: "writeSegment", lsm: 4, bytes: Buffer.from([1]), verify: false, echo: true }]).then(() => null, (e: Error) => e);
+    expect(err?.message).toContain("not in verify mode");
+    expect(dev.echoes).toEqual([]);
   });
 });
 

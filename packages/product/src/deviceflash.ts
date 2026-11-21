@@ -6,7 +6,7 @@ import { buildGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
 import { buildComObjectTableMv0705 } from "./comobjbuild.ts";
 import type { CfgComObjImage } from "./config.ts";
 import { ProductError } from "./errors.ts";
-import { isMemoryMappedLsm } from "./masks.ts";
+import { isMemoryMappedLsm, verifyModeDeclared } from "./masks.ts";
 import { OBJ, MCB_ELEMENT_BYTES, planSecurityObjectLoad, securityUnload, type LoadPlan, type LoadStep, type SecurityObjectTables } from "@busforge/knx";
 
 // Plan an MV-0705 (absolute-segment) parameter download as a SURGICAL memory write.
@@ -163,6 +163,19 @@ export function planRelativeParFlash(lsm: number, image: Buffer, owned: Readonly
     // PERSIST_ON_LOAD_COMPLETED distinction the full download already makes.
     { op: "restart", requireReboot },
   ];
+}
+
+// A download's device control as ETS writes it: on a mask that declares verify mode (verifyModeDeclared)
+// ETS reads object 0 PID 14 right before its first memory write and writes it back with bit 2 set, once,
+// and leaves it to the closing restart to clear (04, or 05 where the unit reports its application
+// stopped; MEAN WELL KNX-40E-1280D, Theben DALI-Gateway, Gira Tastsensor 3, MDT BE-02001.02). Into a
+// unit written with the confirmed extended write (Jung 400021SE, Theben MIX 2, GVS AMMA, OpenKNX) and on
+// the memory-mapped masks (ABB US/U 4.2, Theben Meteodata 140 S) it writes none; the runner leaves the
+// step out on the former (runLoadPlan), and the latter declare no verify mode.
+export function withVerifyMode(plan: LoadPlan, mask: string): LoadPlan {
+  if (!verifyModeDeclared(mask)) return plan;
+  const at = plan.findIndex((st) => st.op === "writeMem" || st.op === "writeSegment" || st.op === "writeSegmentOwned");
+  return at < 0 ? plan : [...plan.slice(0, at), { op: "verifyMode", on: true }, ...plan.slice(at)];
 }
 
 // A plan's restart as the confirmed restart (A_Restart type 1, erase code 1), where `confirmed`.

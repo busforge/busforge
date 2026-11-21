@@ -355,16 +355,12 @@ export function planSystemBFullDownload(tables: {
   // Of a filled segment the runs ETS writes (fillAllocatedRuns); the allocation set every other byte
   // to the fill. An unfilled segment holds nothing the download did not write, so it is written
   // whole, every byte equal to the fill too. Every chunk is echo-checked as it is written (verify
-  // mode, below), and the device's CRCs over the finished segment (or its read-back) prove the whole
+  // mode, which the caller switches on before the first write as ETS does, or the confirmed extended
+  // write), and the device's CRCs over the finished segment (or its read-back) prove the whole
   // segment after the restart.
   const paramWrites = (filled ? fillAllocatedRuns(tables.params, tables.paramsInImage, fillByte) : [{ offset: 0, bytes: tables.params }])
     .map((r): LoadStep => ({ op: "writeSegment", lsm: P, offset: r.offset, bytes: r.bytes, echo: true, verify: false }));
   return [
-    // The application's load procedure declares `LdCtrlWriteRelMem ... Verify="true"`, and this is
-    // what that means: the device answers every memory write. Without it a write that the device
-    // drops is silent, and we would find out a thousand telegrams later, with no idea which one it
-    // was. The answer is no proof of storage (VERIFY_MODE); the segment CRCs after the restart are.
-    { op: "verifyMode", on: true },
     // Everything goes back to unloaded first: a device that was half-programmed by a previous
     // attempt must not contribute leftovers to this one. `unloadPei`: the PEI program's machine
     // (LSM 5) first, the mask's declared first unload, where ETS is captured sending it.
@@ -379,11 +375,9 @@ export function planSystemBFullDownload(tables: {
     // rather than what a previous application left there; unfilled (Mode 0) with the declared fill byte
     // carried in the request all the same, as ETS sends it.
     // `masterResets`: the master resets the application declares right after this allocation, sent there
-    // as ETS sends them (KnxDevice.masterResetAnswered), each followed by a new connection. A device that
-    // restarts may clear the verify mode set above, so it is set again before the next write.
+    // as ETS sends them (KnxDevice.masterResetAnswered), each followed by a new connection.
     { op: "load", lsm: P }, { op: "alloc", lsm: P, size: tables.params.length, fill: filled, fillByte },
     ...masterResets.map((r): LoadStep => ({ op: "masterReset", ...r })),
-    ...(masterResets.length ? [{ op: "verifyMode", on: true } as LoadStep] : []),
     ...mcbFor(P),
     { op: "load", lsm: C, assert: false }, { op: "alloc", lsm: C, size: tables.comObj.length }, ...mcbFor(C),
     { op: "load", lsm: D, assert: false }, { op: "alloc", lsm: D, size: tables.addr.length }, ...mcbFor(D),
@@ -408,7 +402,6 @@ export function planSystemBFullDownload(tables: {
     // start-up telegrams then and refuses requests while it starts.
     ...(closeAtOnce ? [
       { op: "assertLoaded", lsm: C }, { op: "assertLoaded", lsm: A }, { op: "assertLoaded", lsm: D },
-      { op: "verifyMode", on: false },
       { op: "restart", requireReboot },
     ] as LoadStep[] : [
     // The device believes any table it is handed (thelsing/knx validates nothing on LoadCompleted),
@@ -416,7 +409,6 @@ export function planSystemBFullDownload(tables: {
     { op: "awaitReady" },
     { op: "assertLoaded", lsm: P }, { op: "assertLoaded", lsm: C },
     { op: "assertLoaded", lsm: A }, { op: "assertLoaded", lsm: D },
-    { op: "verifyMode", on: false }, // leave the device as we found it
     // AND NOW LEAVE IT ALONE, or everything above is thrown away.
     //
     // This device does not persist its configuration when it is told the load is complete. It

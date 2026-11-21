@@ -71,7 +71,8 @@ export type LoadStep =
   // `verify: false` skips the per-write read-back of the whole segment. Only ever correct when
   // something else proves the bytes (the full download echo-checks every chunk as it writes it and,
   // after the restart, compares the device's own segment CRCs or reads the segment back); a write
-  // nobody verifies is a write that did not happen. `echo` requires the device to be in verify mode (see the verifyMode op).
+  // nobody verifies is a write that did not happen. `echo`: the device's answer to each write is this
+  // write's check, so the device must be in verify mode (the verifyMode op) or take the confirmed write.
   // `offset`: where in the segment these bytes go. A full download whose procedure declares the filled
   // allocation (Mode 1) has the device pre-fill the segment, so only the bytes that differ from the fill
   // need to be sent; an unfilled one (Mode 0) is written whole (see planSystemBFullDownload).
@@ -82,7 +83,8 @@ export type LoadStep =
   // so the whole image is written. Every write is read back before the bracket closes.
   | { op: "writeSegmentOwned"; lsm: number; image: Buffer; owned: ReadonlyArray<number>; keptAt: number }
   // Put the device into (or out of) verify mode, in which it answers every memory write (VERIFY_MODE).
-  // A download's `LdCtrlWriteRelMem Verify="true"` asks for this.
+  // On: at the next classic memory write (runSteps), and every classic write after it awaits the answer,
+  // until a restart ends the mode.
   | { op: "verifyMode"; on: boolean }
   // Wait for the device to be able to talk again. After a long segment write it commits its flash,
   // and a small MCU can be gone for seconds doing it. See the executor for why this is not
@@ -229,6 +231,18 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
   // returns the old bytes. The operation's read-back after the restart proves what was stored.
   const writes = plan.some((s) => s.op === "writeSegment" || s.op === "writeMem" || s.op === "verifyMode");
   let confirmed: boolean | undefined;
+  // Whether a verifyMode step asked for verify mode, and whether the device is in it. ETS switches it on
+  // right before its first classic A_Memory_Write, not before the A_UserMemory writes past 0xFFFF that
+  // may come first (bussard's ETS downloads, tools/bussard-user-memory.test.ts); in it the device answers
+  // every classic write, and each write takes its answer, so no answer is left behind for a later request
+  // to take. A restart ends the mode.
+  let verifyWanted = false, verifying = false;
+  const write = async (address: number, bytes: Buffer, o: { verify: boolean; echoChecked?: boolean; onProgress?: (done: number, total: number) => void }, what: string) => {
+    const classic = !confirmed && address + bytes.length - 1 <= 0xffff;
+    if (classic && verifyWanted && !verifying) { await dev.setVerifyMode(true); verifying = true; }
+    if (classic && o.echoChecked && !verifying) throw new Error(`${what}: a write checked by the device's answer, on a device that is not in verify mode`);
+    await dev.memWrite(address, bytes, { verify: o.verify, echo: verifying, onProgress: o.onProgress });
+  };
   // A readProp that fails is reported when the plan has run to its end: it comes after the last
   // LoadCompleted, and stopping there would leave the new configuration loaded but never restarted.
   let unread: Error | undefined;
@@ -242,7 +256,7 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
     switch (step.op) {
       case "connect": await dev.connect(); break;
       case "disconnect": await dev.disconnect(); break;
-      case "restart": await dev.restart(step.requireReboot ?? true, step.confirmed ?? false); break;
+      case "restart": verifyWanted = verifying = false; await dev.restart(step.requireReboot ?? true, step.confirmed ?? false); break;
       case "unload": {
         open.add(step.lsm);
         await lsmEvent(dev, step.lsm, LSM.UNLOAD, opts.memMappedLsms);
@@ -287,7 +301,7 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
         if (s !== STATE.LOADING) throw await stateRefusal(dev, step.lsm, s, `not LOADING after ${step.op === "taskPtr" ? "TaskPtr" : "TaskCtrl2"}`, opts.memMappedLsms);
         break;
       }
-      case "masterReset": await dev.masterResetAnswered(step.eraseCode, step.channel, step.mask); break;
+      case "masterReset": verifyWanted = verifying = false; await dev.masterResetAnswered(step.eraseCode, step.channel, step.mask); break;
       case "declaredWriteProp": {
         const d = await dev.propertyDescription(step.obj, step.pid, 0);
         const size = genericElementSize(d.pdt);
@@ -318,15 +332,19 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
       }
       case "writeMem": {
         if (step.opens) open.add(step.opens);
-        if (!opts.readCompare) { await dev.memWrite(step.address, step.bytes, { verify: true }); opts.onWritten?.(step.bytes.length); if (step.closes) open.delete(step.closes); break; }
+        if (!opts.readCompare) { await write(step.address, step.bytes, { verify: true }, `memory at 0x${step.address.toString(16)}`); opts.onWritten?.(step.bytes.length); if (step.closes) open.delete(step.closes); break; }
         const block = await dev.classicReadChunk();
         const have = await dev.memRead(step.address, step.bytes.length, block);
-        for (const r of differingRuns(step.address, step.bytes, have, block)) { await dev.memWrite(r.address, r.bytes, { verify: true }); opts.onWritten?.(r.bytes.length); }
+        for (const r of differingRuns(step.address, step.bytes, have, block)) { await write(r.address, r.bytes, { verify: true }, `memory at 0x${r.address.toString(16)}`); opts.onWritten?.(r.bytes.length); }
         if (step.closes) open.delete(step.closes);
         break;
       }
       case "settle": await new Promise((r) => setTimeout(r, step.ms)); break;
-      case "verifyMode": if (!confirmed) await dev.setVerifyMode(step.on); break;
+      case "verifyMode":
+        if (confirmed) break;
+        if (step.on) verifyWanted = true;
+        else { await dev.setVerifyMode(false); verifyWanted = verifying = false; }
+        break;
       // HARDWARE-FOUND, and it cost a device twice before it was understood. After ~21 kB of
       // memory writes an RP2040-class device commits its flash, and while it does that it services
       // nothing: no T_ACK, no response. The request machine gives up after three attempts (about
@@ -365,10 +383,10 @@ async function runSteps(dev: KnxDevice, plan: LoadPlan, opts: RunOpts, open: Set
       case "writeSegmentOwned": {
         const at = await loadedTableAddr(dev, step.lsm, `load-state machine ${step.lsm}`);
         const runs = at === step.keptAt ? ownedRuns(step.image, step.owned) : [{ offset: 0, bytes: step.image }];
-        for (const r of runs) await dev.memWrite(at + r.offset, r.bytes, { verify: true, onProgress: opts.onWrite });
+        for (const r of runs) await write(at + r.offset, r.bytes, { verify: true, onProgress: opts.onWrite }, `LSM ${step.lsm}`);
         break;
       }
-      case "writeSegment": await dev.memWrite((await loadedTableAddr(dev, step.lsm, `load-state machine ${step.lsm}`)) + (step.offset ?? 0), step.bytes, { verify: step.verify ?? true, echo: step.echo, onProgress: opts.onWrite }); break;
+      case "writeSegment": await write((await loadedTableAddr(dev, step.lsm, `load-state machine ${step.lsm}`)) + (step.offset ?? 0), step.bytes, { verify: step.verify ?? true, echoChecked: step.echo, onProgress: opts.onWrite }, `LSM ${step.lsm}`); break;
       // The device echoes what it stored; a declined write answers with nothing (or something else),
       // and carrying on would leave e.g. an MCB region the device never took.
       case "writeProp": {

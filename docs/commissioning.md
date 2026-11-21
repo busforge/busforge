@@ -352,11 +352,16 @@ telegrams away from where it happened. Two mechanisms catch it:
   the System 7 full download do, on both memory models, and it is the mechanism those proven
   flash paths rest on.
 - **Verify mode**: `PID_DEVICE_CONTROL` bit 2, in which the device answers every memory write.
-  Some applications ask for it explicitly (`LdCtrlWriteRelMem Verify="true"`), and ETS enables it
-  with a read-modify-write on the device object before a download. The **System B full download**
-  takes that route: it switches verify mode on as its first step and off as its last, and every
-  table and every parameter run is echo-checked as it is written instead of being read back
-  (`planSystemBFullDownload`). No other path enables it. The answer stops the download at a
+  ETS switches it on in its downloads on every mask whose master data declares it (the mask's
+  `VerifyMode` feature: System B and the property-mapped System 7 masks, not the memory-mapped
+  MV-0700/0701): it reads the device control right before its first classic `A_Memory_Write` and
+  writes it back with bit 2 set (`04`, or `05` where the device reports its application stopped),
+  once, and leaves it to the closing restart to clear. The **full download** does the same, in
+  both forms and on both memory models (`withVerifyMode`), and every classic write then takes the
+  device's answer: the declared form of the System B full download echo-checks every table and
+  every parameter run as it is written instead of reading it back (`planSystemBFullDownload`), its
+  partial form and the System 7 full download read every write back besides. The parameter,
+  group-address and structural flashes do not switch it on. The answer stops the download at a
   dropped chunk but is no proof of storage (thelsing/knx answers with a copy of the request data,
   [findings.md](findings.md) §5); after the restart the device's CRCs over each segment, or the
   segment read back, prove it ([load-procedures.md](load-procedures.md#full-download-coverage)).

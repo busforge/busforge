@@ -267,7 +267,7 @@ for what a device does with it: no device has run one of these steps.
 | --- | --- | --- | --- |
 | `LdCtrlDelay` | System 7 declared form, right between the last `LoadCompleted` and the restart, shorter than a device's 6 s connection timeout | nothing; the restart that many milliseconds later | MV-0701: 200 ms declared, 211 ms between the last `LoadCompleted` and `A_Restart` |
 | `LdCtrlMasterReset` | System 7 declared form on a memory-mapped mask (MV-0701), before the first load-state event, erase code 6 or 5 on channel 0 | the confirmed `A_Restart` with the declared erase code and channel (`81 06 00`), which must answer error 0 and process time 0 (`A1 00 0000`); `T_Disconnect`; about a second later `T_Connect`, `A_DeviceDescriptor_Read` (the same mask as before, else refused) and PID 56; no authorization again | MV-0701: codes 6 then 5 after the connect |
-| `LdCtrlMasterReset` | System B full download (declared form) of an application without Data Secure, right after the parameter segment's allocation in the same merge block, erase code 1 or 4 on channel 0 | the same; Busforge then sets verify mode again, which a restart may clear | MV-07B0: codes 1 and 4 after `LdCtrlRelSegment` LSM 4, before the tables' brackets |
+| `LdCtrlMasterReset` | System B full download (declared form) of an application without Data Secure, right after the parameter segment's allocation in the same merge block, erase code 1 or 4 on channel 0 | the same; verify mode follows them, right before the first memory write | MV-07B0: codes 1 and 4 after `LdCtrlRelSegment` LSM 4, before the tables' brackets |
 | `LdCtrlTaskPtr`, `LdCtrlTaskCtrl2` | System 7 declared form on a property-mapped mask (MV-0705), inside their load-state machine's bracket | PID 5 `03 03` InitPtr, SavePtr, SerialPtr, `00 00`; PID 5 `03 05` Callback, Address, Seg0, Seg1; each answered LOADING | MV-0705: `03 03 4410 4414 4418 00 00`, `03 05 441C 4400 0700 4440` |
 | `LdCtrlWriteProp` with `InlineData` inside a load bracket | System 7 declared form on a memory-mapped mask (MV-0701), to object 3 inside the application's bracket (LSM 3), at its declared place, not to PID 5, 7, 13 or 27 | `A_PropertyDescription_Read` of the property, then `Count` elements in one `A_PropertyValue_Write`; the property must be described writable and the data exactly `Count` elements of the width the description's generic type gives, else it is refused (inside the bracket: the description is the device's answer) | MV-0701: object 3 PID 204, two 5-octet elements, between the segments' writes and the task segment |
 | `LdCtrlAbsSegment` in RAM (MemType 2) that no segment of the application defines | System 7 declared form | the declaration; nothing written or read there | MV-0705: a 48-octet stack segment at `0x0710` |
@@ -536,7 +536,8 @@ Theben TheLuxa P300 and DALI-Gateway) ETS reads object 0 PID 14 and writes it ba
 right before its first memory write, in every capture of such a download, and takes the device's echo
 of each write. With the extended write it switches on no verify mode in any capture: the device's
 answer to each chunk, a return code, is the check. Neither reads memory back. The memory-mapped System 7 masks (ABB US/U 4.2, Theben
-Meteodata 140 S) get no verify mode either.
+Meteodata 140 S), whose master data declares no `VerifyMode` feature, get no verify mode either; every
+other System 7 and every System B mask declares it.
 
 **Busforge reads back, and takes a write confirmation only where the device does not give a byte
 back.** After the restart it reads every owned byte and compares it with what it wrote. A System B
@@ -563,8 +564,9 @@ a full download in the declared form reads nothing first, so every byte there mu
 written. A classic `A_Memory_Write` has no confirmation to rest on: its own read-back (or verify-mode echo) is
 the check.
 
-**Where Busforge departs from ETS, on every rule.** It switches on no verify mode on System 7 and
-reads every write back instead; it keeps no stamps, so on a property-mapped System 7 mask it writes the
+**Where Busforge departs from ETS, on every rule.** It switches on no verify mode in its
+parameter, group-address and structural flashes and reads every write back instead (its full
+download switches it on as ETS does, [commissioning.md](commissioning.md), and reads back besides); it keeps no stamps, so on a property-mapped System 7 mask it writes the
 whole image where ETS leaves out what its stamps say the device holds (on System B it reads the unit
 and sends what R16 selects); it reads the load state after its own
 load-state writes; and its full download reads the unit's program id first and refuses another
@@ -694,9 +696,10 @@ device reads them there. Where Busforge departs from ETS, deliberately:
 - **It authorizes as ETS does.** The partial form of the full download sends `A_Authorize` with the
   free key first and goes on only if the device grants level 0, as it granted ETS
   (`FULL_DOWNLOAD_ACCESS_LEVEL` otherwise, before anything is written).
-- **It does not switch on verify mode.** ETS reads object 0 PID 14 and writes `04` before its first
-  memory write and takes the device's echo of each write; Busforge reads every write back, the
-  check the MV-0705 parameter flash relies on everywhere.
+- **Its flashes do not switch on verify mode.** ETS reads object 0 PID 14 and writes `04` before its
+  first memory write and takes the device's echo of each write; Busforge's full download does the
+  same and reads every write back besides, its parameter and group-address flash read every write
+  back instead, the check the MV-0705 parameter flash relies on everywhere.
 - **The group-address flash writes ETS's image, not more.** It writes the bytes of ETS's image of its
   group-address download, 405 bytes for the captured link: the tables without the own address, the
   com-object table to its 91 entries.
@@ -805,8 +808,9 @@ Where Busforge departs from ETS, deliberately:
 - **The parameter flash reads the parameter segment first**, which ETS does not; it keeps the bits no
   parameter owns from that read. It writes the bytes ETS writes, every byte a parameter covers; a
   covered byte no active parameter owns carries the device's value, where ETS writes its own image's.
-- **It does not switch on verify mode** (object 0 PID 14 `04`), in either download; Busforge reads
-  every write back instead, as on the Gira ([above](#ets-captured-system-7-downloads)).
+- **The parameter flash does not switch on verify mode** (object 0 PID 14 `04`); it reads every
+  write back instead, as on the Gira ([above](#ets-captured-system-7-downloads)). The full download
+  switches it on where ETS does.
 - **It reads the load state after its own load-state writes.** After `Load`, each `AbsSegment`, the
   `TaskCtrl1` and `LoadCompleted` the runner reads PID 5 to assert the state (the same on every
   property-mapped download); ETS takes the state from the write's answer.
@@ -819,7 +823,8 @@ Where Busforge departs from ETS, deliberately:
   reads no load state, so the same sequence runs on a unit without it, which no capture shows.
 
 What the comparisons prove (`tools/etsdiff.test.ts`, "Auro presence detector"): the wire sequence of
-the full, the parameter and the group-address download, verify mode aside, and every byte ETS writes,
+the full download, verify mode included, and of the parameter and the group-address download, verify
+mode aside, and every byte ETS writes,
 checked against ETS directly; the
 tables and the com-object table built from links read off ETS's tables; the parameter bytes for a
 configuration Busforge decoded from the 50 parameter bytes ETS wrote (the project behind the
@@ -868,7 +873,7 @@ same LSM 3 bracket. Busforge runs the parameter flash (`planAbsoluteParFlash`, t
 download marker), the group-address flash (`planSystem7GaFlash`) and the structural flash of the
 revert, each pinned byte for byte against these captures.
 
-Where Busforge departs from ETS, deliberately: as on the Auro ([above](#declared-order-system-7-downloads)), no verify mode, the load state
+Where Busforge departs from ETS, deliberately: as on the Auro ([above](#declared-order-system-7-downloads)), no verify mode in the flashes, the load state
 read after each of its own load-state writes, the device read first, and the program id read before
 the full download. The full download reads back the whole com-object table segment, `0x45D3-0x45EF` behind the
 table included, which ETS writes and which the device holds unchanged after the restart.

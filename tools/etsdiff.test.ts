@@ -656,6 +656,23 @@ const planShape = (plan: LoadPlan) => plan.flatMap((s): string[] => {
   if (s.op === "restart") return [s.confirmed ? "restart confirmed (erase code 1)" : "restart"];
   return ["lsm" in s ? `${s.op}:${s.lsm}` : s.op];
 }).filter((s, i, xs) => !(s === "sec:54" && xs[i - 1] === "sec:54"));
+// ETS's shape of a download with its verify mode as planShape names Busforge's verifyMode step: ETS switches it on
+// inside the memory write it executes first ("Switching on AutoVerifyMode", then its write of object 0 PID 14),
+// before that write's first frame.
+const etsShapeWithVerifyMode = (file: string) => {
+  const shape = etsShape(file);
+  let executed = 0, during = 0;
+  for (const l of captureText(file).split(/\r?\n/)) {
+    if (/ - Executing: <LdCtrlWriteRelMem /.test(l)) executed++;
+    else if (!during && / Send PropertyValue_Write_req -> \S+ \([^)]*\) ObjectIndex=0 PID=14 /.test(l)) during = executed;
+  }
+  let n = 0;
+  const at = shape.findIndex((st) => st.startsWith("write:") && ++n === during);
+  expect([file, at]).not.toEqual([file, -1]);
+  return [...shape.slice(0, at), "verifyMode", ...shape.slice(at)];
+};
+// A plan as the runner sends it to a unit written with the confirmed extended write: without verify mode.
+const confirmedRun = (plan: LoadPlan) => plan.filter((st) => st.op !== "verifyMode");
 // Every byte ETS sent to a secured unit, from the plaintext of its memory writes in its log.
 const etsWrites = (file: string) => {
   const m = new Map<number, number>();
@@ -713,7 +730,7 @@ corpusDescribe("Jung 400021SE full download on a loaded unit against ETS", () =>
         ia: logDevice(run.log), params: new Map(run.params), links: run.links, proc, unitHoldsApplication: true, unitMemory,
         security: { groupKeys: new Map([[gas[0], Buffer.alloc(16, 0x11)]]) },
       });
-      expect([run.log, planShape(build.plan)]).toEqual([run.log, etsShape(run.log)]);
+      expect([run.log, planShape(confirmedRun(build.plan))]).toEqual([run.log, etsShape(run.log)]);
       const ets = etsWrites(run.log);
       expect([run.log, [...ourWrites(build.plan)].sort((x, y) => x[0] - y[0])]).toEqual([run.log, [...ets].sort((x, y) => x[0] - y[0])]);
       // The unit after the download: ETS's bytes, the tables as written, and byte 7700 cleared by the firmware.
@@ -805,7 +822,7 @@ corpusDescribe("Theben DALI-Gateway full download on a loaded unit against ETS",
       ia: fx.ia, params: new Map(fx.params), links: fx.links, moduleInstances: fx.instances, comObjectOverrides: new Map(fx.overrides), proc: parseLoadProcedures(xml),
       unitHoldsApplication: true, unitMemory: { params: seg(4), paramsAt: at(4), paramsMcb: fx.mcb[4], comObj: seg(3), comObjAt: at(3), comObjMcb: fx.mcb[3] },
     });
-    expect(planShape(build.plan)).toEqual(etsShape("dali-ets6log-fulldownload.txt"));
+    expect(planShape(build.plan)).toEqual(etsShapeWithVerifyMode("dali-ets6log-fulldownload.txt"));
     const ours = new Map<number, number>();
     for (const s of build.plan) {
       if (s.op === "writeSegmentOwned") s.image.forEach((b, i) => { if (s.owned[i]) ours.set(s.keptAt + i, b); });
@@ -967,14 +984,23 @@ function planSteps(plan: LoadPlan, propDataMax = 10): string[] {
 // ETS switches the device into verify mode before its first memory write (reads device control,
 // object 0 PID 14, and writes it back with bit 0x04 set: 04, or 05 where the read showed the application
 // stopped, as on the MDT BE-06001.02 with LSM 3 unloaded or loading) and takes the device's echo of each
-// write. Busforge reads every write back instead (KnxDevice.memWrite), the proof the MV-0705 parameter
-// flash is hardware-proven on, so this is the one step of ETS's it leaves out.
+// write. Busforge's full download does the same (withVerifyMode: its verifyMode step stands where ETS's
+// read and write stand, verifyModeAsStep); its partial flashes read every write back instead
+// (KnxDevice.memWrite), the proof the MV-0705 parameter flash is hardware-proven on, and leave the step out.
 const VERIFY_READ = "read 0/14#1";
 const isVerifyWrite = (s: string) => /^prop 0\/14=[0-9a-f]{2}$/.test(s) && (Number.parseInt(s.slice(-2), 16) & 0x04) !== 0;
-const withoutVerifyMode = (steps: string[]) => {
+const verifyModeAt = (steps: string[]) => {
   const at = steps.findIndex(isVerifyWrite);
-  expect([steps.filter((s) => s === VERIFY_READ || isVerifyWrite(s)).length, steps[at - 1]]).toEqual([2, VERIFY_READ]);
+  expect([steps.filter((s) => s === VERIFY_READ || isVerifyWrite(s)).length, steps[at - 1], steps[at + 1]]).toEqual([2, VERIFY_READ, "write"]);
+  return at;
+};
+const withoutVerifyMode = (steps: string[]) => {
+  verifyModeAt(steps);
   return steps.filter((s) => s !== VERIFY_READ && !isVerifyWrite(s));
+};
+const verifyModeAsStep = (steps: string[]) => {
+  const at = verifyModeAt(steps);
+  return [...steps.slice(0, at - 1), "verifyMode", ...steps.slice(at + 1)];
 };
 const STAMPS = ["read 1/27#1", "read 2/27#1", ...[1, 2, 3, 4, 5, 6].map((i) => `read 3/27#${i}`)];
 const bytesOf = (plan: LoadPlan) => {
@@ -1242,12 +1268,12 @@ corpusDescribe("Gira Tastsensor 3 Komfort (M-0008) against ETS", () => {
     expect(baseline.params.size).toBeGreaterThan(0);
   });
 
-  test("full download: the wire sequence is ETS's, verify mode aside", () => {
+  test("full download: the wire sequence is ETS's, verify mode included", () => {
     const build = full(baseline.params, baseline.links);
-    expect(planSteps(build.plan)).toEqual(withoutVerifyMode(etsSteps("gira-m0008-ets-fulldownload.log")));
+    expect(planSteps(build.plan)).toEqual(verifyModeAsStep(etsSteps("gira-m0008-ets-fulldownload.log")));
     expect(planSteps(build.plan)).toEqual([
       "unload:1", "unload:2",
-      "load:1", "absSegment:1@16384+17", "write", "taskSegment:1@16384=00000810d711", "loadCompleted:1",
+      "load:1", "absSegment:1@16384+17", "verifyMode", "write", "taskSegment:1@16384=00000810d711", "loadCompleted:1",
       "load:2", "absSegment:2@16401+467", "write", "taskSegment:2@16401=00000810d711", "loadCompleted:2",
       "load:3", "write", "loadCompleted:3", ...STAMPS, "restart",
     ]);
@@ -1329,7 +1355,7 @@ corpusDescribe("Gira Tastsensor 3 Komfort (M-0008) against ETS", () => {
     expect(r.segments.flatMap((s) => s.divergences)).toEqual([]);
     expect(r.segments.find((s) => s.id.endsWith("AS-41E5"))!.compared).toBeGreaterThan(3 + 64 * 4 + 2);
     expect(r.unattributed).toEqual([]);
-    expect(planSteps(build.plan)).toEqual(withoutVerifyMode(etsSteps("gira-m0008-ets-partial-revert.log")));
+    expect(planSteps(build.plan)).toEqual(verifyModeAsStep(etsSteps("gira-m0008-ets-partial-revert.log")));
     const without = full(baseline.params, baseline.links);
     const w = compareSegments(without.segments.map((seg) => ({ seg, address: seg.address, baseSource: "plan" })), revert, new Map(), []);
     expect(w.segments.flatMap((s) => s.divergences.map((d) => [s.id.split("_").pop(), d.offset, d.busforge, d.ets]))).toEqual([["AS-41E5", 3 + 64 * 4 + 2, 0x47, 0x4f]]);
@@ -1541,14 +1567,14 @@ corpusDescribe("Auro presence detector (M-0081_A-FE01-11-75D9) against ETS", () 
     expect(baseline.params.get(led)).toBe("1");
   });
 
-  test("full download: the declared steps in their declared order, as ETS sends them, verify mode aside", () => {
+  test("full download: the declared steps in their declared order, as ETS sends them, verify mode included", () => {
     const build = full();
-    expect(planSteps(build.plan)).toEqual(withoutVerifyMode(captureSteps(FULL, ia)));
+    expect(planSteps(build.plan)).toEqual(verifyModeAsStep(captureSteps(FULL, ia)));
     const task = "taskSegment:%@%=000081fe0111";
     const t = (l: number, a: number) => task.replace("%", String(l)).replace("%", String(a));
     expect(planSteps(build.plan)).toEqual([
       "unload:1", "unload:2", "unload:3",
-      "load:1", "absSegment:1@16384+47", "write", t(1, 16384), "loadCompleted:1",
+      "load:1", "absSegment:1@16384+47", "verifyMode", "write", t(1, 16384), "loadCompleted:1",
       "load:2", "absSegment:2@16431+45", "write", t(2, 16431), "loadCompleted:2",
       "load:3", "absSegment:3@1792+250", "absSegment:3@16476+91", "write", "absSegment:3@16896+256", "write",
       t(3, 16567), "taskCtrl1:3=0000000000000000", "loadCompleted:3", "restart",
@@ -1845,10 +1871,10 @@ corpusDescribe("Theben TheLuxa P300 (M-0048_A-107E-12-5B58) against ETS", () => 
   const task = (l: number, a: number) => `taskSegment:${l}@${a}=000048107e12`;
   test("full download: the declared steps in their declared order, the tables re-declared as one region, TaskCtrl1 as ETS sends it", () => {
     const build = full();
-    expect(planSteps(build.plan)).toEqual(withoutVerifyMode(captureSteps(FULL, ia)));
+    expect(planSteps(build.plan)).toEqual(verifyModeAsStep(captureSteps(FULL, ia)));
     expect(planSteps(build.plan)).toEqual([
       "unload:1", "unload:2", "unload:3",
-      "load:1", "absSegment:1@16384+9", "write", task(1, 16384), "loadCompleted:1",
+      "load:1", "absSegment:1@16384+9", "verifyMode", "write", task(1, 16384), "loadCompleted:1",
       "load:2", "absSegment:2@16393+1011", "write", task(2, 16393), "loadCompleted:2",
       "load:3", "absSegment:3@1792+248", "absSegment:3@17404+500", "write", "absSegment:3@18432+576", "write",
       task(3, 17894), "taskCtrl1:3=45d3010000000000", "loadCompleted:3", "restart",
@@ -2365,6 +2391,7 @@ function systemBPlanBracket(plan: LoadPlan): string[] {
     if (s.op === "writeProp" && s.pid === 27) return [`mcb:${s.obj}:${s.start ?? 1}:${s.data.toString("hex")}`];
     if (s.op === "writeProp") return [`prop ${s.obj}/${s.pid}`];
     if (s.op === "stampAppId") return [`stamp:${s.data.toString("hex")}`];
+    if (s.op === "verifyMode" && s.on) return ["prop 0/14"];
     if (s.op === "readProp" && s.pid === 27) return [`read:${s.obj}/27:${s.start}:${s.count ?? 1}`];
     if (s.op === "restart") return [`restart:${s.confirmed ? "810100" : "80"}`];
     return [];
@@ -2436,16 +2463,15 @@ corpusDescribe("Theben MIX 2 (M-0048_A-493B-21-B471) against ETS", () => {
 
       test("full download: ETS's bracket, the PEI program unloaded first and the restart confirmed", () => {
         const ets = systemBCaptureBracket(file("fulldownload"), ia);
-        expect(systemBPlanBracket(full.plan)).toEqual(ets);
+        expect(systemBPlanBracket(confirmedRun(full.plan))).toEqual(ets);
         expect(ets.slice(0, 5)).toEqual(["unload:5", "unload:4", "unload:3", "unload:2", "unload:1"]);
         expect(ets.at(-1)).toBe("restart:810100");
         // The segments written in ETS's order, the parameter segment first.
         const writes = (steps: string[]) => steps.filter((x) => x.startsWith("write:"));
         expect(writes(planOrder(full.plan))).toEqual(writes(etsOrder(`mix2-${p.tag}-ets6log-fulldownload.txt`)));
         expect(ets.slice(-5)).toEqual(["read:1/27:1:1", "read:2/27:1:1", "read:3/27:1:1", "read:4/27:1:2", "restart:810100"]);
-        // Busforge besides reads the load states of the three tables there and switches verify mode off
-        // (skipped where its writes are confirmed, as on this device); no pause, no new connection.
-        expect(closingExtras(full.plan)).toEqual(["assertLoaded", "assertLoaded", "assertLoaded", "verifyMode"]);
+        // Busforge besides reads the load states of the three tables there; no pause, no new connection.
+        expect(closingExtras(full.plan)).toEqual(["assertLoaded", "assertLoaded", "assertLoaded"]);
       });
 
       // What the unit holds after ETS's full download: ETS's image, with the download marker cleared.
@@ -2685,7 +2711,8 @@ corpusDescribe("Theben DALI-Gateway KNX plus (M-0048_A-9071-20-F258-O00EF) again
   // The test group address the links download added: the one address of its image's table no project link uses.
   const withLink = [...fx.links, { comObjNum: LINKED, gaRaws: [addedGa(tableGas((o) => relImage("dali-ets6log-partial-links.txt").get(1)!.get(o), "systemB"), fx.links)] }];
   // ETS switches the unit into verify mode (object 0 PID 14 = 04) before its first memory write; Busforge's full
-  // download does the same (its verifyMode step), its partial flashes read each write back (withoutVerifyMode above).
+  // download does the same (its verifyMode step, in the bracket where ETS's write stands), its partial flashes read
+  // each write back (withoutVerifyMode above), so their brackets are held to ETS's without it.
   const etsBracket = (file: string) => systemBCaptureBracket(file, ia).filter((st) => st !== "prop 0/14");
 
   test("the configuration is the project's: the parameter changed is at ETS's value before it, the object unlinked", () => {
@@ -2724,8 +2751,8 @@ corpusDescribe("Theben DALI-Gateway KNX plus (M-0048_A-9071-20-F258-O00EF) again
   });
 
   test("full download: ETS's bracket, the PEI program unloaded first, the application allocated with fill 0, the plain restart", () => {
-    const ets = etsBracket("dali-ets-fulldownload-real.log");
-    expect(systemBCaptureBracket("dali-ets-fulldownload-real.log", ia).filter((st) => st === "prop 0/14")).toEqual(["prop 0/14"]);
+    const ets = systemBCaptureBracket("dali-ets-fulldownload-real.log", ia);
+    expect(ets.filter((st) => st === "prop 0/14")).toEqual(["prop 0/14"]);
     expect(full.plan.filter((st) => st.op === "verifyMode" && st.on).length).toBe(1);
     expect(systemBPlanBracket(full.plan)).toEqual(ets);
     expect(ets.slice(0, 5)).toEqual(["unload:5", "unload:4", "unload:3", "unload:2", "unload:1"]);
@@ -2858,7 +2885,7 @@ corpusDescribe("MEAN WELL KNX-40E-1280D (M-0162_A-0004-11-F245) against ETS", ()
     return m;
   };
   // ETS switches the unit into verify mode (object 0 PID 14) before its first memory write; Busforge's full download does
-  // the same (its verifyMode step), its partial flashes read each write back.
+  // the same (its verifyMode step, in the bracket where ETS's write stands), its partial flashes read each write back.
   const etsBracket = (kind: string) => systemBCaptureBracket(file(kind), ia).filter((st) => st !== "prop 0/14");
   const parFlash = (values: Map<string, string>, current: Buffer, record?: { before: string; file: string }) => {
     const target = buildRelativeSegmentTarget(cfg, values, 4, { ownIdleUnionDefaults: true })!;
@@ -2913,8 +2940,8 @@ corpusDescribe("MEAN WELL KNX-40E-1280D (M-0162_A-0004-11-F245) against ETS", ()
   });
 
   test("full download: ETS's bracket, the PEI program unloaded first, the application allocated with fill 0, the plain restart", () => {
-    const ets = etsBracket("fulldownload");
-    expect(systemBCaptureBracket(file("fulldownload"), ia).filter((st) => st === "prop 0/14")).toEqual(["prop 0/14"]);
+    const ets = systemBCaptureBracket(file("fulldownload"), ia);
+    expect(ets.filter((st) => st === "prop 0/14")).toEqual(["prop 0/14"]);
     expect(full.plan.filter((st) => st.op === "verifyMode" && st.on).length).toBe(1);
     expect(systemBPlanBracket(full.plan)).toEqual(ets);
     expect(ets.slice(0, 5)).toEqual(["unload:5", "unload:4", "unload:3", "unload:2", "unload:1"]);
@@ -3310,7 +3337,7 @@ corpusDescribe("MDT IP Interface/Router (M-0083_A-0137-20-7EB2) against ETS", ()
 
   test("full download: ETS's steps in ETS's order, the parameter segment written first and the security object after the tables", () => {
     expect(planOrder(build.plan)).toEqual(etsOrder(FULL));
-    expect(systemBPlanBracket(build.plan)).toEqual(logBracket(FULL));
+    expect(systemBPlanBracket(confirmedRun(build.plan))).toEqual(logBracket(FULL));
     expect(etsOrder(FULL).filter((s) => s.startsWith("write:"))).toEqual(["write:4", "write:3", "write:2", "write:1"]);
   });
 
@@ -3518,12 +3545,12 @@ corpusDescribe("MDT BE-06001.02 (M-0083_A-00B4-32-3919) against ETS", () => {
     expect(fx.links.some((l) => l.comObjNum === LINKED)).toBe(false);
   });
 
-  test("full download: the declared steps in their declared order, as ETS sends them, verify mode aside", () => {
+  test("full download: the declared steps in their declared order, as ETS sends them, verify mode included", () => {
     const build = full();
-    expect(planSteps(build.plan)).toEqual(withoutVerifyMode(captureSteps(FULL, ia)));
+    expect(planSteps(build.plan)).toEqual(verifyModeAsStep(captureSteps(FULL, ia)));
     expect(planSteps(build.plan)).toEqual([
       "unload:1", "unload:2", "unload:3",
-      "load:1", "absSegment:1@16384+513", "write", "taskSegment:1@16384=01008300b432", "loadCompleted:1",
+      "load:1", "absSegment:1@16384+513", "verifyMode", "write", "taskSegment:1@16384=01008300b432", "loadCompleted:1",
       "load:2", "absSegment:2@16897+511", "write", "taskSegment:2@16897=01008300b432", "loadCompleted:2",
       // The two RAM segments (MemType 2), the second a stack segment (SegType 1): declared, nothing written.
       "load:3", "absSegment:3@1792+190", "absSegment:3@1982+1/t1", "absSegment:3@17408+200", "write", "absSegment:3@17608+372", "write",
