@@ -8,6 +8,14 @@
 // runs every named row (all rows without one), prints each verdict and writes the corpus's manifest
 // (MANIFEST). --keep keeps Busforge's capture and the simulator's lines of each row under <dir>.
 //
+//   BUSFORGE_CORPUS=... bun run tools/ets-sweep.ts --rejudge [<application>/<variant>]... [--out <dir> | --in-place]
+//
+// reruns the rows the same way after a change to the comparison or to Busforge and writes, in the corpus's layout,
+// the manifest with their entries and the explained.json of each row whose verdict or differences moved (rejudge):
+// a difference that stays keeps its cause, a new one gets cause null and the command exits 1 naming it. notes.md
+// is not written; the output names what moved for it. It writes to --out (an empty directory outside the corpus,
+// by default a new one under the system's temporary directory), into the corpus only with --in-place.
+//
 // A ROW lives in the corpus under captures/ets-sweep/<application id>/<variant>/ (ROW_FILES):
 //   row.json            what the row is (RowSpec): the simulated unit, ETS's build, the simulator's endpoint
 //                       ETS was set to, ETS's project export where the row has one, the capture of ETS's
@@ -36,8 +44,9 @@
 // BESIDE THE VERDICT, where the row has ETS's project export: Busforge's images against ETS's record of the
 // download in it (LoadedImage, tools/ets-records.ts).
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, copyFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync, copyFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import net from "node:net";
 import { gunzipSync } from "node:zlib";
 import { APCI, KnxIpServer, MM_CTRL_ADDR, MM_STATUS_BASE, PID, iaToNum } from "../packages/knx/src/index.ts";
@@ -110,13 +119,14 @@ export type Verdict =
   | { verdict: "ets-failed"; why: string; busforge?: string }
   | { verdict: "driver-failed"; why: string };
 
-// What a row's explained.json holds: the verdict the row has today and the cause of every difference.
+// What a row's explained.json holds: the verdict the row has today and the cause of every difference. A cause
+// is null where --rejudge found the difference new (rejudge); tools/ets-sweep.test.ts fails on it.
 export interface Explained {
   verdict: Verdict["verdict"];
-  differences: { difference: string; cause: string }[];
+  differences: { difference: string; cause: string | null }[];
   // Where row.json names a calibration: each position ETS's dialogue with the simulator differs from its
   // dialogue with the real unit, with its cause.
-  calibration?: { difference: string; cause: string }[];
+  calibration?: { difference: string; cause: string | null }[];
 }
 
 // ---- one run's final state ----
@@ -654,33 +664,141 @@ export function manifestRow(row: Row, r: RowResult): ManifestRow {
   };
 }
 
-// The manifest with these rows' entries replaced, and the entries of rows no longer in the corpus dropped.
-export function updateManifest(results: ManifestRow[], present: string[]): Manifest {
+// The corpus's manifest, or null where it has none yet.
+export function readManifest(): Manifest | null {
   const path = corpusUnlistedPath(MANIFEST);
   const old: Manifest | null = existsSync(path) ? readJson<Manifest>(path) : null;
   const format: unknown = old?.format;
   if (old && format !== MANIFEST_FORMAT) throw new Error(`${MANIFEST} is of format ${String(format)}, not ${MANIFEST_FORMAT}`);
-  const id = (r: ManifestRow) => `${r.application}/${r.variant}`;
-  const fresh = new Set(results.map(id));
-  const rows = [...(old?.rows ?? []).filter((r) => present.includes(id(r)) && !fresh.has(id(r))), ...results].sort((a, b) => id(a).localeCompare(id(b)));
+  return old;
+}
+
+const entryId = (r: ManifestRow) => `${r.application}/${r.variant}`;
+
+// The manifest `old` with these rows' entries replaced, and the entries of rows no longer in the corpus dropped.
+export function updateManifest(old: Manifest | null, results: ManifestRow[], present: string[]): Manifest {
+  const fresh = new Set(results.map(entryId));
+  const rows = [...(old?.rows ?? []).filter((r) => present.includes(entryId(r)) && !fresh.has(entryId(r))), ...results].sort((a, b) => entryId(a).localeCompare(entryId(b)));
   return { format: MANIFEST_FORMAT, busforgeRevision: gitRevision(), rows };
+}
+
+// ---- rejudging a row ----
+
+// A row's explained.json after a rerun (its manifest entry `m`, whose causes are the ones `old` gives): the verdict
+// and the differences as the run found them, a difference that stays with its cause, a new one with cause null
+// (none is invented); the same for a calibrated row's positions. `moved` where it is not `old` again.
+export function rejudge(old: Explained, m: ManifestRow): { explained: Explained; moved: boolean; unexplained: string[] } {
+  const calibration = m.calibration?.differences;
+  const explained: Explained = {
+    verdict: m.verdict, differences: m.differences,
+    ...(calibration !== undefined && (calibration.length > 0 || old.calibration !== undefined) ? { calibration } : {}),
+  };
+  const same = (e: Explained) => JSON.stringify([e.verdict, e.differences, e.calibration ?? []]);
+  const unexplained = [
+    ...explained.differences.filter((d) => d.cause === null).map((d) => `difference: ${d.difference}`),
+    ...(explained.calibration ?? []).filter((d) => d.cause === null).map((d) => `calibration: ${d.difference}`),
+  ];
+  return { explained, moved: same(explained) !== same(old), unexplained };
+}
+
+// What moved in a row's entry since the manifest's `before`, for its notes.md, which --rejudge does not write.
+export function movedSince(before: ManifestRow | undefined, m: ManifestRow): string[] {
+  if (before === undefined) return ["the manifest has no entry of the row yet"];
+  const out: string[] = [];
+  if (before.verdict !== m.verdict) out.push(`verdict: ${before.verdict} -> ${m.verdict}`);
+  if (before.first !== m.first) out.push(`first: ${before.first ?? "none"} -> ${m.first ?? "none"}`);
+  // Each item whose count moved.
+  const items = (what: string, a: string[], b: string[]) => {
+    const n = (xs: string[], x: string) => xs.filter((y) => y === x).length;
+    for (const x of new Set([...a, ...b])) {
+      const [was, now] = [n(a, x), n(b, x)];
+      if (was !== now) out.push(`${what} ${now === 0 ? "gone" : was === 0 ? "new" : `${was} -> ${now} times`}: ${x}`);
+    }
+  };
+  const named = (xs: { difference: string }[] | undefined) => (xs ?? []).map((d) => d.difference);
+  items("difference", named(before.differences), named(m.differences));
+  items("calibration position", named(before.calibration?.differences), named(m.calibration?.differences));
+  // Busforge's run is timed by the wall clock, so a refusal's time after the restart moves from run to run.
+  const refusals = (e: ManifestRow) => (e.refusalsAfterRestart ?? []).map((x) => `${x.run}: ${x.refusal}`);
+  const timeless = (xs: string[]) => JSON.stringify(xs.map((x) => x.replace(/ \d+ ms after the restart:/, " <n> ms after the restart:")));
+  if (timeless(refusals(before)) !== timeless(refusals(m))) items("refusal after the restart", refusals(before), refusals(m));
+  else if (JSON.stringify(refusals(before)) !== JSON.stringify(refusals(m))) out.push("refusals after the restart: only their times after the restart moved");
+  items("read only ETS made", before.reads.onlyEts, m.reads.onlyEts);
+  items("read only Busforge made", before.reads.onlyBusforge, m.reads.onlyBusforge);
+  items("not taken by the unit, ETS", before.notTaken.ets, m.notTaken.ets);
+  items("not taken by the unit, Busforge", before.notTaken.busforge, m.notTaken.busforge);
+  if (JSON.stringify(before.loadedImage) !== JSON.stringify(m.loadedImage)) out.push(`LoadedImage: ${JSON.stringify(before.loadedImage)} -> ${JSON.stringify(m.loadedImage)}`);
+  return out;
+}
+
+// Writes under `root` (the corpus root with --in-place, else a directory outside it, in the corpus's layout) the
+// explained.json of each row whose explained.json moved and the manifest `manifest`; returns what it reports and
+// the exit code: 1 where a difference or calibration position is new (cause null), else 0.
+export function writeRejudged(root: string, rows: { id: string; explained: Explained; entry: ManifestRow }[], before: Manifest | null, manifest: Manifest): { report: string[]; exit: number } {
+  const report: string[] = [], unexplained: string[] = [];
+  for (const { id, explained, entry } of rows) {
+    const r = rejudge(explained, entry);
+    report.push(`${id}: explained.json ${r.moved ? "moved" : "unchanged, not written"}`);
+    if (r.moved) {
+      const path = join(root, SWEEP_DIR, id, ROW_FILES.explained);
+      mkdirSync(join(root, SWEEP_DIR, id), { recursive: true });
+      writeFileSync(path, JSON.stringify(r.explained, null, 2) + "\n");
+      report.push(`  written: ${path}`);
+    }
+    for (const u of r.unexplained) { unexplained.push(`${id}: ${u}`); report.push(`  NOT EXPLAINED (cause null): ${u}`); }
+    const moved = movedSince(before?.rows.find((b) => entryId(b) === id), entry);
+    report.push(moved.length ? "  moved since the manifest (for notes.md):" : "  nothing moved since the manifest (notes.md stays)", ...moved.map((x) => `    ${x}`));
+  }
+  const path = join(root, MANIFEST);
+  mkdirSync(join(path, ".."), { recursive: true });
+  writeFileSync(path, JSON.stringify(manifest, null, 2) + "\n");
+  report.push(`manifest: ${path} (${manifest.rows.length} rows)`);
+  if (unexplained.length) report.push(`${unexplained.length} new difference(s) without a cause; explain each in explained.json:`, ...unexplained.map((u) => `  ${u}`));
+  return { report, exit: unexplained.length ? 1 : 0 };
+}
+
+const USAGE = "usage: bun run tools/ets-sweep.ts [<application>/<variant>]... [--keep=<dir>] [--rejudge [--out <dir> | --in-place]]";
+
+// Where --rejudge writes: the corpus root with --in-place, else `out` (a new directory under the system's temporary
+// directory where none is given), which must lie outside the corpus and be empty.
+function rejudgeRoot(out: string | undefined, inPlace: boolean): string {
+  const corpus = corpusUnlistedPath("");
+  if (inPlace) { if (out !== undefined) throw new Error("--out and --in-place exclude each other"); return corpus; }
+  if (out === undefined) return mkdtempSync(join(tmpdir(), "ets-sweep-rejudge-"));
+  const inside = (dir: string) => [corpus, realpathSync(corpus)].some((c) => { const rel = relative(c, dir); return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel)); });
+  if (inside(resolve(out))) throw new Error(`--out ${out} lies in the corpus; write into the corpus only with --in-place`);
+  mkdirSync(out, { recursive: true });
+  if (inside(realpathSync(out))) throw new Error(`--out ${out} lies in the corpus; write into the corpus only with --in-place`);
+  if (readdirSync(out).length) throw new Error(`--out ${out} is not empty`);
+  return out;
 }
 
 async function main(): Promise<number> {
   const args = process.argv.slice(2);
-  const unknown = args.filter((a) => a.startsWith("--") && !a.startsWith("--keep="));
-  if (unknown.length) throw new Error(`unknown option(s): ${unknown.join(" ")}; usage: bun run tools/ets-sweep.ts [<application>/<variant>]... [--keep=<dir>]`);
-  const keep = args.find((a) => a.startsWith("--keep="))?.slice(7);
+  const outAt = args.indexOf("--out");
+  const out = outAt >= 0 ? args[outAt + 1] : args.find((a) => a.startsWith("--out="))?.slice(6);
+  if (outAt >= 0 && (out === undefined || out.startsWith("--"))) throw new Error(`--out takes a directory; ${USAGE}`);
+  const rest = args.filter((_, i) => i !== outAt && !(outAt >= 0 && i === outAt + 1));
+  const flags = new Set(["--rejudge", "--in-place"]);
+  const unknown = rest.filter((a) => a.startsWith("--") && !a.startsWith("--keep=") && !a.startsWith("--out=") && !flags.has(a));
+  if (unknown.length) throw new Error(`unknown option(s): ${unknown.join(" ")}; ${USAGE}`);
+  const rejudging = rest.includes("--rejudge"), inPlace = rest.includes("--in-place");
+  if (!rejudging && (out !== undefined || inPlace)) throw new Error(`--out and --in-place go with --rejudge; ${USAGE}`);
+  const keep = rest.find((a) => a.startsWith("--keep="))?.slice(7);
   const present = listRows();
-  const ids = args.filter((a) => !a.startsWith("--"));
+  const ids = rest.filter((a) => !a.startsWith("--"));
   const todo = ids.length ? ids : present;
   if (todo.length === 0) throw new Error(`no row under ${SWEEP_DIR}`);
+  // Before the rows run, so a wrong --out is refused at once.
+  const root = rejudging ? rejudgeRoot(out, inPlace) : null;
   const results: ManifestRow[] = [];
+  const rejudged: { id: string; explained: Explained; entry: ManifestRow }[] = [];
   for (const id of todo) {
     const row = readRow(id);
     const r = await runRow(row);
     const m = manifestRow(row, r);
     results.push(m);
+    rejudged.push({ id, explained: row.explained, entry: m });
     console.log(`${id}: ${m.verdict}${m.first ? `: ${m.first}` : ""}`);
     for (const d of m.differences) console.log(`  ${d.difference}\n    cause: ${d.cause ?? "NOT EXPLAINED"}`);
     if (m.reads.onlyEts.length || m.reads.onlyBusforge.length) console.log(`  reads only ETS made: ${list(m.reads.onlyEts)}\n  reads only Busforge made: ${list(m.reads.onlyBusforge)}`);
@@ -696,7 +814,13 @@ async function main(): Promise<number> {
       console.log(`  kept in ${out}`);
     }
   }
-  const manifest = updateManifest(results, present);
+  const before = readManifest();
+  const manifest = updateManifest(before, results, present);
+  if (root !== null) {
+    const { report, exit } = writeRejudged(root, rejudged, before, manifest);
+    for (const l of report) console.log(l);
+    return exit;
+  }
   writeFileSync(corpusUnlistedPath(MANIFEST), JSON.stringify(manifest, null, 2) + "\n");
   console.log(`manifest: ${MANIFEST} (${manifest.rows.length} rows)`);
   return 0;

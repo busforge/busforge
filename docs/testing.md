@@ -720,6 +720,21 @@ of their own. The tool writes the verdicts into `internal/ets-sweep/manifest.jso
 BUSFORGE_CORPUS=... bun run tools/ets-sweep.ts [<application>/<variant>]... [--keep=<dir>]
 ```
 
+**Rejudging rows** after a change to the comparison or to Busforge is one command:
+
+```bash
+BUSFORGE_CORPUS=... bun run tools/ets-sweep.ts --rejudge [<application>/<variant>]... [--out <dir> | --in-place]
+```
+
+It reruns the rows as above and writes, in the corpus's layout, the manifest with their entries and
+the `explained.json` of each row whose verdict or differences moved (a row where nothing moved keeps
+its file). A difference or calibrated position that stays keeps its cause; a new one gets cause `null`,
+never an invented one, and the command exits 1 naming it, so the row stays red until it is explained.
+`notes.md` is not written: the output names what moved since the manifest (verdict, differences,
+refusals beside the verdict, reads, the requests the unit did not take, the second check) for it. The output goes to `--out`, an empty
+directory outside the corpus (by default a new one under the system's temporary directory), to be
+checked before it is copied in; it goes straight into the corpus only with `--in-place`.
+
 **A calibrated row** names in `row.json` ETS's capture of the same configuration downloaded into the
 real unit. ETS's dialogue with the simulated unit (its requests with their line confirmations, the
 unit's frames with their first control field) is held to its dialogue with the real unit position by
