@@ -723,9 +723,11 @@ BUSFORGE_CORPUS=... bun run tools/ets-sweep.ts [<application>/<variant>]... [--k
 **A calibrated row** names in `row.json` ETS's capture of the same configuration downloaded into the
 real unit. ETS's dialogue with the simulated unit (its requests with their line confirmations, the
 unit's frames with their first control field) is held to its dialogue with the real unit position by
-position (where the capture holds steps of ETS's the row does not run before its download, such as an
-address assignment, from the position `calibrationFrom` names on), and every position that differs is
-listed with its cause in `explained.json` (`calibration`): what such a row's simulator answers is what the real unit answered ETS, or the row names where not.
+position. Where the capture holds steps before its download that the row does not run (ETS's address
+assignment), `row.json` names the position the download begins at (`calibrationFrom`), and the
+comparison starts there. Every position that differs is listed with its cause in `explained.json`
+(`calibration`): what such a row's simulator answers is what the real unit answered ETS, or the row
+names where not.
 
 `tools/ets-sweep.test.ts` runs every row with the private corpus and holds its verdict and its
 differences to `explained.json`: a new difference fails, and so does an explained one that is gone; the
@@ -755,7 +757,7 @@ flowchart LR
 bun run tools/ets-driver.ts up        # display, VNC and ETS, each process recorded by PID and start time
 BUSFORGE_CORPUS=... bun run tools/ets-driver.ts row <unit> <variant> --order <order number> \
   [--simulator <this host's ip>:3701] [--project "Busforge Sweep"] [--password-env <VAR>] [--configured] [--out <dir>]
-BUSFORGE_CORPUS=... bun run tools/ets-driver.ts same <ets.log> <ets.log> <unit>   # two runs, frame by frame
+BUSFORGE_CORPUS=... bun run tools/ets-driver.ts same <ets.log> <ets.log> <unit> [<from>]   # two runs, frame by frame
 bun run tools/ets-driver.ts down      # closes what `up` started, and nothing else
 bun run tools/ets-driver.ts import <project.knxproj> [--password-env <VAR>]   # prints the copy's name
 bun run tools/ets-driver.ts delete <project name>   # only a project `import` brought in

@@ -545,6 +545,8 @@ export function readRow(id: string): Row {
   if (conf.appRef !== undefined && appProgramId(conf.appRef) !== application && appProgramId(conf.appRef) !== spec.exportApplication) throw new Error(`row ${id}: the configuration is of ${conf.appRef}, not of ${application}`);
   if (spec.export !== undefined && !existsSync(join(dir, spec.export))) throw new Error(`row ${id}: the export ${spec.export} is missing`);
   if (spec.calibration !== undefined && !existsSync(corpusPath(spec.calibration))) throw new Error(`row ${id}: the calibration capture ${spec.calibration} is missing`);
+  const from: unknown = spec.calibrationFrom;
+  if (from !== undefined && (spec.calibration === undefined || typeof from !== "number" || !Number.isInteger(from) || from < 0)) throw new Error(`row ${id}: calibrationFrom ${JSON.stringify(from)} is no position of a calibration capture`);
   return { id, application, variant, dir, spec, unit, conf, explained: readJson<Explained>(join(dir, ROW_FILES.explained)) };
 }
 

@@ -5,7 +5,7 @@
 //   BUSFORGE_CORPUS=... bun run tools/ets-driver.ts row <unit> <variant> --order <order number> \
 //     [--simulator <this host's ip>:3701] [--project "Busforge Sweep"] [--password-env <VAR>] [--configured] \
 //     [--out <dir>] [--stop-sim-after <frames>] [--wrong-interface <host:port>] [--sim-override <object>/<PID>=<hex>]...
-//   BUSFORGE_CORPUS=... bun run tools/ets-driver.ts same <ets.log> <ets.log> <unit>       two runs, frame by frame
+//   BUSFORGE_CORPUS=... bun run tools/ets-driver.ts same <ets.log> <ets.log> <unit> [<from>]   two runs, frame by frame
 //   BUSFORGE_CORPUS=... bun run tools/ets-driver.ts rerun-identity <row dir> <unit>       the identity loop
 //   bun run tools/ets-driver.ts import <project.knxproj> [--password-env <VAR>]   into ETS (as a copy where it
 //                                                                                    holds the project); prints its name
@@ -200,6 +200,16 @@ class Screen {
       const hit = findText(ws, phrase)[0];
       if (hit) return hit;
       if (Date.now() > until) return fail(`${what}: "${phrase}" did not appear within ${timeoutMs / 1000} s`);
+      await sleep(1500);
+    }
+  }
+  // The first word `test` accepts in `region`, looked for until `timeoutMs`.
+  async waitWord(test: (w: Word) => boolean, region: Region, timeoutMs: number, what: string): Promise<Word> {
+    const until = Date.now() + timeoutMs;
+    for (;;) {
+      const hit = this.look(region).ws.find(test);
+      if (hit) return hit;
+      if (Date.now() > until) return fail(`${what} did not appear within ${timeoutMs / 1000} s`);
       await sleep(1500);
     }
   }
@@ -912,16 +922,15 @@ async function deleteProject(name: string): Promise<void> {
     await searchProject(s, name);
     xdo("mousemove", "800", String(AT.searchedRow[1] + 14), "sleep", "1", "mousemove", String(AT.searchedMenu[0]), String(AT.searchedMenu[1]), "sleep", "0.5", "click", "1");
     // OCR reads the menu's ö as é or a ("Léschen"): the entry is found by the rest of the word.
-    let del: Word | undefined;
-    for (let i = 0; i < 6 && !del; i++) { await sleep(1000); del = s.look({ x: 1200, y: 190, w: 600, h: 250 }).ws.find((w) => /^L.schen$/i.test(w.text)); }
-    const item = del ?? fail("the project menu shows no 'Löschen'");
+    const item = await s.waitWord((w) => /^L.schen$/i.test(w.text), { x: 1200, y: 190, w: 600, h: 250 }, 10_000, "the project menu's 'Löschen'");
     click(item.x + item.w / 2, item.y + item.h / 2);
     await sleep(2000);
     const png = s.snap(), box = dialogBox(png) ?? fail("ETS asked nothing before deleting");
     // The question must name the project: the search's one row is OCR's reading, the question confirms it.
     const asked = words(png, box).map((w) => w.text).join(" ");
     if (!nameKey(asked).includes(nameKey(name))) fail(`ETS's delete question names no "${name}" (it reads: ${asked.slice(0, 160)}); nothing deleted`);
-    // Its OK, framed beside Abbrechen, reads only alone and enlarged ("[oK |").
+    // Its OK, framed beside Abbrechen, reads only alone and enlarged ("[oK |"): the box ends 10 px left of the
+    // word "Abbrechen" and holds the OK's 75 px frame (ETS 6.4.1's question at 1920x1200).
     const cancel = findText(dialogButtons(png, box), "Abbrechen")[0] ?? fail("no Abbrechen in ETS's delete question");
     const ok = words(png, { x: cancel.x - 95, y: cancel.cy - 13, w: 85, h: 26 }, { scale: 4, psm: 8 }).find((w) => /ok/i.test(w.text)) ?? fail("no OK beside Abbrechen in ETS's delete question");
     click(ok.x + ok.w / 2, ok.y + ok.h / 2);
@@ -1129,11 +1138,11 @@ async function main(): Promise<number> {
   if (cmd === "xdo") { process.stdout.write(xdo(...rest)); return 0; }
   if (cmd === "type") { typeText(rest.join(" ")); return 0; }
   if (cmd === "same") {
-    const [a, b, unit] = rest;
-    if (!a || !b || !unit) throw new Error("usage: bun run tools/ets-driver.ts same <ets.log> <ets.log> <unit>");
+    const [a, b, unit, from] = rest;
+    if (!a || !b || !unit || (from !== undefined && !/^\d+$/.test(from))) throw new Error("usage: bun run tools/ets-driver.ts same <ets.log> <ets.log> <unit> [<position in the first to compare from>]");
     const device = newSimUnit(simUnitSpec(unit)).deviceIa;
     const [x, y] = [readFileSync(a, "utf8"), readFileSync(b, "utf8")];
-    const d = dialogueDifferences(x, y, device);
+    const d = dialogueDifferences(x, y, device, "ETS", from === undefined ? 0 : Number(from));
     console.log(`${dialogue(x, device).length} and ${dialogue(y, device).length} frames with ${numToIa(device)}, ${d.length} positions differ`);
     for (const l of d.slice(0, 20)) console.log(`  ${l}`);
     return d.length ? 1 : 0;
