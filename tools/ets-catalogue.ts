@@ -227,10 +227,11 @@ export function catalogueList(f: Fetched, marketName: string, masks: string[], b
   }
   // Applications under one order number at one version, over every application of the market: the driver searches
   // the whole catalogue by order number.
-  const atOrder = new Map<string, Set<string>>();
+  const atOrder = new Map<string, Set<string>>(), rowsAt = new Map<string, number>();
   for (const app of apps.values()) for (const e of app.entries) {
     const k = `${e.OrderNumber}\t${app.version}`;
     atOrder.set(k, (atOrder.get(k) ?? new Set()).add(app.id));
+    rowsAt.set(k, (rowsAt.get(k) ?? 0) + 1);
   }
   const byMask: Record<string, number> = {};
   const rows: Row[] = [];
@@ -247,8 +248,9 @@ export function catalogueList(f: Fetched, marketName: string, masks: string[], b
     const orderNumbers = orderNumbersOf(app);
     const others = orderNumbers.map((o) => ({ orderNumber: o, applications: [...atOrder.get(`${o}\t${app.version}`)!].filter((x) => x !== app.id).sort(byText) }));
     const shared = others.filter((o) => o.applications.length);
-    // An empty order number is none to search for.
-    const own = others.find((o) => o.orderNumber && !o.applications.length);
+    // An order number of its own: one catalogue row at the version (the driver refuses two, even of one
+    // application); an empty order number is none to search for.
+    const own = others.find((o) => o.orderNumber && rowsAt.get(`${o.orderNumber}\t${app.version}`) === 1);
     const row: Row = {
       application: app.id, manufacturer: app.manufacturer, manufacturerName: app.manufacturerName, mask, version: catalogueVersion(app.version), name: app.name,
       orderNumber: (own ?? others.find((o) => o.orderNumber) ?? others[0]).orderNumber, orderNumbers, catalogueEntries: app.entries.length,

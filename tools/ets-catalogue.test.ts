@@ -29,7 +29,7 @@ describe("the catalogue list", () => {
   test("counts what it passed, the applications' counts adding up", () => {
     const c = list.counts;
     expect(c).toMatchObject({
-      indexEntries: 19, marketEntries: 18, withoutApplication: 1, refusedEntries: 3, marketIdsWithoutEntry: 0,
+      indexEntries: 20, marketEntries: 19, withoutApplication: 1, refusedEntries: 3, marketIdsWithoutEntry: 0,
       applications: 11, loaded: 8, unloaded: 1, refusedApplications: 2, rows: 7, sameOrderAndVersion: 4, secondApplications: 1,
     });
     expect(c.loaded + c.unloaded + c.refusedApplications).toBe(c.applications);
@@ -50,8 +50,13 @@ describe("the catalogue list", () => {
   test("every order number of an application, and the German name the catalogue shows", () => {
     expect(row("M-FFF1_A-0001-11-A001")).toEqual({
       application: "M-FFF1_A-0001-11-A001", manufacturer: "M-FFF1", manufacturerName: "Example One", mask: "07B0", version: "1.1", name: "Switch (de)",
-      orderNumber: "ORDER-1", orderNumbers: ["ORDER-1", "ORDER-1B"], catalogueEntries: 2,
+      orderNumber: "ORDER-1B", orderNumbers: ["ORDER-1", "ORDER-1B"], catalogueEntries: 3,
     });
+  });
+
+  test("two catalogue rows of one application under one order number: not its own order number", () => {
+    expect(row("M-FFF1_A-0001-11-A001")).toMatchObject({ orderNumber: "ORDER-1B", orderNumbers: ["ORDER-1", "ORDER-1B"], catalogueEntries: 3 });
+    expect(row("M-FFF1_A-0001-11-A001")?.sameOrderAndVersion).toBeUndefined();
   });
 
   test("an empty order number is none to search for", () => {
