@@ -95,10 +95,11 @@ export function productUnit(appXml: string): ProductUnit {
 // `required`.
 export interface Mismatch { line: string; object: number; pid: number; device: Buffer; required: Buffer }
 
-// No ETS6.log of ours holds such a line yet. Read is only the form decision 0004 §1 quotes, as bussard's sweep reads
-// it: `Required data mismatch at SystemProperty(<object>/<PID>)[$0000]: <device> instead of <required>`, the values
-// as contiguous hex, the device's possibly empty. Another index than $0000, a range, or spaced octets are refused
-// until a recorded line shows what they mean.
+// Read is only the form decision 0004 §1 quotes, as bussard's sweep reads it and as ETS wrote it on the MEAN WELL
+// KNX-40E-1280D's sweep row with a wrong hardware type: `Required data mismatch at
+// SystemProperty(<object>/<PID>)[$0000]: <device> instead of <required>`, the values as contiguous hex, the
+// device's possibly empty. Another index than $0000, a range, or spaced octets are refused until a recorded line
+// shows what they mean.
 const MISMATCH_MARK = "Required data mismatch";
 const MISMATCH = new RegExp(`${MISMATCH_MARK} at SystemProperty\\((\\d{1,3})/(\\d{1,3})\\)\\[\\$0000\\]: ((?:[0-9A-Fa-f]{2})*) instead of ((?:[0-9A-Fa-f]{2})+)$`);
 
@@ -126,8 +127,10 @@ export type Rerun = { identity: ProductUnit; learned: Mismatch[] } | { refused: 
 // of that run, the identity to run again with, every value ETS required put in with its line as the source; or the
 // reason not to run again. Refused: a run whose log names no mismatch (its failure is not the identity), a mismatch
 // whose `device` is not what `unit` answers (the log is of another identity), one that requires what `unit` already
-// answers (a rerun would fail the same), and one that contradicts the product or another line.
-export function rerunIdentity(unit: ProductUnit, log: Buffer | string): Rerun {
+// answers (a rerun would fail the same), and one that contradicts the product or another line. `answered`: what the
+// unit answers as a property's first element (empty where it answers none), where that is not `unit`'s own: a
+// catalogue unit's, whose donor answers what the identity does not give (tools/sim-unit-catalogue.ts).
+export function rerunIdentity(unit: ProductUnit, log: Buffer | string, answered?: (key: string) => Buffer): Rerun {
   let mismatches: Mismatch[];
   try { mismatches = mismatchLines(log); } catch (e) { return { refused: (e as Error).message }; }
   if (mismatches.length === 0) return { refused: "the run's ETS6.log names no required data: its failure is not the identity" };
@@ -136,7 +139,7 @@ export function rerunIdentity(unit: ProductUnit, log: Buffer | string): Rerun {
     const key = keyOf(m.object, m.pid);
     // A value not given in full the unit cannot answer (no bit is invented): ETS then saw nothing.
     const had = unit.properties.get(key);
-    const answers = had !== undefined && had.known.every((k) => k === 0xff) ? had.bytes : null;
+    const answers = answered ? answered(key) : had !== undefined && had.known.every((k) => k === 0xff) ? had.bytes : null;
     if (answers === null ? m.device.length > 0 : !answers.equals(m.device)) return { refused: `ETS saw ${hex(m.device) || "nothing"} in ${key}, which this identity does not answer: the log is of another run (${m.line})` };
     if (answers?.subarray(0, m.required.length).equals(m.required)) return { refused: `ETS requires ${hex(m.required)} in ${key}, which this identity already answers: a rerun fails the same (${m.line})` };
   }

@@ -629,6 +629,8 @@ The units simulated, and how each is held to its captures (`tools/sim-unit.test.
 ```bash
 BUSFORGE_CORPUS=... bun run tools/sim-unit-serve.ts <unit id> --tool ETS --log ./capture.log \
   [--port 3700] [--proxy-port 3701] [--advertise <this host's ip>] [--override <object>/<PID>=<hex>]...
+BUSFORGE_CORPUS=... bun run tools/sim-unit-serve.ts <application id> --product <file> --tool ETS --log ./capture.log \
+  [--donor <unit id>] [--learned-from <ETS6.log>]... [--port ...] [--proxy-port ...] [--advertise ...]
 ```
 
 `<unit id>` is a unit's `id` in `tools/sim-units.ts` (`meanwell-knx40e`, `theben-dali-gateway`,
@@ -638,7 +640,10 @@ BUSFORGE_CORPUS=... bun run tools/sim-unit-serve.ts <unit id> --tool ETS --log .
 port over KNXnet/IP TCP; the simulator's own lines go to
 `<log>.sim.txt`, and Ctrl-C prints its refusals. `--override` (System B units) makes the unit answer
 another first element for a property than its collection holds, or none (`0/78=`): a deliberately wrong
-identity, to see what ETS makes of it; the first line of `<log>.sim.txt` names it. A download into the simulator is evidence on no axis
+identity, to see what ETS makes of it; the first line of `<log>.sim.txt` names it. An application id without an
+own unit serves its catalogue unit (below) of the application program in `--product` (a `.knxproj` or `.knxprod`
+holding it, or its manufacturer XML), with the donor its mask's rule picks or `--donor`, and with what ETS required
+in each `--learned-from` ETS6.log, in order. A download into the simulator is evidence on no axis
 of [evidence-contract.md](evidence-contract.md) by itself: it shows what a tool sends given the
 simulator's answers, and the answers are a real unit's only as far as the table above says.
 
@@ -666,7 +671,9 @@ source, or the reason not to: no such line (the failure is not the identity), a 
 value the product or another line contradicts, a line whose device value is not what the unit answers
 (the log of another run), or a value the unit already answers (a rerun would fail the same). Only the
 form above is read, the values as contiguous hex; another index than `$0000`, a range or spaced octets
-are refused until a recorded line shows what they mean.
+are refused until a recorded line shows what they mean. ETS writes the line in this form, as its
+`VerifyAdditionalResourcesTask` warning, for a MEAN WELL KNX-40E-1280D that answers another hardware type
+(0/78) than its product requires; `tools/sim-unit-catalogue.test.ts` reads that line.
 
 `tools/sim-unit-product.test.ts` holds the product unit of each simulated unit against
 the unit built from its collection and lists every difference. The manufacturer is right on all of them,
@@ -674,7 +681,55 @@ also where the application was made for another manufacturer; a compare's value 
 length where the unit answers fewer octets than the compare declares, and the bits a mask leaves out.
 Everything else a unit answers ETS before a download (its serial, order info, version, a hardware type
 no compare names, device control, maximum APDU, load states, table references, descriptions) the
-product does not give: a simulated unit of a catalogue row has no source for it.
+product does not give: a simulated unit of a catalogue row takes it from a donor (below).
+
+### A catalogue row's unit: the product over a donor
+
+A catalogue row whose application has no own unit borrows one (`tools/sim-unit-catalogue.ts`): the unit of a
+donor, an own unit of the application's mask, with the product's identity put over it and what ETS required in an
+earlier run put over that.
+
+| Source | What the unit answers from it |
+|---|---|
+| the product (the application program) | the mask (the donor's must be the application's), the manufacturer (0/12), the application's program id (PID 13 of the application object), every bit its `LdCtrlCompareProp` steps expect, on System 7 the PEI type of its task segments |
+| the identity loop | each value an ETS6.log `Required data mismatch` line required (`learnIdentity`, `rerunIdentity` against what the unit answered) |
+| the donor | everything else, as its collection and its captures show it: serial, order info, hardware type where nothing above names one, descriptions, maximum APDU, segment places, load states, restart, link timing |
+
+A value is put over the donor's element bit by bit, at the donor's length; bits past it must be zero (ETS takes a
+shorter answer with a zero tail). What neither source gives is refused, never filled in: a property the product
+gives only some bits of and the donor never showed, a value longer than the donor's element with bits set past it,
+a segment the donor places nowhere, a task segment for another application than the product's. The unit answers
+the product's program id as the application it holds, as each donor answered its own when it was collected; its
+memory and segments at the start are the donor's application's (what an MV-0701 download reads before it writes).
+
+**The donor** is chosen by one rule per mask, never per product, from the own units there are (`DONOR_RULES`):
+a unit of the mask qualifies where its application leaves its memory as written after a restart (another
+application's would not) and its captures show its answer to each restart a download of the application ends
+with (a confirmed restart for a System B application with Data Secure or a declared master reset, a basic
+restart otherwise); on MV-07B0 its captures must also show `A_MemoryExtended_Write` where the application declares
+extended memory services (ETS writes its memory so), on MV-0701 it must take every additional load control the
+application declares. Of the
+units that qualify, the one whose captures leave the fewest of its answers unshown is taken, then one collected in
+the state its captures show, then by id. A new own unit enters the choice as it is added to `tools/sim-units.ts`.
+A mask without a qualifying unit refuses the row, naming each unit and why. With the units simulated today:
+
+| Mask | Donor | Why the others do not qualify, or rank lower |
+|---|---|---|
+| MV-07B0 without Data Secure or extended memory services | MEAN WELL KNX-40E-1280D | the Theben DALI-Gateway and the OpenKNX RaumController leave more unshown; the Theben MIX 2, the Jung 400021SE and the GVS AMMA show no basic restart |
+| MV-07B0 with extended memory services, without Data Secure | OpenKNX RaumController | the MEAN WELL and the Theben DALI-Gateway show no `A_MemoryExtended_Write`; the Theben MIX 2, the Jung 400021SE and the GVS AMMA show no basic restart |
+| MV-07B0 with Data Secure | GVS AMMA-04/06.S | the Theben MIX 2 and the Jung 400021SE change their memory after a restart; the others show no confirmed restart |
+| MV-0701 | ABB US/U 4.2 | the Theben Meteodata 140 S clears a download marker at its restart; an application that declares task control 1 has no donor |
+| MV-0705 | MDT BE-02001.02 | the Gira Tastsensor 3 leaves more unshown |
+
+**Sources in the log.** The unit's log begins with what it is (application, donor, rule) and the source of each
+property it answers otherwise than its donor; each read it answers is noted with its source: the product, the
+identity loop, the donor, or this session where the answer is no longer what the unit held at the start.
+
+`tools/sim-unit-catalogue.test.ts` holds it: a catalogue unit (the MDT BE-06001.02 on the MDT BE-02001.02) answers
+every read of ETS's calibrated row of its donor, each with its source, its frames the donor's but for the hardware
+type the application's compare gives; a property neither side gives is refused with that reason; and the
+catalogue unit of each qualifying own unit's application on that unit answers ETS's whole download of its row
+frame for frame as the own unit does.
 
 ### A sweep row: ETS and Busforge into the same simulated unit
 
@@ -738,14 +793,22 @@ images for the row's configuration are held against ETS's own record of that dow
 runs over the corpus projects; its result stands beside the verdict.
 
 **A row in the corpus** is a directory `captures/ets-sweep/<application id>/<variant>/` holding
-`row.json` (the simulated unit, ETS's build, the simulator's endpoint ETS was set to, the export
+`row.json` (the simulated unit: an own unit's id, or for a catalogue unit its donor with a digest of its collection
+and behaviour, the rule that chose it, the identity loop's lines and the source of each property it answers
+otherwise than its donor, each held against the unit built today, so a row whose unit moved runs again; ETS's build, the simulator's endpoint ETS was set to, the export
 where there is one, the calibration where there is one), `configuration.json` (the device's
 configuration ETS downloaded, which Busforge downloads), ETS's capture `ets.log` with the simulator's
 lines `ets.log.sim.txt`, `ets6.log.txt`, and `explained.json` (the row's verdict today and every
 difference with its cause). A row may also hold
 `checks/<name>/`: runs of the driver below that repeat the row or were made to fail, each with the outcome
 its ETS6.log must give (`expected.json`), which `tools/ets-sweep.test.ts` holds it to; they are no rows
-of their own. The tool writes the verdicts into `internal/ets-sweep/manifest.json`:
+of their own. A catalogue unit's application program comes from the row's export, not from the corpus's
+`catalogue/`. The tool writes the verdicts into `internal/ets-sweep/manifest.json`, with each row's unit source
+(own, or the donor and its rule, and the donor the rule picks today where that is another), a catalogue unit's
+property sources, and where ETS went by an answer of the unit (`etsBranches`: the maximum APDU it negotiated from
+PID 56, the memory verify mode it detected, the unit's answer to a confirmed restart, and on MV-0701 how many octets
+the unit answered it before it wrote there and how many of them it then wrote, a write the line refused not
+counted), which a catalogue unit gives as its donor does:
 
 ```bash
 BUSFORGE_CORPUS=... bun run tools/ets-sweep.ts [<application>/<variant>]... [--keep=<dir>]
