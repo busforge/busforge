@@ -56,14 +56,14 @@ export interface PropertyMappedBehaviour {
   // (PID 14 bit 0) until its restart; null where no capture shows it, and the device control is then unknown.
   unloadStopsApplication: boolean | null;
   // The same for a load of its application while it is loaded (ETS's partial form); null where no capture shows it,
-  // a read of the device control then refused.
+  // a read of the device control then refused until it is written, the unit restarts or a shown stop sets the bit.
   loadStopsApplication: boolean | null;
   // Where `loadStopsApplication` is null: whether its captures show its memory writes after such a load answered as
   // before it; where not, they are refused as after an unshown unload.
   writesAfterLoadShown: boolean;
-  // Whether it takes a task segment at the address its application declares for the machine where that starts no
-  // segment it holds but lies inside or at the end of one; where not, a task segment names a held segment's start.
-  taskAtDeclaredAddress: boolean;
+  // The machines whose task segment it takes at the address its application declares for them where that starts no
+  // segment it holds but lies inside or at the end of one; another machine's task segment names a held segment's start.
+  taskAtDeclaredAddress: readonly number[];
   // Whether it takes the task control 1 its application declares (`03 04 <address:2> <count> 00 00 00 00 00`),
   // answered LOADING; where not, its captures show none.
   taskControl1: boolean;
@@ -272,8 +272,9 @@ export class SimUnit0705 extends SimUnit {
       if (value.length !== 10) { this.refuse(`${what}: a task segment of another form`); return false; }
       const at = value.readUInt16BE(2), id = value.subarray(5, 10);
       if (segs.length === 0) { this.refuse(`${what}: a task segment where object ${obj} holds no segment`); return false; }
-      const declared = this.unit.propertyMapped.taskAtDeclaredAddress && this.unit.declaredTaskSegment.get(obj) === at && segs.some((x) => at >= x.at && at <= x.at + x.size);
-      if (!declared && !segs.some((x) => x.at === at)) { this.refuse(`${what}: a task segment at 0x${at.toString(16)}, where object ${obj} holds no segment${this.unit.propertyMapped.taskAtDeclaredAddress ? " and its application declares none" : ""}`); return false; }
+      const atDeclared = this.unit.propertyMapped.taskAtDeclaredAddress.includes(obj);
+      const declared = atDeclared && this.unit.declaredTaskSegment.get(obj) === at && segs.some((x) => at >= x.at && at <= x.at + x.size);
+      if (!declared && !segs.some((x) => x.at === at)) { this.refuse(`${what}: a task segment at 0x${at.toString(16)}, where object ${obj} holds no segment${atDeclared ? " and its application declares none" : ""}`); return false; }
       if (value[4] !== this.unit.propertyMapped.peiType) { this.refuse(`${what}: a task segment of PEI type ${value[4]}, where the unit's captures carry ${this.unit.propertyMapped.peiType}`); return false; }
       if (!id.equals(this.unit.programId)) { this.refuse(`${what}: a task segment for application ${id.toString("hex")}, where the unit holds ${this.unit.programId.toString("hex")}`); return false; }
       this.taskAt.set(obj, at);

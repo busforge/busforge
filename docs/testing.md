@@ -595,7 +595,8 @@ show it, the address the application declares for the machine) and carry the uni
 it holds, and the task control 1
 the application declares where the unit's captures show it taken, over one memory at fixed addresses whose bytes
 an unload keeps; no property write but PID 5 and the device control is taken, and the device control after the
-application's unload, or its load while it is loaded, only where the unit's captures show it; the load states
+application's unload, or its load while it is loaded, only where the unit's captures show it (memory writes after
+such an unshown event are refused too, but where its captures show them answered as before); the load states
 are readable as memory at `0xB6EA` onwards as well. Where the unit reports memory-control blocks (PID 27), it
 computes one element per segment it reports in the form its collection shows (the segments flagged for it, or
 every EEPROM segment with the flagged ones marked and the others without a CRC), with the access the allocation
