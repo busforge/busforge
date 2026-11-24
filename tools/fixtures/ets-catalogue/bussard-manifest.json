@@ -1,0 +1,40 @@
+{
+ "generated": "2000-01-01T00:00:00+00:00",
+ "apps": {
+  "M-FFF1_A-0001-11-A001": {
+   "mask": "07B0",
+   "manufacturer": "M-FFF1",
+   "outcome": "captured"
+  },
+  "M-FFF1_A-0002-10-9999": {
+   "mask": "07B0",
+   "manufacturer": "M-FFF1",
+   "outcome": "captured"
+  },
+  "M-FFF1_A-0003-10-C003": {
+   "mask": "0705",
+   "manufacturer": "M-FFF1",
+   "outcome": "captured"
+  },
+  "M-FFF1_A-0007-10-0007": {
+   "mask": "0705",
+   "manufacturer": "M-FFF1",
+   "outcome": "captured"
+  },
+  "M-FFF2_A-0011-10-2345": {
+   "mask": "07B0",
+   "manufacturer": "M-FFF2",
+   "outcome": "captured"
+  },
+  "M-FFF9_A-0001-10-0001": {
+   "mask": "0701",
+   "manufacturer": "M-FFF9",
+   "outcome": "skipped-not-in-catalog"
+  },
+  "M-FFF9_A-0002-10-0002": {
+   "mask": "0012",
+   "manufacturer": "M-FFF9",
+   "outcome": "skipped-mask"
+  }
+ }
+}

@@ -1,0 +1,10 @@
+M-FFF1/M-FFF1_A-0001-11-A001/A	<AP Id="M-FFF1_A-0001-11-A001" ApplicationNumber="1" ApplicationVersion="17" ProgramType="ApplicationProgram" MaskVersion="MV-07B0" Name="Switch &amp; more" LoadProcedureStyle="MergedProcedure">
+M-FFF1/M-FFF1_A-0002-20-B002/A	<AP Id="M-FFF1_A-0002-20-B002" ApplicationNumber="2" ApplicationVersion="32" ProgramType="ApplicationProgram" MaskVersion="MV-07B0" Name="Dimmer" LoadProcedureStyle="MergedProcedure">
+M-FFF1/M-FFF1_A-0003-10-C003/A	<AP Id="M-FFF1_A-0003-10-C003" ApplicationNumber="3" ApplicationVersion="16" ProgramType="ApplicationProgram" MaskVersion="MV-0701" Name="Blind A" LoadProcedureStyle="MergedProcedure">
+M-FFF1/M-FFF1_A-0004-10-D004/A	<AP Id="M-FFF1_A-0004-10-D004" ApplicationNumber="4" ApplicationVersion="16" ProgramType="ApplicationProgram" MaskVersion="MV-0705" Name="Blind B" LoadProcedureStyle="MergedProcedure">
+M-FFF1/M-FFF1_A-0007-10-0007/A	<AP Id="M-FFF1_A-0007-10-0007" ApplicationNumber="7" ApplicationVersion="16" ProgramType="ApplicationProgram" MaskVersion="MV-091A" Name="Line coupler" LoadProcedureStyle="MergedProcedure">
+M-FFF2/M-FFF2_A-0010-12-1234-O0001/A	<AP Id="M-FFF2_A-0010-12-1234-O0001" ApplicationNumber="16" ApplicationVersion="18" ProgramType="ApplicationProgram" MaskVersion="MV-0705" Name="Sensor" LoadProcedureStyle="MergedProcedure">
+M-FFF2/M-FFF2_A-0012-10-3456/A	<AP Id="M-FFF2_A-0012-10-3456" ApplicationNumber="18" ApplicationVersion="17" ProgramType="ApplicationProgram" MaskVersion="MV-07B0" Name="Store disagrees" LoadProcedureStyle="MergedProcedure">
+M-FFF2/M-FFF2_A-0013-10-4567/A	<AP Id="M-FFF2_A-0013-10-4567" ApplicationNumber="19" ApplicationVersion="16" ProgramType="ApplicationProgram" MaskVersion="MV-07B0" Name="With PEI">
+M-FFF2/M-FFF2_A-0013-20-5678/A	<AP Id="M-FFF2_A-0013-20-5678" ApplicationNumber="19" ApplicationVersion="32" ProgramType="PeiProgram" MaskVersion="MV-07B0" Name="With PEI">
+M-FFF2/M-FFF2_A-0014-10-6789/A	<AP Id="M-FFF2_A-0014-10-6789" ApplicationNumber="20" ApplicationVersion="16" ProgramType="PeiProgram" MaskVersion="MV-07B0" Name="Program only">

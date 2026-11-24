@@ -1,0 +1,1 @@
+﻿{"Version":1,"Markets":[{"Id":"00000000-0000-0000-0000-0000000000a7","DefaultName":"Austria"},{"Id":"00000000-0000-0000-0000-0000000000de","DefaultName":"Germany"}]}

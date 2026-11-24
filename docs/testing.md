@@ -862,6 +862,41 @@ WARN  Knx.Ets.Hawk.Impl.VerifyAdditionalResourcesTask - Required data mismatch a
 `tools/sim-unit-product.ts` and prints the overrides to run the row again with, or why not (a value the
 product gives that ETS contradicts is not overwritten).
 
+### The catalogue's rows
+
+The sweep's rows come from ETS's online catalogue, as ETS keeps it on the bench host's disk; nothing
+is read from a manufacturer's file by another route, and nothing of ETS's is written.
+
+```bash
+bun run tools/ets-driver.ts catalogue-download [--batch <rows>] [--from <row>] [--out <dir>]
+bun run tools/ets-catalogue.ts fetch [--out <dir>]
+bun run tools/ets-catalogue.ts list <fetched dir> --json <file> --md <file> [--market Germany] \
+  [--masks 07B0,0701,0705] [--bussard <manifest.json>]
+```
+
+- **The index.** ETS holds the online catalogue as one index file per manufacturer: every entry's
+  order number, application (number, version, fingerprint), name and the markets it is offered in.
+  It does not hold the application's mask.
+- **The mask** is in the product data, which ETS holds only for products it loaded.
+  `catalogue-download` loads them all through the catalogue panel's "Herunterladen", which loads the
+  selected rows' product data without inserting a device. It walks the whole catalogue grid in
+  batches from its first row (a project open, the catalogue's search empty). The catalogue server
+  refuses some selections ("Online-Katalog-Download fehlgeschlagen", `(400) Bad Request` in ETS6.log):
+  such a batch is tried again at half its size, and a row refused alone is written down with its
+  full-resolution screenshot and passed. Rows already loaded leave "Herunterladen" disabled and pass
+  at once, so a run started again resumes.
+- **`fetch`** copies the index files, the market file, the `<AP …>` element of every application ETS
+  loaded, and where they came from (ETS's version and licence from ETS6.log, the index's date).
+- **`list`** builds one row per application the market offers at the given masks: its mask from the
+  product data (an application not loaded has no row and is listed as such, never guessed from its
+  name), its version as ETS shows it, every order number it is offered under, and one to search for,
+  where it stands alone at its version. Two applications under one order number and version are both
+  rows, each naming the other, so the sweep selects them by application id. An entry whose id,
+  application identifier, fingerprint or product data disagree is refused with the reason. With
+  bussard's manifest it lists the applications in either list and not the other, each with the reason
+  the lists show. The Markdown's generated part is rewritten between its markers; text around it
+  stays.
+
 ## Why the golden snapshot is not a correctness proof
 
 The golden file is generated from busforge's own output. It locks the output against accidental

@@ -10,6 +10,8 @@
 //   bun run tools/ets-driver.ts import <project.knxproj> [--password-env <VAR>]   into ETS (as a copy where it
 //                                                                                    holds the project); prints its name
 //   bun run tools/ets-driver.ts delete <project name>                             a project `import` brought in
+//   bun run tools/ets-driver.ts catalogue-download [--batch <rows>] [--from <row>] [--out <dir>]
+//                                     the online catalogue's product data into ETS's product store (downloadCatalogue)
 //   bun run tools/ets-driver.ts up | down | shot <png> | words [<png>] | xdo <args>... | type <text>
 //
 // THE ROW (runRow). On the bench host ETS runs maximised on the display, German UI, in its own project (no
@@ -59,7 +61,7 @@ const step = (what: string) => console.error(`${new Date().toISOString().slice(1
 // ---- the bench host ----
 
 // One ssh call: `command` as ssh's command line, `input` on its stdin; its stdout.
-function ssh(command: string, input: string | Buffer, opts: { timeoutMs?: number; allowFail?: boolean } = {}): Buffer {
+export function ssh(command: string, input: string | Buffer, opts: { timeoutMs?: number; allowFail?: boolean } = {}): Buffer {
   const r = spawnSync("ssh", ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", HOST, command], { input, timeout: opts.timeoutMs ?? 120_000, maxBuffer: 64 << 20 });
   if (r.error) throw r.error;
   if (r.status !== 0 && !opts.allowFail) throw new Error(`on ${HOST} (${r.status}): ${r.stderr.toString().trim()}\n${command === "bash -s" ? input.toString() : command}`);
@@ -72,7 +74,7 @@ const remote = (script: string, opts: { timeoutMs?: number; allowFail?: boolean 
 // the exports; Wine's Z: is the host's root).
 interface HostPaths { prefix: string; etsLog: string; state: string; exportDir: string; exportDirWin: string }
 let hostPaths: HostPaths | null = null;
-function host(): HostPaths {
+export function host(): HostPaths {
   if (hostPaths) return hostPaths;
   const [home, user] = remote(`printf '%s\\n%s' "$HOME" "$(id -un)"`).split("\n");
   const prefix = `${home}/ets/prefix`, state = `${home}/ets/sweep-driver`;
@@ -945,6 +947,121 @@ async function deleteProject(name: string): Promise<void> {
   writeImported(mine);
 }
 
+// ---- ETS's online catalogue into its product store ----
+
+// The catalogue's index on disk (tools/ets-catalogue.ts reads it) names each product's application but not its
+// mask; the mask is in the product data, which ETS keeps only for products it loaded. The catalogue panel's
+// Herunterladen loads the selected rows' product data without inserting anything. The catalogue server refuses
+// some selections with "(400) Bad Request" (all 6,860 rows, one manufacturer's 725, once 50; 40 and 60 passed):
+// the grid is walked in batches from its first row, a batch that fails is tried again at half its size, and one
+// row that fails alone is written down and passed. Rows already loaded leave Herunterladen disabled and pass at
+// once, so a run started again from the first row resumes where the last one ended.
+
+const CATALOGUE = {
+  download: [470, 659], downloadText: { x: 440, y: 652, w: 80, h: 14 }, search: [1460, 659], firstRow: [700, 731],
+  grid: { x: 316, y: 698, w: 1240, h: 462 },
+} as const;
+
+interface CatalogueFailure { row: number; dialog: string; screenshot: string }
+
+// Whether the toolbar's Herunterladen is enabled: its dark label (darkest pixel 0.19 measured) against the grey
+// of a disabled one (0.58).
+const downloadEnabled = (png: string) => measure(png, CATALOGUE.downloadText, ["-colorspace", "Gray", "-format", "%[fx:minima]"]) < 0.4;
+
+// The selection set to `size` rows from row `from` (counted from 0 down the grid). `fresh`: from the grid's first
+// row, else from the row after the selection (the keyboard focus stays in the grid while the toolbar is clicked).
+function selectRows(from: number, size: number, fresh: boolean): void {
+  if (fresh) {
+    // Scrolled to the top, the first catalogue row stands under the first manufacturer's header.
+    xdo("mousemove", "--sync", String(CATALOGUE.firstRow[0]), "900", "click", "--repeat", "3000", "--delay", "1", "4");
+    click(CATALOGUE.firstRow[0], CATALOGUE.firstRow[1]);
+    key("ctrl+Home");
+    if (from > 0) xdo("key", "--delay", "4", "--repeat", String(from), "Down");
+  } else key("Down");
+  if (size > 1) xdo("key", "--delay", "30", "--repeat", String(size - 1), "shift+Down");
+}
+
+// How one download ended: ETS6.log's end of the import, or its refusal (a dialog to confirm); ETS's dialogs
+// after it (the manufacturers' data merged) waited out.
+async function downloadOutcome(s: Screen, since: string): Promise<{ ok: true } | { ok: false; dialog: string; png: string }> {
+  const until = Date.now() + 15 * 60_000;
+  for (;;) {
+    await sleep(3000);
+    if (etsLogHas(since, "Import products took")) break;
+    const png = s.snap(), box = dialogBox(png);
+    const text = box ? words(png, box).map((w) => w.text).join(" ") : "";
+    if (/fehlgeschlagen/i.test(text) || etsLogHas(since, "WebException", /ObjectModel\.Operation/)) {
+      const dialog = text || "(no dialog; ETS6.log names a WebException)";
+      const ok = box ? findText(dialogButtons(png, box), "OK")[0] : undefined;
+      if (ok) click(ok.cx, ok.cy);
+      await waitNoDialog(s);
+      return { ok: false, dialog, png };
+    }
+    if (Date.now() > until) fail("a catalogue download did not end within 15 min");
+  }
+  await waitNoDialog(s);
+  return { ok: true };
+}
+
+// ETS's progress dialogs ("Importiere Daten") waited out; any other dialog fails.
+async function waitNoDialog(s: Screen): Promise<void> {
+  const until = Date.now() + 15 * 60_000;
+  for (let clear = 0; clear < 2;) {
+    await sleep(2000);
+    const png = s.snap(), box = dialogBox(png);
+    if (!box) { clear++; continue; }
+    clear = 0;
+    const text = words(png, box).map((w) => w.text).join(" ");
+    if (!/Importiere|Zusammenf|Download aus/i.test(text)) fail(`ETS shows a dialog during the catalogue download: ${text.slice(0, 200)}`);
+    if (Date.now() > until) fail("ETS's import dialog did not end within 15 min");
+  }
+}
+
+// The whole catalogue grid loaded, `batch` rows at a time. Needs a project open with the catalogue panel showing
+// the whole catalogue (search empty). Failed rows and their screenshots go to `out`; the rows it passed are
+// written to <out>/progress.json after every batch.
+async function downloadCatalogue(batch: number, out: string, from: number): Promise<CatalogueFailure[]> {
+  if (!/^ETS6 - /.test(etsTitle()) || /Übersicht|bersicht$/.test(etsTitle())) fail(`no project open in ETS (${etsTitle() || "no window"})`);
+  mkdirSync(out, { recursive: true });
+  const s = new Screen(out);
+  const failures: CatalogueFailure[] = [];
+  let row = from, size = batch, fresh = true, last = "";
+  try {
+    for (;;) {
+      selectRows(row, size, fresh);
+      fresh = false;
+      await sleep(800);
+      const png = s.snap();
+      // Down from the grid's last row moves nothing: the grid's pixels stay as they were.
+      const now = execFileSync("magick", [png, ...crop(CATALOGUE.grid), "-format", "%#", "info:"], { encoding: "utf8" }).trim();
+      if (now === last) break;
+      last = now;
+      if (!downloadEnabled(png)) { row += size; continue; }
+      const since = etsClock();
+      click(CATALOGUE.download[0], CATALOGUE.download[1]);
+      const r = await downloadOutcome(s, since);
+      // A refused download leaves the grid reloaded: the next batch is selected from its first row.
+      if (r.ok) step(`rows ${row}-${row + size - 1} loaded`);
+      else if (size > 1) { step(`rows ${row}-${row + size - 1} refused, again by ${Math.ceil(size / 2)}`); size = Math.ceil(size / 2); fresh = true; last = ""; continue; }
+      else {
+        const screenshot = join(out, `failed-row-${row}.png`);
+        writeFileSync(screenshot, readFileSync(r.png));
+        failures.push({ row, dialog: r.dialog, screenshot });
+        step(`row ${row} refused alone: ${r.dialog.slice(0, 120)}`);
+        fresh = true; last = "";
+      }
+      row += size;
+      size = batch;
+      writeFileSync(join(out, "progress.json"), `${JSON.stringify({ row, failures }, null, 1)}\n`);
+    }
+  } catch (e) {
+    shot(join(out, `driver-failed-row-${row}.png`));
+    throw e;
+  } finally { s.clean(); }
+  writeFileSync(join(out, "progress.json"), `${JSON.stringify({ row, done: true, failures }, null, 1)}\n`);
+  return failures;
+}
+
 // ---- the simulator on this machine ----
 
 interface Sim { stop(): Promise<void> }
@@ -1156,12 +1273,28 @@ async function main(): Promise<number> {
     for (const m of r.learned) console.log(`--sim-override ${m.object}/${m.pid}=${m.required.toString("hex")}    (${m.line})`);
     return 0;
   }
+  if (cmd === "catalogue-download") {
+    const opts = new Map<string, string>();
+    for (let i = 0; i < rest.length; i += 2) {
+      if (!/^--(batch|from|out)$/.test(rest[i]) || rest[i + 1] === undefined) throw new Error("usage: bun run tools/ets-driver.ts catalogue-download [--batch <rows>] [--from <row>] [--out <dir>]");
+      opts.set(rest[i].slice(2), rest[i + 1]);
+    }
+    const count = (name: string, d: number, min: number) => {
+      const v = opts.has(name) ? Number(opts.get(name)) : d;
+      if (!Number.isInteger(v) || v < min) throw new Error(`--${name} takes a whole number from ${min}`);
+      return v;
+    };
+    const out = opts.get("out") ?? join(tmpdir(), "ets-catalogue-download");
+    const failures = await downloadCatalogue(count("batch", 40, 1), out, count("from", 0, 0));
+    console.log(`${out}: ${failures.length} rows refused${failures.map((f) => `\n  row ${f.row}: ${f.dialog.slice(0, 160)}`).join("")}`);
+    return failures.length ? 1 : 0;
+  }
   if (cmd === "row") {
     const r = await runRow(rowOptions(rest));
     console.log(`${r.dir}: ${r.outcome.kind}${"why" in r.outcome ? `: ${r.outcome.why}` : ""} (${r.minutes.toFixed(1)} min)`);
     return r.outcome.kind === "completed" ? 0 : 1;
   }
-  throw new Error("usage: bun run tools/ets-driver.ts row|same|rerun-identity|up|down|shot|words|xdo|type ... (see the file's head)");
+  throw new Error("usage: bun run tools/ets-driver.ts row|same|rerun-identity|import|delete|catalogue-download|up|down|shot|words|xdo|type ... (see the file's head)");
 }
 
 if (import.meta.main) {
