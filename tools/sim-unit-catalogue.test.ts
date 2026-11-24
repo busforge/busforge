@@ -92,7 +92,7 @@ corpusDescribe("a catalogue unit's donor", () => {
     expect(chooseDonor(app, [])).toEqual({ refused: "no donor for MV-07B0: no own unit of the mask" });
     // A unit showing the Steinel's task control 1 but its task segment at the end of a segment, not inside one.
     const steinel = catalogueXml("M-008E_A-7079-10-9C41.xml.gz");
-    const atEnd: SimUnitSpec = { ...AURO_M0081, id: "a-unit-at-the-end", behaviour: AURO_M0081.behaviour as UnitBehaviour, memoryMapped: undefined, propertyMapped: { ...AURO_M0081.propertyMapped!, taskControls1: [{ lsm: 3, count: 1 }] } };
+    const atEnd: SimUnitSpec = { ...AURO_M0081, id: "a-unit-at-the-end", behaviour: AURO_M0081.behaviour as UnitBehaviour, memoryMapped: undefined, propertyMapped: { ...AURO_M0081.propertyMapped!, taskControls1: [{ lsm: 3, count: 1, at: "inside" }] } };
     expect(donorUnfit(atEnd, steinel)).toBe("its captures show no task segment of object 3 inside a segment");
     expect(catalogueUnitSpec("M-0162_A-0004-11-F245", catalogueXml("M-0162_A-0004-11-F245.xml.gz"))).toEqual({ refused: "M-0162_A-0004-11-F245 has its own unit meanwell-knx40e" });
     const mdt = catalogueXml("M-0083_A-0137-20-7EB2.xml.gz");

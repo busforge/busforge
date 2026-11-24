@@ -546,7 +546,7 @@ export const AURO_M0081: SimUnitSpec = {
     descriptionIndex: null,
     shownWrites: new Map(),
   },
-  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x00, unloadStopsApplication: false, loadStopsApplication: false, writesAfterLoadShown: false, taskSegmentsElsewhere: [{ lsm: 3, place: "end" }], taskControls1: [{ lsm: 3, count: 0 }], mcbSegments: "flagged" },
+  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x00, unloadStopsApplication: false, loadStopsApplication: false, writesAfterLoadShown: false, taskSegmentsElsewhere: [{ lsm: 3, place: "end" }], taskControls1: [{ lsm: 3, count: 0, at: "zero" }], mcbSegments: "flagged" },
 };
 
 // The Theben theLuxa P300 presence detector (M-0048_A-107E-12-5B58, MV-0705), from the collection right before
@@ -559,7 +559,7 @@ export const AURO_M0081: SimUnitSpec = {
 //   (application not stopped), 4 with verify mode;
 // - its task segments carry 00 between the address and the program id; ETS allocates its tables at their own size
 //   and names the segment's start in their task segments; the application's names the address its application
-//   declares, inside a segment, and its task control 1 has count 1;
+//   declares, inside a segment, and its task control 1 has count 1 at an address inside a segment;
 // - it answers a memory read into a segment that is loading with the bytes written there since its load
 //   (Busforge's read-backs in collections/theluxa-p300-hc03-2026-10-07/theluxa-busforge-full-r1.log);
 // - its memory-control block reports every EEPROM segment: one flagged 0x80 as `<size:4> 01 <access> <CRC:2>`,
@@ -590,7 +590,7 @@ export const THEBEN_THELUXA_P300: SimUnitSpec = {
     descriptionIndex: null,
     shownWrites: new Map(),
   },
-  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x00, unloadStopsApplication: false, loadStopsApplication: false, writesAfterLoadShown: false, taskSegmentsElsewhere: [{ lsm: 3, place: "inside" }], taskControls1: [{ lsm: 3, count: 1 }], mcbSegments: "eeprom" },
+  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x00, unloadStopsApplication: false, loadStopsApplication: false, writesAfterLoadShown: false, taskSegmentsElsewhere: [{ lsm: 3, place: "inside" }], taskControls1: [{ lsm: 3, count: 1, at: "inside" }], mcbSegments: "eeprom" },
 };
 
 // The MDT BE-06001 universal interface 6-fold (M-0083_A-00B4-32-3919, MV-0705), from the collection right before

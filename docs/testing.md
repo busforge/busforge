@@ -590,10 +590,10 @@ the restart) is in its entry in `tools/sim-units.ts`; where a unit's captures le
 
 `tools/sim-unit-0705.ts` is the property-mapped System 7 unit (MV-0705) on the same core: its load-state
 machines take their events on PID 5 like System B, but absolute and stack segments at the address the
-request names and the task segment, which must name a segment the machine holds (or, where the unit's captures
-show it, the address the application declares for the machine) and carry the unit's PEI type and the application
-it holds, and the task control 1
-the application declares where the unit's captures show it taken, over one memory at fixed addresses whose bytes
+request names and the task segment, which must name a segment the machine holds (or the address the application
+declares for the machine, at the end of a segment or inside one, where the unit's captures show a task segment of
+that machine there) and carry the unit's PEI type and the application it holds, and the task control 1 the
+application declares where the unit's captures show one of that machine, count and address place, over one memory at fixed addresses whose bytes
 an unload keeps; no property write but PID 5 and the device control is taken, and the device control after the
 application's unload, or its load while it is loaded, only where the unit's captures show it (memory writes after
 such an unshown event are refused too, but where its captures show them answered as before); the load states
@@ -709,7 +709,7 @@ with (a confirmed restart for a System B application with Data Secure or a decla
 restart otherwise); on MV-07B0 its captures must also show `A_MemoryExtended_Write` where the application declares
 extended memory services (ETS writes its memory so), on MV-0701 it must take every additional load control the
 application declares, on MV-0705 its captures must show each task control 1 the application declares (of its
-machine and count) and each task segment it declares at an address that starts no declared segment (of its machine,
+machine and count, its address 0 or at the same place against the segments) and each task segment it declares at an address that starts no declared segment (of its machine,
 at the end of a segment or inside one as declared). Of the
 units that qualify, the one whose captures leave the fewest of its answers unshown is taken, then one collected in
 the state its captures show, then by id. A new own unit enters the choice as it is added to `tools/sim-units.ts`.
@@ -724,7 +724,7 @@ A mask without a qualifying unit refuses the row, naming each unit and why. With
 | MV-0705 without a task control 1, every task segment at the start of a declared segment | MDT BE-02001.02 | the Auro presence detector, the Theben theLuxa P300 and the MDT BE-06001 leave more unshown (four answers to its three), the Gira Tastsensor 3 five |
 | MV-0705 with a task control 1 of count 0 and the application's task segment at the end of a segment | Auro presence detector | the others show no task control 1 of count 0 or no task segment at the end of a segment |
 | MV-0705 with a task control 1 of count 1 and the application's task segment inside a segment | Theben theLuxa P300 | the others show no task control 1 of count 1 or no task segment inside a segment |
-| MV-0705 with another combination (the Gira Tastsensor 3's application: count 0, inside a segment) | none | no unit shows both |
+| MV-0705 with a task control 1 or a task segment place no single unit's captures cover with the rest (the Gira Tastsensor 3's application: count 0 at address 0, its task segment inside a segment) | none | the Auro shows the count, the theLuxa P300 the place, no unit both |
 
 **Sources in the log.** The unit's log begins with what it is (application, donor, rule) and the source of each
 property it answers otherwise than its donor; each read it answers is noted with its source: the product, the

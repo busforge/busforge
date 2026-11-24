@@ -9,6 +9,7 @@ import { memoryImage, parseCapture } from "./etsdiff.ts";
 import { busforgeIntoSim } from "./ets-sweep.ts";
 import { giraM0008Configuration } from "./gira-m0008-config.ts";
 import type { SimUnit } from "./sim-unit.ts";
+import type { UnitBehaviour } from "./sim-unit-model.ts";
 import { SimUnit0705 } from "./sim-unit-0705.ts";
 import { confirmationDifferences, framePairs, replayCapture, replayDifferences, type ReplayStep } from "./sim-unit-replay.ts";
 import { AURO_M0081, GIRA_TS3, MDT_BE02001, MDT_BE06001, THEBEN_THELUXA_P300, newSimUnit, type SimUnitSpec } from "./sim-units.ts";
@@ -253,5 +254,19 @@ corpusDescribe("the new simulated MV-0705 units", () => {
     const gira = newSimUnit(GIRA_TS3, {}, { link: { ackMs: 0, nakMs: 0 } });
     for (const t of ["80", "43d70305100101000000000000000000", "c2", "47d7030510010302435400000810d711"]) await send(gira, GIRA_TS3)(t);
     expect(gira.refusals).toEqual(["sim-refused A_PropertyValue_Write 3/5 0302435400000810d711: a task segment at 0x4354, inside a segment of object 3, which no capture shows the unit take"]);
+    // The Auro's application segment of object 3, then a task segment inside it and one outside every segment, which
+    // its application does not declare, and a task control 1 of another count than it declares.
+    const auro2 = newSimUnit(AURO_M0081, {}, { link: { ackMs: 0, nakMs: 0 } });
+    for (const t of ["80", "43d70305100104000000000000000000", "c2", "47d70305100101000000000000000000", "c6", "4bd7030510010300405c005bf2038000", "ca", "4fd70305100103024080000081fe0111", "53d70305100103025000000081fe0111", "57d70305100103040000010000000000"]) await send(auro2, AURO_M0081)(t);
+    expect(auro2.refusals).toEqual([
+      "sim-refused A_PropertyValue_Write 3/5 03024080000081fe0111: a task segment at 0x4080, inside a segment of object 3, which the application does not declare",
+      "sim-refused A_PropertyValue_Write 3/5 03025000000081fe0111: a task segment at 0x5000, outside the segments object 3 holds",
+      "sim-refused A_PropertyValue_Write 3/5 03040000010000000000: a task control 1 at 0x0 with count 1, which the application does not declare for object 3",
+    ]);
+    // A unit whose captures show its task control 1 only inside a segment refuses the Auro's at address 0.
+    const inside: SimUnitSpec = { ...AURO_M0081, behaviour: AURO_M0081.behaviour as UnitBehaviour, memoryMapped: undefined, propertyMapped: { ...AURO_M0081.propertyMapped!, taskControls1: [{ lsm: 3, count: 0, at: "inside" }] } };
+    const auro3 = newSimUnit(inside, {}, { link: { ackMs: 0, nakMs: 0 } });
+    for (const t of ["80", "43d70305100104000000000000000000", "c2", "47d70305100101000000000000000000", "c6", "4bd70305100103040000000000000000"]) await send(auro3, inside)(t);
+    expect(auro3.refusals).toEqual(["sim-refused A_PropertyValue_Write 3/5 03040000000000000000: a task control 1 of object 3 with count 0 at address 0, which no capture shows the unit take"]);
   });
 });

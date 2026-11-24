@@ -7,9 +7,9 @@
 //   absolute segments: `03 00 <address:2> <size:2> <access> <memory type> <flags> 00` (the stack segment
 //   `03 01` in the same form) at the address the request names, and the task segment
 //   `03 02 <address:2> <octet> <program id:5>`, and the task control 1 its application declares,
-//   `03 04 <address:2> <count> 00 00 00 00 00`, where the unit's captures show one of that count; every one answered
-//   LOADING. A load is
-//   taken from UNLOADED and from LOADED (the application loaded again without an unload, ETS's partial form);
+//   `03 04 <address:2> <count> 00 00 00 00 00`, where the unit's captures show one of that count and address place;
+//   every one answered LOADING. A load is taken from UNLOADED and from LOADED (the application loaded again without
+//   an unload, ETS's partial form);
 // - its memory is one address space at fixed addresses: what the collection read, and what is written; an
 //   unload forgets the machine's segments and keeps their bytes (a later allocation at the same address
 //   holds them, which the CRCs of the memory-control blocks after a download show);
@@ -68,8 +68,9 @@ export interface PropertyMappedBehaviour {
   // task segment names a held segment's start.
   taskSegmentsElsewhere: readonly { lsm: number; place: "end" | "inside" }[];
   // The task controls 1 it takes (`03 04 <address:2> <count> 00 00 00 00 00`, answered LOADING), per machine with their
-  // count, as its captures show them, each at the address the application declares; any other is refused.
-  taskControls1: readonly { lsm: number; count: number }[];
+  // count and where their address lies (0, or against the machine's segments), as its captures show them, each at the
+  // address the application declares; any other is refused.
+  taskControls1: readonly { lsm: number; count: number; at: TaskControlPlace }[];
   // Which segments its memory-control block reports: those flagged 0x80, each `<size:4> 00 <access> <CRC:2>`
   // ("flagged"), or every EEPROM segment, a flagged one `<size:4> 01 <access> <CRC:2>`, another
   // `<size:4> 00 <access> 00 00` ("eeprom"); null for a unit that refuses its memory-control blocks.
@@ -120,7 +121,7 @@ export function simUnit0705Model(collection: CollectPackage, appXml: string, beh
   const proc = parseLoadProcedures(appXml);
   const steps = flattenSteps(proc, "full");
   const tasks = declaredTasks(proc);
-  if (typeof tasks === "string") refuse(tasks);
+  if (typeof tasks === "string") return refuse(tasks);
 
   const bytes = Buffer.alloc(MEMORY_END), known = new Uint8Array(MEMORY_END);
   for (const r of records) {
@@ -183,7 +184,7 @@ export function simUnit0705Model(collection: CollectPackage, appXml: string, beh
   return {
     ...behaviour,
     ia: iaToNum(collection.ia), mask, maxApdu: pm.maxApdu, objects, descriptions, functionStates, memoryExtendedRead,
-    crcConvention: crc, memory: { bytes, known }, held, programId: Buffer.from(programId), ...(tasks as DeclaredTasks), propertyMapped: pm,
+    crcConvention: crc, memory: { bytes, known }, held, programId: Buffer.from(programId), ...tasks, propertyMapped: pm,
   };
 }
 
@@ -197,16 +198,21 @@ export function declaredTasks(proc: LoadProcedures): DeclaredTasks | string {
   for (const s of steps.filter((x) => x.verb === "LdCtrlTaskSegment")) {
     const lsm = lsmIdx(s), at = stepAddress(s);
     if (lsm === undefined || at === undefined) return "the application declares a task segment without its machine or address";
+    if (declaredTaskSegment.has(lsm)) return `the application declares two task segments for object ${lsm}`;
     declaredTaskSegment.set(lsm, at);
   }
   const declaredTaskControl1 = new Map<number, { address: number; count: number }>();
   for (const s of steps.filter((x) => x.verb === "LdCtrlTaskCtrl1")) {
     const t = taskCtrl1Of(s);
     if (typeof t === "string") return `the application's task control 1: ${t}`;
+    if (declaredTaskControl1.has(t.lsm)) return `the application declares two task controls 1 for object ${t.lsm}`;
     declaredTaskControl1.set(t.lsm, { address: t.address, count: t.count });
   }
   return { declaredTaskSegment, declaredTaskControl1 };
 }
+
+// How a refusal names where an address lies against segments.
+export const PLACE_TEXT = { start: "at the start of a segment", end: "at the end of a segment", inside: "inside a segment", outside: "outside the segments" } as const;
 
 // Where a task segment at `at` lies against segments: at the start of one, at the end of one, inside one, or outside.
 export type TaskSegmentPlace = "start" | "end" | "inside" | "outside";
@@ -216,17 +222,30 @@ export function taskSegmentPlace(at: number, segs: readonly { at: number; size: 
   return segs.some((x) => at > x.at && at < x.at + x.size) ? "inside" : "outside";
 }
 
-// Where the application's full download puts each task segment of objects 1 to 3 that starts none of the absolute
-// segments it declares for the machine.
-export function declaredTaskPlaces(proc: LoadProcedures, tasks: DeclaredTasks): { lsm: number; place: Exclude<TaskSegmentPlace, "start"> }[] {
+// Where a task control 1's address lies: 0 (no task), or against the machine's segments.
+export type TaskControlPlace = "zero" | TaskSegmentPlace;
+export const taskControlPlace = (at: number, segs: readonly { at: number; size: number }[]): TaskControlPlace => (at === 0 ? "zero" : taskSegmentPlace(at, segs));
+
+// The forms of the application's full download's task declarations against the absolute segments it declares for
+// each machine: each task segment of objects 1 to 3 that starts none of them, with where it lies, and each task control
+// 1 with its count and where its address lies; or why they cannot be read.
+export interface DeclaredTaskForms { taskPlaces: { lsm: number; place: Exclude<TaskSegmentPlace, "start"> }[]; taskControls1: { lsm: number; count: number; at: TaskControlPlace }[] }
+export function declaredTaskForms(proc: LoadProcedures, tasks: DeclaredTasks): DeclaredTaskForms | string {
   const steps = flattenSteps(proc, "full");
-  return LSMS.flatMap((lsm) => {
+  const segments = new Map<number, { at: number; size: number }[]>();
+  for (const s of steps.filter((x) => x.verb === "LdCtrlAbsSegment")) {
+    const lsm = lsmIdx(s), at = stepAddress(s), size = stepSize(s);
+    if (lsm === undefined || at === undefined || size === undefined) return "the application declares an absolute segment without its machine, address or size";
+    (segments.get(lsm) ?? segments.set(lsm, []).get(lsm)!).push({ at, size });
+  }
+  const taskPlaces = LSMS.flatMap((lsm) => {
     const at = tasks.declaredTaskSegment.get(lsm);
     if (at === undefined) return [];
-    const segs = steps.filter((s) => s.verb === "LdCtrlAbsSegment" && lsmIdx(s) === lsm).map((s) => ({ at: stepAddress(s) ?? -1, size: stepSize(s) ?? 0 }));
-    const place = taskSegmentPlace(at, segs);
+    const place = taskSegmentPlace(at, segments.get(lsm) ?? []);
     return place === "start" ? [] : [{ lsm, place }];
   });
+  const taskControls1 = [...tasks.declaredTaskControl1].map(([lsm, t]) => ({ lsm, count: t.count, at: taskControlPlace(t.address, segments.get(lsm) ?? []) }));
+  return { taskPlaces, taskControls1 };
 }
 
 export class SimUnit0705 extends SimUnit {
@@ -310,9 +329,9 @@ export class SimUnit0705 extends SimUnit {
       if (segs.length === 0) { this.refuse(`${what}: a task segment where object ${obj} holds no segment`); return false; }
       const place = taskSegmentPlace(at, segs);
       if (place !== "start") {
-        if (place === "outside") { this.refuse(`${what}: a task segment at 0x${at.toString(16)}, outside the segments object ${obj} holds`); return false; }
-        if (this.unit.declaredTaskSegment.get(obj) !== at) { this.refuse(`${what}: a task segment at 0x${at.toString(16)}, ${place === "end" ? "at the end of" : "inside"} a segment of object ${obj}, which the application does not declare`); return false; }
-        if (!this.unit.propertyMapped.taskSegmentsElsewhere.some((t) => t.lsm === obj && t.place === place)) { this.refuse(`${what}: a task segment at 0x${at.toString(16)}, ${place === "end" ? "at the end of" : "inside"} a segment of object ${obj}, which no capture shows the unit take`); return false; }
+        if (place === "outside") { this.refuse(`${what}: a task segment at 0x${at.toString(16)}, ${PLACE_TEXT.outside} object ${obj} holds`); return false; }
+        if (this.unit.declaredTaskSegment.get(obj) !== at) { this.refuse(`${what}: a task segment at 0x${at.toString(16)}, ${PLACE_TEXT[place]} of object ${obj}, which the application does not declare`); return false; }
+        if (!this.unit.propertyMapped.taskSegmentsElsewhere.some((t) => t.lsm === obj && t.place === place)) { this.refuse(`${what}: a task segment at 0x${at.toString(16)}, ${PLACE_TEXT[place]} of object ${obj}, which no capture shows the unit take`); return false; }
       }
       if (value[4] !== this.unit.propertyMapped.peiType) { this.refuse(`${what}: a task segment of PEI type ${value[4]}, where the unit's captures carry ${this.unit.propertyMapped.peiType}`); return false; }
       if (!id.equals(this.unit.programId)) { this.refuse(`${what}: a task segment for application ${id.toString("hex")}, where the unit holds ${this.unit.programId.toString("hex")}`); return false; }
@@ -324,7 +343,8 @@ export class SimUnit0705 extends SimUnit {
       const declared = this.unit.declaredTaskControl1.get(obj);
       const at = value.readUInt16BE(2), count = value[4];
       if (!declared || declared.address !== at || declared.count !== count) { this.refuse(`${what}: a task control 1 at 0x${at.toString(16)} with count ${count}, which the application does not declare for object ${obj}`); return false; }
-      if (!this.unit.propertyMapped.taskControls1.some((t) => t.lsm === obj && t.count === count)) { this.refuse(`${what}: a task control 1 of object ${obj} with count ${count}, which no capture shows the unit take`); return false; }
+      const place = taskControlPlace(at, segs);
+      if (!this.unit.propertyMapped.taskControls1.some((t) => t.lsm === obj && t.count === count && t.at === place)) { this.refuse(`${what}: a task control 1 of object ${obj} with count ${count} at ${place === "zero" ? "address 0" : `an address ${PLACE_TEXT[place]}`}, which no capture shows the unit take`); return false; }
       return true;
     }
     this.refuse(`${what}: additional load control 0x${value[1].toString(16)} is not shown on this unit`);

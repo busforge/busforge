@@ -24,7 +24,7 @@ import { catalogueXml, corpusPath } from "./corpus.ts";
 import { SimUnit, type AnswerSources, type SimProperty, type SimUnitCoreModel } from "./sim-unit.ts";
 import { simUnitModel } from "./sim-unit-model.ts";
 import { SimUnit0701, simUnit0701Model, type AdditionalControl } from "./sim-unit-0701.ts";
-import { declaredTaskPlaces, declaredTasks, SimUnit0705, simUnit0705Model, type DeclaredTasks, type TaskSegmentPlace } from "./sim-unit-0705.ts";
+import { declaredTaskForms, declaredTasks, PLACE_TEXT, SimUnit0705, simUnit0705Model, type DeclaredTaskForms, type DeclaredTasks } from "./sim-unit-0705.ts";
 import { productUnit, rerunIdentity, type IdentityValue, type Mismatch, type ProductUnit } from "./sim-unit-product.ts";
 import { newSimUnit, SIM_UNITS, type SimUnitSpec } from "./sim-units.ts";
 
@@ -71,13 +71,13 @@ const COMMON_RULE = "an own unit of the mask whose application leaves its memory
 export const DONOR_RULES: Record<Mask, string> = {
   "MV-07B0": `MV-07B0: ${COMMON_RULE}; and whose captures show A_MemoryExtended_Write where the application declares extended memory services`,
   "MV-0701": `MV-0701: ${COMMON_RULE}; and that takes every additional load control the application declares`,
-  "MV-0705": `MV-0705: ${COMMON_RULE}; and whose captures show each task control 1 the application declares, of its machine and count, and each task segment it declares at an address that starts no declared segment, of its machine and at the same place (the end of a segment, or inside one)`,
+  "MV-0705": `MV-0705: ${COMMON_RULE}; and whose captures show each task control 1 the application declares, of its machine and count with its address 0 or at the same place, and each task segment it declares at an address that starts no declared segment, of its machine and at the same place (the end of a segment, or inside one)`,
 };
 
 const ADDITIONAL_VERBS: Record<string, AdditionalControl> = { LdCtrlAbsSegment: "absolute-segment", LdCtrlTaskSegment: "task-segment", LdCtrlTaskCtrl1: "task-control-1" };
 
 type AppConfig = ReturnType<typeof parseAppConfig>;
-type Needs = { basic: boolean; confirmed: boolean; extendedWrite: boolean; additional: AdditionalControl[]; taskControls1: { lsm: number; count: number }[]; taskPlaces: { lsm: number; place: Exclude<TaskSegmentPlace, "start"> }[] };
+type Needs = { basic: boolean; confirmed: boolean; extendedWrite: boolean; additional: AdditionalControl[] } & DeclaredTaskForms;
 
 // What a download of the application needs of its unit beyond the mask: a basic restart at its end (System 7's
 // LdCtrlRestart; a System B download without Data Secure, whose closing ETS takes from the mask), a confirmed restart
@@ -91,17 +91,16 @@ function needs(cfg: AppConfig): Needs | string {
   const systemB = cfg.mask === "MV-07B0";
   const tasks: DeclaredTasks | string = cfg.mask === "MV-0705" ? declaredTasks(proc) : { declaredTaskSegment: new Map(), declaredTaskControl1: new Map() };
   if (typeof tasks === "string") return tasks;
+  const forms = declaredTaskForms(proc, tasks);
+  if (typeof forms === "string") return forms;
   return {
     basic: systemB ? !proc.secureEnabled : proc.verbs.includes("LdCtrlRestart"),
     confirmed: (systemB && proc.secureEnabled) || proc.verbs.includes("LdCtrlMasterReset"),
     extendedWrite: systemB && proc.extendedMemoryServices,
     additional: cfg.mask === "MV-0701" ? [...new Set(proc.verbs.flatMap((v) => (ADDITIONAL_VERBS[v] ? [ADDITIONAL_VERBS[v]] : [])))] : [],
-    taskControls1: [...tasks.declaredTaskControl1].map(([lsm, t]) => ({ lsm, count: t.count })),
-    taskPlaces: declaredTaskPlaces(proc, tasks),
+    ...forms,
   };
 }
-
-const PLACE = { end: "at the end of a segment", inside: "inside a segment", outside: "outside the segments" } as const;
 
 // Why `u` cannot be the donor of a download with these needs, or null.
 function unfit(u: SimUnitSpec, need: Needs): string | null {
@@ -113,10 +112,10 @@ function unfit(u: SimUnitSpec, need: Needs): string | null {
   if (need.extendedWrite && !b.memoryExtendedWrite) return "its captures show no A_MemoryExtended_Write";
   const missing = need.additional.filter((a) => !u.memoryMapped?.additional.includes(a));
   if (missing.length) return `its captures show no ${missing.join(", ")}`;
-  const control = need.taskControls1.find((t) => !u.propertyMapped?.taskControls1.some((x) => x.lsm === t.lsm && x.count === t.count));
-  if (control) return `its captures show no task control 1 of object ${control.lsm} with count ${control.count}`;
+  const control = need.taskControls1.find((t) => !u.propertyMapped?.taskControls1.some((x) => x.lsm === t.lsm && x.count === t.count && x.at === t.at));
+  if (control) return `its captures show no task control 1 of object ${control.lsm} with count ${control.count} at ${control.at === "zero" ? "address 0" : `an address ${PLACE_TEXT[control.at]}`}`;
   const task = need.taskPlaces.find((t) => !u.propertyMapped?.taskSegmentsElsewhere.some((x) => x.lsm === t.lsm && x.place === t.place));
-  if (task) return `its captures show no task segment of object ${task.lsm} ${PLACE[task.place]}`;
+  if (task) return `its captures show no task segment of object ${task.lsm} ${PLACE_TEXT[task.place]}`;
   return null;
 }
 // The same, for an application whose declarations cannot be read.
@@ -321,8 +320,8 @@ export function catalogueUnit(spec: CatalogueUnitSpec): CatalogueUnit {
   };
   if (spec.donor.propertyMapped || spec.donor.memoryMapped) properties.set("PEI type", `product: the application's PEI type ${cfg.appPeiType}`);
   const tasks = spec.donor.propertyMapped ? declaredTasks(cfg.loadProcedures) : null;
-  if (typeof tasks === "string") refuse(tasks);
-  const overlay: Over = { objects, sources, programId: Buffer.from(programId), peiType: cfg.appPeiType, tasks: tasks as DeclaredTasks | null };
+  if (typeof tasks === "string") return refuse(tasks);
+  const overlay: Over = { objects, sources, programId: Buffer.from(programId), peiType: cfg.appPeiType, tasks };
   return { spec, identity, objects, properties, make: (opts = {}) => donor.make(overlay, opts) };
 }
 
