@@ -532,6 +532,17 @@ export class SimUnit implements KnxTransport {
     this.note("restart");
   }
 
+  // The device control after an event of the application's load-state machine: its application-stopped bit set where
+  // the unit's captures show it set, unknown where they do not show it. A load leaves only that bit unknown, which a
+  // later shown stop sets; an unknown after an unload stays until the device control is written or the unit restarts.
+  protected stopsApplication(event: "unload" | "load", stops: boolean | null): void {
+    if (stops === null) { if (this.deviceControlUnknown !== "unload") this.deviceControlUnknown = event; return; }
+    if (!stops) return;
+    const dc = this.property(0, PID_DEVICE_CONTROL)!;
+    dc.elements = [Buffer.from([dc.elements![0][0] | APPLICATION_STOPPED])];
+    if (this.deviceControlUnknown === "load") this.deviceControlUnknown = null;
+  }
+
   protected property(obj: number, pid: number): SimProperty | null {
     return this.objects.get(obj)?.get(pid) ?? null;
   }
@@ -657,8 +668,7 @@ export class SimUnit implements KnxTransport {
       case EVENT.UNLOAD:
         this.mcbWritten.delete(obj);
         if (this.segments.has(obj)) { this.referenceKnown.set(obj, false); this.mcbKnown.set(obj, false); }
-        if (obj === APPLICATION_LSM && (this.model.unloadStopsApplication ?? null) === null) this.deviceControlUnknown = "unload";
-        if (obj === APPLICATION_LSM && this.model.unloadStopsApplication) { const dc = this.property(0, PID_DEVICE_CONTROL)!; dc.elements = [Buffer.from([dc.elements![0][0] | APPLICATION_STOPPED])]; }
+        if (obj === APPLICATION_LSM) this.stopsApplication("unload", this.model.unloadStopsApplication ?? null);
         return set(STATE.UNLOADED);
       case EVENT.LOAD:
         if (state !== STATE.UNLOADED) { this.refuse(`${what}: a load of a machine in state ${state}`); return null; }

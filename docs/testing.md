@@ -561,7 +561,8 @@ the confirmed restart, and the address reads by broadcast (in programming mode, 
 serial number, as far as a unit's captures show them). Everything else it refuses: a line in its log and in `refusals`, and no answer, so
 the tool's own timeout ends a run where an invented byte would have let it go on. A behaviour the unit's
 captures do not show is refused the same way: a frame in a time after a restart no capture shows the line
-in, a frame on the connection a restart ended, the device control after an unload, a property write or a
+in, a frame on the connection a restart ended, the device control after an unload (or, on MV-0705, a load while the
+application is loaded), a property write or a
 memory service its captures and collection do not show. Three exceptions are chosen, not shown, all where
 Busforge's restart proof probes, so its download test does not hang on the scheduler or a refusal: the MEAN
 WELL's line, down 0.38 s and up 0.65 s after its restart, is taken back at 0.5 s; the Meteodata 140 S's and the
@@ -589,8 +590,9 @@ the restart) is in its entry in `tools/sim-units.ts`; where a unit's captures le
 
 `tools/sim-unit-0705.ts` is the property-mapped System 7 unit (MV-0705) on the same core: its load-state
 machines take their events on PID 5 like System B, but absolute and stack segments at the address the
-request names and the task segment, which must name the address the application declares for the machine or
-a segment the machine holds and carry the unit's PEI type and the application it holds, and the task control 1
+request names and the task segment, which must name a segment the machine holds (or, where the unit's captures
+show it, the address the application declares for the machine) and carry the unit's PEI type and the application
+it holds, and the task control 1
 the application declares where the unit's captures show it taken, over one memory at fixed addresses whose bytes
 an unload keeps; no property write but PID 5 and the device control is taken, and the device control after the
 application's unload, or its load while it is loaded, only where the unit's captures show it; the load states

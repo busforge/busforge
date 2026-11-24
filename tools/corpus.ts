@@ -331,8 +331,9 @@ export const CORPUS_FILES: readonly string[] = [
   "internal/captures/cap-1004/mdt-plain.json",
   "collections/gira-m0008-backup-2026-10-05/1.1.1-gira-m0008-collect.json",
   "collections/auro-m0081-busforge-2026-10-06/1.1.18-auro-m0081-collect-nach-ets.json",
-  // The Theben MIX 2 RMG 8 T's collection right before ETS's later partial downloads, which tools/sim-unit.test.ts
-  // replays from it.
+  // The collections right before ETS's later partial downloads of the Theben MIX 2 RMG 8 T and before Busforge's
+  // captured downloads of the Auro and the MDT BE-06001, with those captures, which tools/sim-unit.test.ts and
+  // tools/sim-unit-0705.test.ts replay.
   "internal/release-readiness/22-house/1.1.53/1.1.53-collect-vor-77.json",
   "internal/house-compat/hc08-busforge-2026-10-09/1.1.56-collect-vor.json",
   "internal/house-compat/hc08-busforge-2026-10-09/mdtui-busforge-full-f1.log",

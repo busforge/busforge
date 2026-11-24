@@ -384,7 +384,7 @@ export const MDT_BE02001: SimUnitSpec = {
     descriptionIndex: null,
     shownWrites: new Map(),
   },
-  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x01, unloadStopsApplication: true, loadStopsApplication: null, taskControl1: false, mcbSegments: "flagged" },
+  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x01, unloadStopsApplication: true, loadStopsApplication: null, writesAfterLoadShown: true, taskAtDeclaredAddress: false, taskControl1: false, mcbSegments: null },
 };
 
 // The Gira Tastsensor 3 Komfort 3fach (M-0008_A-10D7-11-2783-O000A, MV-0705), from the collection before ETS's
@@ -425,7 +425,7 @@ export const GIRA_TS3: SimUnitSpec = {
     descriptionIndex: null,
     shownWrites: new Map(),
   },
-  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x00, unloadStopsApplication: null, loadStopsApplication: false, taskControl1: false, mcbSegments: "flagged" },
+  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x00, unloadStopsApplication: null, loadStopsApplication: false, writesAfterLoadShown: false, taskAtDeclaredAddress: false, taskControl1: false, mcbSegments: "flagged" },
 };
 
 // The Theben MIX 2 JMG 4 T (M-0048_A-493B-21-B471, MV-07B0; the HMG 6 T's application), from the collection after
@@ -444,7 +444,8 @@ export const GIRA_TS3: SimUnitSpec = {
 // - after its restart it clears P-199 "A_Download erfolgt" (bit 7 of octet 39 of the application segment), which
 //   every full and parameter download sets: the CRC of the first block of object 4's memory-control block it reports
 //   at the start of the next download is over the cleared bit;
-// - the interface confirmed a frame 16 ms after the request at the earliest; none negatively;
+// - the interface confirmed a frame 16 ms after the request at the earliest; its own captures show none confirmed
+//   negatively, the Theben DALI-Gateway's through the same interface after 63 ms;
 // - what its device control reads after the application is unloaded none of them shows.
 export const THEBEN_MIX2_JMG4T: SimUnitSpec = {
   id: "theben-mix2-jmg4t",
@@ -481,7 +482,8 @@ export const THEBEN_MIX2_JMG4T: SimUnitSpec = {
 // - a description read by PID is answered with the property's own index (object 2's PID 23 at index 3);
 // - memory is written with A_MemoryExtended_Write;
 // - after its restart it clears P-199 as the JMG 4 T does (-partial-params, -partial-diag-off);
-// - the interface confirmed a frame 16 ms after the request at the earliest; none negatively;
+// - the interface confirmed a frame 16 ms after the request at the earliest; its own captures show none confirmed
+//   negatively, the Theben DALI-Gateway's through the same interface after 63 ms;
 // - what its device control reads after the application is unloaded none of them shows.
 export const THEBEN_MIX2_RMG8T: SimUnitSpec = {
   id: "theben-mix2-rmg8t",
@@ -518,6 +520,7 @@ export const THEBEN_MIX2_RMG8T: SimUnitSpec = {
 // - it answers a memory read into a segment that is loading with the bytes written there since its load
 //   (Busforge's read-backs);
 // - its memory-control block reports each segment flagged 0x80 as `<size:4> 00 <access> <CRC:2>`; object 4 has none;
+// - its task segment of the application names the address its application declares, at the end of a segment;
 // - A_Restart: acknowledged on layer 2 and with T_Ack (every capture); frames 41 ms after the restart request (the
 //   earliest any capture shows, Busforge's probes 1 ms after the interface confirmed the restart) and later
 //   acknowledged, the line taken as up from the restart on as the Meteodata's above; numbered frames on the
@@ -537,14 +540,14 @@ export const AURO_M0081: SimUnitSpec = {
   behaviour: {
     restart: { basic: { acknowledged: true, tAck: "always" }, line: [{ atMs: 0, up: true }], deadConnection: "nothing", confirmedRestartSeconds: null },
     authorize: new Map([["ffffffff", 0]]),
-    link: { ackMs: 16, nakMs: HOUSE_INTERFACE.link.nakMs },
+    link: HOUSE_INTERFACE.link,
     programmingMode: null,
     serialNumberResponseTail: null,
     memoryExtendedWrite: false,
     descriptionIndex: null,
     shownWrites: new Map(),
   },
-  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x00, unloadStopsApplication: false, loadStopsApplication: false, taskControl1: true, mcbSegments: "flagged" },
+  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x00, unloadStopsApplication: false, loadStopsApplication: false, writesAfterLoadShown: false, taskAtDeclaredAddress: true, taskControl1: true, mcbSegments: "flagged" },
 };
 
 // The Theben theLuxa P300 presence detector (M-0048_A-107E-12-5B58, MV-0705), from the collection right before
@@ -563,7 +566,7 @@ export const AURO_M0081: SimUnitSpec = {
 // - its memory-control block reports every EEPROM segment: one flagged 0x80 as `<size:4> 01 <access> <CRC:2>`,
 //   another as `<size:4> 00 <access> 00 00`; object 4 has none;
 // - A_Restart: acknowledged on layer 2 and with T_Ack (every capture); Busforge's probe 41 or 42 ms after the restart
-//   request acknowledged in thirteen captures and not in three, frames from 333 ms on acknowledged (Busforge's
+//   request acknowledged in nine captures and not in three, frames from 333 ms on acknowledged (Busforge's
 //   probes, ETS's T_Disconnect about 1.1 s after it): before 333 ms the line is not shown and a frame refused;
 //   numbered frames on the connection the restart ended acknowledged and left without an answer (Busforge's probes);
 // - the free key grants access level 0;
@@ -588,7 +591,7 @@ export const THEBEN_THELUXA_P300: SimUnitSpec = {
     descriptionIndex: null,
     shownWrites: new Map(),
   },
-  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x00, unloadStopsApplication: false, loadStopsApplication: false, taskControl1: true, mcbSegments: "eeprom" },
+  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x00, unloadStopsApplication: false, loadStopsApplication: false, writesAfterLoadShown: false, taskAtDeclaredAddress: true, taskControl1: true, mcbSegments: "eeprom" },
 };
 
 // The MDT BE-06001 universal interface 6-fold (M-0083_A-00B4-32-3919, MV-0705), from the collection right before
@@ -628,7 +631,7 @@ export const MDT_BE06001: SimUnitSpec = {
     descriptionIndex: null,
     shownWrites: new Map(),
   },
-  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x01, unloadStopsApplication: true, loadStopsApplication: true, taskControl1: false, mcbSegments: "flagged" },
+  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x01, unloadStopsApplication: true, loadStopsApplication: true, writesAfterLoadShown: false, taskAtDeclaredAddress: false, taskControl1: false, mcbSegments: null },
 };
 
 export const SIM_UNITS: readonly SimUnitSpec[] = [MEANWELL_KNX40E, THEBEN_DALI_GATEWAY, OPENKNX_RAUMCONTROLLER, THEBEN_MIX2_HMG6T, JUNG_400021SE, GVS_AMMA, ABB_USU42, THEBEN_METEODATA_140S, MDT_BE02001, GIRA_TS3, THEBEN_MIX2_JMG4T, THEBEN_MIX2_RMG8T, AURO_M0081, THEBEN_THELUXA_P300, MDT_BE06001];

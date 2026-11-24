@@ -17,6 +17,9 @@ import { AURO_M0081, GIRA_TS3, MDT_BE02001, MDT_BE06001, THEBEN_THELUXA_P300, ne
 // alone; twenty times that under a loaded full check (docs/testing.md, "Timeouts of heavy tests").
 setDefaultTimeout(600_000);
 
+// A T_Ack or T_Disconnect, the requests whose confirmation a capture may lack.
+const ACK_OR_DISCONNECT = /^(81|[c-f][26ae])$/;
+
 // A capture replayed into `sim` on its own clock, as tools/sim-unit-replay.ts does it.
 async function replay(sim: SimUnit, spec: SimUnitSpec, text: string, tool: string, set: (ms: number) => void, from?: number): Promise<ReplayStep[]> {
   return replayCapture(sim, text, { tool, device: sim.deviceIa, interfaceIa: spec.interfaceIa, clock: set, from, broadcasts: true });
@@ -107,7 +110,7 @@ corpusDescribe("the simulated MDT BE-02001.02", () => {
       const firstEvent = steps.findIndex((s) => /^..d7..05/.test(s.request));
       const isMemoryRead = (tpdu: string) => { const t = Buffer.from(tpdu, "hex"); return ((((t[0] & 0x03) << 8) | t[1]) & 0x3f0) === 0x200; };
       // The unconfirmed requests are T_Acks and T_Disconnects; every other confirmation is the unit's.
-      expect([run, steps.filter((s) => s.unitCon === undefined && !/^(81|[c-f][26ae])$/.test(s.request))]).toEqual([run, []]);
+      expect([run, steps.filter((s) => s.unitCon === undefined && !ACK_OR_DISCONNECT.test(s.request))]).toEqual([run, []]);
       expect([run, confirmationDifferences(steps.filter((s) => s.unitCon !== undefined))]).toEqual([run, []]);
       // Every differing frame answers a memory read before the first load-state event.
       const differing = framePairs(steps).filter((f) => f.unit !== f.sim);
@@ -179,9 +182,7 @@ for (const { spec, captures, collection } of CALIBRATIONS) {
       for (const capture of captures) {
         const text = captureText(capture);
         const steps = await replay(sim, spec, text, "ETS", (ms) => { clock = ms; });
-        // The house's interface reports a long frame of the unit as a standard one; the priority is the unit's.
-        const reported = steps.map((st) => ({ ...st, unit: st.unit.map((f) => f.replace(/^[0-9a-f]{2}/, (c) => (parseInt(c, 16) & 0x0c).toString(16).padStart(2, "0"))), sim: st.sim.map((f) => f.replace(/^[0-9a-f]{2}/, (c) => (parseInt(c, 16) & 0x0c).toString(16).padStart(2, "0"))) }));
-        expect([capture, steps.length > 40, replayDifferences(reported, { context: 3 })]).toEqual([capture, true, []]);
+        expect([capture, steps.length > 40, replayDifferences(steps, { context: 3 })]).toEqual([capture, true, []]);
         expect([capture, notHeld(sim, text)]).toEqual([capture, []]);
       }
       expect(sim.refusals).toEqual([]);
@@ -210,7 +211,7 @@ for (const { spec, collection, captures } of BUSFORGE_CAPTURES) {
       const sim = newSimUnit(spec, { now: () => clock }, { link: { ackMs: 0, nakMs: 0 } }, collection);
       for (const capture of captures) {
         const steps = await replay(sim, spec, readFileSync(corpusPath(capture), "utf8"), "Busforge", (ms) => { clock = ms; });
-        expect([capture, steps.filter((s) => s.unitCon === undefined && !/^(81|[c-f][26ae])$/.test(s.request))]).toEqual([capture, []]);
+        expect([capture, steps.filter((s) => s.unitCon === undefined && !ACK_OR_DISCONNECT.test(s.request))]).toEqual([capture, []]);
         expect([capture, steps.length > 100, replayDifferences(steps.filter((s) => s.unitCon !== undefined), { context: 3 })]).toEqual([capture, true, []]);
       }
       expect(sim.refusals).toEqual([]);
@@ -245,5 +246,12 @@ corpusDescribe("the new simulated MV-0705 units", () => {
     const be02001 = newSimUnit(MDT_BE02001, {}, { link: { ackMs: 0, nakMs: 0 } });
     for (const t of ["80", "43d70305100101000000000000000000", "c2", "47d5000e1001"]) await send(be02001, MDT_BE02001)(t);
     expect(be02001.refusals).toEqual(["sim-refused A_PropertyValue_Read 0/14 of 1 from 1 after the load of the application: what the unit reports then is not shown"]);
+    // Its unload after the load, which its captures show set the application-stopped bit, makes it known again.
+    for (const t of ["4bd70305100104000000000000000000", "c6", "4fd5000e1001"]) await send(be02001, MDT_BE02001)(t);
+    expect(be02001.refusals.length).toBe(1);
+    // The Gira's application declares its task segment inside a segment, which no capture shows it take.
+    const gira = newSimUnit(GIRA_TS3, {}, { link: { ackMs: 0, nakMs: 0 } });
+    for (const t of ["80", "43d70305100101000000000000000000", "c2", "47d7030510010302435400000810d711"]) await send(gira, GIRA_TS3)(t);
+    expect(gira.refusals).toEqual(["sim-refused A_PropertyValue_Write 3/5 0302435400000810d711: a task segment at 0x4354, where object 3 holds no segment"]);
   });
 });
