@@ -43,6 +43,7 @@ import { appProgramId, loadKnxproj, readAppProgram } from "../packages/project/s
 import { parseAppConfig } from "../packages/product/src/index.ts";
 import { catalogueXml } from "./corpus.ts";
 import { deviceConfiguration, deviceRows, dialogue, dialogueDifferences } from "./etsdiff.ts";
+import { reduceExport } from "./ets-export-reduce.ts";
 import { ETS_TASK_FAILED, etsOutcome, ROW_FILES, ROW_FORMAT, simRefusals, type EtsOutcome, type RowConfiguration, type RowSpec } from "./ets-sweep.ts";
 import { productUnit, rerunIdentity } from "./sim-unit-product.ts";
 import { newSimUnit, simUnitSpec } from "./sim-units.ts";
@@ -794,8 +795,12 @@ const parsedAs = (xml: string, id: string, as: string) => JSON.stringify(parseAp
 // unit's application under another build's id (same manufacturer, number and version, another content hash;
 // an OpenKNX application ETS imported from its release): taken only where the project's application parses as
 // the unit's does, its ids then written as the unit's and the project's named in row.json (exportApplication).
+// The export is stored reduced to the device's product data (tools/ets-export-reduce.ts), and read from there.
 function writeRow(dir: string, o: RowOptions, applicationId: string, ia: string, password: string | undefined): void {
-  const bytes = readFileSync(join(dir, "export.knxproj"));
+  const full = loadKnxproj(readFileSync(join(dir, "export.knxproj")), password, "export");
+  const at = full.devices.find((x) => x.ia === ia) ?? fail(`ETS's export holds no device ${ia}`);
+  const bytes = reduceExport(readFileSync(join(dir, "export.knxproj")), [appProgramId(at.appRef)]).bytes;
+  writeFileSync(join(dir, "export.knxproj"), bytes);
   const proj = loadKnxproj(bytes, password, "export");
   const d = proj.devices.find((x) => x.ia === ia) ?? fail(`ETS's export holds no device ${ia}`);
   const exported = appProgramId(d.appRef);

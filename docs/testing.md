@@ -829,7 +829,11 @@ One row, step by step:
 5. **The export** of the project, from the project's row in ETS's project search (a project's password stays on its export; the export's project name is checked), and
    the row written: `row.json`, `configuration.json` (the device's configuration as the export holds it), the
    simulator's capture `ets.log` with `ets.log.sim.txt` and its output `ets.log.serve.txt`,
-   `ets6.log.txt` from the row's start, `export.knxproj`. Where the project holds the unit's application
+   `ets6.log.txt` from the row's start, `export.knxproj`. The export is stored reduced to the device's product
+   data (`tools/ets-export-reduce.ts`): ETS keeps every product ever inserted into a project and exports them
+   all, so only the project, `knx_master.xml`, and of the device's manufacturer its `Hardware.xml`,
+   `Catalog.xml` and the device's application program stay, each entry byte for byte as ETS wrote it; the row
+   is written from the reduced export. Where the project holds the unit's application
    under another build's id (same manufacturer, number and version, another content hash: the OpenKNX
    release ETS took in), the row is written only if that build parses as the unit's; its parameter and
    module ids are then written as the unit's (the `appRef` keeps the export's build) and the project's
