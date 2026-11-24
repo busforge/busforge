@@ -62,7 +62,7 @@ corpusDescribe("a catalogue unit's donor", () => {
       // An MV-0705 application declaring a task control 1 and a task segment that starts no segment: the Auro shows
       // the task segment at the end of a segment and a task control 1 of count 0, the theLuxa P300 the task segment
       // inside a segment and a task control 1 of count 1; the Gira's application asks for count 0 inside a segment.
-      ["M-0008_A-10D7-11-2783-O000A", "no donor for MV-0705: mdt-be02001: its captures show no task control 1 of object 3 with count 0; gira-ts3: its captures show no task control 1 of object 3 with count 0; auro-m0081: its captures show no task segment of object 3 inside a segment; theben-theluxa-p300: its captures show no task control 1 of object 3 with count 0; mdt-be06001: its captures show no task control 1 of object 3 with count 0"],
+      ["M-0008_A-10D7-11-2783-O000A", "no donor for MV-0705: mdt-be02001: its captures show no task control 1 of object 3 with count 0 at address 0; gira-ts3: its captures show no task control 1 of object 3 with count 0 at address 0; auro-m0081: its captures show no task segment of object 3 inside a segment; theben-theluxa-p300: its captures show no task control 1 of object 3 with count 0 at address 0; mdt-be06001: its captures show no task control 1 of object 3 with count 0 at address 0"],
       ["M-0048_A-107E-12-5B58", "theben-theluxa-p300"],
       ["M-0048_A-140C-14-EB70", "no donor for MV-0701: abb-usu-4.2: its captures show no task-control-1; theben-meteodata-140s: its application changes its memory after a restart"],
       ["M-0048_A-493B-21-B471", "gvs-amma"],
