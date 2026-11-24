@@ -119,7 +119,7 @@ export function loadProceduresOf(root: ONode[]): LoadProcedures {
       verbs.add(verb);
       if (!KNOWN_LD_VERBS.has(verb)) unknown.add(verb);
     }
-    blocks.push({ mergeId: mergeId !== undefined ? Number(mergeId) : undefined, steps });
+    blocks.push({ mergeId: mergeId !== undefined ? decimalAttr(mergeId) : undefined, steps });
   }
   return {
     style, ...(appId !== undefined ? { app: appId } : {}), blocks, verbs: [...verbs].sort(), unknown: [...unknown].sort(),
@@ -151,6 +151,7 @@ export function flattenSteps(lp: LoadProcedures, op: LoadOp): LdStep[] {
 }
 
 function orderedSteps(lp: LoadProcedures): LdStep[] {
+  refuseMalformed(lp);
   return [...lp.blocks].sort((a, b) => (a.mergeId ?? 0) - (b.mergeId ?? 0)).flatMap((b) => b.steps);
 }
 
@@ -162,7 +163,7 @@ function orderedSteps(lp: LoadProcedures): LdStep[] {
 // the procedure declares no relative parameter allocation.
 export function relParamFillByte(lp: LoadProcedures): number {
   const seg = relParamFullSegment(lp);
-  return seg ? Number(seg.attrs.Fill ?? 0) & 0xff : 0;
+  return seg ? (stepNumber(seg, "Fill") ?? 0) & 0xff : 0;
 }
 // The allocation Mode the full download's LdCtrlRelSegment of the parameter segment declares ("1" =
 // pre-filled with Fill, "0" = not), undefined when the procedure declares none.
@@ -175,14 +176,62 @@ function relParamFullSegment(lp: LoadProcedures): LdStep | undefined {
   return rel.find((s) => s.attrs.LsmIdx === "4") ?? rel.find((s) => s.attrs.LsmIdx === undefined);
 }
 
+// ---- numeric attributes ----
+// The schema declares every numeric attribute of a load procedure an unsigned integer, and every
+// procedure of the catalogue and the corpus projects writes each in decimal without leading zeros.
+// Number() reads more: "" as 0, "0x10" as 16, " 5" as 5, "1e3" as 1000, "-1" as -1. A value read that way
+// is a value the procedure does not declare, so only the plain decimal form is read (with a leading zero
+// it would also miss the steps matched by their text, LsmIdx "4"); anything else is NaN here, which the
+// range checks below refuse, and a refusal where a value is taken (stepNumber).
+const decimalAttr = (v: string | undefined): number => {
+  const n = v !== undefined && /^(0|[1-9][0-9]*)$/.test(v) ? Number(v) : NaN;
+  return Number.isSafeInteger(n) ? n : NaN;
+};
+// The attributes of a step Busforge reads as numbers (hex InlineData and Mask, and the flags, are read as text).
+const NUMERIC_STEP_ATTRS = [
+  "LsmIdx", "Address", "Size", "MemType", "SegType", "Access", "SegFlags", "Fill", "ObjIdx", "PropId", "StartElement",
+  "Count", "Offset", "EraseCode", "ChannelNumber", "MilliSeconds", "InitPtr", "SavePtr", "SerialPtr", "Callback", "Seg0", "Seg1",
+];
+const MALFORMED = "LOAD_PROCEDURE_ATTRIBUTE_MALFORMED" as const;
+const malformed = (what: string) => `the load procedure declares ${what}, which is not an unsigned decimal number; refusing to read a value from it`;
+// A load procedure that declares one of those attributes, or a LoadProcedure's MergeId, as anything but a
+// decimal number refuses every download, before any step is planned: which value it means is not said.
+export function malformedStepRefusal(lp: LoadProcedures): { code: typeof MALFORMED; message: string } | null {
+  const refusal = (what: string) => ({ code: MALFORMED, message: malformed(what) });
+  for (const b of lp.blocks) {
+    if (b.mergeId !== undefined && Number.isNaN(b.mergeId)) return refusal("a LoadProcedure MergeId");
+    for (const s of b.steps) {
+      const bad = NUMERIC_STEP_ATTRS.find((k) => s.attrs[k] !== undefined && Number.isNaN(decimalAttr(s.attrs[k])));
+      if (bad) return refusal(`${s.verb} ${bad}="${s.attrs[bad]}"`);
+    }
+  }
+  return null;
+}
+// The walks a planner takes values from (orderedSteps, closingSteps) start here, so a planner never
+// takes a step of a malformed one.
+function refuseMalformed(lp: LoadProcedures): void {
+  const refusal = malformedStepRefusal(lp);
+  if (refusal) throw new ProductError(refusal.code, refusal.message);
+}
+// A numeric attribute a download takes: undefined where the step does not declare it.
+function stepNumber(s: LdStep, name: string): number | undefined {
+  const v = s.attrs[name];
+  if (v === undefined) return undefined;
+  const n = decimalAttr(v);
+  if (Number.isNaN(n)) throw new ProductError(MALFORMED, malformed(`${s.verb} ${name}="${v}"`));
+  return n;
+}
+
 // ---- typed attribute accessors (the fields the executor reads) ----
-export const lsmIdx = (s: LdStep): number | undefined => (s.attrs.LsmIdx !== undefined ? Number(s.attrs.LsmIdx) : undefined);
-export const stepAddress = (s: LdStep): number | undefined => (s.attrs.Address !== undefined ? Number(s.attrs.Address) : undefined);
-export const stepSize = (s: LdStep): number | undefined => (s.attrs.Size !== undefined ? Number(s.attrs.Size) : undefined);
-export const memType = (s: LdStep): number | undefined => (s.attrs.MemType !== undefined ? Number(s.attrs.MemType) : undefined);
-export const segType = (s: LdStep): number => (s.attrs.SegType !== undefined ? Number(s.attrs.SegType) : 0);
-export const segAccess = (s: LdStep): number => (s.attrs.Access !== undefined ? Number(s.attrs.Access) : 0);
-export const segFlags = (s: LdStep): number => (s.attrs.SegFlags !== undefined ? Number(s.attrs.SegFlags) : 0);
+export const lsmIdx = (s: LdStep): number | undefined => stepNumber(s, "LsmIdx");
+export const stepAddress = (s: LdStep): number | undefined => stepNumber(s, "Address");
+export const stepSize = (s: LdStep): number | undefined => stepNumber(s, "Size");
+export const stepOffset = (s: LdStep): number | undefined => stepNumber(s, "Offset");
+export const objIdx = (s: LdStep): number | undefined => stepNumber(s, "ObjIdx");
+export const memType = (s: LdStep): number | undefined => stepNumber(s, "MemType");
+export const segType = (s: LdStep): number => stepNumber(s, "SegType") ?? 0;
+export const segAccess = (s: LdStep): number => stepNumber(s, "Access") ?? 0;
+export const segFlags = (s: LdStep): number => stepNumber(s, "SegFlags") ?? 0;
 
 // ---- par-download step policy ----
 // The par (parameter-only) download deliberately does not execute every step a procedure
@@ -236,8 +285,8 @@ function mcbWrite(step: LdStep): McbWrite | string {
   const data = Buffer.from(hex, "hex");
   if (data.length < MCB_ENTRY_BYTES) return `InlineData of ${data.length} bytes is shorter than an MCB entry`;
   if (data.subarray(MCB_ENTRY_BYTES).some((b) => b !== 0)) return `InlineData carries data beyond the ${MCB_ENTRY_BYTES}-byte MCB entry`;
-  if (Number(step.attrs.ObjIdx) !== MCB_OBJ) return `it targets object ${step.attrs.ObjIdx}; only the parameter segment (object ${MCB_OBJ}) is known to carry declared regions`;
-  const element = Number(step.attrs.StartElement ?? 1);
+  if (decimalAttr(step.attrs.ObjIdx) !== MCB_OBJ) return `it targets object ${step.attrs.ObjIdx}; only the parameter segment (object ${MCB_OBJ}) is known to carry declared regions`;
+  const element = decimalAttr(step.attrs.StartElement ?? "1");
   if (!Number.isInteger(element) || element < 1 || element > 4095) return `StartElement "${step.attrs.StartElement}" is not an element index`;
   if (step.attrs.Count !== undefined && step.attrs.Count !== "1") return `Count="${step.attrs.Count}" writes more than one entry`;
   return { obj: MCB_OBJ, element, data: data.subarray(0, MCB_ENTRY_BYTES), ...(step.attrs.Verify === "false" ? { echoPrefix: 4 } : {}) };
@@ -248,7 +297,7 @@ function mcbWrite(step: LdStep): McbWrite | string {
 // would have the device check the wrong bytes at boot.
 export function declaredMcbWrites(lp: LoadProcedures, segmentSize: number, op: LoadOp = "full"): McbWrite[] {
   const writes = flattenSteps(lp, op)
-    .filter((s) => s.verb === "LdCtrlWriteProp" && Number(s.attrs.PropId) === MCB_PID)
+    .filter((s) => s.verb === "LdCtrlWriteProp" && decimalAttr(s.attrs.PropId) === MCB_PID)
     .map((s) => {
       const w = mcbWrite(s);
       if (typeof w === "string") throw new ProductError("LOAD_STEP_UNSUPPORTED", `the load procedure's ${s.verb} to PID 27 cannot be executed: ${w}`);
@@ -277,7 +326,7 @@ export type ClosingStep =
   | { kind: "write"; obj: number; pid: number; start: number; data: Buffer; verify: boolean };
 
 const CLOSING_MERGE_ID = 7;
-const isClosingVerb = (s: LdStep) => s.verb === "LdCtrlLoadImageProp" || (s.verb === "LdCtrlWriteProp" && Number(s.attrs.PropId) !== MCB_PID);
+const isClosingVerb = (s: LdStep) => s.verb === "LdCtrlLoadImageProp" || (s.verb === "LdCtrlWriteProp" && decimalAttr(s.attrs.PropId) !== MCB_PID);
 
 function closingCandidates(lp: LoadProcedures): LdStep[] {
   if (lp.style === "MergedProcedure") return [...lp.blocks].filter((b) => b.mergeId === CLOSING_MERGE_ID).flatMap((b) => b.steps);
@@ -294,6 +343,7 @@ const closingApplies = (s: LdStep, op: ClosingOp): boolean => {
 };
 
 export function closingSteps(lp: LoadProcedures, op: ClosingOp): ClosingStep[] {
+  refuseMalformed(lp);
   return closingCandidates(lp).filter((s) => isClosingVerb(s) && closingApplies(s, op)).map((s) => {
     const r = closingStep(s);
     if (typeof r === "string") throw new ProductError("LOAD_STEP_UNSUPPORTED", `the load procedure closes with ${s.verb} ${JSON.stringify(s.attrs)}, which cannot be executed as declared: ${r}`);
@@ -303,7 +353,7 @@ export function closingSteps(lp: LoadProcedures, op: ClosingOp): ClosingStep[] {
 
 // The object index, PID and first element a property step names, or why it names none.
 function propertyAddressOf(s: LdStep): { obj: number; pid: number; start: number } | string {
-  const obj = Number(s.attrs.ObjIdx), pid = Number(s.attrs.PropId), start = Number(s.attrs.StartElement ?? 1);
+  const obj = decimalAttr(s.attrs.ObjIdx), pid = decimalAttr(s.attrs.PropId), start = decimalAttr(s.attrs.StartElement ?? "1");
   if (s.attrs.ObjIdx === undefined || !Number.isInteger(obj) || obj < 0 || obj > 255) return "it names no object index";
   if (s.attrs.PropId === undefined || !Number.isInteger(pid) || pid < 1 || pid > 255) return "it names no property";
   if (!Number.isInteger(start) || start < 1 || start > 4095) return `StartElement "${s.attrs.StartElement}" is not an element index`;
@@ -313,7 +363,7 @@ function propertyAddressOf(s: LdStep): { obj: number; pid: number; start: number
 function closingStep(s: LdStep): ClosingStep | string {
   const a = propertyAddressOf(s);
   if (typeof a === "string") return a;
-  const { obj, pid, start } = a, count = Number(s.attrs.Count ?? 1);
+  const { obj, pid, start } = a, count = decimalAttr(s.attrs.Count ?? "1");
   if (s.verb === "LdCtrlLoadImageProp") {
     if (pid !== MCB_PID) return "only the memory-control block (PID 27) is known as the image a closing read takes";
     if (!Number.isInteger(count) || count < 1 || count > 15) return `Count "${s.attrs.Count}" is not a number of elements`;
@@ -340,7 +390,7 @@ export function bracketWritePropOf(s: LdStep, lsm: number): BracketWriteProp | s
   if (extra.length) return `it declares ${extra.join(", ")}, which no capture shows`;
   const a = propertyAddressOf(s);
   if (typeof a === "string") return a;
-  const { obj, pid, start } = a, count = Number(s.attrs.Count ?? 1);
+  const { obj, pid, start } = a, count = decimalAttr(s.attrs.Count ?? "1");
   if (obj !== lsm) return `it writes object ${obj} inside the load bracket of load-state machine ${lsm}, which no capture shows`;
   if (BRACKET_WRITE_FORBIDDEN_PIDS.includes(pid)) return `it writes PID ${pid}, which the download itself drives, inside a load bracket, which no capture shows`;
   if (!Number.isInteger(count) || count < 1 || count > 15) return `Count "${s.attrs.Count}" is not a number of elements one write carries`;
@@ -373,7 +423,7 @@ export function unrunGrpSteps(lp: LoadProcedures): { verb: string; detail: strin
 // over 0x0104) captures. A form outside what one byte of Count and two of Address carry is refused.
 export interface TaskCtrl1 { lsm: number; address: number; count: number }
 export function taskCtrl1Of(s: LdStep): TaskCtrl1 | string {
-  const lsm = Number(s.attrs.LsmIdx), address = Number(s.attrs.Address), count = Number(s.attrs.Count);
+  const lsm = decimalAttr(s.attrs.LsmIdx), address = decimalAttr(s.attrs.Address), count = decimalAttr(s.attrs.Count);
   const extra = Object.keys(s.attrs).filter((k) => !["LsmIdx", "Address", "Count"].includes(k));
   if (extra.length) return `it declares ${extra.join(", ")}, which no capture shows encoded`;
   if (s.attrs.LsmIdx === undefined || !Number.isInteger(lsm) || lsm < 1 || lsm > 15) return "it names no load-state machine";
@@ -391,11 +441,11 @@ export interface TaskCtrl2 { lsm: number; callback: number; address: number; seg
 function addressFields(s: LdStep, names: readonly string[]): { lsm: number; v: Record<string, number> } | string {
   const extra = Object.keys(s.attrs).filter((k) => k !== "LsmIdx" && !names.includes(k));
   if (extra.length) return `it declares ${extra.join(", ")}, which no capture shows encoded`;
-  const lsm = Number(s.attrs.LsmIdx);
+  const lsm = decimalAttr(s.attrs.LsmIdx);
   if (s.attrs.LsmIdx === undefined || !Number.isInteger(lsm) || lsm < 1 || lsm > 15) return "it names no load-state machine";
   const v: Record<string, number> = {};
   for (const n of names) {
-    const x = Number(s.attrs[n]);
+    const x = decimalAttr(s.attrs[n]);
     if (s.attrs[n] === undefined || !Number.isInteger(x) || x < 0 || x > 0xffff) return `${n} "${s.attrs[n]}" is not a 16-bit address`;
     v[n] = x;
   }
@@ -426,7 +476,7 @@ export function capturedMasterResetRefusal(r: MasterReset, family: keyof typeof 
 export function masterResetOf(s: LdStep): MasterReset | string {
   const extra = Object.keys(s.attrs).filter((k) => !["EraseCode", "ChannelNumber", "AppliesTo"].includes(k));
   if (extra.length) return `it declares ${extra.join(", ")}, which no capture shows`;
-  const eraseCode = Number(s.attrs.EraseCode), channel = Number(s.attrs.ChannelNumber);
+  const eraseCode = decimalAttr(s.attrs.EraseCode), channel = decimalAttr(s.attrs.ChannelNumber);
   if (s.attrs.EraseCode === undefined || !Number.isInteger(eraseCode) || eraseCode < 0 || eraseCode > 0xff) return `EraseCode "${s.attrs.EraseCode}" does not fit the octet the A_Restart carries`;
   if (s.attrs.ChannelNumber === undefined || !Number.isInteger(channel) || channel < 0 || channel > 0xff) return `ChannelNumber "${s.attrs.ChannelNumber}" does not fit the octet the A_Restart carries`;
   return { eraseCode, channel };
@@ -439,7 +489,7 @@ const DELAY_MAX_MS = 5999;
 export function delayOf(s: LdStep): number | string {
   const extra = Object.keys(s.attrs).filter((k) => !["MilliSeconds", "AppliesTo"].includes(k));
   if (extra.length) return `it declares ${extra.join(", ")}, which no capture shows`;
-  const ms = Number(s.attrs.MilliSeconds);
+  const ms = decimalAttr(s.attrs.MilliSeconds);
   if (s.attrs.MilliSeconds === undefined || !Number.isInteger(ms) || ms < 0) return `MilliSeconds "${s.attrs.MilliSeconds}" is not a pause in milliseconds`;
   if (ms > DELAY_MAX_MS) return `a pause of ${ms} ms reaches a device's 6 s connection timeout, which no capture shows ETS handling`;
   return ms;
@@ -464,7 +514,7 @@ export function assessParStep(step: LdStep, model: "absolute" | "relative", lp?:
       // first invalid pair, which would turn a corrupt declaration into a shorter (and
       // possibly passing) expected value instead of a refusal.
       const hexOk = step.attrs.InlineData !== undefined && /^([0-9A-Fa-f]{2})+$/.test(step.attrs.InlineData);
-      if (!hexOk || step.attrs.ObjIdx === undefined || step.attrs.PropId === undefined || (start !== undefined && start !== "1")) {
+      if (!hexOk || Number.isNaN(decimalAttr(step.attrs.ObjIdx)) || Number.isNaN(decimalAttr(step.attrs.PropId)) || (start !== undefined && start !== "1")) {
         return { kind: "blocked", detail: `${step.verb} with malformed/missing inline data or element addressing (not modeled)` };
       }
       return { kind: "executed" }; // run as a pre-flight property check
@@ -521,7 +571,7 @@ export function assessParStep(step: LdStep, model: "absolute" | "relative", lp?:
         return { kind: "executed" }; // the read-back-verified segment write
       }
       case "LdCtrlWriteProp":
-        if (Number(step.attrs.PropId) === MCB_PID) {
+        if (decimalAttr(step.attrs.PropId) === MCB_PID) {
           const w = mcbWrite(step);
           return typeof w === "string" ? { kind: "blocked", detail: `${step.verb} to PID 27: ${w}` } : { kind: "executed" };
         }
@@ -549,7 +599,7 @@ export interface ParCoverage {
 // The interface object (load-state machine) a step addresses: LsmIdx, else ObjIdx; undefined for a
 // step addressed to none (connect, restart, disconnect).
 export const stepObject = (s: LdStep): number | undefined =>
-  s.attrs.LsmIdx !== undefined ? Number(s.attrs.LsmIdx) : s.attrs.ObjIdx !== undefined ? Number(s.attrs.ObjIdx) : undefined;
+  stepNumber(s, "LsmIdx") ?? stepNumber(s, "ObjIdx");
 
 // Assess every par-applicable step of a procedure. The caller must refuse the flash when
 // `blocked` is non-empty; `checks` are the CompareProp pre-flights it must run. `objects` narrows
@@ -663,12 +713,13 @@ export function fullDownloadParCoverage(lp: LoadProcedures): ParCoverage {
 // (the stricter fallback). Malformed inline data / addressing throws rather than silently
 // truncating to a shorter (and possibly passing) expected value.
 function comparePropCheck(step: LdStep): DeclaredPropCheck {
-  if (!/^([0-9A-Fa-f]{2})+$/.test(step.attrs.InlineData ?? "") || step.attrs.ObjIdx === undefined || step.attrs.PropId === undefined) {
+  const obj = decimalAttr(step.attrs.ObjIdx), pid = decimalAttr(step.attrs.PropId);
+  if (!/^([0-9A-Fa-f]{2})+$/.test(step.attrs.InlineData ?? "") || Number.isNaN(obj) || Number.isNaN(pid)) {
     throw new ProductError("LOAD_STEP_UNSUPPORTED", `an LdCtrlCompareProp step has malformed/missing inline data or addressing (${JSON.stringify(step.attrs)}); refusing to run its check blind`);
   }
   const maskHex = step.attrs.Mask;
   const mask = maskHex !== undefined && /^([0-9A-Fa-f]{2})+$/.test(maskHex) ? Buffer.from(maskHex, "hex") : undefined;
-  return { obj: Number(step.attrs.ObjIdx), pid: Number(step.attrs.PropId), expect: Buffer.from(step.attrs.InlineData, "hex"), mask };
+  return { obj, pid, expect: Buffer.from(step.attrs.InlineData, "hex"), mask };
 }
 
 // The CompareProp pre-flights a given load OP declares. A full download must source these from its

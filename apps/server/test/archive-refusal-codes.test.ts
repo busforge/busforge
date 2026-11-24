@@ -73,6 +73,27 @@ describe("an archive Busforge refuses keeps its code", () => {
   });
 });
 
+// Product data that describe a Hardware2Program twice say no longer which program its devices run.
+describe("product data that describe a Hardware2Program twice are refused", () => {
+  const hw = hardware.slice(hardware.indexOf("  <Hardware Id="), hardware.indexOf("</Hardware></Manufacturer>"));
+  const doubled = hardware.replace("</Hardware></Manufacturer>", `${hw}</Hardware></Manufacturer>`);
+  const twice = storeZip({ [`${M}/Hardware.xml`]: doubled, "P-0001/0.xml": xml0 });
+  for (const path of ["/api/projects/analyze", "/api/projects/import"]) {
+    test(`${path} refuses it with HARDWARE_PROGRAM_DUPLICATE`, async () => {
+      expect(await codeOf(path, twice, "x.knxproj")).toEqual({ status: 400, code: "HARDWARE_PROGRAM_DUPLICATE" });
+    });
+  }
+  for (const [what, bytes] of [["a product database", storeZip({ [`${M}/Hardware.xml`]: doubled })], ["a plain manufacturer XML", Buffer.from(doubled)]] as const) {
+    test(`the catalogue import refuses ${what} with HARDWARE_PROGRAM_DUPLICATE`, async () => {
+      expect(await codeOf("/api/catalog/import", bytes, "x.knxprod")).toEqual({ status: 400, code: "HARDWARE_PROGRAM_DUPLICATE" });
+    });
+  }
+  test("the code is localised", () => {
+    expect(en.errors.HARDWARE_PROGRAM_DUPLICATE).toBeString();
+    expect(de.errors.HARDWARE_PROGRAM_DUPLICATE).toBeString();
+  });
+});
+
 describe("the catalogue import's own refusals", () => {
   test("an encrypted product database is CATALOG_ENCRYPTED", async () => {
     // A WinZip-AES entry: the AES extra field (id 0x9901, 7 bytes, key strength 3) and method 99.

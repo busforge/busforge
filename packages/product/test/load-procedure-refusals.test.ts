@@ -1,7 +1,7 @@
 import { test, expect, describe, setDefaultTimeout } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseAppConfig, parseLoadProcedures, classify, assessParCoverage, buildDeviceConfig, buildComObjectTable } from "@busforge/product";
+import { parseAppConfig, parseLoadProcedures, classify, assessParCoverage, buildDeviceConfig, buildComObjectTable, malformedStepRefusal, lsmIdx, stepAddress, stepSize, taskCtrl1Of, closingSteps, assessParStep } from "@busforge/product";
 import { catalogueXml, listCatalogue, captureText, corpusPath, bussardCapture, bussardApplication } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
 import { parseCapture } from "../../../tools/etsdiff.ts";
@@ -71,6 +71,57 @@ describe("a System B application whose declared sizes for one segment disagree i
     expect(await rejection(profile.downloadFull(untouched, "MV-07B0", ctx))).toEqual(refusedWith("LOAD_PROCEDURE_SIZE_MISMATCH"));
     expect(await rejection(profile.flashParameters(untouched, "MV-07B0", ctx))).toEqual(refusedWith("LOAD_PROCEDURE_SIZE_MISMATCH"));
     expect(await rejection(profile.flashGroupTables(untouched, "MV-07B0", ctx))).toEqual(refusedWith("LOAD_PROCEDURE_SIZE_MISMATCH"));
+  });
+});
+
+// Number() reads "" as 0 and "0x8" as 8; a procedure declaring those declares no value Busforge may take.
+describe("a load procedure that declares a numeric attribute as anything but a decimal number is refused every write", () => {
+  test.each([
+    ["an empty Size", 'LsmIdx="4" Size="8" Mode="1"', 'LsmIdx="4" Size="" Mode="1"'],
+    ["a hexadecimal Size", 'LsmIdx="4" Size="8" Mode="1"', 'LsmIdx="4" Size="0x8" Mode="1"'],
+    ["a fractional Size", 'LsmIdx="4" Size="8" Mode="1"', 'LsmIdx="4" Size="8.0" Mode="1"'],
+    ["a word for LsmIdx", 'AppliesTo="par" LsmIdx="4"', 'AppliesTo="par" LsmIdx="abc"'],
+    ["an empty Offset", 'Offset="0" Size="8" Verify="true"', 'Offset="" Size="8" Verify="true"'],
+    ["an empty Fill", 'Mode="1" Fill="0"', 'Mode="1" Fill=""'],
+    ["an empty MergeId", '<LoadProcedure MergeId="4">', '<LoadProcedure MergeId="">'],
+    ["a leading zero on LsmIdx", 'AppliesTo="full" LsmIdx="4"', 'AppliesTo="full" LsmIdx="04"'],
+  ])("%s", async (_, from, to) => {
+    const xml = once(base, from, to);
+    const profile = classify(parseAppConfig(xml));
+    const refusals = profile.operationRefusals();
+    for (const op of ["flashParams", "flashLinks", "fullDownload"] as const) expect(refusals[op]?.code).toBe("LOAD_PROCEDURE_ATTRIBUTE_MALFORMED");
+    expect(profile.capabilities()).toMatchObject({ flashParams: false, flashLinks: false, fullDownload: false, structuralFlash: false });
+    expect(fullDownload(xml)).toThrow(refusedWith("LOAD_PROCEDURE_ATTRIBUTE_MALFORMED"));
+    expect(await rejection(profile.downloadFull(untouched, "MV-07B0", ctx))).toEqual(refusedWith("LOAD_PROCEDURE_ATTRIBUTE_MALFORMED"));
+    expect(await rejection(profile.flashParameters(untouched, "MV-07B0", ctx))).toEqual(refusedWith("LOAD_PROCEDURE_ATTRIBUTE_MALFORMED"));
+    expect(await rejection(profile.flashGroupTables(untouched, "MV-07B0", ctx))).toEqual(refusedWith("LOAD_PROCEDURE_ATTRIBUTE_MALFORMED"));
+  });
+
+  test("a reader the planner takes a value from refuses it, and reads the decimal form as before", () => {
+    const step = (attrs: Record<string, string>) => ({ verb: "LdCtrlAbsSegment", attrs });
+    for (const [read, name] of [[lsmIdx, "LsmIdx"], [stepAddress, "Address"], [stepSize, "Size"]] as const) {
+      for (const v of ["", "abc", "0x10", " 16", "1e1", "-1", "016"]) expect(() => read(step({ [name]: v }))).toThrow(refusedWith("LOAD_PROCEDURE_ATTRIBUTE_MALFORMED"));
+      expect([read(step({ [name]: "0" })), read(step({ [name]: "17875" })), read(step({}))]).toEqual([0, 17875, undefined]);
+    }
+  });
+
+  test("the steps that close a MergedProcedure download refuse it too, and a CompareProp without a decimal object or property is blocked", () => {
+    const closing = once(base, "</LoadProcedures>", `  <LoadProcedure MergeId="7"><LdCtrlLoadImageProp ObjIdx="4" PropId="27" /></LoadProcedure>
+            </LoadProcedures>`);
+    expect(closingSteps(parseLoadProcedures(closing), "full")).toEqual([{ kind: "read", obj: 4, pid: 27, start: 1, count: 1 }]);
+    for (const [from, to] of [['ObjIdx="4" PropId="27"', 'ObjIdx="" PropId="27"'], ['<LoadProcedure MergeId="4">', '<LoadProcedure MergeId="">']]) {
+      expect(() => closingSteps(parseLoadProcedures(once(closing, from, to)), "full")).toThrow(refusedWith("LOAD_PROCEDURE_ATTRIBUTE_MALFORMED"));
+    }
+    const compare = (attrs: Record<string, string>) => assessParStep({ verb: "LdCtrlCompareProp", attrs: { ObjIdx: "0", PropId: "13", InlineData: "00FA", ...attrs } }, "relative").kind;
+    expect(compare({})).toBe("executed");
+    for (const attrs of [{ ObjIdx: "" }, { PropId: "0x0D" }, { ObjIdx: "abc" }] as Record<string, string>[]) expect(compare(attrs)).toBe("blocked");
+  });
+
+  test("a task control 1 whose Address or Count is empty names none, and the decimal one is encoded as before", () => {
+    const ctrl = (attrs: Record<string, string>) => taskCtrl1Of({ verb: "LdCtrlTaskCtrl1", attrs: { LsmIdx: "3", Address: "17875", Count: "1", ...attrs } });
+    expect(ctrl({})).toEqual({ lsm: 3, address: 17875, count: 1 });
+    expect(ctrl({ Address: "0", Count: "0" })).toEqual({ lsm: 3, address: 0, count: 0 });
+    for (const attrs of [{ Address: "" }, { Count: "" }, { LsmIdx: "" }, { Address: "0x45D3" }, { Count: " 1" }] as Record<string, string>[]) expect(typeof ctrl(attrs)).toBe("string");
   });
 });
 
@@ -301,6 +352,18 @@ corpusDescribe("System 7: LSM 5, the task segment's manufacturer and the declare
     expect(await rejection(profile.flashGroupTables(untouched, "MV-0701", ctx))).toEqual(refusedWith("LOAD_PROCEDURE_SIZE_MISMATCH"));
   });
 
+  test("an empty segment Address refuses every write, before it asks the device anything", async () => {
+    const xml = once(abb, '<LdCtrlAbsSegment LsmIdx="3" SegType="0" Address="28416" Size="8"', '<LdCtrlAbsSegment LsmIdx="3" SegType="0" Address="" Size="8"');
+    const profile = classify(parseAppConfig(xml));
+    const refusals = profile.operationRefusals();
+    for (const op of ["flashParams", "flashLinks", "fullDownload"] as const) expect(refusals[op]?.code).toBe("LOAD_PROCEDURE_ATTRIBUTE_MALFORMED");
+    expect(profile.fullDownloadLoadsApplication()).toBe(false);
+    expect(() => plan(xml, true)).toThrow(refusedWith("LOAD_PROCEDURE_ATTRIBUTE_MALFORMED"));
+    expect(await rejection(profile.downloadFull(untouched, "MV-0701", ctx))).toEqual(refusedWith("LOAD_PROCEDURE_ATTRIBUTE_MALFORMED"));
+    expect(await rejection(profile.flashParameters(untouched, "MV-0701", ctx))).toEqual(refusedWith("LOAD_PROCEDURE_ATTRIBUTE_MALFORMED"));
+    expect(await rejection(profile.flashGroupTables(untouched, "MV-0701", ctx))).toEqual(refusedWith("LOAD_PROCEDURE_ATTRIBUTE_MALFORMED"));
+  });
+
   test("a group table whose MaxEntries outgrow its segment refuses every write", () => {
     const xml = once(abb, '<AddressTable CodeSegment="M-0002_A-A001-13-63C2_AS-4000" Offset="0" MaxEntries="254"', '<AddressTable CodeSegment="M-0002_A-A001-13-63C2_AS-4000" Offset="0" MaxEntries="255"');
     expect(classify(parseAppConfig(xml)).operationRefusals().fullDownload?.code).toBe("LOAD_PROCEDURE_SIZE_MISMATCH");
@@ -310,6 +373,7 @@ corpusDescribe("System 7: LSM 5, the task segment's manufacturer and the declare
     for (const f of listCatalogue()) {
       const xml = catalogueXml(f);
       const cfg = parseAppConfig(xml), proc = parseLoadProcedures(xml);
+      expect([f, malformedStepRefusal(proc)]).toEqual([f, null]);
       expect([f, procedureSizeRefusal(cfg, proc)]).toEqual([f, null]);
       expect([f, taskSegmentManufacturerRefusal(cfg, proc)]).toEqual([f, null]);
       // the counts of docs/load-procedures.md, "Steps refused until a capture shows them"

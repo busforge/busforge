@@ -180,6 +180,14 @@ ETS instead. A segment of the application on another load-state
 machine than 4 or 5 refuses it too (`FULL_DOWNLOAD_SEGMENT_UNKNOWN`). Every write checks these refusals itself before it asks the device
 anything, as the routes do before they queue it (`operationRefusals`).
 
+**Numbers are read only in decimal** (`malformedStepRefusal`, before the sizes): the schema declares
+every numeric attribute of a step (`LsmIdx`, `Address`, `Size`, `ObjIdx`, `PropId`, `Count`, `Fill`
+and the others the planners read) and a `LoadProcedure`'s `MergeId` an unsigned integer, and every
+application of the catalogue fixtures and the corpus projects writes each in decimal. A procedure that
+declares one as anything else, an empty value, a hexadecimal one or a word, is refused every write
+(`LOAD_PROCEDURE_ATTRIBUTE_MALFORMED`), named in `operationRefusals`: read as a JavaScript number, an
+empty `Address` would be address 0. Each reader the planners take a value from refuses it as well.
+
 **Sizes are checked before anything is planned** (`procedureSizeRefusal`): every size an
 application declares for one segment must agree, the segment's own `Size` with each
 `AbsSegment` and `RelSegment` that declares it, a `WriteRelMem` with the whole segment at offset 0

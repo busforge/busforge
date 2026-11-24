@@ -236,7 +236,7 @@ export function declaredTasks(steps: FullSteps): DeclaredTasks | string {
   }
   const declaredTaskControl1 = new Map<number, { address: number; count: number }>();
   for (const s of steps.filter((x) => x.verb === "LdCtrlTaskCtrl1")) {
-    // taskCtrl1Of reads "" as 0; the unit takes the decimal form alone, as for the segments.
+    // The unit takes the decimal form alone, as for the segments.
     if (lsmAttr(s) === undefined || intAttr(s, "Address", ADDRESS_MAX) === undefined || intAttr(s, "Count", OCTET_MAX) === undefined) return `the application declares a task control 1 ${JSON.stringify(s.attrs)} without a machine, an address and a count of their form`;
     const t = taskCtrl1Of(s);
     if (typeof t === "string") return `the application's task control 1: ${t}`;

@@ -77,7 +77,9 @@ bus interfaces its programs declare, the application each `Hardware2Program` nam
 products, programs and images alike: an entry elsewhere whose name ends the same (a baggage, a file at the
 root, a manufacturer directory below another folder, another manufacturer's directory) is none of the
 archive's product data. The inner archive of a project holds none of them. A `Hardware.xml` at its place
-that does not parse is refused (`HARDWARE_XML_MALFORMED`), not read as an archive without products. An
+that does not parse is refused (`HARDWARE_XML_MALFORMED`), not read as an archive without products. Product
+data that describe one `Hardware2Program` twice, in one `Hardware.xml` or in two, are refused as well, by
+the project and the catalogue import (`HARDWARE_PROGRAM_DUPLICATE`): Busforge takes neither description. An
 OpenKNX release ZIP holds no manufacturer directory: its product database is the plain manufacturer XML `data/<name>.xml`, which the
 catalogue imports on its own.
 

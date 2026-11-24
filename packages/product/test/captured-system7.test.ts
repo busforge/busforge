@@ -680,7 +680,7 @@ corpusDescribe("the declared-order M-0048_A-107E-12-5B58 (TheLuxa P300) full dow
     expect(plan(app)).toThrow(expect.objectContaining({ code: "FULL_DOWNLOAD_SEGMENT_UNKNOWN", message: expect.stringContaining("leaves out byte 10") }));
   });
   // An LdCtrlTaskCtrl1 the control cannot carry is refused on this application as on every other.
-  const forms: Record<string, string>[] = [{ LsmIdx: "3", Address: "17875", Count: "300" }, { LsmIdx: "0", Address: "17875", Count: "1" }, { LsmIdx: "3", Address: "-1", Count: "1" }];
+  const forms: Record<string, string>[] = [{ LsmIdx: "3", Address: "17875", Count: "300" }, { LsmIdx: "0", Address: "17875", Count: "1" }, { LsmIdx: "3", Address: "65536", Count: "1" }];
   for (const attrs of forms) {
     test(`LdCtrlTaskCtrl1 ${JSON.stringify(attrs)} is refused`, () => {
       const changed: LoadProcedures = { ...proc, blocks: proc.blocks.map((b) => ({ ...b, steps: b.steps.map((s) => (s.verb === "LdCtrlTaskCtrl1" ? { ...s, attrs } : s)) })) };
@@ -688,6 +688,10 @@ corpusDescribe("the declared-order M-0048_A-107E-12-5B58 (TheLuxa P300) full dow
       expect(plan(cfg, changed)).toThrow(expect.objectContaining({ code: "FULL_DOWNLOAD_STEP_UNSUPPORTED" }));
     });
   }
+  test("an LdCtrlTaskCtrl1 whose Address is no decimal number refuses the procedure before any step is planned", () => {
+    const changed: LoadProcedures = { ...proc, blocks: proc.blocks.map((b) => ({ ...b, steps: b.steps.map((s) => (s.verb === "LdCtrlTaskCtrl1" ? { ...s, attrs: { LsmIdx: "3", Address: "-1", Count: "1" } } : s)) })) };
+    expect(plan(cfg, changed)).toThrow(expect.objectContaining({ code: "LOAD_PROCEDURE_ATTRIBUTE_MALFORMED" }));
+  });
 });
 
 // The update bit (config 0x80) of the MV-0705 com-object table follows each configured object's update

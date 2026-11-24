@@ -138,10 +138,14 @@ test("a declared property write in merge block 7 closes every download it applie
 });
 
 test("a closing step that cannot be executed as declared refuses, and the same step elsewhere blocks", () => {
-  for (const s of [pid67({ InlineData: "0g" }), pid67({ Count: "2" }), pid67({ ObjIdx: "x" }), pid67({ StartElement: "0" })]) {
+  for (const s of [pid67({ InlineData: "0g" }), pid67({ Count: "2" }), pid67({ StartElement: "0" })]) {
     expect(() => closingSteps(lpOf(7, s), "full")).toThrow("cannot be executed as declared");
     expect(assessParStep(s, "relative", lpOf(7, s)).kind).toBe("blocked");
   }
+  // an object index that is no decimal number refuses the whole procedure before its closing steps are read
+  const objX = pid67({ ObjIdx: "x" });
+  expect(() => closingSteps(lpOf(7, objX), "full")).toThrow(expect.objectContaining({ code: "LOAD_PROCEDURE_ATTRIBUTE_MALFORMED" }));
+  expect(assessParStep(objX, "relative", lpOf(7, objX)).kind).toBe("blocked");
   // outside merge block 7 a property write is no closing step: its effect inside a bracket is not modeled
   expect(closingSteps(lpOf(2, pid67()), "full")).toEqual([]);
   expect(assessParStep(pid67(), "relative", lpOf(2, pid67())).kind).toBe("blocked");

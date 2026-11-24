@@ -67,7 +67,7 @@ describe("Hardware.xml is read only at M-XXXX/Hardware.xml", () => {
   });
 
   test("each manufacturer's Hardware.xml is read", () => {
-    const other = hardware("Other unit", "M-0002_A-BBBB-01-0000", "M-0002_H-1-1_P-1").replaceAll(`"${M}_H-1-1"`, `"M-0002_H-1-1"`).replace(`RefId="${M}"`, `RefId="M-0002"`);
+    const other = hardware("Other unit", "M-0002_A-BBBB-01-0000", "M-0002_H-1-1_P-1").replaceAll(`"${M}_H-1-1"`, `"M-0002_H-1-1"`).replace(HP, "M-0002_H-1-1_HP-BBBB-01-0000").replace(`RefId="${M}"`, `RefId="M-0002"`);
     const bytes = storeZip({ [`${M}/Hardware.xml`]: real, "M-0002/Hardware.xml": other });
     expect(extractCatalogProducts(bytes).map((p) => p.name).sort()).toEqual(["Other unit", "Real unit"]);
   });

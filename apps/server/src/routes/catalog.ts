@@ -56,13 +56,13 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // the zip reader's INVALID_KNXPROJ) or a zip without manufacturer data is the realistic wrong-file case;
     // report it as "not a product database" rather than leaking the .knxproj-worded INVALID_KNXPROJ. An
     // encrypted zip is refused in the catalogue's words, since the catalogue import takes no password.
-    // Every other refusal keeps its own code.
+    // Every other refusal of a zip keeps its own code, and so does product data that describe a Hardware2Program twice.
     const zip = bytes.length >= 2 && bytes[0] === 0x50 && bytes[1] === 0x4b; // "PK"
     let products: ReturnType<typeof extractCatalogProducts> = [];
     try { products = extractCatalogProducts(bytes); } catch (e) {
       const code = errorCode(e);
       if (code === "PASSWORD_REQUIRED" || code === "ZIP_ENCRYPTION_UNSUPPORTED") return err("CATALOG_ENCRYPTED", "the product database is encrypted; Busforge does not read an encrypted one");
-      if (zip && code !== "INVALID_KNXPROJ") throw e;
+      if ((zip && code !== "INVALID_KNXPROJ") || code === "HARDWARE_PROGRAM_DUPLICATE") throw e;
       products = [];
     }
     if (products.length === 0) return err("CATALOG_IMPORT_EMPTY", "no manufacturer products found in the archive");

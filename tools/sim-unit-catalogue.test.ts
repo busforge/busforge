@@ -125,9 +125,9 @@ corpusDescribe("a catalogue unit's donor", () => {
   test("refuses an MV-0705 application whose task declarations it cannot read or no unit of the mask takes", () => {
     const be06001 = catalogueXml("M-0083_A-00B4-32-3919.xml.gz");
     const refused = (xml: string) => { const c = chooseDonor(xml); return "refused" in c ? c.refused : c.donor.id; };
-    expect(refused(be06001.replace('<LdCtrlTaskSegment LsmIdx="3" Address="17408" />', '<LdCtrlTaskSegment LsmIdx="3" Address="abc" />'))).toBe('no donor for MV-0705: the application declares a task segment {"LsmIdx":"3","Address":"abc"} without a machine and an address of their form');
-    expect(refused(be06001.replace('Address="17408" Size="200"', 'Address="" Size="200"'))).toContain("the application declares an absolute segment");
-    expect(refused(be06001.replace("<LdCtrlRestart />", '<LdCtrlTaskCtrl1 LsmIdx="3" Address="" Count="" /><LdCtrlRestart />'))).toBe('no donor for MV-0705: the application declares a task control 1 {"LsmIdx":"3","Address":"","Count":""} without a machine, an address and a count of their form');
+    expect(refused(be06001.replace('<LdCtrlTaskSegment LsmIdx="3" Address="17408" />', '<LdCtrlTaskSegment LsmIdx="3" Address="abc" />'))).toBe('no donor for MV-0705: the load procedure declares LdCtrlTaskSegment Address="abc", which is not an unsigned decimal number; refusing to read a value from it');
+    expect(refused(be06001.replace('Address="17408" Size="200"', 'Address="" Size="200"'))).toBe('no donor for MV-0705: the load procedure declares LdCtrlAbsSegment Address="", which is not an unsigned decimal number; refusing to read a value from it');
+    expect(refused(be06001.replace("<LdCtrlRestart />", '<LdCtrlTaskCtrl1 LsmIdx="3" Address="" Count="" /><LdCtrlRestart />'))).toBe('no donor for MV-0705: the load procedure declares LdCtrlTaskCtrl1 Address="", which is not an unsigned decimal number; refusing to read a value from it');
     expect(refused(be06001.replace("<LdCtrlRestart />", '<LdCtrlTaskSegment LsmIdx="4" Address="17408" /><LdCtrlRestart />'))).toBe("no donor for MV-0705: the application declares a segment or task on object 4, whose load-state machine no unit of the mask shows");
     // ETS never sends a task segment on machine 5 (the Gira Tastsensor 3's application declares one).
     expect(refused(be06001.replace("<LdCtrlRestart />", '<LdCtrlRestart /><LdCtrlTaskSegment LsmIdx="5" Address="17408" />'))).toBe("mdt-be02001");
