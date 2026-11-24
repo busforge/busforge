@@ -1,61 +1,96 @@
-// The ETS sweep's rows judged side by side, each in a worker thread of its own that judges one row at a time
+// The ETS sweep's rows judged side by side, each in a worker thread that judges one row at a time
 // (tools/ets-sweep.ts runRow). Busforge's run into a simulated unit waits on the simulated line nearly all its
 // time, so rows can overlap; but they cannot share an event loop: one row's parse of a large application holds
-// the loop for seconds, and with it the timers of every other row's simulated line and connection.
+// the loop for seconds, and with it the timers of every other row's simulated line and connection. Nor can they
+// take every core: `bun run check` runs the other workspaces' tests at the same time, and a worker that waits for
+// a core delays its row's timers just the same.
 import { availableParallelism } from "node:os";
 import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
-import { readRow, runRow, type Verdict } from "./ets-sweep.ts";
+import type { Verdict } from "./ets-sweep.ts";
 
 const ROLE = "ets-sweep-row";
-type Judged = { id: string; verdict: Verdict } | { id: string; error: string };
+// A row and its answer between the pool and a worker; `job` tells two judgements of one row apart.
+export interface RowRequest { job: number; id: string }
+export type RowAnswer = { job: number; verdict: Verdict } | { job: number; error: string };
 
-// One worker per core but one, for the test runner's own thread.
-export const ROW_WORKERS = Math.max(1, availableParallelism() - 1);
+// Half the cores: the rest is the other workspaces' tests' and the runner's.
+export const ROW_WORKERS = Math.max(1, Math.floor(availableParallelism() / 2));
 
-// Each row's verdict, as runRow gives it; a row whose run threw is rejected with the worker's error.
-export function judgeRows(ids: readonly string[], workers = ROW_WORKERS): Map<string, Promise<Verdict>> {
-  const queue = [...ids];
-  const settle = new Map<string, { resolve: (v: Verdict) => void; reject: (e: Error) => void }>();
-  const out = new Map(ids.map((id) => [id, new Promise<Verdict>((resolve, reject) => settle.set(id, { resolve, reject }))]));
-  // A rejection is the test's to report when it awaits its row, not an unhandled one before.
-  for (const p of out.values()) p.catch(() => {});
-  const start = () => {
-    const worker = new Worker(new URL(import.meta.url), { workerData: { role: ROLE } });
-    let current: string | undefined;
-    const next = () => {
-      current = queue.shift();
-      if (current !== undefined) { worker.postMessage(current); return; }
-      // No more rows: the worker no longer holds the process open and closes its port. Terminating it from
-      // here crashes Bun (1.3) while the worker's sockets wind down.
-      worker.unref();
-      worker.postMessage(null);
-    };
-    worker.on("message", (m: Judged) => {
-      const s = settle.get(m.id)!;
-      if ("error" in m) s.reject(new Error(m.error)); else s.resolve(m.verdict);
-      next();
+interface Job { job: number; id: string; resolve: (v: Verdict) => void; reject: (e: Error) => void; deaths: number }
+
+// A pool of `size` workers (each started on demand, ended with the process): judge(id) is the row's verdict, as
+// runRow gives it, or the error its run threw. A row whose worker dies is judged once more by a new worker; the
+// second death rejects it with the worker's error. `worker` is the worker's module (this one by default).
+export class RowPool {
+  private readonly queue: Job[] = [];
+  private readonly idle: Worker[] = [];
+  private readonly current = new Map<Worker, Job>();
+  private workers = 0;
+  private jobs = 0;
+
+  constructor(private readonly size = ROW_WORKERS, private readonly worker: URL = new URL(import.meta.url)) {
+    if (!Number.isInteger(size) || size < 1) throw new Error(`a pool of ${size} workers judges no row`);
+  }
+
+  judge(id: string): Promise<Verdict> {
+    return new Promise((resolve, reject) => {
+      this.queue.push({ job: this.jobs++, id, resolve, reject, deaths: 0 });
+      this.pump();
     });
-    // A worker that dies takes its row with it; the rows still queued go to a new worker.
+  }
+
+  private pump(): void {
+    while (this.queue.length) {
+      const w = this.idle.pop() ?? (this.workers < this.size ? this.start() : undefined);
+      if (w === undefined) return;
+      const job = this.queue.shift()!;
+      this.current.set(w, job);
+      // An idle worker does not hold the process open; one judging a row does.
+      w.ref();
+      w.postMessage({ job: job.job, id: job.id } satisfies RowRequest);
+    }
+  }
+
+  private start(): Worker {
+    const w = new Worker(this.worker, { workerData: { role: ROLE } });
+    this.workers++;
+    let dead = false;
+    w.on("message", (m: RowAnswer) => {
+      const job = this.current.get(w);
+      if (dead || job === undefined || job.job !== m.job) return;
+      this.current.delete(w);
+      if ("error" in m) job.reject(new Error(m.error)); else job.resolve(m.verdict);
+      w.unref();
+      this.idle.push(w);
+      this.pump();
+    });
     const died = (e: Error) => {
-      if (current === undefined) return;
-      settle.get(current)!.reject(e);
-      current = undefined;
-      if (queue.length) start();
+      if (dead) return;
+      dead = true;
+      this.workers--;
+      const at = this.idle.indexOf(w);
+      if (at >= 0) this.idle.splice(at, 1);
+      const job = this.current.get(w);
+      this.current.delete(w);
+      if (job !== undefined) {
+        if (++job.deaths < 2) this.queue.unshift(job);
+        else job.reject(new Error(`the workers judging ${job.id} died twice; the second: ${e.message}`));
+      }
+      this.pump();
     };
-    worker.on("error", (e) => died(e instanceof Error ? e : new Error(String(e))));
-    worker.on("exit", (code) => died(new Error(`the worker judging the row exited with code ${code}`)));
-    next();
-  };
-  for (let i = 0; i < Math.min(workers, ids.length); i++) start();
-  return out;
+    w.on("error", (e) => died(e instanceof Error ? e : new Error(String(e))));
+    w.on("messageerror", (e) => died(e instanceof Error ? e : new Error(String(e))));
+    w.on("exit", (code) => died(new Error(`the worker exited with code ${code}`)));
+    return w;
+  }
 }
 
 if (!isMainThread && (workerData as { role?: string } | null)?.role === ROLE) {
-  parentPort!.on("message", (id: string | null) => {
-    if (id === null) { parentPort!.close(); return; }
+  const { readRow, runRow } = await import("./ets-sweep.ts");
+  parentPort!.on("message", ({ job, id }: RowRequest) => {
     Promise.resolve().then(() => runRow(readRow(id))).then(
-      (r) => parentPort!.postMessage({ id, verdict: r.verdict } satisfies Judged),
-      (e: unknown) => parentPort!.postMessage({ id, error: e instanceof Error ? e.stack ?? e.message : String(e) } satisfies Judged),
+      (r) => parentPort!.postMessage({ job, verdict: r.verdict } satisfies RowAnswer),
+      (e: unknown) => parentPort!.postMessage({ job, error: e instanceof Error ? e.stack ?? e.message : String(e) } satisfies RowAnswer),
     );
   });
 }

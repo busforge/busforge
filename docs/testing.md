@@ -769,11 +769,13 @@ names where not.
 `tools/ets-sweep.test.ts` runs every row with the private corpus and holds its verdict and its
 differences to `explained.json`: a new difference fails, and so does an explained one that is gone; the
 same holds for a calibrated row's positions. The rows run side by side, one per worker thread
-(`tools/ets-sweep-workers.ts`, one worker per core but one): Busforge's run into a simulated unit spends nearly
-all its time waiting on the simulated line, but each row needs an event loop of its own, because one row's parse
-of a large application would hold up the timers of every other row's line. More workers than cores starve the
-timers too: the simulator then refuses frames that arrive at instants its captures do not show (`sim-refused`),
-and the row fails loudly.
+(`tools/ets-sweep-workers.ts`, as many workers as half the cores): Busforge's run into a simulated unit spends
+nearly all its time waiting on the simulated line, but each row needs an event loop of its own, because one row's
+parse of a large application would hold up the timers of every other row's line. Busy threads beyond the cores
+(the workers, and the other workspaces' tests `bun run check` runs at the same time) starve the timers too: the
+simulator then refuses frames that arrive at instants its captures do not show (`sim-refused`), which fails every
+row but one whose verdict is `sim-refused` already, as `explained.json` holds a verdict by its kind and its
+differences only.
 Without the corpus it is skipped visibly. A row is evidence on no axis of
 [evidence-contract.md](evidence-contract.md): it shows what Busforge sends next to what ETS sends,
 both given the same simulator's answers.
@@ -834,11 +836,14 @@ One row, step by step:
 5. **The export** of the project, from the project's row in ETS's project search (a project's password stays on its export; the export's project name is checked), and
    the row written: `row.json`, `configuration.json` (the device's configuration as the export holds it), the
    simulator's capture `ets.log` with `ets.log.sim.txt` and its output `ets.log.serve.txt`,
-   `ets6.log.txt` from the row's start, `export.knxproj`. The export is stored reduced to the device's product
-   data (`tools/ets-export-reduce.ts`): ETS keeps every product ever inserted into a project and exports them
-   all, so only the project, `knx_master.xml`, and of the device's manufacturer its `Hardware.xml`,
-   `Catalog.xml` and the device's application program stay, each entry byte for byte as ETS wrote it; the row
-   is written from the reduced export. Where the project holds the unit's application
+   `ets6.log.txt` from the row's start, `export.knxproj`. The export is stored reduced to the product data of
+   the devices its project holds (`tools/ets-export-reduce.ts`): ETS keeps every product ever inserted into a
+   project and exports them all. Every entry outside the manufacturers' product data stays (the project with its
+   signature and certificate, `knx_master.xml`, `.validation`), and of each manufacturer of a device its
+   `Hardware.xml`, `Catalog.xml` and the application programs the devices' Hardware2Program entries name, each
+   entry byte for byte as ETS wrote it; baggages, the other products and the manufacturers' signatures go. The row
+   is written from the reduced export, which then replaces ETS's; it is a record for Busforge to read, not a
+   project to import into ETS again. Where the project holds the unit's application
    under another build's id (same manufacturer, number and version, another content hash: the OpenKNX
    release ETS took in), the row is written only if that build parses as the unit's; its parameter and
    module ids are then written as the unit's (the `appRef` keeps the export's build) and the project's

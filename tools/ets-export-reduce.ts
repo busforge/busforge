@@ -1,85 +1,90 @@
-// ETS's project export reduced to one device's product data, for an ETS sweep row (tools/ets-driver.ts stores
-// each row's export through it). ETS keeps every product ever inserted into a project and exports all of them,
-// so the export of the n-th row of a sweep project would carry the n-1 products before it.
+// ETS's project export reduced to the product data of the devices its project holds, for an ETS sweep row
+// (tools/ets-driver.ts stores each row's export through it). ETS keeps every product ever inserted into a project
+// and exports all of them, so the export of the n-th row of a sweep project would carry the n-1 products before it.
 //
-//   bun run tools/ets-export-reduce.ts <export.knxproj> <out.knxproj> <application id>...
+//   bun run tools/ets-export-reduce.ts <export.knxproj> <out.knxproj> [--password-env <VAR>]
 //
 // Kept, byte for byte as ETS wrote them (local header, data, data descriptor): every entry outside the
 // manufacturers' product data (the project P-xxxx with its signature and certificate, knx_master.xml,
-// .validation), and of the applications' manufacturer its directory, Hardware.xml, Catalog.xml and the named
-// application programs. Dropped: every other manufacturer's directory and signature, the manufacturer's other
-// application programs, its Baggages and its signature (which signs the whole directory, so it no longer holds).
+// .validation); of each manufacturer of a device of the project its directory, Hardware.xml and Catalog.xml;
+// and every application program the devices' Hardware2Program entries name (an application and a PEI program
+// alike). Dropped: the other manufacturers' directories and signatures, the other application programs, the
+// baggages, and the kept manufacturers' signatures (each signs its whole directory, so it no longer holds). The
+// reduced export is the record of the row's project and devices that Busforge reads, not an archive to import
+// into ETS again: without the signatures and baggages ETS may refuse it.
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { readZip } from "../packages/project/src/zip.ts";
+import { appProgramId, loadKnxproj, type Device } from "../packages/project/src/index.ts";
+import { readCentralDirectory, readZip } from "../packages/project/src/zip.ts";
 
+const FLAG_DATA_DESCRIPTOR = 0x0008;
+const DESCRIPTOR_SIG = 0x08074b50;
 const EOCD_SIG = 0x06054b50;
-const CD_SIG = 0x02014b50;
-const LFH_SIG = 0x04034b50;
-const ZIP64 = 0xffffffff;
-const APPLICATION_ID = /^(M-[0-9A-F]{4})_A-[0-9A-F]{4}-[0-9A-F]{2}-[0-9A-F]{4}(?:-O[0-9A-F]+)?$/i;
+const MANUFACTURER = /^(m-[0-9a-f]{4})(?:[/.]|$)/;
 
-interface Entry { name: string; record: Buffer; lfh: number }
-
-function centralDirectory(buf: Buffer): { entries: Entry[]; start: number; comment: Buffer } {
-  let eocd = -1;
-  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 22 - 0xffff); i--) if (buf.readUInt32LE(i) === EOCD_SIG) { eocd = i; break; }
-  if (eocd < 0) throw new Error("the export is no zip: no end of central directory record");
-  if (buf.readUInt16LE(eocd + 4) !== 0 || buf.readUInt16LE(eocd + 6) !== 0) throw new Error("the export spans several disks");
-  const count = buf.readUInt16LE(eocd + 10), size = buf.readUInt32LE(eocd + 12), start = buf.readUInt32LE(eocd + 16);
-  if (count === 0xffff || size === ZIP64 || start === ZIP64) throw new Error("the export is a ZIP64 archive");
-  if (start + size !== eocd) throw new Error(`the central directory (${size} bytes at ${start}) does not end at the end record (${eocd})`);
-  const entries: Entry[] = [];
-  let off = start;
-  for (let i = 0; i < count; i++) {
-    if (off + 46 > eocd || buf.readUInt32LE(off) !== CD_SIG) throw new Error(`central directory entry ${i} of ${count} is malformed`);
-    const len = 46 + buf.readUInt16LE(off + 28) + buf.readUInt16LE(off + 30) + buf.readUInt16LE(off + 32);
-    const lfh = buf.readUInt32LE(off + 42);
-    if (lfh === ZIP64 || buf.readUInt32LE(off + 20) === ZIP64 || buf.readUInt32LE(off + 24) === ZIP64) throw new Error("the export is a ZIP64 archive");
-    if (lfh + 30 > start || buf.readUInt32LE(lfh) !== LFH_SIG) throw new Error(`the local header of central directory entry ${i} is malformed`);
-    entries.push({ name: buf.toString("utf8", off + 46, off + 46 + buf.readUInt16LE(off + 28)), record: buf.subarray(off, off + len), lfh });
-    off += len;
+// The application programs (lower-cased ids) each Hardware2Program of `hardware` (a Hardware.xml) names, by its
+// lower-cased id.
+function programsOf(hardware: string): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const m of hardware.matchAll(/<Hardware2Program\b[^>]*\bId="([^"]+)"[^>]*>([\s\S]*?)<\/Hardware2Program>/g)) {
+    out.set(m[1].toLowerCase(), [...m[2].matchAll(/<ApplicationProgramRef\b[^>]*\bRefId="([^"]+)"/g)].map((r) => r[1].toLowerCase()));
   }
-  if (off !== eocd) throw new Error(`the central directory's ${count} entries end at ${off}, not at the end record (${eocd})`);
-  return { entries, start, comment: buf.subarray(eocd + 22) };
+  return out;
 }
 
-// Whether the reduced export keeps `name`; `manufacturer` and `programs` lower-cased.
-function kept(name: string, manufacturer: string, programs: ReadonlySet<string>): boolean {
-  const n = name.toLowerCase();
-  if (!/^m-[0-9a-f]{4}(?:[/.]|$)/.test(n)) return true;
-  return n === `${manufacturer}/` || n === `${manufacturer}/hardware.xml` || n === `${manufacturer}/catalog.xml`
-    || [...programs].some((p) => n === `${manufacturer}/${p}.xml`);
-}
+const programPath = (id: string) => `${id.split("_")[0]}/${id}.xml`;
 
-// The export reduced to the product data of `applications` (application program ids, of one manufacturer),
-// with the names of what was dropped. Refuses an application the export does not hold.
-export function reduceExport(bytes: Buffer, applications: readonly string[]): { bytes: Buffer; dropped: string[] } {
-  if (applications.length === 0) throw new Error("no application to keep");
-  const bad = applications.find((a) => !APPLICATION_ID.test(a));
-  if (bad !== undefined) throw new Error(`${bad} is no application program id`);
-  const manufacturers = new Set(applications.map((a) => APPLICATION_ID.exec(a)![1].toLowerCase()));
-  if (manufacturers.size > 1) throw new Error(`the applications ${applications.join(", ")} are of ${manufacturers.size} manufacturers`);
-  const manufacturer = [...manufacturers][0];
-  const programs = new Set(applications.map((a) => a.toLowerCase()));
-  const { entries, start, comment } = centralDirectory(bytes);
-  const names = new Set(entries.map((e) => e.name.toLowerCase()));
-  const missing = [...programs].filter((p) => !names.has(`${manufacturer}/${p}.xml`));
-  if (missing.length) throw new Error(`the export holds no application program ${missing.join(", ")}`);
-  // An entry's local header, data and data descriptor run up to the next entry's local header.
-  const offsets = [...new Set(entries.map((e) => e.lfh))].sort((a, b) => a - b);
+// The export reduced to the product data of `devices` (the devices of its project: their ProductRefId and
+// Hardware2ProgramRefId), with the names of what was dropped. Refuses a device whose application program the
+// export does not hold.
+export function reduceExport(bytes: Buffer, devices: readonly Pick<Device, "ia" | "productRef" | "appRef">[]): { bytes: Buffer; dropped: string[] } {
+  if (devices.length === 0) throw new Error("the project holds no device whose product data to keep");
+  const { entries, start, comment } = readCentralDirectory(bytes);
+  const files = readZip(bytes);
+  const at = new Map([...files.keys()].map((n) => [n.toLowerCase(), n]));
+  const manufacturers = new Set(devices.map((d) => d.productRef.split("_")[0].toLowerCase()));
+  const hardware = new Map<string, string[]>();
+  for (const m of manufacturers) {
+    const name = at.get(`${m}/hardware.xml`);
+    if (name !== undefined) for (const [id, refs] of programsOf(files.get(name)!.toString("utf8"))) hardware.set(id, refs);
+  }
+  const programs = new Set<string>();
+  for (const d of devices) {
+    if (!d.appRef) continue;
+    // Where no Hardware.xml describes the Hardware2Program, the program its id names (as readAppProgram reads it).
+    for (const r of hardware.get(d.appRef.toLowerCase()) ?? [appProgramId(d.appRef).toLowerCase()]) {
+      if (!at.has(programPath(r))) throw new Error(`the export holds no application program ${r} (the device ${d.ia})`);
+      programs.add(programPath(r));
+    }
+  }
+  const kept = (name: string): boolean => {
+    const n = name.toLowerCase(), m = MANUFACTURER.exec(n)?.[1];
+    if (m === undefined) return true;
+    return manufacturers.has(m) && (n === `${m}/` || n === `${m}/hardware.xml` || n === `${m}/catalog.xml` || programs.has(n));
+  };
+  // Each entry is its local header, its data and, with bit 3, a data descriptor (12 bytes, 16 with its signature),
+  // and the entries lie end to end from the archive's start to the central directory: copied by those spans, an
+  // entry that overlapped or left a gap would carry another entry's bytes or lose its own.
+  const offsets = [...new Set(entries.map((e) => e.lfhOffset))].sort((a, b) => a - b);
   if (offsets.length !== entries.length) throw new Error("two central directory entries share a local header");
-  const end = (lfh: number) => offsets[offsets.indexOf(lfh) + 1] ?? start;
-  const locals: Buffer[] = [], records: Buffer[] = [], dropped: string[] = [];
-  let at = 0;
+  const next = new Map(offsets.map((o, i) => [o, offsets[i + 1] ?? start]));
+  if (entries.length && offsets[0] !== 0) throw new Error(`the first entry begins at ${offsets[0]}, not at the archive's start`);
   for (const e of entries) {
-    if (!kept(e.name, manufacturer, programs)) { dropped.push(e.name); continue; }
-    const local = bytes.subarray(e.lfh, end(e.lfh));
-    const record = Buffer.from(e.record);
-    record.writeUInt32LE(at, 42);
+    const data = e.lfhOffset + 30 + bytes.readUInt16LE(e.lfhOffset + 26) + bytes.readUInt16LE(e.lfhOffset + 28) + e.compSize;
+    const rest = next.get(e.lfhOffset)! - data;
+    const fits = !(e.flags & FLAG_DATA_DESCRIPTOR) ? rest === 0 : rest === 12 || (rest === 16 && bytes.readUInt32LE(data) === DESCRIPTOR_SIG);
+    if (!fits) throw new Error(`${e.name} (local header at ${e.lfhOffset}, data to ${data}) does not end where the next entry begins (${next.get(e.lfhOffset)})`);
+  }
+  const locals: Buffer[] = [], records: Buffer[] = [], dropped: string[] = [];
+  let length = 0;
+  for (const e of entries) {
+    if (!kept(e.name)) { dropped.push(e.name); continue; }
+    const local = bytes.subarray(e.lfhOffset, next.get(e.lfhOffset));
+    const record = Buffer.from(bytes.subarray(...e.record));
+    record.writeUInt32LE(length, 42);
     locals.push(local);
     records.push(record);
-    at += local.length;
+    length += local.length;
   }
   const cd = Buffer.concat(records);
   const eocd = Buffer.alloc(22);
@@ -87,22 +92,27 @@ export function reduceExport(bytes: Buffer, applications: readonly string[]): { 
   eocd.writeUInt16LE(records.length, 8);
   eocd.writeUInt16LE(records.length, 10);
   eocd.writeUInt32LE(cd.length, 12);
-  eocd.writeUInt32LE(at, 16);
+  eocd.writeUInt32LE(length, 16);
   eocd.writeUInt16LE(comment.length, 20);
   const out = Buffer.concat([...locals, cd, eocd, comment]);
-  // The reduced archive read back whole, without unpacking the export (whose size the reduction exists to bound).
-  const files = entries.filter((e) => !e.name.endsWith("/") && kept(e.name, manufacturer, programs)).map((e) => e.name);
-  const read = [...readZip(out).keys()];
-  if (read.join("\n") !== files.join("\n")) throw new Error(`the reduced export reads as ${read.length} files, not as the ${files.length} kept`);
+  // The reduced archive read back whole: the kept files, each with the export's bytes.
+  const read = readZip(out);
+  const want = [...files.keys()].filter(kept);
+  if ([...read.keys()].join("\n") !== want.join("\n") || want.some((n) => !read.get(n)!.equals(files.get(n)!))) throw new Error("the reduced export does not read back as the kept files of the export");
   return { bytes: out, dropped };
 }
 
+// The export of a project reduced to the product data of the devices it holds.
+export function reduceProjectExport(bytes: Buffer, password: string | undefined): { bytes: Buffer; dropped: string[] } {
+  return reduceExport(bytes, loadKnxproj(bytes, password, "export").devices);
+}
+
 if (import.meta.main) {
-  const [from, to, ...applications] = process.argv.slice(2);
+  const [from, to, flag, env, ...rest] = process.argv.slice(2);
   try {
-    if (!from || !to || applications.length === 0) throw new Error("usage: bun run tools/ets-export-reduce.ts <export.knxproj> <out.knxproj> <application id>...");
+    if (!from || !to || rest.length || (flag !== undefined && (flag !== "--password-env" || !env))) throw new Error("usage: bun run tools/ets-export-reduce.ts <export.knxproj> <out.knxproj> [--password-env <VAR>]");
     if (resolve(from) === resolve(to)) throw new Error("the reduced export goes to another file than the export");
-    const r = reduceExport(readFileSync(from), applications);
+    const r = reduceProjectExport(readFileSync(from), env === undefined ? undefined : process.env[env]);
     writeFileSync(to, r.bytes);
     console.log(`${to}: ${r.bytes.length} bytes; dropped ${r.dropped.length} entries`);
   } catch (e) {

@@ -7,8 +7,8 @@ import { iaToNum } from "../packages/knx/src/index.ts";
 import { captureText, corpusPath, corpusRoot } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { capturedOnLoadedUnit, deviceConfiguration, deviceRows, dialogueDifferences, parseCapture } from "./etsdiff.ts";
-import { causes, compareRuns, etsOutcome, inCorpus, judge, listRows, loadedImageCheck, MANIFEST, MANIFEST_FORMAT, movedSince, readRow, refusalsAfterRestart, rejudge, ROW_FILES, runState, simRefusals, SWEEP_DIR, updateManifest, writeRejudged, type EtsOutcome, type Explained, type Manifest, type ManifestRow, type RowConfiguration, type RowSpec, type Verdict, withCause } from "./ets-sweep.ts";
-import { judgeRows } from "./ets-sweep-workers.ts";
+import { causes, compareRuns, etsOutcome, inCorpus, judge, listRows, loadedImageCheck, MANIFEST, MANIFEST_FORMAT, movedSince, readRow, refusalsAfterRestart, rejudge, ROW_FILES, runState, simRefusals, SWEEP_DIR, updateManifest, writeRejudged, type EtsOutcome, type Explained, type Manifest, type ManifestRow, type RowConfiguration, type RowSpec, withCause } from "./ets-sweep.ts";
+import { RowPool } from "./ets-sweep-workers.ts";
 import { mismatchLines } from "./sim-unit-product.ts";
 import { tempDir } from "./test-temp.ts";
 
@@ -389,12 +389,12 @@ corpusDescribe("the ETS sweep rows", () => {
   test("the corpus holds rows", () => {
     expect(rows.length).toBeGreaterThan(0);
   });
-  // The rows run side by side in worker threads (tools/ets-sweep-workers.ts), started with the first row's test.
-  let judged: Map<string, Promise<Verdict>> | undefined;
+  // The rows run side by side in worker threads (tools/ets-sweep-workers.ts), each test's row as the test runs.
+  let pool: RowPool | undefined;
   for (const id of rows) {
-    test(`${id}: Busforge's download into a fresh simulated unit has the verdict and the differences explained`, async () => {
+    test.concurrent(`${id}: Busforge's download into a fresh simulated unit has the verdict and the differences explained`, async () => {
       const row = readRow(id);
-      const verdict = await (judged ??= judgeRows(rows)).get(id)!;
+      const verdict = await (pool ??= new RowPool()).judge(id);
       const found = verdict.verdict === "differs" ? verdict.differences : [];
       expect({ verdict: verdict.verdict, differences: found }).toEqual({ verdict: row.explained.verdict, differences: row.explained.differences.map((d) => d.difference) });
       expect(row.explained.differences.filter((d) => !d.cause?.trim()).map((d) => d.difference)).toEqual([]);

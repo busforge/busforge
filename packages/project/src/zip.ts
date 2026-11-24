@@ -13,7 +13,8 @@ const LFH_SIG = 0x04034b50;
 const ZIP64_LOCATOR_SIG = 0x07064b50;
 const ZIP64_SENTINEL = 0xffffffff;
 
-interface CDEntry { name: string; method: number; flags: number; modTime: number; crc: number; lfhOffset: number; compSize: number; size: number; }
+// `record`: the entry's central directory record, [start, end) in the archive.
+export interface CDEntry { name: string; method: number; flags: number; modTime: number; crc: number; lfhOffset: number; compSize: number; size: number; record: [number, number]; }
 
 // What one archive may unpack to. The largest entry of any project or product database in the corpus
 // unpacks to about 73 MiB and the largest archive to about 98 MiB in all; the caps leave room above
@@ -46,9 +47,10 @@ function zip64(): KnxprojError {
   return new KnxprojError("ZIP64_UNSUPPORTED", "the archive is a ZIP64 archive, which Busforge does not read");
 }
 
-interface CentralDirectory { entries: CDEntry[]; start: number; }
+// `start`: where the central directory begins; `comment`: the end record's comment.
+export interface CentralDirectory { entries: CDEntry[]; start: number; comment: Buffer; }
 
-function readCentralDirectory(buf: Buffer): CentralDirectory {
+export function readCentralDirectory(buf: Buffer): CentralDirectory {
   const eocd = findEOCD(buf);
   // ZIP64 moves the directory's offset and the entries' sizes into records this reader does not parse;
   // its sentinels read as plain numbers would be taken for offsets and sizes that are not there.
@@ -83,11 +85,11 @@ function readCentralDirectory(buf: Buffer): CentralDirectory {
     const next = off + 46 + nameLen + extraLen + commentLen;
     if (next > end) throw pastEnd(i);
     const name = buf.toString("utf8", off + 46, off + 46 + nameLen);
-    entries.push({ name, method, flags, modTime, crc, lfhOffset, compSize, size });
+    entries.push({ name, method, flags, modTime, crc, lfhOffset, compSize, size, record: [off, next] });
     off = next;
   }
   if (off !== end) throw malformed(`central directory's ${count} entries end at ${off}, the end record declares ${end}`);
-  return { entries, start };
+  return { entries, start, comment: buf.subarray(eocd + 22, eocd + 22 + commentLen) };
 }
 
 // Locate the compressed payload and the AES extra field (if any) from the local file header, which is
