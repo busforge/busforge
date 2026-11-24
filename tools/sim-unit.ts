@@ -119,6 +119,29 @@ export interface SimUnitCoreModel {
   // The four octets after the serial number in its A_IndividualAddressSerialNumber_Response, as its captures
   // show them; null where they show none, and the read is refused.
   serialNumberResponseTail: Buffer | null;
+  // Where the unit is no one real unit's own (a catalogue unit, tools/sim-unit-catalogue.ts): the sources of what it
+  // holds at the start, and each read it answers is noted in its log with its source. Absent on a unit of its own
+  // product, whose answers are all its collection's and its captures'.
+  sources?: AnswerSources;
+}
+
+// The sources of a unit's answers (SimUnitCoreModel.sources). An answer that is not what the unit held at the start
+// is noted as this session's.
+export interface AnswerSources {
+  // What the unit is: the first line of its log.
+  unit: string;
+  // The source of its mask (its device descriptor 0).
+  mask: string;
+  // `<object>/<PID>` -> the source of the property's first element as the unit holds it at the start, where it is
+  // not `held`.
+  properties: Map<string, string>;
+  // The source of everything else it holds at the start: the other elements, descriptions, function-property
+  // states, its answer to an authorization, its memory.
+  held: string;
+  // Why a property it holds no element of is not answered.
+  absent: string;
+  // The octet it holds at an address at the start, for a memory answer's source.
+  memoryAt: (address: number) => number | undefined;
 }
 
 // A System B unit: its relative load control on PID 5.
@@ -171,9 +194,10 @@ export class SimUnit implements KnxTransport {
   private restartedNow = false;
   // Whether its application's load-state machine took a load event since its last restart.
   private applicationLoaded = false;
-  // Whether its device control is not known: after an unload of the application where the captures do not
-  // show what the unit reports then, until it is written or the unit restarts.
-  protected deviceControlUnknown = false;
+  // Whether its device control is not known, and after which event of the application's load-state machine: after
+  // an unload (or a load) of it where the captures do not show what the unit reports then, until it is written or
+  // the unit restarts.
+  protected deviceControlUnknown: "unload" | "load" | null = null;
   // The priority bits of the request on the line, which the unit's frames in answer carry.
   private priority = 0;
   private line: Promise<void> = Promise.resolve();
@@ -194,6 +218,10 @@ export class SimUnit implements KnxTransport {
     this.programmingMode = model.programmingMode;
     this.objects = new Map([...model.objects].map(([o, props]) => [o, new Map([...props].map(([pid, p]) => [pid, { ...p, elements: p.elements?.map((e) => Buffer.from(e)) ?? null }]))]));
     if (!this.property(0, PID_DEVICE_CONTROL)?.elements?.[0]) throw new Error("a simulated unit needs the device control (object 0 PID 14) its unit answered: verify mode and the stopped application live there");
+    if (model.sources) {
+      this.note(model.sources.unit);
+      for (const [key, source] of model.sources.properties) this.note(`source of ${key}: ${source}`);
+    }
     for (const [lsm, s] of model.segments ?? []) {
       this.segments.set(lsm, { at: s.at, size: s.size, bytes: Buffer.from(s.bytes), known: new Uint8Array(s.size).fill(1), mcbControl: s.mcbControl && Buffer.from(s.mcbControl) });
       this.referenceKnown.set(lsm, true);
@@ -416,6 +444,7 @@ export class SimUnit implements KnxTransport {
       if (this.programmingMode === null) { this.refuse(`${what}: whether the unit is in programming mode is not known`); return; }
       if (!this.programmingMode) { this.note(`${what} outside programming mode: no answer`); return; }
       this.emit(0, Buffer.from([APCI.INDIVIDUAL_ADDRESS_RESPONSE >> 8, APCI.INDIVIDUAL_ADDRESS_RESPONSE & 0xff]), true);
+      if (this.model.sources) this.note(`answered A_IndividualAddress_Read: ${this.model.sources.held}`);
       return;
     }
     const serial = this.property(0, PID_SERIAL)?.elements?.[0];
@@ -424,6 +453,7 @@ export class SimUnit implements KnxTransport {
     const tail = this.model.serialNumberResponseTail;
     if (!tail) { this.refuse(`${what}: the octets after the serial number in the unit's answer are not known`); return; }
     this.emit(0, Buffer.concat([Buffer.from([APCI.IA_SERIAL_RESPONSE >> 8, APCI.IA_SERIAL_RESPONSE & 0xff]), serial, tail]), true);
+    if (this.model.sources) this.note(`answered A_IndividualAddressSerialNumber_Read: ${this.model.sources.properties.get(`0/${PID_SERIAL}`) ?? this.model.sources.held}`);
   }
 
   private onConnectionless(src: number, tpdu: Buffer): void {
@@ -435,7 +465,10 @@ export class SimUnit implements KnxTransport {
   private onApdu(src: number, tpdu: Buffer, connected: boolean): void {
     const raw = ((tpdu[0] & 0x03) << 8) | tpdu[1];
     const d = parseApdu(tpdu).data;
-    const reply: Reply = (apci, data, low = 0) => connected ? this.answer(src, apci, data, low) : this.answerConnectionless(src, apci, data, low);
+    const send: Reply = (apci, data, low = 0) => connected ? this.answer(src, apci, data, low) : this.answerConnectionless(src, apci, data, low);
+    const sources = this.model.sources;
+    // An answer the unit refused to send (beyond its maximum APDU) is not noted.
+    const reply: Reply = sources ? (apci, data, low = 0) => { const refused = this.refusals.length; send(apci, data, low); if (this.refusals.length === refused) this.noteSource(sources, raw, apci, data, low); } : send;
     const shape = (n: number) => { if (d.length < n) throw new Error(`service 0x${raw.toString(16)} with ${d.length} octets of data`); };
     switch (raw & 0x3c0) {
       case APCI.DEVICE_DESCRIPTOR_READ: {
@@ -474,6 +507,39 @@ export class SimUnit implements KnxTransport {
     this.refuse(`${connected ? "" : "connectionless "}APDU ${tpdu.toString("hex")}: service 0x${raw.toString(16)} is not modelled`);
   }
 
+  // The source of the unit's answer to a read (`request`, its APCI), in its log: what it held at the start, by the
+  // source `sources` gives that, or this session's. The answers to the other services are not noted.
+  private noteSource(sources: AnswerSources, request: number, apci: number, data: Buffer, low: number): void {
+    const sourceIf = (unchanged: boolean, source: string) => (unchanged ? source : "this session");
+    const memory = (at: number, bytes: Buffer) => {
+      const held = Array.from(bytes, (b, i) => sources.memoryAt(at + i) === b);
+      return held.every(Boolean) ? sources.held : held.some(Boolean) ? `${sources.held} and this session` : "this session";
+    };
+    let what: string, source: string;
+    if ((request & 0x3c0) === APCI.DEVICE_DESCRIPTOR_READ) { what = "A_DeviceDescriptor_Read"; source = sourceIf(data.readUInt16BE(0) === this.model.mask, sources.mask); }
+    else if (request === APCI.PROPERTY_READ && apci === APCI.PROPERTY_RESPONSE) {
+      const [obj, pid, count, start] = [data[0], data[1], data[2] >> 4, ((data[2] & 0x0f) << 8) | data[3]];
+      const held = this.model.objects.get(obj)?.get(pid), got = data.subarray(4);
+      what = `A_PropertyValue_Read ${obj}/${pid} of ${count} from ${start}`;
+      const first = sources.properties.get(`${obj}/${pid}`) ?? sources.held;
+      if (count === 0) source = sourceIf(held?.elements === null, sources.held);
+      else if (start === 0) source = sourceIf(held?.elements?.length === got.readUInt16BE(0), sources.held);
+      else {
+        const was = held?.elements?.slice(start - 1, start - 1 + count);
+        const same = was !== undefined && was.length === count && Buffer.concat(was).equals(got);
+        source = sourceIf(same, start === 1 && count > 1 && first !== sources.held ? `${first}; the elements after it: ${sources.held}` : start === 1 ? first : sources.held);
+      }
+    }
+    else if (request === APCI.PROPERTY_DESCRIPTION_READ || request === APCI.FUNCTION_PROPERTY_EXT_STATE_READ || request === APCI.AUTHORIZE_REQUEST) {
+      what = request === APCI.PROPERTY_DESCRIPTION_READ ? "A_PropertyDescription_Read" : request === APCI.AUTHORIZE_REQUEST ? "A_Authorize_Request" : "A_FunctionPropertyExtState_Read";
+      source = sources.held;
+    }
+    else if ((request & 0x3c0) === APCI.MEMORY_READ && (apci & 0x3c0) === APCI.MEMORY_RESPONSE) { const at = data.readUInt16BE(0); what = `A_Memory_Read ${low} at 0x${at.toString(16)}`; source = memory(at, data.subarray(2)); }
+    else if (request === APCI.MEMORY_EXT_READ && apci === APCI.MEMORY_EXT_READ_RESP) { const at = data.readUIntBE(1, 3); what = `A_MemoryExtended_Read ${data.length - 4} at 0x${at.toString(16)}`; source = memory(at, data.subarray(4)); }
+    else return;
+    this.note(`answered ${what}: ${source}`);
+  }
+
   // Why the unit's restart now is not modelled, or null.
   protected restartRefusal(): string | null {
     const loading = [...this.objects.keys()].filter((o) => this.state(o) === STATE.LOADING);
@@ -505,7 +571,7 @@ export class SimUnit implements KnxTransport {
     // restart's is moved back to its T_Ack's arrival (onAck).
     this.restartedAt = this.now();
     this.applicationLoaded = false;
-    this.deviceControlUnknown = false;
+    this.deviceControlUnknown = null;
     // A unit without System B's segments has none. What the application does with other bits, or while it is
     // not loaded, is not shown: the octet is then unknown. The memory-control block reports the CRC over the
     // segment as it then holds it.
@@ -531,6 +597,17 @@ export class SimUnit implements KnxTransport {
     this.note("restart");
   }
 
+  // The device control after an event of the application's load-state machine: its application-stopped bit set where
+  // the unit's captures show it set, unknown where they do not show it. A load leaves only that bit unknown, which a
+  // later shown stop sets; an unknown after an unload stays until the device control is written or the unit restarts.
+  protected stopsApplication(event: "unload" | "load", stops: boolean | null): void {
+    if (stops === null) { if (this.deviceControlUnknown !== "unload") this.deviceControlUnknown = event; return; }
+    if (!stops) return;
+    const dc = this.property(0, PID_DEVICE_CONTROL)!;
+    dc.elements = [Buffer.from([dc.elements![0][0] | APPLICATION_STOPPED])];
+    if (this.deviceControlUnknown === "load") this.deviceControlUnknown = null;
+  }
+
   protected property(obj: number, pid: number): SimProperty | null {
     return this.objects.get(obj)?.get(pid) ?? null;
   }
@@ -540,14 +617,15 @@ export class SimUnit implements KnxTransport {
     const collectedMode = obj === 0 && pid === PID_PROGRAMMING_MODE ? this.property(0, pid)?.elements?.[0]?.[0] : undefined;
     if (collectedMode !== undefined && this.programmingMode !== null && ((collectedMode & 1) === 1) !== this.programmingMode) { this.refuse(`${what}: the unit's programming mode differs from the one collected, and what it reports then is not shown`); return; }
     const prop = this.property(obj, pid);
-    if (!prop) { this.refuse(`${what}: the unit was not read there`); return; }
+    const sources = this.model.sources;
+    if (!prop) { this.refuse(`${what}: ${sources ? sources.absent : "the unit was not read there"}`); return; }
     const head = (n: number) => Buffer.from([obj, pid, (n << 4) | ((start >> 8) & 0x0f), start & 0xff]);
     if (prop.elements === null) {
       if (start !== 1 || count !== 1) { this.refuse(`${what}: the unit refused the property's first element, its answer here is not known`); return; }
       reply(APCI.PROPERTY_RESPONSE, head(0));
       return;
     }
-    if (obj === 0 && pid === PID_DEVICE_CONTROL && this.deviceControlUnknown) { this.refuse(`${what} after the unload of the application: what the unit reports then is not shown`); return; }
+    if (obj === 0 && pid === PID_DEVICE_CONTROL && this.deviceControlUnknown) { this.refuse(`${what} after the ${this.deviceControlUnknown} of the application: what the unit reports then is not shown`); return; }
     if ((pid === PID_TABLE_REFERENCE && this.referenceKnown.get(obj) === false) || (pid === PID_MCB && this.mcbKnown.get(obj) === false)) {
       this.refuse(`${what} after the unload of its load-state machine: what the unit reports there before the next allocation is not known`);
       return;
@@ -592,7 +670,7 @@ export class SimUnit implements KnxTransport {
       return;
     }
     if (obj === 0 && pid === PID_DEVICE_CONTROL && value.length === 1) {
-      this.deviceControlUnknown = false;
+      this.deviceControlUnknown = null;
       prop.elements = [Buffer.from(value)];
       echo(value);
       return;
@@ -656,8 +734,7 @@ export class SimUnit implements KnxTransport {
       case EVENT.UNLOAD:
         this.mcbWritten.delete(obj);
         if (this.segments.has(obj)) { this.referenceKnown.set(obj, false); this.mcbKnown.set(obj, false); }
-        if (obj === APPLICATION_LSM && (this.model.unloadStopsApplication ?? null) === null) this.deviceControlUnknown = true;
-        if (obj === APPLICATION_LSM && this.model.unloadStopsApplication) { const dc = this.property(0, PID_DEVICE_CONTROL)!; dc.elements = [Buffer.from([dc.elements![0][0] | APPLICATION_STOPPED])]; }
+        if (obj === APPLICATION_LSM) this.stopsApplication("unload", this.model.unloadStopsApplication ?? null);
         return set(STATE.UNLOADED);
       case EVENT.LOAD:
         if (state !== STATE.UNLOADED) { this.refuse(`${what}: a load of a machine in state ${state}`); return null; }
