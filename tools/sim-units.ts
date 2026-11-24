@@ -384,7 +384,7 @@ export const MDT_BE02001: SimUnitSpec = {
     descriptionIndex: null,
     shownWrites: new Map(),
   },
-  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x01, unloadStopsApplication: true, loadStopsApplication: null, writesAfterLoadShown: true, taskAtDeclaredAddress: [], taskControl1: false, mcbSegments: null },
+  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x01, unloadStopsApplication: true, loadStopsApplication: null, writesAfterLoadShown: true, taskSegmentsElsewhere: [], taskControls1: [], mcbSegments: null },
 };
 
 // The Gira Tastsensor 3 Komfort 3fach (M-0008_A-10D7-11-2783-O000A, MV-0705), from the collection before ETS's
@@ -425,7 +425,7 @@ export const GIRA_TS3: SimUnitSpec = {
     descriptionIndex: null,
     shownWrites: new Map(),
   },
-  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x00, unloadStopsApplication: null, loadStopsApplication: false, writesAfterLoadShown: false, taskAtDeclaredAddress: [], taskControl1: false, mcbSegments: "flagged" },
+  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x00, unloadStopsApplication: null, loadStopsApplication: false, writesAfterLoadShown: false, taskSegmentsElsewhere: [], taskControls1: [], mcbSegments: "flagged" },
 };
 
 // The Theben MIX 2 JMG 4 T (M-0048_A-493B-21-B471, MV-07B0; the HMG 6 T's application), from the collection after
@@ -515,12 +515,11 @@ export const THEBEN_MIX2_RMG8T: SimUnitSpec = {
 // - it refuses PID 56, and takes the 15-octet APDUs ETS sends it ("assuming 15");
 // - its device control reads 0 after ETS unloaded its application and after ETS loaded it again while loaded
 //   (application not stopped), 4 with verify mode;
-// - its task segments carry 00 between the address and the program id, and it takes the task control 1 its
-//   application declares;
+// - its task segments carry 00 between the address and the program id; the application's names the address its
+//   application declares, at the end of a segment, and its task control 1 has count 0 (the address 0 it declares);
 // - it answers a memory read into a segment that is loading with the bytes written there since its load
 //   (Busforge's read-backs);
 // - its memory-control block reports each segment flagged 0x80 as `<size:4> 00 <access> <CRC:2>`; object 4 has none;
-// - the application's task segment names the address its application declares, at the end of a segment;
 // - A_Restart: acknowledged on layer 2 and with T_Ack (every capture); frames 41 ms after the restart request (the
 //   earliest any capture shows, Busforge's probes 1 ms after the interface confirmed the restart) and later
 //   acknowledged, the line taken as up from the restart on as the Meteodata's above; numbered frames on the
@@ -547,7 +546,7 @@ export const AURO_M0081: SimUnitSpec = {
     descriptionIndex: null,
     shownWrites: new Map(),
   },
-  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x00, unloadStopsApplication: false, loadStopsApplication: false, writesAfterLoadShown: false, taskAtDeclaredAddress: [3], taskControl1: true, mcbSegments: "flagged" },
+  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x00, unloadStopsApplication: false, loadStopsApplication: false, writesAfterLoadShown: false, taskSegmentsElsewhere: [{ lsm: 3, place: "end" }], taskControls1: [{ lsm: 3, count: 0 }], mcbSegments: "flagged" },
 };
 
 // The Theben theLuxa P300 presence detector (M-0048_A-107E-12-5B58, MV-0705), from the collection right before
@@ -558,9 +557,9 @@ export const AURO_M0081: SimUnitSpec = {
 // - it refuses PID 56, and takes the 15-octet APDUs ETS sends it ("assuming 15");
 // - its device control reads 0 after ETS unloaded its application and after ETS loaded it again while loaded
 //   (application not stopped), 4 with verify mode;
-// - its task segments carry 00 between the address and the program id, and it takes the task control 1 its
-//   application declares; ETS allocates its tables at their own size and names the segment's start in their task
-//   segments, and the application's task segment names the address its application declares, inside a segment;
+// - its task segments carry 00 between the address and the program id; ETS allocates its tables at their own size
+//   and names the segment's start in their task segments; the application's names the address its application
+//   declares, inside a segment, and its task control 1 has count 1;
 // - it answers a memory read into a segment that is loading with the bytes written there since its load
 //   (Busforge's read-backs in collections/theluxa-p300-hc03-2026-10-07/theluxa-busforge-full-r1.log);
 // - its memory-control block reports every EEPROM segment: one flagged 0x80 as `<size:4> 01 <access> <CRC:2>`,
@@ -591,7 +590,7 @@ export const THEBEN_THELUXA_P300: SimUnitSpec = {
     descriptionIndex: null,
     shownWrites: new Map(),
   },
-  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x00, unloadStopsApplication: false, loadStopsApplication: false, writesAfterLoadShown: false, taskAtDeclaredAddress: [3], taskControl1: true, mcbSegments: "eeprom" },
+  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x00, unloadStopsApplication: false, loadStopsApplication: false, writesAfterLoadShown: false, taskSegmentsElsewhere: [{ lsm: 3, place: "inside" }], taskControls1: [{ lsm: 3, count: 1 }], mcbSegments: "eeprom" },
 };
 
 // The MDT BE-06001 universal interface 6-fold (M-0083_A-00B4-32-3919, MV-0705), from the collection right before
@@ -631,7 +630,7 @@ export const MDT_BE06001: SimUnitSpec = {
     descriptionIndex: null,
     shownWrites: new Map(),
   },
-  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x01, unloadStopsApplication: true, loadStopsApplication: true, writesAfterLoadShown: false, taskAtDeclaredAddress: [], taskControl1: false, mcbSegments: null },
+  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x01, unloadStopsApplication: true, loadStopsApplication: true, writesAfterLoadShown: false, taskSegmentsElsewhere: [], taskControls1: [], mcbSegments: null },
 };
 
 export const SIM_UNITS: readonly SimUnitSpec[] = [MEANWELL_KNX40E, THEBEN_DALI_GATEWAY, OPENKNX_RAUMCONTROLLER, THEBEN_MIX2_HMG6T, JUNG_400021SE, GVS_AMMA, ABB_USU42, THEBEN_METEODATA_140S, MDT_BE02001, GIRA_TS3, THEBEN_MIX2_JMG4T, THEBEN_MIX2_RMG8T, AURO_M0081, THEBEN_THELUXA_P300, MDT_BE06001];

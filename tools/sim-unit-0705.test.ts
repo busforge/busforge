@@ -252,6 +252,6 @@ corpusDescribe("the new simulated MV-0705 units", () => {
     // The Gira's application declares its task segment inside a segment, which no capture shows it take.
     const gira = newSimUnit(GIRA_TS3, {}, { link: { ackMs: 0, nakMs: 0 } });
     for (const t of ["80", "43d70305100101000000000000000000", "c2", "47d7030510010302435400000810d711"]) await send(gira, GIRA_TS3)(t);
-    expect(gira.refusals).toEqual(["sim-refused A_PropertyValue_Write 3/5 0302435400000810d711: a task segment at 0x4354, where object 3 holds no segment"]);
+    expect(gira.refusals).toEqual(["sim-refused A_PropertyValue_Write 3/5 0302435400000810d711: a task segment at 0x4354, inside a segment of object 3, which no capture shows the unit take"]);
   });
 });

@@ -8,11 +8,11 @@ import { captureLData } from "./etsdiff.ts";
 import { etsBranches, rowUnit, ROW_FORMAT, SWEEP_DIR, type RowSpec } from "./ets-sweep.ts";
 import { tempDir } from "./test-temp.ts";
 import type { SimUnit } from "./sim-unit.ts";
-import type { SystemBBehaviour } from "./sim-unit-model.ts";
+import type { SystemBBehaviour, UnitBehaviour } from "./sim-unit-model.ts";
 import { catalogueUnit, catalogueUnitRecord, catalogueUnitSpec, chooseDonor, donorDigest, donorUnfit, DONOR_RULES, learnIdentity, unitMask, type CatalogueUnitSpec } from "./sim-unit-catalogue.ts";
 import { mismatchLines } from "./sim-unit-product.ts";
 import { framePairs, replayCapture } from "./sim-unit-replay.ts";
-import { MEANWELL_KNX40E, newSimUnit, SIM_UNITS, type SimUnitSpec } from "./sim-units.ts";
+import { AURO_M0081, MEANWELL_KNX40E, newSimUnit, SIM_UNITS, type SimUnitSpec } from "./sim-units.ts";
 
 // Parsing an application takes up to 6.7 s alone (the OpenKNX RaumController's); the replays below run every unit's
 // sweep row on its capture's clock. Twenty times that under a loaded full check (docs/testing.md, "Timeouts of heavy
@@ -59,10 +59,11 @@ corpusDescribe("a catalogue unit's donor", () => {
       // A System B download with Data Secure ends with the confirmed restart: of the units that show it, the MIX 2's and
       // the Jung's applications change their memory after a restart.
       ["M-0004_A-7072-21-99A7-O000A", "gvs-amma"],
-      // An MV-0705 application declaring a task control 1 and a task segment inside a segment: of the units that show
-      // both, the Auro and the theLuxa P300 leave as many answers unshown, and the Auro comes first by id.
-      ["M-0008_A-10D7-11-2783-O000A", "auro-m0081"],
-      ["M-0048_A-107E-12-5B58", "auro-m0081"],
+      // An MV-0705 application declaring a task control 1 and a task segment that starts no segment: the Auro shows
+      // the task segment at the end of a segment and a task control 1 of count 0, the theLuxa P300 the task segment
+      // inside a segment and a task control 1 of count 1; the Gira's application asks for count 0 inside a segment.
+      ["M-0008_A-10D7-11-2783-O000A", "no donor for MV-0705: mdt-be02001: its captures show no task control 1 of object 3 with count 0; gira-ts3: its captures show no task control 1 of object 3 with count 0; auro-m0081: its captures show no task segment of object 3 inside a segment; theben-theluxa-p300: its captures show no task control 1 of object 3 with count 0; mdt-be06001: its captures show no task control 1 of object 3 with count 0"],
+      ["M-0048_A-107E-12-5B58", "theben-theluxa-p300"],
       ["M-0048_A-140C-14-EB70", "no donor for MV-0701: abb-usu-4.2: its captures show no task-control-1; theben-meteodata-140s: its application changes its memory after a restart"],
       ["M-0048_A-493B-21-B471", "gvs-amma"],
       ["M-0048_A-9071-20-F258-O00EF", "meanwell-knx40e"],
@@ -73,7 +74,7 @@ corpusDescribe("a catalogue unit's donor", () => {
       ["M-0083_A-0137-20-7EB2", "gvs-amma"],
       ["M-0083_A-0138-21-F18E-O0072", "no donor for MV-0012: no rule for it, the simulator models MV-07B0, MV-0701, MV-0705"],
       ["M-0085_A-0072-30-69AA", "gvs-amma"],
-      ["M-008E_A-7079-10-9C41", "auro-m0081"],
+      ["M-008E_A-7079-10-9C41", "theben-theluxa-p300"],
       // With extended memory services ETS writes A_MemoryExtended_Write, which the MEAN WELL's captures do not show.
       ["M-00FA_A-A012-55-0000", "openknx-raumcontroller"],
       ["M-0162_A-0004-11-F245", "meanwell-knx40e"],
@@ -89,6 +90,10 @@ corpusDescribe("a catalogue unit's donor", () => {
     expect("donor" in c && [c.donor.id, c.rule]).toEqual([shown.id, DONOR_RULES["MV-07B0"]]);
     expect(chooseDonor(app, SIM_UNITS.filter((u) => u.id === "theben-mix2-hmg6t"))).toEqual({ refused: "no donor for MV-07B0: theben-mix2-hmg6t: its application changes its memory after a restart" });
     expect(chooseDonor(app, [])).toEqual({ refused: "no donor for MV-07B0: no own unit of the mask" });
+    // A unit showing the Steinel's task control 1 but its task segment at the end of a segment, not inside one.
+    const steinel = catalogueXml("M-008E_A-7079-10-9C41.xml.gz");
+    const atEnd: SimUnitSpec = { ...AURO_M0081, id: "a-unit-at-the-end", behaviour: AURO_M0081.behaviour as UnitBehaviour, memoryMapped: undefined, propertyMapped: { ...AURO_M0081.propertyMapped!, taskControls1: [{ lsm: 3, count: 1 }] } };
+    expect(donorUnfit(atEnd, steinel)).toBe("its captures show no task segment of object 3 inside a segment");
     expect(catalogueUnitSpec("M-0162_A-0004-11-F245", catalogueXml("M-0162_A-0004-11-F245.xml.gz"))).toEqual({ refused: "M-0162_A-0004-11-F245 has its own unit meanwell-knx40e" });
     const mdt = catalogueXml("M-0083_A-0137-20-7EB2.xml.gz");
     expect(catalogueUnitSpec("M-0083_A-0137-20-7EB2", mdt, { donor: "meanwell-knx40e" })).toEqual({ refused: "the donor meanwell-knx40e does not fit the rule: its captures show no confirmed restart" });
@@ -132,9 +137,9 @@ corpusDescribe("a catalogue unit", () => {
   });
 
   test("of an application without an own unit answers ETS's reads of its donor's captured download, the product's identity where it gives one", async () => {
-    // The Steinel True Presence on the Auro presence detector, the donor its rule picks.
-    const s = spec("M-008E_A-7079-10-9C41", "auro-m0081");
-    const capture = captureText("auro-m0081-ets-fulldownload.log");
+    // The Steinel True Presence on the Theben theLuxa P300, the donor its rule picks.
+    const s = spec("M-008E_A-7079-10-9C41", "theben-theluxa-p300");
+    const capture = captureText("theluxa-p300-ets-fulldownload.log");
     const text = readsOnly(capture);
     const own = await replay((o) => newSimUnit(s.donor, o), s.donor.interfaceIa, text);
     const unit = catalogueUnit(s);
@@ -142,7 +147,7 @@ corpusDescribe("a catalogue unit", () => {
     expect([own.sim.refusals, cat.sim.refusals]).toEqual([[], []]);
     // Its frames are the donor's but for the manufacturer, which the product gives.
     const differ = own.frames.flatMap((f, i) => (f === cat.frames[i] ? [] : [[f, cat.frames[i]]]));
-    expect(differ).toEqual([["b0 53d6000c10010081", "b0 53d6000c1001008e"]]);
+    expect(differ).toEqual([["b0 53d6000c10010048", "b0 53d6000c1001008e"]]);
     expect(cat.sim.lines.filter((l) => l.startsWith("source"))).toEqual([
       "source of 0/12: product: the application's manufacturer M-008E",
       "source of 3/13: product: the application's program id 008e707910",
@@ -150,13 +155,15 @@ corpusDescribe("a catalogue unit", () => {
     ]);
     // It holds the product's application: the donor's own task segment, in the donor's capture, it refuses.
     const whole = await replay((o) => unit.make(o), s.interfaceIa, capture);
-    expect(whole.sim.refusals[0]).toBe("sim-refused A_PropertyValue_Write 1/5 03024000000081fe0111: a task segment for application 0081fe0111, where the unit holds 008e707910");
-    // And the task segment and task control 1 the product declares, not the donor's: the application's segment, its
-    // task segment inside it and its task control 1 taken, the donor's task control 1 (0/0) refused.
+    expect(whole.sim.refusals[0]).toBe("sim-refused A_PropertyValue_Write 1/5 03024000000048107e12: a task segment for application 0048107e12, where the unit holds 008e707910");
+    // And the task segment and task control 1 the product declares, not the donor's: after the unloads, the
+    // application's segment, its task segment inside it and its task control 1 taken, the donor's task control 1 refused.
     const sim = unit.make();
     const send = (tpdu: string) => sim.sendCemi(cemiLData(s.interfaceIa, sim.deviceIa, Buffer.from(tpdu, "hex")));
-    for (const t of ["80", "43d70305100104000000000000000000", "c2", "47d70305100101000000000000000000", "c6", "4bd703051001030043ec02eef2038000", "ca", "4fd703051001030246ce00008e707910", "ce", "53d703051001030446bb010000000000", "d2", "57d70305100103040000000000000000"]) await send(t);
-    expect(sim.refusals).toEqual(["sim-refused A_PropertyValue_Write 3/5 03040000000000000000: a task control 1 at 0x0 with count 0, which the application does not declare for object 3"]);
+    const frames = ["80", "43d70105100104000000000000000000", "c2", "47d70205100104000000000000000000", "c6", "4bd70305100104000000000000000000", "ca", "4fd70305100101000000000000000000", "ce",
+      "53d703051001030043ec02eef2038000", "d2", "57d703051001030246ce00008e707910", "d6", "5bd703051001030446bb010000000000", "da", "5fd703051001030445d3010000000000"];
+    for (const t of frames) await send(t);
+    expect(sim.refusals).toEqual(["sim-refused A_PropertyValue_Write 3/5 030445d3010000000000: a task control 1 at 0x45d3 with count 1, which the application does not declare for object 3"]);
   });
 
   test("answers its load states as memory from what its donor held at the start", async () => {

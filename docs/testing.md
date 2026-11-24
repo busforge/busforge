@@ -708,8 +708,9 @@ application's would not) and its captures show its answer to each restart a down
 with (a confirmed restart for a System B application with Data Secure or a declared master reset, a basic
 restart otherwise); on MV-07B0 its captures must also show `A_MemoryExtended_Write` where the application declares
 extended memory services (ETS writes its memory so), on MV-0701 it must take every additional load control the
-application declares, on MV-0705 its captures must show the task control 1 and a task segment at an address that
-starts no declared segment where the application declares them. Of the
+application declares, on MV-0705 its captures must show each task control 1 the application declares (of its
+machine and count) and each task segment it declares at an address that starts no declared segment (of its machine,
+at the end of a segment or inside one as declared). Of the
 units that qualify, the one whose captures leave the fewest of its answers unshown is taken, then one collected in
 the state its captures show, then by id. A new own unit enters the choice as it is added to `tools/sim-units.ts`.
 A mask without a qualifying unit refuses the row, naming each unit and why. With the units simulated today:
@@ -721,7 +722,9 @@ A mask without a qualifying unit refuses the row, naming each unit and why. With
 | MV-07B0 with Data Secure | GVS AMMA-04/06.S | the Theben MIX 2 and the Jung 400021SE change their memory after a restart; the others show no confirmed restart |
 | MV-0701 | ABB US/U 4.2 | the Theben Meteodata 140 S clears a download marker at its restart; an application that declares task control 1 has no donor |
 | MV-0705 without a task control 1, every task segment at the start of a declared segment | MDT BE-02001.02 | the Auro presence detector, the Theben theLuxa P300 and the MDT BE-06001 leave more unshown (four answers to its three), the Gira Tastsensor 3 five |
-| MV-0705 with a task control 1 or a task segment inside a segment | Auro presence detector | the Theben theLuxa P300 leaves as many unshown and comes after it by id; the two MDTs and the Gira Tastsensor 3 show no task control 1 |
+| MV-0705 with a task control 1 of count 0 and the application's task segment at the end of a segment | Auro presence detector | the others show no task control 1 of count 0 or no task segment at the end of a segment |
+| MV-0705 with a task control 1 of count 1 and the application's task segment inside a segment | Theben theLuxa P300 | the others show no task control 1 of count 1 or no task segment inside a segment |
+| MV-0705 with another combination (the Gira Tastsensor 3's application: count 0, inside a segment) | none | no unit shows both |
 
 **Sources in the log.** The unit's log begins with what it is (application, donor, rule) and the source of each
 property it answers otherwise than its donor; each read it answers is noted with its source: the product, the
@@ -730,7 +733,7 @@ identity loop, the donor, or this session where the answer is no longer what the
 `tools/sim-unit-catalogue.test.ts` holds it: a catalogue unit (the MDT BE-06001 on the MDT BE-02001.02) answers
 every read of ETS's calibrated row of its donor, each with its source, its frames the donor's but for the hardware
 type the application's compare gives; one of an application without an own unit (the Steinel True Presence on the
-Auro presence detector) answers ETS's reads of the donor's captured download, its frames the donor's but for the
+Theben theLuxa P300) answers ETS's reads of the donor's captured download, its frames the donor's but for the
 manufacturer, and takes the task segment and task control 1 its own application declares, not the donor's; a
 property neither side gives is refused with that reason; and the catalogue unit of each qualifying own unit's
 application on that unit answers ETS's whole download of its row (or, without a row, of its captured full download

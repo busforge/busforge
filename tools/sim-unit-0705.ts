@@ -6,8 +6,9 @@
 // - the load-state machines on PID 5 of objects 1 to 3 (address table, association table, application) take
 //   absolute segments: `03 00 <address:2> <size:2> <access> <memory type> <flags> 00` (the stack segment
 //   `03 01` in the same form) at the address the request names, and the task segment
-//   `03 02 <address:2> <octet> <program id:5>`, and where the unit's captures show it the task control 1 its
-//   application declares, `03 04 <address:2> <count> 00 00 00 00 00`; every one answered LOADING. A load is
+//   `03 02 <address:2> <octet> <program id:5>`, and the task control 1 its application declares,
+//   `03 04 <address:2> <count> 00 00 00 00 00`, where the unit's captures show one of that count; every one answered
+//   LOADING. A load is
 //   taken from UNLOADED and from LOADED (the application loaded again without an unload, ETS's partial form);
 // - its memory is one address space at fixed addresses: what the collection read, and what is written; an
 //   unload forgets the machine's segments and keeps their bytes (a later allocation at the same address
@@ -24,10 +25,11 @@
 //   application-stopped bit where the unit's captures show it (`unloadStopsApplication`, `loadStopsApplication`),
 //   as on System B the unload of object 4;
 // - no property but PID 5 and the device control is written; the program id comes with the task segment, which
-//   names the start of a segment the machine holds (or, where the unit's captures show it, the address its
-//   application declares for the machine), and carries the unit's PEI type and the application it holds.
+//   names the start of a segment the machine holds (or the address its application declares for the machine, at
+//   the end of a segment or inside one, where the unit's captures show one so), and carries the unit's PEI type and
+//   the application it holds.
 import { iaToNum, APCI, LSM, MM_STATUS_BASE, PID, STATE } from "../packages/knx/src/index.ts";
-import { flattenSteps, lsmIdx, parseLoadProcedures, stepAddress, taskCtrl1Of, type CollectPackage } from "../packages/product/src/index.ts";
+import { flattenSteps, lsmIdx, parseLoadProcedures, stepAddress, stepSize, taskCtrl1Of, type CollectPackage, type LoadProcedures } from "../packages/product/src/index.ts";
 import { SimUnit, crcConventionOf, mcbCrc, MEMORY_END, type Reply, type SimUnitCoreModel } from "./sim-unit.ts";
 import { collectedUnit, type Target, type UnitBehaviour } from "./sim-unit-model.ts";
 
@@ -61,12 +63,13 @@ export interface PropertyMappedBehaviour {
   // Where `loadStopsApplication` is null: whether its captures show its memory writes after such a load answered as
   // before it; where not, they are refused as after an unshown unload.
   writesAfterLoadShown: boolean;
-  // The machines whose task segment it takes at the address its application declares for them where that starts no
-  // segment it holds but lies inside or at the end of one; another machine's task segment names a held segment's start.
-  taskAtDeclaredAddress: readonly number[];
-  // Whether it takes the task control 1 its application declares (`03 04 <address:2> <count> 00 00 00 00 00`),
-  // answered LOADING; where not, its captures show none.
-  taskControl1: boolean;
+  // The task segments it takes at the address its application declares where that starts no segment it holds, per
+  // machine with where the address lies (at the end of a segment, or inside one), as its captures show them; any other
+  // task segment names a held segment's start.
+  taskSegmentsElsewhere: readonly { lsm: number; place: "end" | "inside" }[];
+  // The task controls 1 it takes (`03 04 <address:2> <count> 00 00 00 00 00`, answered LOADING), per machine with their
+  // count, as its captures show them, each at the address the application declares; any other is refused.
+  taskControls1: readonly { lsm: number; count: number }[];
   // Which segments its memory-control block reports: those flagged 0x80, each `<size:4> 00 <access> <CRC:2>`
   // ("flagged"), or every EEPROM segment, a flagged one `<size:4> 01 <access> <CRC:2>`, another
   // `<size:4> 00 <access> 00 00` ("eeprom"); null for a unit that refuses its memory-control blocks.
@@ -114,7 +117,10 @@ export function simUnit0705Model(collection: CollectPackage, appXml: string, beh
   const { records, mask, objects, descriptions, functionStates, memoryExtendedRead } = collectedUnit(collection, appXml, refuse);
   if (collection.maxApdu !== null && collection.maxApdu !== pm.maxApdu) refuse(`the unit reports a maximum APDU of ${collection.maxApdu}, the spec ${pm.maxApdu}`);
   const programId = objects.get(APPLICATION_LSM)?.get(PID_PROGRAM_ID)?.elements?.[0] ?? refuse("the collection did not read the program id (object 3 PID 13)");
-  const steps = flattenSteps(parseLoadProcedures(appXml), "full");
+  const proc = parseLoadProcedures(appXml);
+  const steps = flattenSteps(proc, "full");
+  const tasks = declaredTasks(proc);
+  if (typeof tasks === "string") refuse(tasks);
 
   const bytes = Buffer.alloc(MEMORY_END), known = new Uint8Array(MEMORY_END);
   for (const r of records) {
@@ -177,38 +183,50 @@ export function simUnit0705Model(collection: CollectPackage, appXml: string, beh
   return {
     ...behaviour,
     ia: iaToNum(collection.ia), mask, maxApdu: pm.maxApdu, objects, descriptions, functionStates, memoryExtendedRead,
-    crcConvention: crc, memory: { bytes, known }, held, programId: Buffer.from(programId), ...declaredTasks(appXml), propertyMapped: pm,
+    crcConvention: crc, memory: { bytes, known }, held, programId: Buffer.from(programId), ...(tasks as DeclaredTasks), propertyMapped: pm,
   };
 }
 
 export type DeclaredTasks = Pick<SimUnit0705Model, "declaredTaskSegment" | "declaredTaskControl1">;
 
-// The task segment and task control 1 of each load-state machine as the application declares them, which the unit
-// running it checks a download's against.
-export function declaredTasks(appXml: string): DeclaredTasks {
-  const steps = flattenSteps(parseLoadProcedures(appXml), "full");
+// The task segment and task control 1 of each load-state machine as the application's full download declares them,
+// which the unit running it checks a download's against; or why they cannot be read.
+export function declaredTasks(proc: LoadProcedures): DeclaredTasks | string {
+  const steps = flattenSteps(proc, "full");
   const declaredTaskSegment = new Map<number, number>();
   for (const s of steps.filter((x) => x.verb === "LdCtrlTaskSegment")) {
     const lsm = lsmIdx(s), at = stepAddress(s);
-    if (lsm === undefined || at === undefined) refuse("the application declares a task segment without its machine or address");
-    declaredTaskSegment.set(lsm!, at!);
+    if (lsm === undefined || at === undefined) return "the application declares a task segment without its machine or address";
+    declaredTaskSegment.set(lsm, at);
   }
   const declaredTaskControl1 = new Map<number, { address: number; count: number }>();
   for (const s of steps.filter((x) => x.verb === "LdCtrlTaskCtrl1")) {
     const t = taskCtrl1Of(s);
-    if (typeof t === "string") refuse(`the application's task control 1: ${t}`);
-    else declaredTaskControl1.set(t.lsm, { address: t.address, count: t.count });
+    if (typeof t === "string") return `the application's task control 1: ${t}`;
+    declaredTaskControl1.set(t.lsm, { address: t.address, count: t.count });
   }
   return { declaredTaskSegment, declaredTaskControl1 };
 }
 
-// The load-state machines of objects 1 to 3 whose task segment the application declares at an address that starts
-// none of the absolute segments it declares for the machine (a unit takes that only where `taskAtDeclaredAddress`
-// names the machine).
-export function taskAtDeclaredMachines(appXml: string): number[] {
-  const steps = flattenSteps(parseLoadProcedures(appXml), "full");
-  const { declaredTaskSegment } = declaredTasks(appXml);
-  return LSMS.filter((lsm) => declaredTaskSegment.has(lsm) && !steps.some((s) => s.verb === "LdCtrlAbsSegment" && lsmIdx(s) === lsm && stepAddress(s) === declaredTaskSegment.get(lsm)));
+// Where a task segment at `at` lies against segments: at the start of one, at the end of one, inside one, or outside.
+export type TaskSegmentPlace = "start" | "end" | "inside" | "outside";
+export function taskSegmentPlace(at: number, segs: readonly { at: number; size: number }[]): TaskSegmentPlace {
+  if (segs.some((x) => x.at === at)) return "start";
+  if (segs.some((x) => x.at + x.size === at)) return "end";
+  return segs.some((x) => at > x.at && at < x.at + x.size) ? "inside" : "outside";
+}
+
+// Where the application's full download puts each task segment of objects 1 to 3 that starts none of the absolute
+// segments it declares for the machine.
+export function declaredTaskPlaces(proc: LoadProcedures, tasks: DeclaredTasks): { lsm: number; place: Exclude<TaskSegmentPlace, "start"> }[] {
+  const steps = flattenSteps(proc, "full");
+  return LSMS.flatMap((lsm) => {
+    const at = tasks.declaredTaskSegment.get(lsm);
+    if (at === undefined) return [];
+    const segs = steps.filter((s) => s.verb === "LdCtrlAbsSegment" && lsmIdx(s) === lsm).map((s) => ({ at: stepAddress(s) ?? -1, size: stepSize(s) ?? 0 }));
+    const place = taskSegmentPlace(at, segs);
+    return place === "start" ? [] : [{ lsm, place }];
+  });
 }
 
 export class SimUnit0705 extends SimUnit {
@@ -290,19 +308,23 @@ export class SimUnit0705 extends SimUnit {
       if (value.length !== 10) { this.refuse(`${what}: a task segment of another form`); return false; }
       const at = value.readUInt16BE(2), id = value.subarray(5, 10);
       if (segs.length === 0) { this.refuse(`${what}: a task segment where object ${obj} holds no segment`); return false; }
-      const atDeclared = this.unit.propertyMapped.taskAtDeclaredAddress.includes(obj);
-      const declared = atDeclared && this.unit.declaredTaskSegment.get(obj) === at && segs.some((x) => at >= x.at && at <= x.at + x.size);
-      if (!declared && !segs.some((x) => x.at === at)) { this.refuse(`${what}: a task segment at 0x${at.toString(16)}, where object ${obj} holds no segment${atDeclared ? " and its application declares none" : ""}`); return false; }
+      const place = taskSegmentPlace(at, segs);
+      if (place !== "start") {
+        if (place === "outside") { this.refuse(`${what}: a task segment at 0x${at.toString(16)}, outside the segments object ${obj} holds`); return false; }
+        if (this.unit.declaredTaskSegment.get(obj) !== at) { this.refuse(`${what}: a task segment at 0x${at.toString(16)}, ${place === "end" ? "at the end of" : "inside"} a segment of object ${obj}, which the application does not declare`); return false; }
+        if (!this.unit.propertyMapped.taskSegmentsElsewhere.some((t) => t.lsm === obj && t.place === place)) { this.refuse(`${what}: a task segment at 0x${at.toString(16)}, ${place === "end" ? "at the end of" : "inside"} a segment of object ${obj}, which no capture shows the unit take`); return false; }
+      }
       if (value[4] !== this.unit.propertyMapped.peiType) { this.refuse(`${what}: a task segment of PEI type ${value[4]}, where the unit's captures carry ${this.unit.propertyMapped.peiType}`); return false; }
       if (!id.equals(this.unit.programId)) { this.refuse(`${what}: a task segment for application ${id.toString("hex")}, where the unit holds ${this.unit.programId.toString("hex")}`); return false; }
       this.taskAt.set(obj, at);
       return true;
     }
-    if (value[1] === SEGMENT.TASK_CONTROL_1 && this.unit.propertyMapped.taskControl1) {
+    if (value[1] === SEGMENT.TASK_CONTROL_1 && this.unit.propertyMapped.taskControls1.length) {
       if (value.length !== 10 || value.subarray(5).some((b) => b !== 0)) { this.refuse(`${what}: a task control 1 of another form`); return false; }
       const declared = this.unit.declaredTaskControl1.get(obj);
       const at = value.readUInt16BE(2), count = value[4];
       if (!declared || declared.address !== at || declared.count !== count) { this.refuse(`${what}: a task control 1 at 0x${at.toString(16)} with count ${count}, which the application does not declare for object ${obj}`); return false; }
+      if (!this.unit.propertyMapped.taskControls1.some((t) => t.lsm === obj && t.count === count)) { this.refuse(`${what}: a task control 1 of object ${obj} with count ${count}, which no capture shows the unit take`); return false; }
       return true;
     }
     this.refuse(`${what}: additional load control 0x${value[1].toString(16)} is not shown on this unit`);
