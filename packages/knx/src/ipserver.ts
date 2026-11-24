@@ -103,10 +103,12 @@ export interface ServerTcpListener {
   close(): void;
 }
 
-function realTcpListener(): ServerTcpListener {
+// The listener on a real TCP socket. `onListening` is told the port it listens on: the one asked for, or the one the
+// system gave for port 0.
+export function realTcpListener(onListening?: (port: number) => void): ServerTcpListener {
   const server = net.createServer();
   return {
-    listen: (port, cb) => { server.listen(port, cb); },
+    listen: (port, cb) => { server.listen(port, () => { const a = server.address(); onListening?.(typeof a === "object" && a ? a.port : port); cb(); }); },
     onConnection: (cb) => {
       server.on("connection", (s) => {
         // 'error' must have a listener or node throws it uncaught; the 'close' that always follows an
@@ -162,6 +164,7 @@ export interface KnxIpServerOptions {
   // min(this, the device's own) per frame, so more than the interface carries loses the frames above it.
   maxApdu: number;
   name?: string;
+  // The UDP and TCP port; 0 lets the system give each its own, the TCP one told by realTcpListener's onListening.
   port?: number;
   serialNumber?: Buffer;
   createSocket?: () => ServerSocket;
@@ -218,7 +221,7 @@ export class KnxIpServer {
     this.port = opts.port ?? KNXPORT;
     this.serialNumber = opts.serialNumber ?? Buffer.alloc(6);
     this.createSocket = opts.createSocket ?? realSocket;
-    this.createTcpListener = opts.createTcpListener ?? realTcpListener;
+    this.createTcpListener = opts.createTcpListener ?? (() => realTcpListener());
     this.now = opts.now ?? (() => Date.now());
     this.log = opts.log ?? (() => {});
   }

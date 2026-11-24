@@ -9,24 +9,24 @@
 // value an ETS6.log `Required data mismatch` line required. From the donor: everything else, as its collection and
 // its captures show it (its serial, order info, hardware type where nothing above names one, descriptions, segment
 // places, load states, restart, link timing). What neither gives is refused, never filled in: a property the product
-// gives only some bits of and the donor never showed, a value longer than the donor's element, a segment the donor
-// places nowhere (the simulator refuses it when it comes). Every answer carries its source in the simulator's log
-// (tools/sim-unit.ts AnswerSources).
+// gives only some bits of and the donor never showed, a value longer than the donor's element with bits set past it, a
+// value given whole and shorter than the donor's element, a segment the donor places nowhere (the simulator refuses it
+// when it comes). Every answer carries its source in the simulator's log (tools/sim-unit.ts AnswerSources).
 //
 // The donor is chosen by one rule per mask (DONOR_RULES), never per product, from the own units there are: one that
 // cannot show what a download of the application needs of its unit does not qualify, and of those that do the one
 // whose captures leave the fewest of its answers unshown is taken.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { declaredPropMatches, MM_STATUS_BASE } from "../packages/knx/src/index.ts";
-import { declaredPropChecks, maskInfo, parseAppConfig, programIdStamp, type CollectPackage } from "../packages/product/src/index.ts";
+import { gunzipSync } from "node:zlib";
+import { declaredPropMatches, MM_STATUS_BASE, PID } from "../packages/knx/src/index.ts";
+import { closingSteps, declaredPropChecks, maskInfo, parseAppConfig, programIdStamp, type CollectPackage } from "../packages/product/src/index.ts";
 import { catalogueXml, corpusPath } from "./corpus.ts";
-import { SimUnit, type AnswerSources, type SimProperty, type SimUnitCoreModel } from "./sim-unit.ts";
-import { simUnitModel } from "./sim-unit-model.ts";
-import { SimUnit0701, simUnit0701Model, type AdditionalControl } from "./sim-unit-0701.ts";
-import { declaredTaskForms, declaredTasks, PLACE_TEXT, SimUnit0705, simUnit0705Model, type DeclaredTaskForms, type DeclaredTasks } from "./sim-unit-0705.ts";
+import { type AnswerSources, type SimProperty, type SimUnit, type SimUnitCoreModel } from "./sim-unit.ts";
+import type { AdditionalControl } from "./sim-unit-0701.ts";
+import { declaredSegments, declaredTaskForms, declaredTasks, fullSteps, PLACE_TEXT, type DeclaredTaskForms, type DeclaredTasks } from "./sim-unit-0705.ts";
 import { productUnit, rerunIdentity, type IdentityValue, type Mismatch, type ProductUnit } from "./sim-unit-product.ts";
-import { newSimUnit, SIM_UNITS, type SimUnitSpec } from "./sim-units.ts";
+import { newSimUnit, SIM_UNITS, simUnitOf, unitModel, type SimUnitSpec, type UnitModel } from "./sim-units.ts";
 
 // A catalogue row's unit: the application, the donor, the rule that chose it, and the ETS6.log lines the identity
 // loop learned from, in the order it took them.
@@ -50,6 +50,8 @@ export type RowUnit = SimUnitSpec | CatalogueUnitSpec;
 export const isCatalogueUnit = (u: RowUnit): u is CatalogueUnitSpec => "donor" in u;
 // The application program a row's unit runs: an own unit's from the corpus's catalogue/, a catalogue unit's its own.
 export const unitAppXml = (u: RowUnit): string => (isCatalogueUnit(u) ? u.appXml : catalogueXml(u.catalogue));
+// A file's bytes, gunzipped where its name ends in .gz: a row's export, a --product file of tools/sim-unit-serve.ts.
+export const readMaybeGzipped = (path: string): Buffer => { const b = readFileSync(path); return path.endsWith(".gz") ? gunzipSync(b) : b; };
 
 // How a row's row.json names a catalogue unit: its donor, the rule, the identity loop's lines, and the source of
 // each property the unit answers otherwise than its donor or with the product's or the loop's value; `donorDigest` what
@@ -63,13 +65,15 @@ type Mask = (typeof MASKS)[number];
 // model MV-0701, the property-mapped one MV-0705).
 export const unitMask = (u: SimUnitSpec): Mask => (u.memoryMapped ? "MV-0701" : u.propertyMapped ? "MV-0705" : "MV-07B0");
 
-const COMMON_RULE = "an own unit of the mask whose application leaves its memory as written after a restart (another application's would not) and whose captures show its answer to each restart a download of the application ends with; of those, the one whose captures leave the fewest of its answers unshown, then one collected in the state its captures show, then by id";
+const COMMON_RULE = "an own unit of the mask whose application leaves its memory as written after a restart (another application's would not), whose captures show its answer to each restart a download of the application ends with, and whose collection shows its answer to each property the application's LdCtrlLoadImageProp reads; of those, the one whose captures leave the fewest of its answers unshown, then one collected in the state its captures show, then by id";
 // The rule per mask. MV-07B0 asks besides for A_MemoryExtended_Write where the application declares extended memory
-// services, MV-0701 for the additional load controls the application declares, MV-0705 for its task controls 1 (by
-// machine and count) and its task segments at an address that starts no declared segment (by machine and where the
-// address lies), which its units take or refuse as their captures show.
+// services, and for the device control after the application's unload where it declares none (ETS and Busforge then
+// write its memory with A_Memory_Write, echoed in verify mode, which that octet holds); MV-0701 for the additional load
+// controls the application declares; MV-0705 for its task controls 1 (by machine, count and where the address lies)
+// and its task segments at an address that starts no declared segment (by machine and where the address lies), which
+// its units take or refuse as their captures show.
 export const DONOR_RULES: Record<Mask, string> = {
-  "MV-07B0": `MV-07B0: ${COMMON_RULE}; and whose captures show A_MemoryExtended_Write where the application declares extended memory services`,
+  "MV-07B0": `MV-07B0: ${COMMON_RULE}; and whose captures show A_MemoryExtended_Write where the application declares extended memory services, and its device control after its application's unload where the application declares none`,
   "MV-0701": `MV-0701: ${COMMON_RULE}; and that takes every additional load control the application declares`,
   "MV-0705": `MV-0705: ${COMMON_RULE}; and whose captures show each task control 1 the application declares, of its machine and count with its address 0 or at the same place, and each task segment it declares at an address that starts no declared segment, of its machine and at the same place (the end of a segment, or inside one)`,
 };
@@ -77,29 +81,60 @@ export const DONOR_RULES: Record<Mask, string> = {
 const ADDITIONAL_VERBS: Record<string, AdditionalControl> = { LdCtrlAbsSegment: "absolute-segment", LdCtrlTaskSegment: "task-segment", LdCtrlTaskCtrl1: "task-control-1" };
 
 type AppConfig = ReturnType<typeof parseAppConfig>;
-type Needs = { basic: boolean; confirmed: boolean; extendedWrite: boolean; additional: AdditionalControl[] } & DeclaredTaskForms;
+type Needs = { basic: boolean; confirmed: boolean; extendedWrite: boolean; classicWrite: boolean; loadImage: { obj: number; pid: number }[]; additional: AdditionalControl[] } & DeclaredTaskForms;
+const NO_TASKS: DeclaredTaskForms = { taskPlaces: [], taskControls1: [] };
 
 // What a download of the application needs of its unit beyond the mask: a basic restart at its end (System 7's
 // LdCtrlRestart; a System B download without Data Secure, whose closing ETS takes from the mask), a confirmed restart
 // (a System B download with Data Secure, as ETS's downloads of the Theben MIX 2, the Jung 400021SE and the GVS AMMA
-// show; a declared LdCtrlMasterReset), A_MemoryExtended_Write (a System B application with extended memory services,
-// whose memory ETS writes so: packages/product/src/loadproc.ts), the additional load controls it declares on MV-0701,
+// show; a declared LdCtrlMasterReset), on System B A_MemoryExtended_Write (an application with extended memory services,
+// whose memory ETS writes so: packages/product/src/loadproc.ts) or else the device control after the application's
+// unload (its memory written with A_Memory_Write, echoed where the octet holds verify mode), an answer to each
+// property its LdCtrlLoadImageProp reads at the download's end, the additional load controls it declares on MV-0701,
 // on MV-0705 the task controls 1 and the task segments at an address that starts none of the machine's declared
 // segments its full download declares. Or why the application's declarations cannot be read.
 function needs(cfg: AppConfig): Needs | string {
   const proc = cfg.loadProcedures;
   const systemB = cfg.mask === "MV-07B0";
-  const tasks: DeclaredTasks | string = cfg.mask === "MV-0705" ? declaredTasks(proc) : { declaredTaskSegment: new Map(), declaredTaskControl1: new Map() };
-  if (typeof tasks === "string") return tasks;
-  const forms = declaredTaskForms(proc, tasks);
+  let loadImage: Needs["loadImage"];
+  try { loadImage = closingSteps(proc, "full").flatMap((c) => (c.kind === "read" ? [{ obj: c.obj, pid: c.pid }] : [])); } catch (e) { return (e as Error).message; }
+  const forms = cfg.mask === "MV-0705" ? taskForms(fullSteps(proc)) : NO_TASKS;
   if (typeof forms === "string") return forms;
   return {
     basic: systemB ? !proc.secureEnabled : proc.verbs.includes("LdCtrlRestart"),
     confirmed: (systemB && proc.secureEnabled) || proc.verbs.includes("LdCtrlMasterReset"),
     extendedWrite: systemB && proc.extendedMemoryServices,
+    classicWrite: systemB && !proc.extendedMemoryServices,
+    loadImage,
     additional: cfg.mask === "MV-0701" ? [...new Set(proc.verbs.flatMap((v) => (ADDITIONAL_VERBS[v] ? [ADDITIONAL_VERBS[v]] : [])))] : [],
     ...forms,
   };
+}
+// An MV-0705 application's task declarations and their forms, or why they cannot be read.
+function taskForms(steps: ReturnType<typeof fullSteps>): DeclaredTaskForms | string {
+  const tasks = declaredTasks(steps);
+  if (typeof tasks === "string") return tasks;
+  const segments = declaredSegments(steps);
+  return typeof segments === "string" ? segments : declaredTaskForms(segments, tasks);
+}
+
+// What a unit's collection shows of property `<object>/<PID>`: answered (any element or its count), refused, or not
+// read; by collection, as the collections do not change while a process runs.
+const collected = new Map<string, Map<string, "answered" | "refused">>();
+function collectedProperty(u: SimUnitSpec, key: string): "answered" | "refused" | "not read" {
+  let shown = collected.get(u.collection);
+  if (!shown) {
+    shown = new Map();
+    for (const r of (JSON.parse(readFileSync(corpusPath(u.collection), "utf8")) as CollectPackage).records) {
+      const t = r.target as { object?: number; pid?: number };
+      if (r.space !== "property" || t.object === undefined || t.pid === undefined) continue;
+      const k = `${t.object}/${t.pid}`;
+      if (r.outcome === "refused") shown.set(k, "refused");
+      else if (r.outcome === "bytes" && !shown.has(k)) shown.set(k, "answered");
+    }
+    collected.set(u.collection, shown);
+  }
+  return shown.get(key) ?? "not read";
 }
 
 // Why `u` cannot be the donor of a download with these needs, or null.
@@ -110,6 +145,11 @@ function unfit(u: SimUnitSpec, need: Needs): string | null {
   if (need.basic && b.restart.basic === null) return "its captures show no basic restart";
   if (need.confirmed && b.restart.confirmedRestartSeconds === null) return "its captures show no confirmed restart";
   if (need.extendedWrite && !b.memoryExtendedWrite) return "its captures show no A_MemoryExtended_Write";
+  if (need.classicWrite && "unloadStopsApplication" in b && b.unloadStopsApplication === null) return "its captures show no device control after its application's unload, which decides whether its A_Memory_Write is echoed";
+  for (const { obj, pid } of need.loadImage) {
+    const shown = collectedProperty(u, `${obj}/${pid}`);
+    if (shown !== "answered") return `its collection ${shown === "refused" ? "shows it refuse" : "did not read"} property ${obj}/${pid}, which the application's LdCtrlLoadImageProp reads`;
+  }
   const missing = need.additional.filter((a) => !u.memoryMapped?.additional.includes(a));
   if (missing.length) return `its captures show no ${missing.join(", ")}`;
   const control = need.taskControls1.find((t) => !u.propertyMapped?.taskControls1.some((x) => x.lsm === t.lsm && x.count === t.count && x.at === t.at));
@@ -176,14 +216,14 @@ export function catalogueUnitSpec(application: string, appXml: string, opts: { d
 }
 
 const hex = (b: Buffer) => b.toString("hex");
-const PID_PROGRAM_ID = 13;
+// The property that holds the application's program id: on System B object 4's, on System 7 object 3's.
+const programIdKey = (cfg: AppConfig) => `${maskInfo(cfg.mask).family === "system-b" ? 4 : 3}/${PID.PROGRAM_ID}`;
 
 // The identity the product gives: productUnit's, with the application's program id on its application object.
-function productIdentity(appXml: string): ProductUnit {
+function productIdentity(appXml: string, cfg: AppConfig): ProductUnit {
   const refuse = (why: string): never => { throw new Error(`no catalogue unit: ${why}`); };
-  const unit = productUnit(appXml);
-  const cfg = parseAppConfig(appXml);
-  const key = `${maskInfo(cfg.mask).family === "system-b" ? 4 : 3}/${PID_PROGRAM_ID}`;
+  const unit = productUnit(appXml, cfg);
+  const key = programIdKey(cfg);
   const id = programIdStamp(cfg);
   const had = unit.properties.get(key);
   // A compare on the program id (the ABB US/U 4.2's on its application number) must hold on the application's own.
@@ -205,40 +245,34 @@ type Objects = SimUnitCoreModel["objects"];
 // and PEI type its task segments carry, which the unit checks them against, and on MV-0705 the task segments and
 // task control 1 its application declares.
 type Over = { objects: Objects; sources: AnswerSources; programId: Buffer; peiType: number; tasks: DeclaredTasks | null };
-type DonorModel = { core: SimUnitCoreModel; make: (over: Over, opts: SimOpts) => SimUnit; memoryAt: (a: number) => number | undefined };
 
 // The load-state machine (1 to 15) whose state a System 7 unit answers at memory address `a`, or null.
 export const loadStateMachineAt = (a: number): number | null => (a > MM_STATUS_BASE && a <= MM_STATUS_BASE + 15 ? a - MM_STATUS_BASE : null);
-const PID_LOAD_STATE = 5;
 // A System 7 unit's load state as memory, which its PID 5 holds at the start.
-const loadStateAt = (m: SimUnitCoreModel, a: number) => { const lsm = loadStateMachineAt(a); return lsm === null ? undefined : m.objects.get(lsm)?.get(PID_LOAD_STATE)?.elements?.[0]?.[0]; };
+const loadStateAt = (m: SimUnitCoreModel, a: number) => { const lsm = loadStateMachineAt(a); return lsm === null ? undefined : m.objects.get(lsm)?.get(PID.LOAD_STATE_CONTROL)?.elements?.[0]?.[0]; };
 
-// The donor's own unit as its model builder makes it, with how to make a simulated unit of a model of its kind.
-function donorModel(donor: SimUnitSpec): DonorModel {
-  const collection = JSON.parse(readFileSync(corpusPath(donor.collection), "utf8")) as CollectPackage;
-  const xml = catalogueXml(donor.catalogue);
-  const opts = (o: SimOpts): SimOpts => ({ interfaceMaxApdu: donor.interfaceMaxApdu, ...o });
-  if (donor.propertyMapped) {
-    const m = simUnit0705Model(collection, xml, donor.behaviour, donor.propertyMapped);
-    const make = ({ objects, sources, programId, peiType, tasks }: Over, o: SimOpts) => new SimUnit0705({ ...m, ...tasks, objects, sources, programId, propertyMapped: { ...m.propertyMapped, peiType } }, donor.interfaceIa, opts(o));
-    return { core: m, make, memoryAt: (a) => (m.memory.known[a] ? m.memory.bytes[a] : loadStateAt(m, a)) };
-  }
-  if (donor.memoryMapped) {
-    const m = simUnit0701Model(collection, xml, donor.behaviour, donor.memoryMapped);
-    const make = ({ objects, sources, programId, peiType }: Over, o: SimOpts) => new SimUnit0701({ ...m, objects, sources, programId, memoryMapped: { ...m.memoryMapped, peiType } }, donor.interfaceIa, opts(o));
-    return { core: m, make, memoryAt: (a) => m.memory.get(a) ?? loadStateAt(m, a) };
-  }
-  const m = simUnitModel(collection, xml, donor.behaviour as Parameters<typeof simUnitModel>[2]);
-  const memoryAt = (a: number) => { for (const seg of m.segments.values()) if (a >= seg.at && a < seg.at + seg.size) return seg.bytes[a - seg.at]; return undefined; };
-  // System B's program id is its object 4 PID 13 alone; its unit takes no task segment.
-  return { core: m, make: ({ objects, sources }, o) => new SimUnit({ ...m, objects, sources }, donor.interfaceIa, opts(o)), memoryAt };
+// The octet the donor's own unit holds at address `a` at the start.
+function memoryAt(u: UnitModel): (a: number) => number | undefined {
+  if (u.kind === "property-mapped") { const m = u.model; return (a) => (m.memory.known[a] ? m.memory.bytes[a] : loadStateAt(m, a)); }
+  if (u.kind === "memory-mapped") { const m = u.model; return (a) => m.memory.get(a) ?? loadStateAt(m, a); }
+  const m = u.model;
+  return (a) => { for (const seg of m.segments.values()) if (a >= seg.at && a < seg.at + seg.size) return seg.bytes[a - seg.at]; return undefined; };
 }
 
-// What a donor is, as a digest: its collection and everything tools/sim-units.ts gives it besides. A row names it, so
-// a donor collected again or given another behaviour since the row ran is seen.
+// The donor's model with what the catalogue unit puts over it. System B's program id is its object 4 PID 13 alone, and
+// its unit takes no task segment.
+function overDonor(u: UnitModel, { objects, sources, programId, peiType, tasks }: Over): UnitModel {
+  if (u.kind === "property-mapped") return { kind: u.kind, model: { ...u.model, ...tasks, objects, sources, programId, propertyMapped: { ...u.model.propertyMapped, peiType } } };
+  if (u.kind === "memory-mapped") return { kind: u.kind, model: { ...u.model, objects, sources, programId, memoryMapped: { ...u.model.memoryMapped, peiType } } };
+  return { kind: u.kind, model: { ...u.model, objects, sources } };
+}
+
+// What a donor is, as a digest: its collection, its application program (whose segments, tasks and descriptions its
+// model reads) and everything tools/sim-units.ts gives it besides. A row names it, so a donor collected again, run on
+// another application program or given another behaviour since the row ran is seen.
 export function donorDigest(donor: SimUnitSpec): string {
   const plain = (_: string, v: unknown) => (v instanceof Map ? [...v] : v instanceof Uint8Array ? Buffer.from(v).toString("hex") : v && typeof v === "object" && (v as { type?: string }).type === "Buffer" ? Buffer.from((v as { data: number[] }).data).toString("hex") : v);
-  return createHash("sha256").update(readFileSync(corpusPath(donor.collection))).update(JSON.stringify(donor, plain)).digest("hex");
+  return createHash("sha256").update(readFileSync(corpusPath(donor.collection))).update(readFileSync(corpusPath(`catalogue/${donor.catalogue}`))).update(JSON.stringify(donor, plain)).digest("hex");
 }
 
 // `value` as the unit answers it: over the donor's element where it has one (the donor's octets where the value gives
@@ -279,9 +313,9 @@ export function catalogueUnit(spec: CatalogueUnitSpec): CatalogueUnit {
   if (cfg.mask !== unitMask(spec.donor)) refuse(`the application is for ${cfg.mask}, the donor ${spec.donor.id} is ${unitMask(spec.donor)}`);
   const why = unfitFor(spec.donor, needs(cfg));
   if (why) refuse(`the donor ${spec.donor.id} does not fit the rule: ${why}`);
-  const donor = donorModel(spec.donor);
+  const donor = unitModel(spec.donor);
   const compose = (identity: ProductUnit) => {
-    const objects = new Map([...donor.core.objects].map(([o, props]) => [o, new Map(props)]));
+    const objects = new Map([...donor.model.objects].map(([o, props]) => [o, new Map(props)]));
     const properties = new Map<string, string>();
     for (const [key, v] of identity.properties) {
       const [o, pid] = keyParts(key);
@@ -297,7 +331,7 @@ export function catalogueUnit(spec: CatalogueUnitSpec): CatalogueUnit {
     }
     return { objects, properties };
   };
-  let identity = productIdentity(appXml);
+  let identity = productIdentity(appXml, cfg);
   for (const line of spec.learned) {
     const r = rerunIdentity(identity, line, answered(compose(identity).objects));
     if ("refused" in r) refuse(`the identity loop's line does not apply: ${r.refused}`);
@@ -309,20 +343,20 @@ export function catalogueUnit(spec: CatalogueUnitSpec): CatalogueUnit {
     const v = objects.get(c.obj)?.get(c.pid)?.elements?.[0];
     if (!v || !declaredPropMatches(v, c.expect, c.mask)) refuse(`the application expects ${hex(c.expect)} in property ${c.obj}/${c.pid}, the unit answers ${v ? hex(v) : "nothing"}`);
   }
-  const programId = identity.properties.get(`${maskInfo(cfg.mask).family === "system-b" ? 4 : 3}/${PID_PROGRAM_ID}`)!.bytes;
+  const programId = identity.properties.get(programIdKey(cfg))!.bytes;
   const sources: AnswerSources = {
     unit: `catalogue unit of ${spec.application} from donor ${spec.donor.id} (${spec.donor.name}), by the rule ${spec.rule}`,
     mask: `product: the application's mask ${cfg.mask}, donor ${spec.donor.id}'s`,
     properties,
     held: `donor ${spec.donor.id}`,
     absent: `neither the product nor donor ${spec.donor.id} gives it`,
-    memoryAt: donor.memoryAt,
+    memoryAt: memoryAt(donor),
   };
   if (spec.donor.propertyMapped || spec.donor.memoryMapped) properties.set("PEI type", `product: the application's PEI type ${cfg.appPeiType}`);
-  const tasks = spec.donor.propertyMapped ? declaredTasks(cfg.loadProcedures) : null;
+  const tasks = spec.donor.propertyMapped ? declaredTasks(fullSteps(cfg.loadProcedures)) : null;
   if (typeof tasks === "string") return refuse(tasks);
-  const overlay: Over = { objects, sources, programId: Buffer.from(programId), peiType: cfg.appPeiType, tasks };
-  return { spec, identity, objects, properties, make: (opts = {}) => donor.make(overlay, opts) };
+  const overlaid = overDonor(donor, { objects, sources, programId: Buffer.from(programId), peiType: cfg.appPeiType, tasks });
+  return { spec, identity, objects, properties, make: (opts = {}) => simUnitOf(spec.donor, overlaid, opts) };
 }
 
 // A fresh simulated unit of a row: an own unit (tools/sim-units.ts) or a catalogue unit.

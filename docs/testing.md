@@ -594,9 +594,12 @@ request names and the task segment, which must name a segment the machine holds 
 declares for the machine, at the end of a segment or inside one, where the unit's captures show a task segment of
 that machine there) and carry the unit's PEI type and the application it holds, and the task control 1 the
 application declares where the unit's captures show one of that machine, count and address place, over one memory at fixed addresses whose bytes
-an unload keeps; no property write but PID 5 and the device control is taken, and the device control after the
-application's unload, or its load while it is loaded, only where the unit's captures show it (memory writes after
-such an unshown event are refused too, but where its captures show them answered as before); the load states
+an unload keeps; after an unload, load completed is taken only once a segment, the task segment and the task
+control 1 the application declares for the machine were declared; no property write but PID 5 and the device control
+is taken, and the device control after the application's unload, or its load while it is loaded, only where the
+unit's captures show it (memory writes after such an unshown event are refused too, but where its captures show them
+answered as before; once unknown, the device control stays so until it is written or the unit restarts, whatever a
+later event shows of its stopped bit); the load states
 are readable as memory at `0xB6EA` onwards as well. Where the unit reports memory-control blocks (PID 27), it
 computes one element per segment it reports in the form its collection shows (the segments flagged for it, or
 every EEPROM segment with the flagged ones marked and the others without a CRC), with the access the allocation
@@ -698,32 +701,39 @@ earlier run put over that.
 A value is put over the donor's element bit by bit, at the donor's length; bits past it must be zero (ETS takes a
 shorter answer with a zero tail). What neither source gives is refused, never filled in: a property the product
 gives only some bits of and the donor never showed, a value longer than the donor's element with bits set past it,
-a segment the donor places nowhere, a task segment for another application than the product's. The unit answers
+a value given whole and shorter than the donor's element (what the unit answers after it nobody gave), a segment
+the donor places nowhere, a task segment for another application than the product's. The unit answers
 the product's program id as the application it holds, as each donor answered its own when it was collected; its
 memory and segments at the start are the donor's application's (what an MV-0701 download reads before it writes).
 
 **The donor** is chosen by one rule per mask, never per product, from the own units there are (`DONOR_RULES`):
 a unit of the mask qualifies where its application leaves its memory as written after a restart (another
-application's would not) and its captures show its answer to each restart a download of the application ends
+application's would not), its captures show its answer to each restart a download of the application ends
 with (a confirmed restart for a System B application with Data Secure or a declared master reset, a basic
-restart otherwise); on MV-07B0 its captures must also show `A_MemoryExtended_Write` where the application declares
-extended memory services (ETS writes its memory so), on MV-0701 it must take every additional load control the
-application declares, on MV-0705 its captures must show each task control 1 the application declares (of its
-machine and count, its address 0 or at the same place against the segments) and each task segment it declares at an address that starts no declared segment (of its machine,
-at the end of a segment or inside one as declared). Of the
+restart otherwise), and its collection shows its answer to each property the application's `LdCtrlLoadImageProp`
+reads at the end of the download (the memory-control blocks, which both MDT units refuse). On MV-07B0 its captures
+must also show `A_MemoryExtended_Write` where the application declares extended memory services (ETS writes its
+memory so), and where it declares none, its device control after its application's unload (the memory is then
+written with `A_Memory_Write`, which the unit echoes in the verify mode that octet holds); on MV-0701 it must take
+every additional load control the application declares; on MV-0705 its captures must show each task control 1 the
+application declares (of its machine and count, its address 0 or at the same place against the segments) and each
+task segment it declares at an address that starts no declared segment (of its machine, at the end of a segment or
+inside one as declared), and an application that declares a segment or task on another machine than objects 1 to 3
+has no donor (the task segment on machine 5, which ETS never sends, aside). Of the
 units that qualify, the one whose captures leave the fewest of its answers unshown is taken, then one collected in
 the state its captures show, then by id. A new own unit enters the choice as it is added to `tools/sim-units.ts`.
 A mask without a qualifying unit refuses the row, naming each unit and why. With the units simulated today:
 
 | Mask | Donor | Why the others do not qualify, or rank lower |
 |---|---|---|
-| MV-07B0 without Data Secure or extended memory services | MEAN WELL KNX-40E-1280D | the Theben DALI-Gateway and the OpenKNX RaumController leave more unshown; the Theben MIX 2, the Jung 400021SE and the GVS AMMA show no basic restart |
+| MV-07B0 without Data Secure or extended memory services | MEAN WELL KNX-40E-1280D | the Theben DALI-Gateway leaves more unshown; the OpenKNX RaumController shows no device control after its application's unload; the Theben MIX 2, the Jung 400021SE and the GVS AMMA show no basic restart |
 | MV-07B0 with extended memory services, without Data Secure | OpenKNX RaumController | the MEAN WELL and the Theben DALI-Gateway show no `A_MemoryExtended_Write`; the Theben MIX 2, the Jung 400021SE and the GVS AMMA show no basic restart |
-| MV-07B0 with Data Secure | GVS AMMA-04/06.S | the Theben MIX 2 and the Jung 400021SE change their memory after a restart; the others show no confirmed restart |
+| MV-07B0 with Data Secure and extended memory services | GVS AMMA-04/06.S | the Theben MIX 2 and the Jung 400021SE change their memory after a restart; the others show no confirmed restart |
+| MV-07B0 with Data Secure, without extended memory services | none | the GVS AMMA shows no device control after its application's unload; the Theben MIX 2 and the Jung 400021SE change their memory after a restart; the others show no confirmed restart |
 | MV-0701 | ABB US/U 4.2 | the Theben Meteodata 140 S clears a download marker at its restart; an application that declares task control 1 has no donor |
 | MV-0705 without a task control 1, every task segment at the start of a declared segment | MDT BE-02001.02 | the Auro presence detector, the Theben theLuxa P300 and the MDT BE-06001 leave more unshown (four answers to its three), the Gira Tastsensor 3 five |
-| MV-0705 with a task control 1 of count 0 and the application's task segment at the end of a segment | Auro presence detector | the others show no task control 1 of count 0 or no task segment at the end of a segment |
-| MV-0705 with a task control 1 of count 1 and the application's task segment inside a segment | Theben theLuxa P300 | the others show no task control 1 of count 1 or no task segment inside a segment |
+| MV-0705 with a task control 1 of count 0 at address 0 and the application's task segment at the end of a segment | Auro presence detector | the others show no task control 1 of count 0 at address 0 or no task segment at the end of a segment |
+| MV-0705 with a task control 1 of count 1 at an address inside a segment and the application's task segment inside a segment | Theben theLuxa P300 | the others show no task control 1 of count 1 inside a segment or no task segment inside a segment |
 | MV-0705 with a task control 1 or a task segment place no single unit's captures cover with the rest (the Gira Tastsensor 3's application: count 0 at address 0, its task segment inside a segment) | none | the Auro shows the count, the theLuxa P300 the place, no unit both |
 
 **Sources in the log.** The unit's log begins with what it is (application, donor, rule) and the source of each
@@ -807,7 +817,9 @@ otherwise than its donor, each held against the unit built today, so a row whose
 where there is one, the calibration where there is one), `configuration.json` (the device's
 configuration ETS downloaded, which Busforge downloads), ETS's capture `ets.log` with the simulator's
 lines `ets.log.sim.txt`, `ets6.log.txt`, and `explained.json` (the row's verdict today and every
-difference with its cause). A row may also hold
+difference with its cause; for a refusal or a failure the verdict whole, `detail`: its run and the simulator's
+refusals, or the failure's reason, each time after a restart written `<n> ms`, as Busforge's run is on the wall
+clock). A row may also hold
 `checks/<name>/`: runs of the driver below that repeat the row or were made to fail, each with the outcome
 its ETS6.log must give (`expected.json`), which `tools/ets-sweep.test.ts` holds it to; they are no rows
 of their own. A catalogue unit's application program comes from the row's export, not from the corpus's
@@ -822,6 +834,9 @@ counted), which a catalogue unit gives as its donor does:
 BUSFORGE_CORPUS=... bun run tools/ets-sweep.ts [<application>/<variant>]... [--keep=<dir>]
 ```
 
+It judges the rows side by side through the same worker pool as the check below (`tools/ets-sweep-workers.ts`),
+printing each row once it is judged.
+
 **Rejudging rows** after a change to the comparison or to Busforge is one command:
 
 ```bash
@@ -832,8 +847,9 @@ It reruns the rows as above and writes, in the corpus's layout, the manifest wit
 the `explained.json` of each row whose verdict or differences moved (a row where nothing moved keeps
 its file). A difference or calibrated position that stays keeps its cause; a new one gets cause `null`,
 never an invented one, and the command exits 1 naming it, so the row stays red until it is explained.
-It exits 1 as well where the verdict moved to a refusal or a failure, whose reason `explained.json`
-does not hold, and names each explained difference that is gone with the cause it had. `notes.md` is
+It exits 1 as well where the verdict moved to a refusal or a failure, and where a refusal's or failure's
+`detail` moved (a refusal of another cause, or one recorded for the first time), whose reason only `notes.md`
+gives, and names each explained difference that is gone with the cause it had. `notes.md` is
 not written: the output names what moved since the manifest for it (the verdict and its first
 difference or refusal, differences, calibrated positions, refusals beside the verdict, reads, the
 requests the unit did not take, the second check). The output goes to `--out`, an empty directory
@@ -849,16 +865,17 @@ comparison starts there. Every position that differs is listed with its cause in
 (`calibration`): what such a row's simulator answers is what the real unit answered ETS, or the row
 names where not.
 
-`tools/ets-sweep.test.ts` runs every row with the private corpus and holds its verdict and its
-differences to `explained.json`: a new difference fails, and so does an explained one that is gone; the
-same holds for a calibrated row's positions. The rows run side by side, one per worker thread
-(`tools/ets-sweep-workers.ts`, as many workers as half the cores): Busforge's run into a simulated unit spends
-nearly all its time waiting on the simulated line, but each row needs an event loop of its own, because one row's
-parse of a large application would hold up the timers of every other row's line. Busy threads beyond the cores
-(the workers, and the other workspaces' tests `bun run check` runs at the same time) starve the timers too: the
-simulator then refuses frames that arrive at instants its captures do not show (`sim-refused`), which fails every
-row but one whose verdict is `sim-refused` already, as `explained.json` holds a verdict by its kind and its
-differences only.
+`tools/ets-sweep.test.ts` runs every row with the private corpus and holds its verdict, its
+differences and a refusal's or failure's `detail` to `explained.json`: a new difference fails, and so does an
+explained one that is gone, and a refusal of another cause than the one held; the same holds for a calibrated
+row's positions. The rows run side by side, one per worker thread (`tools/ets-sweep-workers.ts`, as many workers
+as half the cores), each row's time limit counted from when a worker takes it, and a row past it ends its worker:
+Busforge's run into a simulated unit spends nearly all its time waiting on the simulated line, but each row needs
+an event loop of its own, because one row's parse of a large application would hold up the timers of every other
+row's line. Busy threads beyond the cores (the workers, and the other workspaces' tests `bun run check` runs at the
+same time) starve the timers too: the simulator then refuses frames that arrive at instants its captures do not
+show (`sim-refused`), which fails every row, one whose verdict is `sim-refused` already too, as its refusals are
+held.
 Without the corpus it is skipped visibly. A row is evidence on no axis of
 [evidence-contract.md](evidence-contract.md): it shows what Busforge sends next to what ETS sends,
 both given the same simulator's answers.

@@ -598,14 +598,14 @@ export class SimUnit implements KnxTransport {
   }
 
   // The device control after an event of the application's load-state machine: its application-stopped bit set where
-  // the unit's captures show it set, unknown where they do not show it. A load leaves only that bit unknown, which a
-  // later shown stop sets; an unknown after an unload stays until the device control is written or the unit restarts.
+  // the unit's captures show it set, unknown where they do not show it. Once unknown it stays so until the device
+  // control is written or the unit restarts, whatever a later event's captures show of that one bit: no capture shows
+  // what the rest of the octet reads then. An unload after an unknown load leaves it unknown as after an unload.
   protected stopsApplication(event: "unload" | "load", stops: boolean | null): void {
-    if (stops === null) { if (this.deviceControlUnknown !== "unload") this.deviceControlUnknown = event; return; }
+    if (this.deviceControlUnknown !== null || stops === null) { if (this.deviceControlUnknown !== "unload") this.deviceControlUnknown = event; return; }
     if (!stops) return;
     const dc = this.property(0, PID_DEVICE_CONTROL)!;
     dc.elements = [Buffer.from([dc.elements![0][0] | APPLICATION_STOPPED])];
-    if (this.deviceControlUnknown === "load") this.deviceControlUnknown = null;
   }
 
   protected property(obj: number, pid: number): SimProperty | null {

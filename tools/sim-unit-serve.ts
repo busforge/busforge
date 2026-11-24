@@ -17,19 +17,24 @@
 // puts that endpoint into the search answers, as knxproxy's PROXY_ADVERTISE does. The simulator's own lines,
 // every refusal among them, go to <log>.sim.txt. Ctrl-C stops it and prints the refusals.
 import { appendFileSync, readFileSync } from "node:fs";
-import { gunzipSync } from "node:zlib";
 import { KnxIpServer, numToIa } from "../packages/knx/src/index.ts";
 import { startProxy, parseEndpoint, toolLabel } from "./knxproxy.ts";
 import { extractAppPrograms } from "../packages/project/src/index.ts";
-import { catalogueUnit, catalogueUnitSpec, isCatalogueUnit, learnIdentity, type CatalogueUnitSpec, type RowUnit } from "./sim-unit-catalogue.ts";
+import { catalogueUnit, catalogueUnitSpec, isCatalogueUnit, learnIdentity, readMaybeGzipped, type CatalogueUnitSpec, type RowUnit } from "./sim-unit-catalogue.ts";
 import { newSimUnit, SIM_UNITS } from "./sim-units.ts";
 
 const args = process.argv.slice(2);
+// The value after the option at `i`, refused where there is none or another option follows.
+const valueAt = (name: string, i: number) => {
+  if (args[i + 1] === undefined || args[i + 1].startsWith("--")) throw new Error(`--${name} takes a value`);
+  return args[i + 1];
+};
 const flag = (name: string) => {
   const i = args.indexOf(`--${name}`);
-  if (i >= 0 && (args[i + 1] === undefined || args[i + 1].startsWith("--"))) throw new Error(`--${name} takes a value`);
-  return i >= 0 ? args[i + 1] : undefined;
+  return i >= 0 ? valueAt(name, i) : undefined;
 };
+// Every value of a repeatable option.
+const flags = (name: string) => args.flatMap((a, i) => (a === `--${name}` ? [valueAt(name, i)] : []));
 const id = args[0];
 if (!id || id.startsWith("--")) throw new Error("usage: bun run tools/sim-unit-serve.ts <unit> --tool ETS|Busforge --log <file> [--port 3700] [--proxy-port 3701] [--advertise <ip>] [--override <object>/<PID>=<hex>]...\n       bun run tools/sim-unit-serve.ts <application id> --product <file> --tool ETS|Busforge --log <file> [--donor <unit>] [--learned-from <ETS6.log>]... [--port ...] [--proxy-port ...] [--advertise ...]");
 const log = flag("log");
@@ -40,8 +45,6 @@ const advertise = flag("advertise");
 if (advertise !== undefined && !/^\d+\.\d+\.\d+\.\d+$/.test(advertise)) throw new Error(`--advertise ${advertise} is not an IPv4 address`);
 
 const simLog = `${log}.sim.txt`;
-const flags = (name: string) => args.flatMap((a, i) => (a === `--${name}` ? [args[i + 1] ?? ""] : []));
-const readMaybeGzipped = (file: string) => { const b = readFileSync(file); return file.endsWith(".gz") ? gunzipSync(b) : b; };
 // A catalogue unit, with each ETS6.log's lines learned in turn.
 const catalogue = (): CatalogueUnitSpec => {
   const product = flag("product");

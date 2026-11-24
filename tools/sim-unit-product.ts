@@ -47,11 +47,10 @@ function merge(into: IdentityValue | undefined, value: Buffer, known: Buffer, so
 
 const describe = (sources: IdentitySource[]) => sources.map((s) => s.from === "product" ? s.what : `ETS6.log "${s.line}"`).join(", ");
 
-// The unit as the application program alone gives it. Refused where the application's identity steps are not
-// modelled or contradict each other.
-export function productUnit(appXml: string): ProductUnit {
+// The unit as the application program alone gives it (`cfg`: the program parsed, where the caller has it). Refused
+// where the application's identity steps are not modelled or contradict each other.
+export function productUnit(appXml: string, cfg: ReturnType<typeof parseAppConfig> = parseAppConfig(appXml)): ProductUnit {
   const refuse = (why: string): never => { throw new Error(`no product unit: ${why}`); };
-  const cfg = parseAppConfig(appXml);
   // Only System B and System 7 keep their identity in a device object's properties (a BCU1 has none).
   const mask = maskInfo(cfg.mask);
   if (mask.family !== "system-b" && mask.family !== "system-7") refuse(`the application's mask ${cfg.mask} is of family ${mask.family}, whose identity is not modelled`);
@@ -127,7 +126,9 @@ export type Rerun = { identity: ProductUnit; learned: Mismatch[] } | { refused: 
 // of that run, the identity to run again with, every value ETS required put in with its line as the source; or the
 // reason not to run again. Refused: a run whose log names no mismatch (its failure is not the identity), a mismatch
 // whose `device` is not what `unit` answers (the log is of another identity), one that requires what `unit` already
-// answers (a rerun would fail the same), and one that contradicts the product or another line. `answered`: what the
+// answers (a rerun would fail the same), one that requires the first octets of what it answers alone (no answer
+// shorter than the unit's is modelled), two that require different values of one property (which one the unit is to
+// answer the run does not show), and one that contradicts the product or another line. `answered`: what the
 // unit answers as a property's first element (empty where it answers none), where that is not `unit`'s own: a
 // catalogue unit's, whose donor answers what the identity does not give (tools/sim-unit-catalogue.ts).
 export function rerunIdentity(unit: ProductUnit, log: Buffer | string, answered?: (key: string) => Buffer): Rerun {
@@ -141,7 +142,10 @@ export function rerunIdentity(unit: ProductUnit, log: Buffer | string, answered?
     const had = unit.properties.get(key);
     const answers = answered ? answered(key) : had !== undefined && had.known.every((k) => k === 0xff) ? had.bytes : null;
     if (answers === null ? m.device.length > 0 : !answers.equals(m.device)) return { refused: `ETS saw ${hex(m.device) || "nothing"} in ${key}, which this identity does not answer: the log is of another run (${m.line})` };
-    if (answers?.subarray(0, m.required.length).equals(m.required)) return { refused: `ETS requires ${hex(m.required)} in ${key}, which this identity already answers: a rerun fails the same (${m.line})` };
+    if (answers?.equals(m.required)) return { refused: `ETS requires ${hex(m.required)} in ${key}, which this identity already answers: a rerun fails the same (${m.line})` };
+    if (answers && answers.length > m.required.length && answers.subarray(0, m.required.length).equals(m.required)) return { refused: `ETS requires the ${m.required.length} octets ${hex(m.required)} in ${key}, where this identity answers ${answers.length} beginning with them: an answer shorter than the unit's is not modelled (${m.line})` };
+    const other = mismatches.find((x) => keyOf(x.object, x.pid) === key && !x.required.equals(m.required));
+    if (other) return { refused: `ETS requires both ${hex(m.required)} and ${hex(other.required)} in ${key} in one run: which the unit is to answer is not shown (${m.line}; ${other.line})` };
   }
   const properties = new Map(unit.properties);
   const learned: Mismatch[] = [];

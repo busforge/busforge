@@ -1,4 +1,4 @@
-import { describe, expect, test, setDefaultTimeout } from "bun:test";
+import { afterAll, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { existsSync, readdirSync, readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { appProgramId, loadKnxproj, readAppProgram } from "../packages/project/src/index.ts";
@@ -7,14 +7,15 @@ import { iaToNum } from "../packages/knx/src/index.ts";
 import { captureText, corpusPath, corpusRoot } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { capturedOnLoadedUnit, deviceConfiguration, deviceRows, dialogueDifferences, parseCapture } from "./etsdiff.ts";
-import { causes, compareRuns, etsOutcome, inCorpus, judge, listRows, loadedImageCheck, MANIFEST, MANIFEST_FORMAT, movedSince, readRow, refusalsAfterRestart, rejudge, ROW_FILES, runState, simRefusals, SWEEP_DIR, updateManifest, writeRejudged, type EtsOutcome, type Explained, type Manifest, type ManifestRow, type RowConfiguration, type RowSpec, withCause } from "./ets-sweep.ts";
-import { RowPool } from "./ets-sweep-workers.ts";
+import { causes, compareRuns, etsBranches, etsOutcome, expected, inCorpus, judge, judged, listRows, loadedImageCheck, MANIFEST, MANIFEST_FORMAT, movedSince, readRow, refusalsAfterRestart, rejudge, ROW_FILES, runState, simRefusals, SWEEP_DIR, updateManifest, verdictDetail, writeRejudged, type EtsOutcome, type Explained, type Manifest, type ManifestRow, type RowConfiguration, type RowSpec, type Verdict, withCause } from "./ets-sweep.ts";
+import { ROW_WORKERS, RowPool } from "./ets-sweep-workers.ts";
 import { mismatchLines } from "./sim-unit-product.ts";
 import { tempDir } from "./test-temp.ts";
 
 // Each row runs Busforge's download into a simulated unit on the wall clock (tools/sim-unit.test.ts: about
-// 15 s alone, twenty times that under a loaded full check).
-setDefaultTimeout(300_000);
+// 15 s alone, twenty times that under a loaded full check), counted from when a worker takes the row.
+const ROW_TIMEOUT_MS = 300_000;
+setDefaultTimeout(ROW_TIMEOUT_MS);
 
 const TOOL = 0x11ff, DEV = 0x110a;
 // One capture line as tools/knxproxy.ts logs it: a KNXnet/IP TUNNELLING_REQUEST carrying a cEMI L_Data frame.
@@ -57,6 +58,21 @@ describe("a sweep row's run", () => {
     expect(s.restarts).toEqual(["0380"]);
     expect([...s.reads]).toEqual(["A_PropertyValue_Read 04071001"]);
     expect([s.writes, s.other, s.functionCalls, s.notTaken]).toEqual([5, [], [], ["outside a connection: 4300"]]);
+  });
+
+  test("counts where ETS read before it wrote on MV-0701 as the unit took the frames: a repetition once, a write outside a connection none", () => {
+    const branches = etsBranches("", capture(
+      line("ETS->BRIDGE", "80"),
+      line("ETS->BRIDGE", "42024000"), // A_Memory_Read 2 at 0x4000
+      line("BRIDGE->ETS", "42424000aabb"), // its answer
+      line("BRIDGE->ETS", "42424000aabb"), // the unit's repetition of it
+      line("ETS->BRIDGE", "c2"),
+      line("ETS->BRIDGE", "468240000102"), // A_Memory_Write 2 at 0x4000
+      line("ETS->BRIDGE", "468240000102"), // its repetition: not executed
+      line("ETS->BRIDGE", "81"),
+      line("ETS->BRIDGE", "4a8240000102"), // numbered, outside a connection: not taken
+    ), DEV, "MV-0701");
+    expect(branches).toEqual([{ on: "read-before-write", answer: "the unit answered ETS 2 octets of its memory before ETS wrote there; ETS then wrote 2 of them and left 0 as the unit answered them", evidence: ["1 memory answers of the unit, 1 memory writes of ETS the line took"] }]);
   });
 
   test("records a function property's state read as a read and compares its command", () => {
@@ -273,6 +289,20 @@ describe("a sweep row's verdict", () => {
     expect(judge(ok, bf, none)).toEqual({ verdict: "identical" });
     expect(judge(ok, bf, () => ["d"])).toEqual({ verdict: "differs", differences: ["d"] });
   });
+
+  test("a refusal's detail, its time after the restart left out, is held to explained.json: a refusal of another cause fails", () => {
+    const timing: Verdict = { verdict: "sim-refused", run: "Busforge", refusals: ["sim-refused 80 3002 ms after the restart: whether the unit acknowledges a frame then is not shown"] };
+    const pinned: Explained = { verdict: "sim-refused", differences: [], detail: verdictDetail(timing) };
+    expect(pinned.detail).toEqual({ run: "Busforge", refusals: ["sim-refused 80 <n> ms after the restart: whether the unit acknowledges a frame then is not shown"] });
+    // The same refusal at another time is the row's verdict; one of another cause, or of the other run, is not.
+    expect(judged({ ...timing, refusals: [timing.refusals[0].replace("3002", "3017")] })).toEqual(expected(pinned));
+    expect(judged({ ...timing, refusals: ["sim-refused A_PropertyValue_Read 2/7 of 1 from 1 after a load event of its machine: what the unit reports there then is not shown"] })).not.toEqual(expected(pinned));
+    expect(judged({ ...timing, run: "ETS" })).not.toEqual(expected(pinned));
+    // An explained.json that names the verdict alone does not hold a refusal.
+    expect(judged(timing)).not.toEqual(expected({ verdict: "sim-refused", differences: [] }));
+    expect([verdictDetail({ verdict: "identical" }), verdictDetail({ verdict: "differs", differences: ["d"] })]).toEqual([undefined, undefined]);
+    expect(verdictDetail({ verdict: "refused", code: "C", message: "m" })).toEqual({ code: "C", message: "m" });
+  });
 });
 
 describe("rejudging a row (--rejudge)", () => {
@@ -356,6 +386,18 @@ describe("rejudging a row (--rejudge)", () => {
     expect(rejudge(blank, entry(blank, "differs", ["d1"])).unexplained).toEqual(["difference: d1"]);
   });
 
+  test("a refusal of another cause where the verdict stays: its detail written, the exit 1 naming it", () => {
+    const root = tempDir("ets-sweep-rejudge-");
+    const was = { run: "Busforge", refusals: ["sim-refused x"] }, now = { run: "Busforge", refusals: ["sim-refused y"] };
+    const old: Explained = { verdict: "sim-refused", differences: [], detail: was };
+    const m = entry(old, "sim-refused", [], { first: "sim-refused y", detail: now });
+    expect(rejudge(old, m)).toEqual({ explained: { verdict: "sim-refused", differences: [], detail: now }, moved: true, unexplained: [`sim-refused: its detail moved: ${JSON.stringify(was)} -> ${JSON.stringify(now)}`], gone: [] });
+    const { exit } = writeRejudged(root, [m], olds(old), manifest(entry(old, "sim-refused", [], { first: "sim-refused x", detail: was })), updateManifest(null, [m], [ID]));
+    expect([exit, JSON.parse(readFileSync(explainedAt(root), "utf8"))]).toEqual([1, { verdict: "sim-refused", differences: [], detail: now }]);
+    // The same detail stays unwritten.
+    expect(rejudge({ ...old, detail: now }, m).moved).toBe(false);
+  });
+
   test("a verdict moved to a refusal or a failure: the exit 1, the dropped causes named", () => {
     const root = tempDir("ets-sweep-rejudge-");
     const old: Explained = { verdict: "differs", differences: [{ difference: "d1", cause: "c1" }] };
@@ -389,16 +431,19 @@ corpusDescribe("the ETS sweep rows", () => {
   test("the corpus holds rows", () => {
     expect(rows.length).toBeGreaterThan(0);
   });
-  // The rows run side by side in worker threads (tools/ets-sweep-workers.ts), each test's row as the test runs.
+  // The rows run side by side in worker threads (tools/ets-sweep-workers.ts), each test's row as the test runs. A row
+  // waits for a worker as long as the rows before it take: its test's time is the row's own limit, which the pool
+  // counts from when a worker takes it, for each round of rows before it.
   let pool: RowPool | undefined;
+  afterAll(() => pool?.close());
+  const waiting = ROW_TIMEOUT_MS * Math.ceil(rows.length / ROW_WORKERS) + 60_000;
   for (const id of rows) {
-    test.concurrent(`${id}: Busforge's download into a fresh simulated unit has the verdict and the differences explained`, async () => {
+    test.concurrent(`${id}: Busforge's download into a fresh simulated unit has the verdict, the differences and a refusal's detail explained`, async () => {
       const row = readRow(id);
-      const verdict = await (pool ??= new RowPool()).judge(id);
-      const found = verdict.verdict === "differs" ? verdict.differences : [];
-      expect({ verdict: verdict.verdict, differences: found }).toEqual({ verdict: row.explained.verdict, differences: row.explained.differences.map((d) => d.difference) });
+      const { verdict } = await (pool ??= new RowPool(ROW_WORKERS, { rowTimeoutMs: ROW_TIMEOUT_MS })).judge(id);
+      expect(judged(verdict)).toEqual(expected(row.explained));
       expect(row.explained.differences.filter((d) => !d.cause?.trim()).map((d) => d.difference)).toEqual([]);
-    });
+    }, waiting);
   }
 
   // A calibrated row: ETS's dialogue with the simulated unit against its dialogue with the real unit at the same

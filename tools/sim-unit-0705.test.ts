@@ -95,14 +95,21 @@ corpusDescribe("the simulated MDT BE-02001.02", () => {
     // T_Connect, then unload, load and load completed of object 1, each answer acknowledged.
     for (const t of ["80", "43d70105100104000000000000000000", "c2", "47d70105100101000000000000000000", "c6", "4bd70105100102000000000000000000"]) await send(t);
     expect(sim.refusals).toEqual(["sim-refused A_PropertyValue_Write 1/5 02000000000000000000: load completed after an unload without a segment and a task segment declared, which no capture shows"]);
+    // The Auro's application declares a task control 1 for object 3: unload, load, the segment, the task segment ETS
+    // sends, and load completed without the task control 1.
+    const auro = newSimUnit(AURO_M0081, {}, { link: { ackMs: 0, nakMs: 0 } });
+    const a = (tpdu: string) => auro.sendCemi(withSource(cemiLData(0, auro.deviceIa, Buffer.from(tpdu, "hex")), AURO_M0081.interfaceIa));
+    for (const t of ["80", "43d70305100104000000000000000000", "c2", "47d70305100101000000000000000000", "c6", "4bd7030510010300405c005bf2038000", "ca", "4fd703051001030240b7000081fe0111", "ce", "53d70305100102000000000000000000"]) await a(t);
+    expect(auro.refusals).toEqual(["sim-refused A_PropertyValue_Write 3/5 02000000000000000000: load completed after an unload without the task control 1 the application declares for object 3, which no capture shows"]);
   });
 
-  // Busforge's two full downloads of its smoke runs (the proxy names the tool ETS): its read-backs while a segment
-  // loads, its probes after each restart, its verification. No collection was taken right before them; the
+  // Busforge's two smoke runs (the proxy names the tool ETS), each a full download and then parameter downloads that
+  // load the application again while it is loaded and write its memory: its read-backs while a segment loads, its
+  // probes after each restart, its verification. No collection was taken right before them; the
   // unit's starts from the one taken four days earlier, and the unit then held another configuration (a link,
   // two parameters). Busforge's backup reads before its first load-state event read that configuration, and only
   // they differ. The capture holds no confirmation of some T_Acks and T_Disconnects.
-  test("answers every request of Busforge's two captured full downloads as the unit did but for the reads of the configuration it held before them", async () => {
+  test("answers every request of Busforge's two captured smoke runs as the unit did but for the reads of the configuration it held before them", async () => {
     for (const run of ["api", "ui"]) {
       let clock = 0;
       const sim = newSimUnit(MDT_BE02001, { now: () => clock }, { link: { ackMs: 0, nakMs: 0 } });
@@ -247,9 +254,10 @@ corpusDescribe("the new simulated MV-0705 units", () => {
     const be02001 = newSimUnit(MDT_BE02001, {}, { link: { ackMs: 0, nakMs: 0 } });
     for (const t of ["80", "43d70305100101000000000000000000", "c2", "47d5000e1001"]) await send(be02001, MDT_BE02001)(t);
     expect(be02001.refusals).toEqual(["sim-refused A_PropertyValue_Read 0/14 of 1 from 1 after the load of the application: what the unit reports then is not shown"]);
-    // Its unload after the load, which its captures show set the application-stopped bit, makes it known again.
+    // Its unload after the load sets the application-stopped bit, as its captures show; what the rest of the octet
+    // reads after that load no capture shows, so it stays unknown, and so do its memory writes' echoes.
     for (const t of ["4bd70305100104000000000000000000", "c6", "4fd5000e1001"]) await send(be02001, MDT_BE02001)(t);
-    expect(be02001.refusals.length).toBe(1);
+    expect(be02001.refusals.slice(1)).toEqual(["sim-refused A_PropertyValue_Read 0/14 of 1 from 1 after the unload of the application: what the unit reports then is not shown"]);
     // The Gira's application declares its task segment inside a segment, which no capture shows it take.
     const gira = newSimUnit(GIRA_TS3, {}, { link: { ackMs: 0, nakMs: 0 } });
     for (const t of ["80", "43d70305100101000000000000000000", "c2", "47d7030510010302435400000810d711"]) await send(gira, GIRA_TS3)(t);

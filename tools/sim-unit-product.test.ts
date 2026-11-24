@@ -95,9 +95,13 @@ corpusDescribe("the identity loop's rerun step", () => {
     const refused = (u: ProductUnit, ...lines: string[]) => (rerunIdentity(u, lines.join("\n")) as { refused?: string }).refused;
     // The DALI-Gateway's application gives 0/78 in full.
     expect(refused(productUnit(app(DALI)), at("SystemProperty(0/78)[$0000]: 00907092910000000000 instead of 009070929101"))).toContain("octet 5 is 00");
-    expect(refused(meanwell(), at("SystemProperty(0/78)[$0000]:  instead of 620100000004"), at("SystemProperty(0/78)[$0000]:  instead of 620100000005"))).toContain("octet 5 is 04");
+    expect(refused(meanwell(), at("SystemProperty(0/78)[$0000]:  instead of 620100000004"), at("SystemProperty(0/78)[$0000]:  instead of 620100000005"))).toContain("ETS requires both 620100000004 and 620100000005 in 0/78 in one run: which the unit is to answer is not shown");
+    // Two lengths of one property in one run (a 6- and a 10-octet 0/78), the shorter the longer's beginning.
+    expect(refused(meanwell(), at("SystemProperty(0/78)[$0000]:  instead of 620100000004"), at("SystemProperty(0/78)[$0000]:  instead of 62010000000400000000"))).toContain("in one run: which the unit is to answer is not shown");
     expect(refused(meanwell(), at("SystemProperty(0/12)[$0000]: 0048 instead of 0162"))).toContain("which this identity does not answer");
     expect(refused(meanwell(), at("SystemProperty(0/12)[$0000]: 0162 instead of 0162"))).toContain("which this identity already answers");
+    // A required value the unit's answer begins with, shorter than it: ETS failed on the longer answer.
+    expect(refused(meanwell(), at("SystemProperty(0/12)[$0000]: 0162 instead of 01"))).toContain("ETS requires the 1 octets 01 in 0/12, where this identity answers 2 beginning with them: an answer shorter than the unit's is not modelled");
     // Each line is checked against the run's identity, also one whose required value an earlier line already gave.
     expect(refused(meanwell(), at("SystemProperty(0/15)[$0000]:  instead of 0102"), at("SystemProperty(0/15)[$0000]: ff instead of 0102"))).toContain("which this identity does not answer");
   });
@@ -201,6 +205,24 @@ const EXPECTED: Record<string, string[]> = {
     "descriptions not given: 95 for 64 object indices"
   ],
 };
+
+corpusDescribe("a collected unit's property answered with a count and refused", () => {
+  test("is held as refused in either order of the records; an element answered and refused is a contradiction", () => {
+    // The GVS AMMA answered 0/224 with count 1 and refused its element 1.
+    const gvs = SIM_UNITS.find((u) => u.id === "gvs-amma")!;
+    const collection = JSON.parse(readFileSync(corpusPath(gvs.collection), "utf8")) as CollectPackage;
+    const xml = app(gvs.catalogue);
+    const is224 = (r: CollectPackage["records"][number]) => { const t = r.target as { object?: number; pid?: number }; return r.space === "property" && t.object === 0 && t.pid === 224; };
+    const of224 = collection.records.filter(is224);
+    expect(of224.map((r) => [(r.target as { start: number }).start, r.outcome])).toEqual([[0, "bytes"], [1, "refused"]]);
+    const unit = (records: CollectPackage["records"]) => collectedUnit({ ...collection, records }, xml, (why) => { throw new Error(why); }).objects.get(0)!.get(224);
+    const rest = collection.records.filter((r) => !is224(r));
+    expect([unit(collection.records)?.elements, unit([...rest, ...[...of224].reverse()])?.elements]).toEqual([null, null]);
+    const answered = { ...of224[1], target: { ...(of224[1].target as object), start: 1 }, outcome: "bytes", bytes: "00" } as CollectPackage["records"][number];
+    expect(() => unit([...rest, answered, of224[1]])).toThrow("the unit answered property 0/224 and refused it");
+    expect(() => unit([...rest, of224[1], answered])).toThrow("the unit refused property 0/224 and answered it");
+  });
+});
 
 corpusDescribe("the units from their product against their collection: every difference", () => {
   for (const u of UNITS) test(u.id, () => {

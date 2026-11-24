@@ -2,11 +2,11 @@
 // unit and its product's application program in the private corpus, with what only the unit's captures show of it.
 import { readFileSync } from "node:fs";
 import { catalogueXml, corpusPath } from "./corpus.ts";
-import { SimUnit } from "./sim-unit.ts";
+import { SimUnit, type SimUnitModel } from "./sim-unit.ts";
 import type { CollectPackage } from "../packages/product/src/index.ts";
 import { simUnitModel, type SystemBBehaviour, type UnitBehaviour } from "./sim-unit-model.ts";
-import { SimUnit0701, simUnit0701Model, type MemoryMappedBehaviour } from "./sim-unit-0701.ts";
-import { SimUnit0705, simUnit0705Model, type PropertyMappedBehaviour } from "./sim-unit-0705.ts";
+import { SimUnit0701, simUnit0701Model, type MemoryMappedBehaviour, type SimUnit0701Model } from "./sim-unit-0701.ts";
+import { SimUnit0705, simUnit0705Model, type PropertyMappedBehaviour, type SimUnit0705Model } from "./sim-unit-0705.ts";
 
 interface SimUnitSpecBase {
   id: string;
@@ -356,7 +356,8 @@ export const THEBEN_METEODATA_140S: SimUnitSpec = {
 // - its task segments carry 01 between the address and the program id (every capture);
 // - its device control reads 1 after ETS unloaded objects 1 to 3 (application stopped), 5 with verify mode; what it
 //   reads after its application is loaded again while loaded no capture shows (its partial downloads read it before
-//   the load), and its writes then are answered as before (Busforge's parameter downloads in its smoke runs);
+//   the load), and its memory writes then are answered as before (the parameter downloads after the full download in
+//   each of Busforge's smoke runs, 87 writes each, which tools/sim-unit-0705.test.ts replays);
 // - in programming mode at the first full download (it answers ETS's A_IndividualAddress_Read), and out of it
 //   after a restart (no answer in the second, nor after the assignment's restart); its
 //   A_IndividualAddressSerialNumber_Response carries four zero octets after the serial (the second);
@@ -511,7 +512,8 @@ export const THEBEN_MIX2_RMG8T: SimUnitSpec = {
 // ETS's captures in the order they ran on it (captures/auro-m0081-ets-fulldownload.log, -partial-params,
 // -partial-links, -partial-revert, and from the collection before them -partial-unlink9, -partial-relink9) and
 // Busforge's downloads (collections/auro-m0081-busforge-2026-10-06*/auro-m0081-busforge-*.log), through the house's
-// KNXnet/IP interface:
+// KNXnet/IP interface (its two further ETS captures, -partial-heatalarm-on and -off, are not replayed: the collection
+// before them did not read the application segments, so no segment CRC to start from, internal/ets-sweep/donors.md):
 // - it refuses PID 56, and takes the 15-octet APDUs ETS sends it ("assuming 15");
 // - its device control reads 0 after ETS unloaded its application and after ETS loaded it again while loaded
 //   (application not stopped), 4 with verify mode;
@@ -658,19 +660,35 @@ function collectionOf(spec: SimUnitSpec, collectionPath: string): CollectPackage
   return c;
 }
 
-// A fresh unit as its collection shows it (another collection of the same unit where one is named).
-export function newSimUnit(spec: SimUnitSpec, opts: SimOpts = {}, behaviour: Partial<SystemBBehaviour> = {}, collectionPath = spec.collection): SimUnit {
+// The model of a unit as its collection shows it (another collection of the same unit where one is named), by its
+// load control: System B's, the memory-mapped System 7 one (MV-0701) or the property-mapped one (MV-0705).
+export type UnitModel = { kind: "system-b"; model: SimUnitModel } | { kind: "memory-mapped"; model: SimUnit0701Model } | { kind: "property-mapped"; model: SimUnit0705Model };
+export function unitModel(spec: SimUnitSpec, behaviour: Partial<SystemBBehaviour> = {}, collectionPath = spec.collection): UnitModel {
+  const collection = collectionOf(spec, collectionPath), xml = catalogueXml(spec.catalogue);
   if (spec.memoryMapped || spec.propertyMapped) {
     const systemB = (["unloadStopsApplication", "clearsAfterRestart", "mcb", "stateInCaptures"] as const).filter((k) => k in behaviour);
     if (systemB.length) throw new Error(`no simulated unit: ${systemB.join(", ")} of a System B unit given for the System 7 ${spec.id}`);
-    if (spec.propertyMapped) return new SimUnit0705(simUnit0705Model(collectionOf(spec, collectionPath), catalogueXml(spec.catalogue), { ...spec.behaviour, ...behaviour }, spec.propertyMapped), spec.interfaceIa, { interfaceMaxApdu: spec.interfaceMaxApdu, ...opts });
-    return newSimUnit0701(spec, opts, behaviour, collectionPath);
+    if (spec.propertyMapped) return { kind: "property-mapped", model: simUnit0705Model(collection, xml, { ...spec.behaviour, ...behaviour }, spec.propertyMapped) };
+    return { kind: "memory-mapped", model: simUnit0701Model(collection, xml, { ...spec.behaviour, ...behaviour }, spec.memoryMapped!) };
   }
-  return new SimUnit(simUnitModel(collectionOf(spec, collectionPath), catalogueXml(spec.catalogue), { ...spec.behaviour, ...behaviour }), spec.interfaceIa, { interfaceMaxApdu: spec.interfaceMaxApdu, ...opts });
+  return { kind: "system-b", model: simUnitModel(collection, xml, { ...spec.behaviour, ...behaviour }) };
+}
+
+// The simulated unit of a model of `spec`'s, through `spec`'s interface.
+export function simUnitOf(spec: SimUnitSpec, u: UnitModel, opts: SimOpts = {}): SimUnit {
+  const o = { interfaceMaxApdu: spec.interfaceMaxApdu, ...opts };
+  if (u.kind === "property-mapped") return new SimUnit0705(u.model, spec.interfaceIa, o);
+  if (u.kind === "memory-mapped") return new SimUnit0701(u.model, spec.interfaceIa, o);
+  return new SimUnit(u.model, spec.interfaceIa, o);
+}
+
+// A fresh unit as its collection shows it (another collection of the same unit where one is named).
+export function newSimUnit(spec: SimUnitSpec, opts: SimOpts = {}, behaviour: Partial<SystemBBehaviour> = {}, collectionPath = spec.collection): SimUnit {
+  return simUnitOf(spec, unitModel(spec, behaviour, collectionPath), opts);
 }
 
 // The same for a memory-mapped System 7 unit, refused for a spec of another.
 export function newSimUnit0701(spec: SimUnitSpec, opts: SimOpts = {}, behaviour: Partial<UnitBehaviour> = {}, collectionPath = spec.collection): SimUnit0701 {
   if (!spec.memoryMapped) throw new Error(`${spec.id} is not a memory-mapped System 7 unit`);
-  return new SimUnit0701(simUnit0701Model(collectionOf(spec, collectionPath), catalogueXml(spec.catalogue), { ...spec.behaviour, ...behaviour }, spec.memoryMapped), spec.interfaceIa, { interfaceMaxApdu: spec.interfaceMaxApdu, ...opts });
+  return simUnitOf(spec, unitModel(spec, behaviour, collectionPath), opts) as SimUnit0701;
 }

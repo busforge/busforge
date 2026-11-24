@@ -5,16 +5,18 @@
 //
 //   BUSFORGE_CORPUS=... bun run tools/ets-sweep.ts [<application>/<variant>]... [--keep=<dir>]
 //
-// runs every named row (all rows without one), prints each verdict and writes the corpus's manifest
-// (MANIFEST). --keep keeps Busforge's capture and the simulator's lines of each row under <dir>.
+// runs every named row (all rows without one) side by side in worker threads (tools/ets-sweep-workers.ts), prints
+// each verdict once its row is judged and writes the corpus's manifest (MANIFEST). --keep keeps Busforge's capture and
+// the simulator's lines of each row under <dir>.
 //
 //   BUSFORGE_CORPUS=... bun run tools/ets-sweep.ts --rejudge [<application>/<variant>]... [--out <dir> | --in-place]
 //
 // reruns the rows the same way after a change to the comparison or to Busforge and writes, in the corpus's layout,
-// the manifest with their entries and the explained.json of each row whose verdict or differences moved (rejudge):
-// a difference that stays keeps its cause, a new one gets cause null and the command exits 1 naming it, as it does
-// for a verdict moved to a refusal or a failure. notes.md is not written; the output names what moved for it. It writes to --out (an empty directory outside the corpus,
-// by default a new one under the system's temporary directory), into the corpus only with --in-place.
+// the manifest with their entries and the explained.json of each row whose verdict, differences or detail moved
+// (rejudge): a difference that stays keeps its cause, a new one gets cause null and the command exits 1 naming it, as
+// it does for a verdict moved to a refusal or a failure and for a refusal's or failure's detail that moved. notes.md
+// is not written; the output names what moved for it. It writes to --out (an empty directory outside the corpus, by
+// default a new one under the system's temporary directory), into the corpus only with --in-place.
 //
 // A ROW lives in the corpus under captures/ets-sweep/<application id>/<variant>/ (ROW_FILES):
 //   row.json            what the row is (RowSpec): the simulated unit, ETS's build, the simulator's endpoint
@@ -24,8 +26,9 @@
 //   ets.log             ETS's download into the simulator, as tools/knxproxy.ts logs it
 //   ets.log.sim.txt     the simulator's lines of that run, every refusal among them
 //   ets6.log.txt        ETS6.log of the run
-//   explained.json      the verdict the row has today and every difference with its cause, and where the row
-//                       is calibrated, every position its ETS capture differs from the real unit's (Explained)
+//   explained.json      the verdict the row has today and every difference with its cause, for a refusal or a
+//                       failure the verdict whole (its detail), and where the row is calibrated, every position its
+//                       ETS capture differs from the real unit's (Explained)
 //
 // WHAT IS COMPARED (runState, compareRuns). Each run's requests as the unit took them (a transport-layer
 // repetition once; a frame the line confirmed negatively or a numbered one outside a connection not at all)
@@ -56,9 +59,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync, copyFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import net from "node:net";
-import { gunzipSync } from "node:zlib";
-import { APCI, KnxIpServer, MM_CTRL_ADDR, MM_STATUS_BASE, PID, iaToNum, numToIa } from "../packages/knx/src/index.ts";
+import { APCI, KnxIpServer, MM_CTRL_ADDR, MM_STATUS_BASE, PID, iaToNum, numToIa, realTcpListener } from "../packages/knx/src/index.ts";
 import { appProgramId, etsLoadedCompletely, etsNotDownloaded, extractAppPrograms, loadKnxproj, type Project } from "../packages/project/src/index.ts";
 import { isMemoryMappedLsm, parseAppConfig, parseLoadProcedures, ProductError, type ComObjectLink, type ComObjInstanceOverride, type FlashResult, type ModuleInstance } from "../packages/product/src/index.ts";
 import { downloadDeviceFull } from "../apps/server/src/deviceprofile.ts";
@@ -72,7 +73,7 @@ import { loadedImageComparison } from "./ets-records.ts";
 import { gitRevision } from "./evidence.ts";
 import { startProxy } from "./knxproxy.ts";
 import type { SimUnit } from "./sim-unit.ts";
-import { catalogueUnit, catalogueUnitRecord, catalogueUnitSpec, chooseDonor, donorDigest, isCatalogueUnit, loadStateMachineAt, newRowUnit, unitAppXml, type CatalogueUnitRecord, type RowUnit } from "./sim-unit-catalogue.ts";
+import { catalogueUnit, catalogueUnitRecord, catalogueUnitSpec, chooseDonor, donorDigest, isCatalogueUnit, loadStateMachineAt, newRowUnit, readMaybeGzipped, unitAppXml, type CatalogueUnitRecord, type RowUnit } from "./sim-unit-catalogue.ts";
 import { simUnitSpec } from "./sim-units.ts";
 import { removeTempDir, tempDir } from "./test-temp.ts";
 
@@ -135,6 +136,9 @@ export type Verdict =
 export interface Explained {
   verdict: Verdict["verdict"];
   differences: { difference: string; cause: string | null }[];
+  // For a verdict other than identical and differs: the verdict as the run gives it (verdictDetail), its refusals
+  // with their run, or its failure, so a refusal or failure of another cause is a verdict that moved.
+  detail?: Record<string, unknown>;
   // Where row.json names a calibration: each position ETS's dialogue with the simulator differs from its
   // dialogue with the real unit, with its cause.
   calibration?: { difference: string; cause: string | null }[];
@@ -213,40 +217,53 @@ function lineItems(text: string, tool: string, device: number): LineItem[] {
   return items;
 }
 
-// A capture's frames between `tool` and the unit at `device`, as tools/knxproxy.ts logs them.
-export function runState(text: string, tool: string, device: number, mask: string): RunState {
-  const s: RunState = { memory: new Map(), memoryService: new Map(), properties: new Map(), loadControls: new Map(), functionCalls: [], loadStates: new Map(), tableReferences: new Map(), restarts: [], other: [], reads: new Set(), notTaken: [], unplaced: [], writes: 0, changesAfterRestart: null };
-  const memoryMapped = isMemoryMappedLsm(mask);
-  const r: Replay = { s, memoryMapped, order: new Map(), fills: [], mmStates: new Map(), n: 0 };
-  const items = lineItems(text, tool, device);
-  // The transport connection as the unit keeps it (KNX 3/3/4): a T_Connect while connected is taken as
-  // nothing, so only a new connection, after a disconnect or a restart, starts the sequence numbers again.
-  let connected = false, lastSeq: number | null = null;
+// The line's items as the unit took them, with each request it did not take in `notTaken`. The transport connection as
+// the unit keeps it (KNX 3/3/4): a T_Connect while connected is taken as nothing, so only a new connection, after a
+// disconnect or a restart, starts the sequence numbers again; a numbered request outside a connection is not taken, a
+// repetition (the same sequence number again) taken once, and so is a repetition of the unit's own numbered frame.
+function takenItems(items: LineItem[], notTaken: string[]): LineItem[] {
+  const out: LineItem[] = [];
+  let connected = false, lastSeq: number | null = null, unitSeq: number | null = null;
+  const numbered = (t: Buffer) => t.length >= 2 && (t[0] & 0xc0) === 0x40;
   for (const it of items) {
-    const t = it.t, tpci = t[0];
+    const t = it.t;
     if (!it.request) {
       if (isDisconnect(t)) connected = false;
-      else if (t.length >= 2) answer(r, t);
+      else if (numbered(t)) { const seq = (t[0] >> 2) & 0x0f; if (seq === unitSeq) continue; unitSeq = seq; }
+      out.push(it);
       continue;
     }
     const restart = isRestart(t);
     // A frame the line did not confirm did not reach the unit, but for a restart: a unit that restarts at
     // once acknowledges it on no layer (tools/sim-units.ts) and the tool sees it confirmed negatively.
-    if (it.neg && !restart) { s.notTaken.push(`not confirmed: ${hexOf(t)}`); continue; }
+    if (it.neg && !restart) { notTaken.push(`not confirmed: ${hexOf(t)}`); continue; }
     if (t.length === 1) {
-      if (isConnect(t) && !connected) { connected = true; lastSeq = null; }
+      if (isConnect(t) && !connected) { connected = true; lastSeq = null; unitSeq = null; }
       if (isDisconnect(t)) connected = false;
+      out.push(it);
       continue;
     }
-    if ((tpci & 0xc0) === 0x40) {
-      if (!connected) { s.notTaken.push(`outside a connection: ${hexOf(t)}`); continue; }
-      const seq = (tpci >> 2) & 0x0f;
+    if (numbered(t)) {
+      if (!connected) { notTaken.push(`outside a connection: ${hexOf(t)}`); continue; }
+      const seq = (t[0] >> 2) & 0x0f;
       // The unit acknowledges a repetition again and does not execute it.
       if (seq === lastSeq) continue;
       lastSeq = seq;
     }
-    request(r, t);
+    out.push(it);
     if (restart) connected = false;
+  }
+  return out;
+}
+
+// A capture's frames between `tool` and the unit at `device`, as tools/knxproxy.ts logs them.
+export function runState(text: string, tool: string, device: number, mask: string): RunState {
+  const s: RunState = { memory: new Map(), memoryService: new Map(), properties: new Map(), loadControls: new Map(), functionCalls: [], loadStates: new Map(), tableReferences: new Map(), restarts: [], other: [], reads: new Set(), notTaken: [], unplaced: [], writes: 0, changesAfterRestart: null };
+  const memoryMapped = isMemoryMappedLsm(mask);
+  const r: Replay = { s, memoryMapped, order: new Map(), fills: [], mmStates: new Map(), n: 0 };
+  for (const it of takenItems(lineItems(text, tool, device), s.notTaken)) {
+    if (it.t.length < 2) continue;
+    if (it.request) request(r, it.t); else answer(r, it.t);
   }
   // An allocation with fill sets its whole segment, where the unit reported it, over every earlier write.
   for (const f of r.fills) {
@@ -457,8 +474,9 @@ const logText = (l: string) => l.replace(/^\S+ \S+ \[\d+\]\s+/, "").trim();
 // the unit's PID 56 (each ETS task's, once), the memory verify mode ETS detected and whether it switched it on, the
 // unit's answers to confirmed restarts (the lines of `device`; the verify-mode lines name no device, the row's ETS6.log
 // is of its one download), and on MV-0701 (memory-mapped; ETS reads before it writes and writes only what
-// differs) how many octets the unit answered ETS before ETS wrote there and how many of them ETS then wrote; a write
-// the line confirmed negatively is none.
+// differs) how many octets the unit answered ETS before ETS wrote there and how many of them ETS then wrote, each
+// frame as the unit took it (runState: a repetition once; a write the line confirmed negatively, or a numbered one
+// outside a connection, none).
 export function etsBranches(ets6log: string, capture: string, device: number, mask: string): EtsBranch[] {
   const lines = ets6log.split(/\r?\n/), ia = numToIa(device);
   const out: EtsBranch[] = [];
@@ -485,7 +503,7 @@ export function etsBranches(ets6log: string, capture: string, device: number, ma
   // The unit's answers to confirmed restarts, each distinct one once (ETS logs each answer twice).
   const restart = lines.filter((l) => CONFIRMED_RESTART_ANSWER.test(l) && l.includes(`<- ${ia} `));
   const answers = new Map<string, string[]>();
-  for (const l of restart) { const [, error, time] = CONFIRMED_RESTART_ANSWER.exec(l)!; (answers.get(`${error}, process time ${time}`) ?? answers.set(`${error}, process time ${time}`, []).get(`${error}, process time ${time}`)!).push(logText(l)); }
+  for (const l of restart) { const [, error, time] = CONFIRMED_RESTART_ANSWER.exec(l)!; push(answers, `${error}, process time ${time}`, logText(l)); }
   for (const [answer, evidence] of answers) out.push({ on: "confirmed-restart", answer: `the unit answered the confirmed restart with ${answer}`, evidence: [...new Set(evidence)] });
   if (!answers.size && lines.some((l) => l.includes(`Send ConfirmedRestart_req -> ${ia} `))) {
     out.push({ on: "confirmed-restart", answer: "ETS sent a confirmed restart, and ETS6.log shows no answer of the unit", evidence: [...new Set(lines.filter((l) => l.includes("ConfirmedRestart")).map(logText))] });
@@ -496,7 +514,7 @@ export function etsBranches(ets6log: string, capture: string, device: number, ma
     const compared = (a: number) => !(a >= MM_CTRL_ADDR && a < MM_CTRL_ADDR + 11) && loadStateMachineAt(a) === null;
     const readFirst = new Set<number>(), written = new Set<number>();
     let reads = 0, writes = 0;
-    for (const it of lineItems(capture, "ETS", device)) {
+    for (const it of takenItems(lineItems(capture, "ETS", device), [])) {
       if (it.t.length < 4) continue;
       const raw = ((it.t[0] & 0x03) << 8) | it.t[1];
       // The octets the unit answered, which ETS compares with what it would write.
@@ -507,7 +525,7 @@ export function etsBranches(ets6log: string, capture: string, device: number, ma
         for (let a = at; a < at + (raw & 0x3f); a++) if (compared(a) && !written.has(a)) readFirst.add(a);
         continue;
       }
-      const w = it.neg ? null : memWriteOf(it.t, raw);
+      const w = memWriteOf(it.t, raw);
       if (!w || w.addr === MM_CTRL_ADDR) continue;
       writes++;
       w.data.forEach((_, i) => written.add(w.addr + i));
@@ -575,13 +593,16 @@ export async function busforgeIntoSim(spec: RowUnit, conf: RowConfiguration, sim
 // says the task wrote is refused, after a refusal the session may end otherwise.
 export async function busforgeSessionIntoSim<T>(sim: SimUnit, spec: RowUnit, run: (connection: Connection, dataDir: string) => Promise<T>, succeeded: (value: T) => boolean): Promise<{ value: T; capture: string }> {
   const dir = tempDir("busforge-ets-sweep-");
-  const port = await freePort();
-  const server = new KnxIpServer({ transport: sim, maxApdu: spec.interfaceMaxApdu, port });
+  // The server on ports the system gives (rows run side by side), the proxy to its TCP listener.
+  let port: number | undefined;
+  const server = new KnxIpServer({ transport: sim, maxApdu: spec.interfaceMaxApdu, port: 0, createTcpListener: () => realTcpListener((p) => { port = p; }) });
   const log = join(dir, "capture.log");
-  const proxy = startProxy({ port: 0, bridgeHost: "127.0.0.1", bridgePort: port, log, tool: "Busforge" });
+  let proxy: ReturnType<typeof startProxy> | undefined;
   try {
     await server.start();
-    await new Promise<void>((r) => proxy.listen(0, "127.0.0.1", () => r()));
+    if (port === undefined) throw new Error("the KNXnet/IP server's TCP listener named no port");
+    proxy = startProxy({ port: 0, bridgeHost: "127.0.0.1", bridgePort: port, log, tool: "Busforge" });
+    await new Promise<void>((r) => proxy!.listen(0, "127.0.0.1", () => r()));
     const proxyPort = (proxy.address() as { port: number }).port;
     const connection: Connection = { id: "sim", name: "sim", type: "ip", host: "127.0.0.1", port: proxyPort, ipTransport: "tcp", usbVendorId: null, usbProductId: null, usbSerial: null, createdAt: 0 };
     const value = await run(connection, dir);
@@ -592,19 +613,10 @@ export async function busforgeSessionIntoSim<T>(sim: SimUnit, spec: RowUnit, run
     }
     return { value, capture: existsSync(log) ? readFileSync(log, "utf8") : "" };
   } finally {
-    proxy.close();
+    proxy?.close();
     await server.stop();
     removeTempDir(dir);
   }
-}
-
-// A port for the KNXnet/IP server, which takes a port number for its UDP socket and TCP listener alike.
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const s = net.createServer();
-    s.on("error", reject);
-    s.listen(0, "127.0.0.1", () => { const a = s.address(); s.close(() => resolve(typeof a === "object" && a ? a.port : 0)); });
-  });
 }
 
 // ---- the second check: ETS's record of the download in its export ----
@@ -680,19 +692,13 @@ export function rowUnit(id: string, dir: string, application: string, spec: RowS
   if (source !== "donor") throw new Error(`row ${id}: its unit's source is ${String(source)}, not donor`);
   if (typeof donor !== "string" || !Array.isArray(identity) || identity.some((l) => typeof l !== "string")) throw new Error(`row ${id}: its unit names no donor and identity loop lines`);
   if (spec.export === undefined) throw new Error(`row ${id}: a catalogue unit's application program comes from the row's export, and row.json names none`);
-  const appXml = extractAppPrograms(exportBytes(dir, spec.export), [application]).get(application);
+  const appXml = extractAppPrograms(readMaybeGzipped(join(dir, spec.export)), [application]).get(application);
   if (appXml === undefined) throw new Error(`row ${id}: its export ${spec.export} holds no application program ${application}`);
   const unit = catalogueUnitSpec(application, appXml, { donor: named.donor, learned: named.identity });
   if ("refused" in unit) throw new Error(`row ${id}: no catalogue unit: ${unit.refused}`);
   if (unit.rule !== named.rule) throw new Error(`row ${id}: its unit was chosen by the rule "${named.rule}", the rule of its mask is now "${unit.rule}": the row is to run again`);
   if (donorDigest(unit.donor) !== named.donorDigest) throw new Error(`row ${id}: its donor ${donor} was collected again or given another behaviour since the row ran: the row is to run again`);
   return unit;
-}
-
-// A row's export file, unzipped where it is gzipped.
-function exportBytes(dir: string, file: string): Buffer {
-  const b = readFileSync(join(dir, file));
-  return file.endsWith(".gz") ? gunzipSync(b) : b;
 }
 
 export interface RowResult {
@@ -741,7 +747,7 @@ export async function runRow(row: Row): Promise<RowResult> {
   const exportFile = row.spec.export;
   const loadedImage: LoadedImageCheck = (() => {
     if (exportFile === undefined) return { state: "no export" };
-    const bytes = exportBytes(row.dir, exportFile);
+    const bytes = readMaybeGzipped(join(row.dir, exportFile));
     const proj = openWithPasswords((password) => loadKnxproj(bytes, password, "export"));
     if (proj === null) return { state: "not compared", why: `the export is password-protected and none of the ${passwords().length} password(s) in ${PASSWORDS_ENV} opens it` };
     return loadedImageCheck(proj, unitAppXml(row.unit), row.conf, capturedOnLoadedUnit(parseCapture(etsText, sim.deviceIa)), row.spec.exportApplication);
@@ -762,6 +768,22 @@ export async function runRow(row: Row): Promise<RowResult> {
 // A difference found, with the cause `given` (explained.json's list) names for it; null where it names none.
 export const withCause = (difference: string, given: Explained["differences"] | undefined) => ({ difference, cause: given?.find((e) => e.difference === difference)?.cause ?? null });
 
+// A refusal's time after the restart as `<n> ms`: Busforge's run is timed by the wall clock, so it moves from run to run.
+export const timeless = (x: string): string => x.replace(/\b\d+ ms after the restart:/g, "<n> ms after the restart:");
+
+// A verdict other than identical and differs without its kind, every time after a restart in it timeless: what
+// explained.json's `detail` holds of it. Undefined for identical and differs, whose differences explained.json holds.
+export function verdictDetail(v: Verdict): Record<string, unknown> | undefined {
+  if (v.verdict === "identical" || v.verdict === "differs") return undefined;
+  const { verdict: _, ...rest } = v;
+  return JSON.parse(JSON.stringify(rest), (_k, x: unknown) => (typeof x === "string" ? timeless(x) : x)) as Record<string, unknown>;
+}
+
+// What tools/ets-sweep.test.ts holds a row's run to: its verdict, its differences and the verdict's detail; and the
+// same as the row's explained.json gives them.
+export const judged = (v: Verdict) => ({ verdict: v.verdict, differences: v.verdict === "differs" ? v.differences : [], detail: verdictDetail(v) ?? null });
+export const expected = (e: Explained) => ({ verdict: e.verdict, differences: e.differences.map((d) => d.difference), detail: e.detail ?? null });
+
 // The differences of a verdict, with the cause explained.json gives each; null where none is given.
 export function causes(verdict: Verdict, explained: Explained): { difference: string; cause: string | null }[] {
   if (verdict.verdict !== "differs") return [];
@@ -778,6 +800,9 @@ export interface ManifestRow {
   // Its cause, where explained; for a refusal or failure the reason itself.
   cause: string | null;
   differences: { difference: string; cause: string | null }[];
+  // For a verdict other than identical and differs, all of it (verdictDetail); absent in an entry kept from a manifest
+  // the tool wrote before it recorded it.
+  detail?: Record<string, unknown>;
   reads: RowResult["reads"];
   notTaken: RowResult["notTaken"];
   loadedImage: LoadedImageCheck;
@@ -811,9 +836,10 @@ export function manifestRow(row: Row, r: RowResult): ManifestRow {
     const picks = "refused" in now ? `none: ${now.refused}` : now.donor.id;
     return { source: "donor", donor: row.unit.donor.id, rule: row.unit.rule, ...(picks === row.unit.donor.id ? {} : { rulePicksNow: picks }) };
   })();
+  const detail = verdictDetail(v);
   return {
     application: row.application, variant: row.variant, unit: row.unit.id, product: row.unit.name, mask: cfg.mask,
-    manufacturer: row.application.split("_")[0], etsBuild: row.spec.etsBuild, verdict: v.verdict, first, cause, differences: diffs,
+    manufacturer: row.application.split("_")[0], etsBuild: row.spec.etsBuild, verdict: v.verdict, first, cause, differences: diffs, ...(detail ? { detail } : {}),
     reads: r.reads, notTaken: r.notTaken, loadedImage: r.loadedImage,
     calibration: r.calibration, refusalsAfterRestart: r.refusalsAfterRestart,
     unitSource, ...(typeof row.spec.unit === "string" ? {} : { propertySources: row.spec.unit.properties }), etsBranches: r.etsBranches,
@@ -846,19 +872,22 @@ const noCause = (cause: string | null) => !cause?.trim();
 
 // A row's explained.json after a rerun (its manifest entry `m`, whose causes are the ones `old` gives, manifestRow):
 // the verdict and the differences as the run found them, a difference that stays with its cause, a new one with
-// cause null (none is invented); the same for a calibrated row's positions. `moved` where it is not `old` again.
-// `unexplained`: each difference or position without a cause, and a verdict that moved to one explained.json holds
-// no cause of (a refusal or a failure: its reason is said in notes.md). `gone`: the explained ones the run no longer
-// finds, with the cause they had.
+// cause null (none is invented); the same for a calibrated row's positions; a refusal's or failure's detail as the run
+// gives it. `moved` where it is not `old` again. `unexplained`: each difference or position without a cause, a verdict
+// that moved to one explained.json holds no cause of (a refusal or a failure: its reason is said in notes.md), and the
+// detail of such a verdict that moved (a refusal of another cause, or one recorded for the first time).
+// `gone`: the explained ones the run no longer finds, with the cause they had.
 export function rejudge(old: Explained, m: ManifestRow): { explained: Explained; moved: boolean; unexplained: string[]; gone: string[] } {
   const calibration = m.calibration?.differences;
   const explained: Explained = {
-    verdict: m.verdict, differences: m.differences,
+    verdict: m.verdict, differences: m.differences, ...(m.detail ? { detail: m.detail } : {}),
     ...(calibration !== undefined && (calibration.length > 0 || old.calibration !== undefined) ? { calibration } : {}),
   };
-  const same = (e: Explained) => JSON.stringify([e.verdict, e.differences, e.calibration ?? []]);
+  const same = (e: Explained) => JSON.stringify([e.verdict, e.differences, e.detail ?? null, e.calibration ?? []]);
+  const refusalOrFailure = m.verdict !== "identical" && m.verdict !== "differs";
   const unexplained = [
-    ...(old.verdict !== m.verdict && m.verdict !== "identical" && m.verdict !== "differs" ? [`verdict: ${old.verdict} -> ${m.verdict}: ${m.first ?? ""}`] : []),
+    ...(old.verdict !== m.verdict && refusalOrFailure ? [`verdict: ${old.verdict} -> ${m.verdict}: ${m.first ?? ""}`] : []),
+    ...(old.verdict === m.verdict && refusalOrFailure && JSON.stringify(old.detail ?? null) !== JSON.stringify(m.detail ?? null) ? [`${m.verdict}: its detail moved: ${JSON.stringify(old.detail ?? null)} -> ${JSON.stringify(m.detail ?? null)}`] : []),
     ...explained.differences.filter((d) => noCause(d.cause)).map((d) => `difference: ${d.difference}`),
     ...(explained.calibration ?? []).filter((d) => noCause(d.cause)).map((d) => `calibration: ${d.difference}`),
   ];
@@ -873,9 +902,7 @@ export function movedSince(before: ManifestRow | undefined, m: ManifestRow): str
   if (before === undefined) return ["the manifest has no entry of the row yet"];
   const out: string[] = [];
   if (before.verdict !== m.verdict) out.push(`verdict: ${before.verdict} -> ${m.verdict}`);
-  // Busforge's run is timed by the wall clock, so a refusal's time after the restart moves from run to run.
-  const timeless = (x: string | null) => x?.replace(/ \d+ ms after the restart:/, " <n> ms after the restart:") ?? "none";
-  if (before.first !== m.first) out.push(timeless(before.first) === timeless(m.first) ? "first: only its time after the restart moved" : `first: ${before.first ?? "none"} -> ${m.first ?? "none"}`);
+  if (before.first !== m.first) out.push(timeless(before.first ?? "none") === timeless(m.first ?? "none") ? "first: only its time after the restart moved" : `first: ${before.first ?? "none"} -> ${m.first ?? "none"}`);
   // Each item whose count moved.
   const items = (what: string, a: string[], b: string[]) => {
     const n = (xs: string[], x: string) => xs.filter((y) => y === x).length;
@@ -973,39 +1000,50 @@ async function main(): Promise<number> {
   if (todo.length === 0) throw new Error(`no row under ${SWEEP_DIR}`);
   // Before the rows run, so a wrong --out is refused at once.
   const root = rejudging ? rejudgeRoot(out, inPlace) : null;
-  const results: ManifestRow[] = [];
-  const olds = new Map<string, Explained>();
-  for (const id of todo) {
-    const row = readRow(id);
-    const r = await runRow(row);
-    const m = manifestRow(row, r);
-    results.push(m);
-    olds.set(id, row.explained);
-    console.log(`${id}: ${m.verdict}${m.first ? `: ${m.first}` : ""}`);
-    for (const d of m.differences) console.log(`  ${d.difference}\n    cause: ${d.cause ?? "NOT EXPLAINED"}`);
-    if (m.reads.onlyEts.length || m.reads.onlyBusforge.length) console.log(`  reads only ETS made: ${list(m.reads.onlyEts)}\n  reads only Busforge made: ${list(m.reads.onlyBusforge)}`);
-    if (m.notTaken.ets.length || m.notTaken.busforge.length) console.log(`  not taken by the unit, ETS: ${list(m.notTaken.ets)}\n  not taken by the unit, Busforge: ${list(m.notTaken.busforge)}`);
-    for (const x of m.refusalsAfterRestart ?? []) console.log(`  after the restart, refused (comparison whole): ${x.run}: ${x.refusal}`);
-    console.log(`  LoadedImage: ${m.loadedImage.state}${"why" in m.loadedImage ? ` (${m.loadedImage.why})` : ""}${"bytes" in m.loadedImage ? `, ${m.loadedImage.bytes} bytes` : ""}`);
-    if (keep) {
-      const out = join(keep, id);
-      mkdirSync(out, { recursive: true });
-      writeFileSync(join(out, "busforge.log"), r.busforge.capture);
-      writeFileSync(join(out, "busforge.log.sim.txt"), r.busforge.sim.lines.join("\n") + "\n");
-      copyFileSync(join(row.dir, ROW_FILES.ets), join(out, "ets.log"));
-      console.log(`  kept in ${out}`);
-    }
-  }
+  const olds = new Map(todo.map((id) => [id, readRow(id)]));
+  // The rows side by side, as tools/ets-sweep.test.ts judges them; imported here, as the pool's workers import this
+  // module.
+  const { RowPool } = await import("./ets-sweep-workers.ts");
+  const pool = new RowPool();
+  let results: ManifestRow[];
+  try {
+    results = await Promise.all(todo.map(async (id) => {
+      const row = olds.get(id)!;
+      const { manifest: m, kept } = await pool.judge(id, { manifest: true, keep: keep !== undefined });
+      printRow(row, m!, keep, kept);
+      return m!;
+    }));
+  } finally { pool.close(); }
   const before = readManifest();
   const manifest = updateManifest(before, results, present);
   if (root !== null) {
-    const { report, exit } = writeRejudged(root, results, olds, before, manifest);
+    const { report, exit } = writeRejudged(root, results, new Map([...olds].map(([id, row]) => [id, row.explained])), before, manifest);
     for (const l of report) console.log(l);
     return exit;
   }
   writeFileSync(corpusUnlistedPath(MANIFEST), JSON.stringify(manifest, null, 2) + "\n");
   console.log(`manifest: ${MANIFEST} (${manifest.rows.length} rows)`);
   return 0;
+}
+
+// A row's verdict and what was recorded beside it, as the tool prints it once the row is judged; with --keep,
+// Busforge's capture and the simulator's lines kept under `keep`.
+function printRow(row: Row, m: ManifestRow, keep: string | undefined, kept: { capture: string; simLines: string[] } | undefined): void {
+  const id = row.id;
+  console.log(`${id}: ${m.verdict}${m.first ? `: ${m.first}` : ""}`);
+  for (const d of m.differences) console.log(`  ${d.difference}\n    cause: ${d.cause ?? "NOT EXPLAINED"}`);
+  if (m.reads.onlyEts.length || m.reads.onlyBusforge.length) console.log(`  reads only ETS made: ${list(m.reads.onlyEts)}\n  reads only Busforge made: ${list(m.reads.onlyBusforge)}`);
+  if (m.notTaken.ets.length || m.notTaken.busforge.length) console.log(`  not taken by the unit, ETS: ${list(m.notTaken.ets)}\n  not taken by the unit, Busforge: ${list(m.notTaken.busforge)}`);
+  for (const x of m.refusalsAfterRestart ?? []) console.log(`  after the restart, refused (comparison whole): ${x.run}: ${x.refusal}`);
+  console.log(`  LoadedImage: ${m.loadedImage.state}${"why" in m.loadedImage ? ` (${m.loadedImage.why})` : ""}${"bytes" in m.loadedImage ? `, ${m.loadedImage.bytes} bytes` : ""}`);
+  if (keep && kept) {
+    const out = join(keep, id);
+    mkdirSync(out, { recursive: true });
+    writeFileSync(join(out, "busforge.log"), kept.capture);
+    writeFileSync(join(out, "busforge.log.sim.txt"), kept.simLines.join("\n") + "\n");
+    copyFileSync(join(row.dir, ROW_FILES.ets), join(out, "ets.log"));
+    console.log(`  kept in ${out}`);
+  }
 }
 
 if (import.meta.main) {
