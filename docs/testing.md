@@ -768,7 +768,12 @@ names where not.
 
 `tools/ets-sweep.test.ts` runs every row with the private corpus and holds its verdict and its
 differences to `explained.json`: a new difference fails, and so does an explained one that is gone; the
-same holds for a calibrated row's positions.
+same holds for a calibrated row's positions. The rows run side by side, one per worker thread
+(`tools/ets-sweep-workers.ts`, one worker per core but one): Busforge's run into a simulated unit spends nearly
+all its time waiting on the simulated line, but each row needs an event loop of its own, because one row's parse
+of a large application would hold up the timers of every other row's line. More workers than cores starve the
+timers too: the simulator then refuses frames that arrive at instants its captures do not show (`sim-refused`),
+and the row fails loudly.
 Without the corpus it is skipped visibly. A row is evidence on no axis of
 [evidence-contract.md](evidence-contract.md): it shows what Busforge sends next to what ETS sends,
 both given the same simulator's answers.
