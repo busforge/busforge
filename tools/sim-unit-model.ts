@@ -81,6 +81,8 @@ export function collectedUnit(collection: CollectPackage, appXml: string, refuse
     if (r.outcome !== "bytes" || !r.bytes) continue;
     const bytes = Buffer.from(r.bytes, "hex");
     const p = prop(o, pid);
+    // A count of 0 agrees with the refusal of its first element (the Auro's and the Theben theLuxa P300's object 4 PID 27).
+    if (p.elements === null && start === 0 && bytes.readUInt16BE(0) === 0) continue;
     if (p.elements === null) refuse(`the unit refused property ${o}/${pid} and answered it`);
     if (start === 0) { counts.set(`${o}/${pid}`, bytes.readUInt16BE(0)); p.countKnown = true; continue; }
     const size = bytes.length / count;

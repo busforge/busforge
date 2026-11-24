@@ -6,8 +6,9 @@
 // - the load-state machines on PID 5 of objects 1 to 3 (address table, association table, application) take
 //   absolute segments: `03 00 <address:2> <size:2> <access> <memory type> <flags> 00` (the stack segment
 //   `03 01` in the same form) at the address the request names, and the task segment
-//   `03 02 <address:2> <octet> <program id:5>`; every one answered LOADING. A load is taken from UNLOADED and
-//   from LOADED (the application loaded again without an unload, ETS's partial form);
+//   `03 02 <address:2> <octet> <program id:5>`, and where the unit's captures show it the task control 1 its
+//   application declares, `03 04 <address:2> <count> 00 00 00 00 00`; every one answered LOADING. A load is
+//   taken from UNLOADED and from LOADED (the application loaded again without an unload, ETS's partial form);
 // - its memory is one address space at fixed addresses: what the collection read, and what is written; an
 //   unload forgets the machine's segments and keeps their bytes (a later allocation at the same address
 //   holds them, which the CRCs of the memory-control blocks after a download show);
@@ -15,14 +16,16 @@
 //   that is loaded (or loading, the bytes written since its load, where the unit's captures show it answer
 //   them), and into the load states at
 //   0xB6EA to 0xB6ED (46825 + machine), which hold PID 5;
-// - the memory-control block (PID 27) of an object whose unit answers it: one element per segment with
-//   flags 0x80, in the order allocated, `<size:4> 00 <access> <CRC:2>`, computed at load completed;
+// - the memory-control block (PID 27) of an object whose unit answers it: one element per segment it reports
+//   (`mcbSegments`), in the order allocated, computed at load completed;
 // - the table reference (PID 7) after a download: the address of the machine's first segment, where its task
 //   segment names the same address;
-// - the unload of the application (object 3) sets the device control's application-stopped bit where the unit's
-//   captures show it (`unloadStopsApplication`), as on System B the unload of object 4;
+// - the unload of the application (object 3), and its load while it is loaded, set the device control's
+//   application-stopped bit where the unit's captures show it (`unloadStopsApplication`, `loadStopsApplication`),
+//   as on System B the unload of object 4;
 // - no property but PID 5 and the device control is written; the program id comes with the task segment, which
-//   names a segment the machine holds and carries the unit's PEI type and the application it holds.
+//   names the address its application declares for the machine or the start of a segment the machine holds, and
+//   carries the unit's PEI type and the application it holds.
 import { iaToNum, APCI, LSM, MM_STATUS_BASE, PID, STATE } from "../packages/knx/src/index.ts";
 import { flattenSteps, parseLoadProcedures, type CollectPackage } from "../packages/product/src/index.ts";
 import { SimUnit, crcConventionOf, mcbCrc, APPLICATION_STOPPED, MEMORY_END, type Reply, type SimUnitCoreModel } from "./sim-unit.ts";
@@ -32,7 +35,7 @@ const refuse = (why: string): never => { throw new Error(`no simulated unit: ${w
 
 const PID_LOAD_STATE = PID.LOAD_STATE_CONTROL, PID_TABLE_REFERENCE = PID.TABLE_REFERENCE, PID_PROGRAM_ID = PID.PROGRAM_ID, PID_DEVICE_CONTROL = PID.DEVICE_CONTROL, PID_MCB = PID.MCB_TABLE;
 const EVENT = { ...LSM, ADDITIONAL: 3 } as const;
-const SEGMENT = { DATA: 0x00, STACK: 0x01, TASK: 0x02 } as const;
+const SEGMENT = { DATA: 0x00, STACK: 0x01, TASK: 0x02, TASK_CONTROL_1: 0x04 } as const;
 const LSMS = [1, 2, 3], APPLICATION_LSM = 3;
 const MEMORY_TYPE = { RAM: 2, EEPROM: 3 } as const;
 // The segment flag of a segment the unit reports in its memory-control block.
@@ -52,6 +55,16 @@ export interface PropertyMappedBehaviour {
   // Whether the unload of its application (object 3) sets the device control's application-stopped bit
   // (PID 14 bit 0) until its restart; null where no capture shows it, and the device control is then unknown.
   unloadStopsApplication: boolean | null;
+  // The same for a load of its application while it is loaded (ETS's partial form); null leaves only the bit
+  // unknown, a read of the device control refused.
+  loadStopsApplication: boolean | null;
+  // Whether it takes the task control 1 its application declares (`03 04 <address:2> <count> 00 00 00 00 00`),
+  // answered LOADING; where not, its captures show none.
+  taskControl1: boolean;
+  // Which segments its memory-control block reports: those flagged 0x80, each `<size:4> 00 <access> <CRC:2>`
+  // ("flagged"), or every EEPROM segment, a flagged one `<size:4> 01 <access> <CRC:2>`, another
+  // `<size:4> 00 <access> 00 00` ("eeprom").
+  mcbSegments: "flagged" | "eeprom";
 }
 
 export interface SimUnit0705Model extends SimUnitCoreModel {
@@ -63,7 +76,21 @@ export interface SimUnit0705Model extends SimUnitCoreModel {
   crcConvention: "ccitt" | "ccitt-false" | null;
   // The application the unit holds (object 3 PID 13), which every task segment carries.
   programId: Buffer;
+  // Per load-state machine the address of the task segment and the task control 1 its application declares.
+  taskSegment: Map<number, number>;
+  taskControl1: Map<number, { at: number; count: number }>;
   propertyMapped: PropertyMappedBehaviour;
+}
+
+// The memory-control block's element of a segment, `<size:4> <octet> <access> <CRC:2>`, as `mcbSegments` gives
+// it; null where the unit reports none for the segment.
+function mcbElement(pm: PropertyMappedBehaviour, s: SimUnit0705Segment, crc: () => number): Buffer | null {
+  const flagged = (s.flags & MCB_FLAG) !== 0;
+  if (pm.mcbSegments === "flagged" ? !flagged : s.memoryType !== MEMORY_TYPE.EEPROM) return null;
+  const e = Buffer.alloc(8);
+  e.writeUInt32BE(s.size, 0); e[4] = pm.mcbSegments === "eeprom" && flagged ? 1 : 0; e[5] = s.access;
+  if (flagged) e.writeUInt16BE(crc(), 6);
+  return e;
 }
 
 export function simUnit0705Model(collection: CollectPackage, appXml: string, behaviour: UnitBehaviour, pm: PropertyMappedBehaviour): SimUnit0705Model {
@@ -106,16 +133,20 @@ export function simUnit0705Model(collection: CollectPackage, appXml: string, beh
     const ref = objects.get(lsm)?.get(PID_TABLE_REFERENCE)?.elements?.[0];
     let segs = declared(lsm);
     if (mcb && mcb.length > 0) {
-      const flagged = segs.filter((s) => s.flags & MCB_FLAG);
+      const head = (s: SimUnit0705Segment) => mcbElement(pm, s, () => 0)?.readUInt16BE(4);
+      const expected = segs.filter((s) => head(s) !== undefined);
       const reported = mcb.map((e) => ({ size: e.readUInt32BE(0), control: e.readUInt16BE(4) }));
-      const same = reported.length === flagged.length && reported.every((e, i) => e.size === flagged[i].size && e.control === flagged[i].access);
+      const same = reported.length === expected.length && reported.every((e, i) => e.size === expected[i].size && e.control === head(expected[i]));
       if (!same) {
-        if (segs.length !== 1 || reported.length !== 1 || !ref || reported[0].control >> 8 !== 0) refuse(`the memory-control block of object ${lsm} reports segments its application does not declare`);
+        const reportedHead = segs.length === 1 ? head(segs[0]) : undefined;
+        if (reportedHead === undefined || reported.length !== 1 || !ref || reported[0].control >> 8 !== reportedHead >> 8) refuse(`the memory-control block of object ${lsm} reports segments its application does not declare`);
         segs = [{ ...segs[0], at: ref!.readUInt16BE(0), size: reported[0].size, access: reported[0].control & 0xff }];
       }
-      segs.filter((s) => s.flags & MCB_FLAG).forEach((s, i) => {
+      segs.filter((s) => head(s) !== undefined).forEach((s, i) => {
+        const reportedCrc = mcb[i].readUInt16BE(6);
+        if (!(s.flags & MCB_FLAG)) { if (reportedCrc !== 0) refuse(`the memory-control block of object ${lsm} reports CRC ${reportedCrc.toString(16)} for the unflagged segment at 0x${s.at.toString(16)}`); return; }
         if (!known.subarray(s.at, s.at + s.size).every((k) => k === 1)) refuse(`the collection did not read the segment of object ${lsm} at 0x${s.at.toString(16)}, whose CRC the unit reports`);
-        const seg = bytes.subarray(s.at, s.at + s.size), reportedCrc = mcb[i].readUInt16BE(6);
+        const seg = bytes.subarray(s.at, s.at + s.size);
         const conv = crcConventionOf(reportedCrc, seg) ?? refuse(`the memory-control block of object ${lsm} reports CRC ${reportedCrc.toString(16)} over the segment at 0x${s.at.toString(16)}, which neither convention gives`);
         if (crc && crc !== conv) refuse("the memory-control blocks take both CRC conventions");
         crc = conv;
@@ -124,10 +155,12 @@ export function simUnit0705Model(collection: CollectPackage, appXml: string, beh
     if (ref && (segs.length === 0 || ref.readUInt16BE(0) !== segs[0].at)) refuse(`object ${lsm} references 0x${ref.toString("hex")}, ${segs.length ? `its first segment is at 0x${segs[0].at.toString(16)}` : "it holds no segment"}`);
     held.set(lsm, segs);
   }
+  const taskSegment = new Map(steps.filter((s) => s.verb === "LdCtrlTaskSegment").map((s) => [Number(s.attrs.LsmIdx), Number(s.attrs.Address)]));
+  const taskControl1 = new Map(steps.filter((s) => s.verb === "LdCtrlTaskCtrl1").map((s) => [Number(s.attrs.LsmIdx), { at: Number(s.attrs.Address), count: Number(s.attrs.Count) }]));
   return {
     ...behaviour,
     ia: iaToNum(collection.ia), mask, maxApdu: pm.maxApdu, objects, descriptions, functionStates, memoryExtendedRead,
-    crcConvention: crc, memory: { bytes, known }, held, programId: Buffer.from(programId), propertyMapped: pm,
+    crcConvention: crc, memory: { bytes, known }, held, programId: Buffer.from(programId), taskSegment, taskControl1, propertyMapped: pm,
   };
 }
 
@@ -173,11 +206,11 @@ export class SimUnit0705 extends SimUnit {
         this.unloaded.add(obj);
         if (this.property(obj, PID_TABLE_REFERENCE)?.elements) this.referenceKnown.set(obj, false);
         if (this.property(obj, PID_MCB)?.elements) this.mcbKnown.set(obj, false);
-        if (obj === APPLICATION_LSM && this.unit.propertyMapped.unloadStopsApplication === null) this.deviceControlUnknown = true;
-        if (obj === APPLICATION_LSM && this.unit.propertyMapped.unloadStopsApplication) { const dc = this.property(0, PID_DEVICE_CONTROL)!; dc.elements = [Buffer.from([dc.elements![0][0] | APPLICATION_STOPPED])]; }
+        if (obj === APPLICATION_LSM) this.stopsApplication("unload", this.unit.propertyMapped.unloadStopsApplication);
         return set(STATE.UNLOADED);
       case EVENT.LOAD:
         if (state === STATE.LOADING) { this.refuse(`${what}: a load of a machine that is loading`); return null; }
+        if (obj === APPLICATION_LSM && state === STATE.LOADED) this.stopsApplication("load", this.unit.propertyMapped.loadStopsApplication);
         for (const s of this.held.get(obj)!) this.fresh.fill(0, s.at, s.at + s.size);
         return set(STATE.LOADING);
       case EVENT.ADDITIONAL:
@@ -189,6 +222,13 @@ export class SimUnit0705 extends SimUnit {
     }
     this.refuse(`${what}: load-state event ${value[0]}`);
     return null;
+  }
+
+  // The device control after an event of the application's load-state machine: its application-stopped bit set
+  // where the unit's captures show it set, unknown where they do not show it.
+  private stopsApplication(event: "unload" | "load", stops: boolean | null): void {
+    if (stops === null) { this.deviceControlUnknown = event; return; }
+    if (stops) { const dc = this.property(0, PID_DEVICE_CONTROL)!; dc.elements = [Buffer.from([dc.elements![0][0] | APPLICATION_STOPPED])]; }
   }
 
   private additional(obj: number, value: Buffer, what: string): boolean {
@@ -208,10 +248,18 @@ export class SimUnit0705 extends SimUnit {
     if (value[1] === SEGMENT.TASK) {
       if (value.length !== 10) { this.refuse(`${what}: a task segment of another form`); return false; }
       const at = value.readUInt16BE(2), id = value.subarray(5, 10);
-      if (!segs.some((x) => x.at === at)) { this.refuse(`${what}: a task segment at 0x${at.toString(16)}, where object ${obj} holds no segment`); return false; }
+      if (segs.length === 0) { this.refuse(`${what}: a task segment where object ${obj} holds no segment`); return false; }
+      if (this.unit.taskSegment.get(obj) !== at && !segs.some((x) => x.at === at)) { this.refuse(`${what}: a task segment at 0x${at.toString(16)}, neither the address the application declares for object ${obj} nor a segment it holds`); return false; }
       if (value[4] !== this.unit.propertyMapped.peiType) { this.refuse(`${what}: a task segment of PEI type ${value[4]}, where the unit's captures carry ${this.unit.propertyMapped.peiType}`); return false; }
       if (!id.equals(this.unit.programId)) { this.refuse(`${what}: a task segment for application ${id.toString("hex")}, where the unit holds ${this.unit.programId.toString("hex")}`); return false; }
       this.taskAt.set(obj, at);
+      return true;
+    }
+    if (value[1] === SEGMENT.TASK_CONTROL_1 && this.unit.propertyMapped.taskControl1) {
+      const declared = this.unit.taskControl1.get(obj);
+      const at = value.readUInt16BE(2), count = value[4];
+      if (value.length !== 10 || value.subarray(5).some((b) => b !== 0)) { this.refuse(`${what}: a task control 1 of another form`); return false; }
+      if (!declared || declared.at !== at || declared.count !== count) { this.refuse(`${what}: a task control 1 at 0x${at.toString(16)} with count ${count}, which the application does not declare for object ${obj}`); return false; }
       return true;
     }
     this.refuse(`${what}: additional load control 0x${value[1].toString(16)} is not shown on this unit`);
@@ -228,11 +276,7 @@ export class SimUnit0705 extends SimUnit {
       if (!crc) { this.refuse(`${what}: the unit reports a memory-control block whose CRC convention its collection does not show`); return false; }
       const unknown = flagged.find((s) => !this.memory(s.at, s.size));
       if (unknown) { this.refuse(`${what}: the segment at 0x${unknown.at.toString(16)} holds octets no write set and the unit was not shown to hold, so its CRC is not known`); return false; }
-      mcb.elements = flagged.map((s) => {
-        const e = Buffer.alloc(8);
-        e.writeUInt32BE(s.size, 0); e[4] = 0; e[5] = s.access; e.writeUInt16BE(mcbCrc(crc, this.bytes.subarray(s.at, s.at + s.size)), 6);
-        return e;
-      });
+      mcb.elements = segs.flatMap((s) => mcbElement(this.unit.propertyMapped, s, () => mcbCrc(crc, this.bytes.subarray(s.at, s.at + s.size))) ?? []);
       mcb.countKnown = true;
       this.mcbKnown.set(obj, true);
     }
@@ -274,7 +318,9 @@ export class SimUnit0705 extends SimUnit {
   protected override memoryWrite(n: number, addr: number, data: Buffer, reply: Reply): void {
     const what = `A_Memory_Write ${n} at 0x${addr.toString(16)}`;
     if (n === 0 || data.length !== n) { this.refuse(`${what}: ${data.length} octets of data`); return; }
-    if (this.deviceControlUnknown) { this.refuse(`${what}: whether the unit echoes it is not known, its device control after the application's unload not shown`); return; }
+    // After a load of the application the unit's writes are answered as before it (the MDT BE-02001.02's parameter
+    // downloads in Busforge's runs), whatever its application-stopped bit then reads.
+    if (this.deviceControlUnknown === "unload") { this.refuse(`${what}: whether the unit echoes it is not known, its device control after the application's unload not shown`); return; }
     const hit = this.heldAt(addr, n);
     if (!hit) { this.refuse(`${what}: outside an allocated segment`); return; }
     if (this.state(hit[0]) !== STATE.LOADING) { this.refuse(`${what}: into the segment of object ${hit[0]} while it is not loading`); return; }

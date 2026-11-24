@@ -171,9 +171,10 @@ export class SimUnit implements KnxTransport {
   private restartedNow = false;
   // Whether its application's load-state machine took a load event since its last restart.
   private applicationLoaded = false;
-  // Whether its device control is not known: after an unload of the application where the captures do not
-  // show what the unit reports then, until it is written or the unit restarts.
-  protected deviceControlUnknown = false;
+  // Whether its device control is not known, and after which event of the application's load-state machine: after
+  // an unload (or a load) of it where the captures do not show what the unit reports then, until it is written or
+  // the unit restarts.
+  protected deviceControlUnknown: "unload" | "load" | null = null;
   // The priority bits of the request on the line, which the unit's frames in answer carry.
   private priority = 0;
   private line: Promise<void> = Promise.resolve();
@@ -505,7 +506,7 @@ export class SimUnit implements KnxTransport {
     // restart's is moved back to its T_Ack's arrival (onAck).
     this.restartedAt = this.now();
     this.applicationLoaded = false;
-    this.deviceControlUnknown = false;
+    this.deviceControlUnknown = null;
     // A unit without System B's segments has none. What the application does with other bits, or while it is
     // not loaded, is not shown: the octet is then unknown. The memory-control block reports the CRC over the
     // segment as it then holds it.
@@ -547,7 +548,7 @@ export class SimUnit implements KnxTransport {
       reply(APCI.PROPERTY_RESPONSE, head(0));
       return;
     }
-    if (obj === 0 && pid === PID_DEVICE_CONTROL && this.deviceControlUnknown) { this.refuse(`${what} after the unload of the application: what the unit reports then is not shown`); return; }
+    if (obj === 0 && pid === PID_DEVICE_CONTROL && this.deviceControlUnknown) { this.refuse(`${what} after the ${this.deviceControlUnknown} of the application: what the unit reports then is not shown`); return; }
     if ((pid === PID_TABLE_REFERENCE && this.referenceKnown.get(obj) === false) || (pid === PID_MCB && this.mcbKnown.get(obj) === false)) {
       this.refuse(`${what} after the unload of its load-state machine: what the unit reports there before the next allocation is not known`);
       return;
@@ -592,7 +593,7 @@ export class SimUnit implements KnxTransport {
       return;
     }
     if (obj === 0 && pid === PID_DEVICE_CONTROL && value.length === 1) {
-      this.deviceControlUnknown = false;
+      this.deviceControlUnknown = null;
       prop.elements = [Buffer.from(value)];
       echo(value);
       return;
@@ -656,7 +657,7 @@ export class SimUnit implements KnxTransport {
       case EVENT.UNLOAD:
         this.mcbWritten.delete(obj);
         if (this.segments.has(obj)) { this.referenceKnown.set(obj, false); this.mcbKnown.set(obj, false); }
-        if (obj === APPLICATION_LSM && (this.model.unloadStopsApplication ?? null) === null) this.deviceControlUnknown = true;
+        if (obj === APPLICATION_LSM && (this.model.unloadStopsApplication ?? null) === null) this.deviceControlUnknown = "unload";
         if (obj === APPLICATION_LSM && this.model.unloadStopsApplication) { const dc = this.property(0, PID_DEVICE_CONTROL)!; dc.elements = [Buffer.from([dc.elements![0][0] | APPLICATION_STOPPED])]; }
         return set(STATE.UNLOADED);
       case EVENT.LOAD:

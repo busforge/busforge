@@ -1,7 +1,7 @@
 import { test, expect, setDefaultTimeout } from "bun:test";
 import { readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
-import { cemiLData, withSource } from "../packages/knx/src/index.ts";
+import { cemiLData, numToIa, withSource } from "../packages/knx/src/index.ts";
 import { parseAppConfig } from "../packages/product/src/index.ts";
 import { captureText, catalogueXml, corpusPath } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
@@ -11,7 +11,7 @@ import { giraM0008Configuration } from "./gira-m0008-config.ts";
 import type { SimUnit } from "./sim-unit.ts";
 import { SimUnit0705 } from "./sim-unit-0705.ts";
 import { confirmationDifferences, framePairs, replayCapture, replayDifferences, type ReplayStep } from "./sim-unit-replay.ts";
-import { GIRA_TS3, MDT_BE02001, newSimUnit, type SimUnitSpec } from "./sim-units.ts";
+import { AURO_M0081, GIRA_TS3, MDT_BE02001, MDT_BE06001, THEBEN_THELUXA_P300, newSimUnit, type SimUnitSpec } from "./sim-units.ts";
 
 // Busforge's downloads below run on the wall clock (the units' line timing, the restart windows): about 25 s
 // alone; twenty times that under a loaded full check (docs/testing.md, "Timeouts of heavy tests").
@@ -158,5 +158,92 @@ corpusDescribe("the simulated Gira Tastsensor 3 Komfort", () => {
     const run = await busforgeIntoSim(GIRA_TS3, { ia: "1.1.1", params: [...params], links });
     expect([run.refused, run.error, run.refusals]).toEqual([null, null, []]);
     expect(run.result).toMatchObject({ kind: "flashed", verified: true });
+  });
+});
+
+// ETS's captures of each unit in the order they ran on it, into one simulated unit from the state its collection
+// shows (or the other collection of the unit named), on the captures' clock: every frame and confirmation as the unit
+// and its interface gave them, every byte written held.
+const CALIBRATIONS: { spec: SimUnitSpec; captures: string[]; collection?: string }[] = [
+  { spec: AURO_M0081, captures: ["fulldownload", "partial-params", "partial-links", "partial-revert"].map((k) => `auro-m0081-ets-${k}.log`) },
+  { spec: AURO_M0081, collection: "collections/in-service/auro-m0081-in-service.json", captures: ["partial-unlink9", "partial-relink9"].map((k) => `auro-m0081-ets-${k}.log`) },
+  { spec: THEBEN_THELUXA_P300, captures: ["fulldownload", "partial-params", "partial-links", "partial-revert"].map((k) => `theluxa-p300-ets-${k}.log`) },
+  { spec: MDT_BE06001, captures: ["fulldownload", "partial-params", "partial-links", "partial-revert"].map((k) => `mdtui-ets-${k}.log`) },
+];
+
+for (const { spec, captures, collection } of CALIBRATIONS) {
+  corpusDescribe(`the simulated ${spec.name} against ETS's captures${collection ? ` from ${collection}` : ""}`, () => {
+    test("answers every request as the unit did, and confirms each on the line as its interface did", async () => {
+      let clock = 0;
+      const sim = newSimUnit(spec, { now: () => clock }, { link: { ackMs: 0, nakMs: 0 } }, collection);
+      for (const capture of captures) {
+        const text = captureText(capture);
+        const steps = await replay(sim, spec, text, "ETS", (ms) => { clock = ms; });
+        // The house's interface reports a long frame of the unit as a standard one; the priority is the unit's.
+        const reported = steps.map((st) => ({ ...st, unit: st.unit.map((f) => f.replace(/^[0-9a-f]{2}/, (c) => (parseInt(c, 16) & 0x0c).toString(16).padStart(2, "0"))), sim: st.sim.map((f) => f.replace(/^[0-9a-f]{2}/, (c) => (parseInt(c, 16) & 0x0c).toString(16).padStart(2, "0"))) }));
+        expect([capture, steps.length > 40, replayDifferences(reported, { context: 3 })]).toEqual([capture, true, []]);
+        expect([capture, notHeld(sim, text)]).toEqual([capture, []]);
+      }
+      expect(sim.refusals).toEqual([]);
+    });
+  });
+}
+
+// Busforge's captured downloads of the units in the order they ran, from the collection taken right before them:
+// their read-backs while a segment loads, their probes after each restart. The captures hold no confirmation of some
+// T_Acks and T_Disconnects.
+const BUSFORGE_CAPTURES: { spec: SimUnitSpec; collection: string; captures: string[] }[] = [
+  {
+    spec: AURO_M0081, collection: "collections/auro-m0081-busforge-2026-10-06/1.1.18-auro-m0081-collect-vor-busforge-20261006-223003.json",
+    captures: ["params-led0", "params-led1", "ga-add-7ffa"].map((k) => `collections/auro-m0081-busforge-2026-10-06/auro-m0081-busforge-${k}.log`),
+  },
+  {
+    spec: MDT_BE06001, collection: "internal/house-compat/hc08-busforge-2026-10-09/1.1.56-collect-vor.json",
+    captures: ["internal/house-compat/hc08-busforge-2026-10-09/mdtui-busforge-full-f1.log"],
+  },
+];
+
+for (const { spec, collection, captures } of BUSFORGE_CAPTURES) {
+  corpusDescribe(`the simulated ${spec.name} against Busforge's captures`, () => {
+    test("answers every request as the unit did, and confirms each on the line as its interface did", async () => {
+      let clock = 0;
+      const sim = newSimUnit(spec, { now: () => clock }, { link: { ackMs: 0, nakMs: 0 } }, collection);
+      for (const capture of captures) {
+        const steps = await replay(sim, spec, readFileSync(corpusPath(capture), "utf8"), "Busforge", (ms) => { clock = ms; });
+        expect([capture, steps.filter((s) => s.unitCon === undefined && !/^(81|[c-f][26ae])$/.test(s.request))]).toEqual([capture, []]);
+        expect([capture, steps.length > 100, replayDifferences(steps.filter((s) => s.unitCon !== undefined), { context: 3 })]).toEqual([capture, true, []]);
+      }
+      expect(sim.refusals).toEqual([]);
+    });
+  });
+}
+
+// The theLuxa P300's line right after its restart is not shown (sim-units.ts): Busforge's probe then is refused.
+corpusDescribe("Busforge's full download of the defaults into the new simulated MV-0705 units", () => {
+  for (const [spec, refusals] of [[AURO_M0081, []], [MDT_BE06001, []], [THEBEN_THELUXA_P300, ["after the restart: whether the unit acknowledges a frame then is not shown"]]] as const) {
+    test(`is taken by the ${spec.name} and verified`, async () => {
+      const run = await busforgeIntoSim(spec, { ia: numToIa(newSimUnit(spec).deviceIa), params: [], links: [] });
+      expect([run.refused, run.error]).toEqual([null, null]);
+      expect(run.result).toMatchObject({ kind: "flashed", verified: true });
+      expect(run.refusals.map((r) => refusals.find((k) => r.endsWith(k)) ?? r)).toEqual([...refusals]);
+    });
+  }
+});
+
+corpusDescribe("the new simulated MV-0705 units", () => {
+  test("refuse a task control 1 their application does not declare or their captures do not show, and the device control after a load of the application no capture shows", async () => {
+    const send = (sim: SimUnit, spec: SimUnitSpec) => (tpdu: string) => sim.sendCemi(withSource(cemiLData(0, sim.deviceIa, Buffer.from(tpdu, "hex")), spec.interfaceIa));
+    // T_Connect, unload and load of the application, each answer acknowledged, then a task control 1.
+    const taskControl = ["80", "43d70305100104000000000000000000", "c2", "47d70305100101000000000000000000", "c6", "4bd70305100103040010010000000000"];
+    const auro = newSimUnit(AURO_M0081, {}, { link: { ackMs: 0, nakMs: 0 } });
+    for (const t of taskControl) await send(auro, AURO_M0081)(t);
+    expect(auro.refusals).toEqual(["sim-refused A_PropertyValue_Write 3/5 03040010010000000000: a task control 1 at 0x10 with count 1, which the application does not declare for object 3"]);
+    const mdt = newSimUnit(MDT_BE06001, {}, { link: { ackMs: 0, nakMs: 0 } });
+    for (const t of taskControl) await send(mdt, MDT_BE06001)(t);
+    expect(mdt.refusals).toEqual(["sim-refused A_PropertyValue_Write 3/5 03040010010000000000: additional load control 0x4 is not shown on this unit"]);
+    // The MDT BE-02001.02's application loaded again while it is loaded, then its device control read.
+    const be02001 = newSimUnit(MDT_BE02001, {}, { link: { ackMs: 0, nakMs: 0 } });
+    for (const t of ["80", "43d70305100101000000000000000000", "c2", "47d5000e1001"]) await send(be02001, MDT_BE02001)(t);
+    expect(be02001.refusals).toEqual(["sim-refused A_PropertyValue_Read 0/14 of 1 from 1 after the load of the application: what the unit reports then is not shown"]);
   });
 });

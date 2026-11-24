@@ -562,10 +562,11 @@ serial number, as far as a unit's captures show them). Everything else it refuse
 the tool's own timeout ends a run where an invented byte would have let it go on. A behaviour the unit's
 captures do not show is refused the same way: a frame in a time after a restart no capture shows the line
 in, a frame on the connection a restart ended, the device control after an unload, a property write or a
-memory service its captures and collection do not show. Two exceptions are chosen, not shown, both where
+memory service its captures and collection do not show. Three exceptions are chosen, not shown, all where
 Busforge's restart proof probes, so its download test does not hang on the scheduler or a refusal: the MEAN
-WELL's line, down 0.38 s and up 0.65 s after its restart, is taken back at 0.5 s; the Meteodata 140 S's line,
-shown up 41 ms after its restart, is taken as up from the restart on. A confirmed restart's line runs from the
+WELL's line, down 0.38 s and up 0.65 s after its restart, is taken back at 0.5 s; the Meteodata 140 S's and the
+Auro presence detector's lines, shown up 41 ms after the restart (the Auro's 1 ms after the interface confirmed
+it), are taken as up from the restart on. A confirmed restart's line runs from the
 moment the tool's T_Ack reaches the unit, as the captures time it, also on the wall clock.
 
 `tools/sim-unit-0701.ts` is a memory-mapped System 7 unit (MV-0701) on the same transport core: its
@@ -588,13 +589,16 @@ the restart) is in its entry in `tools/sim-units.ts`; where a unit's captures le
 
 `tools/sim-unit-0705.ts` is the property-mapped System 7 unit (MV-0705) on the same core: its load-state
 machines take their events on PID 5 like System B, but absolute and stack segments at the address the
-request names and the task segment, which must name a segment the machine holds and carry the unit's PEI
-type and the application it holds, over one memory at fixed addresses whose bytes an unload keeps; no property
-write but PID 5 and the device control is taken, and the device control after the application's unload only
-where the unit's captures show it; the load states are readable as memory at `0xB6EA` onwards as well. Where the unit
-reports memory-control blocks (PID 27), it computes one element per segment it marks for it, with the access
-the allocation named and the CRC its collection shows; where it reports none they stay refused, and so does
-a table reference no capture shows. Which segments a unit holds at the start comes from its application's
+request names and the task segment, which must name the address the application declares for the machine or
+a segment the machine holds and carry the unit's PEI type and the application it holds, and the task control 1
+the application declares where the unit's captures show it taken, over one memory at fixed addresses whose bytes
+an unload keeps; no property write but PID 5 and the device control is taken, and the device control after the
+application's unload, or its load while it is loaded, only where the unit's captures show it; the load states
+are readable as memory at `0xB6EA` onwards as well. Where the unit reports memory-control blocks (PID 27), it
+computes one element per segment it reports in the form its collection shows (the segments flagged for it, or
+every EEPROM segment with the flagged ones marked and the others without a CRC), with the access the allocation
+named and the CRC its collection shows; where it reports none they stay refused, and so does a table reference
+no capture shows. Which segments a unit holds at the start comes from its application's
 declaration or, where they differ, its own memory-control blocks. A read into a segment that is loading is
 answered only where the unit's captures show it, and only with the bytes written since the load; what the
 unit answers on a connection its restart ended, where no capture shows it, is refused.
@@ -614,6 +618,10 @@ The units simulated, and how each is held to its captures (`tools/sim-unit.test.
 | Theben Meteodata 140 S weather station (MV-0701) | Every request of ETS's four captured downloads (the full download, a parameter, a link, the revert), in order into one unit from the collection before them: every frame the simulator answers and every confirmation equal the unit's, the full download's 191 memory reads included | The configuration of ETS's full download (the project's parameter values, the links the unit's tables held) from the collection before it: taken without a refusal and verified; the declared form, its memory writes on the wire ETS's two (the address table's count and the download marker), the unit's memory after it exactly what ETS's download left |
 | MDT BE-02001.02 binary input (MV-0705) | Every request of ETS's three captured full downloads (a unit in programming mode at the application's defaults, one link, a later configuration), in order into one unit, the restart of Busforge's address assignment, and Busforge's two captured full downloads (its read-back of each write while a segment loads, its probes after each restart, its verification): every frame the simulator answers and every confirmation on the line equal the unit's, but for one answer, to a request the capture of ETS's third download does not hold, and Busforge's reads of the configuration the unit held before its downloads, which the collection, taken earlier, does not; the unit's start-up group telegrams after a restart are not simulated | Through `KnxIpServer` and the proxy, at defaults into a fresh unit: taken without a refusal and verified. The unit's answer to a read outside its memory (a response without data) is not modelled |
 | Gira Tastsensor 3 Komfort 3fach (MV-0705) | Every request of ETS's captured full download, its partial form on a unit holding the application (the stamps read before and after, the tables rewritten, the application loaded again without an unload), and of Busforge's captured full download (its read-back of each write while a segment loads, its probes after the restart, its verification by the memory-control blocks): every frame the simulator answers and every confirmation on the line equal the unit's; the unit's start-up group telegrams after a restart are not simulated | The configuration ETS downloaded, the same way into a fresh unit: taken without a refusal and verified |
+| Theben MIX 2 JMG 4 T, RMG 8 T (the HMG 6 T's application) | Every request of ETS's four captured downloads of each (the full download, a parameter, a link, the revert), and of the RMG 8 T's diagnosis parameter on and off from the collection before them, as the HMG 6 T's; the collection of each is taken after ETS's first four downloads, as the one before them read only the first of the application segment's two memory-control blocks, and ETS's full download writes the whole segment. The RMG 8 T's parameter download ends before the interface confirmed ETS's T_Ack of the restart's answer: it is sent, its confirmation not compared | The configuration ETS downloaded: taken without a refusal and verified, with ETS's memory-control blocks |
+| Auro presence detector (MV-0705) | Every request of ETS's six captured downloads (the full download, a parameter, a link, the revert, and a link removed and restored from the collection before them) and of Busforge's three captured flashes (two parameters and a group address, its read-back of each write while a segment loads, its probes after each restart): every frame the simulator answers and every confirmation on the line equal the unit's | At defaults into a fresh unit: taken without a refusal and verified |
+| Theben theLuxa P300 presence detector (MV-0705) | Every request of ETS's four captured downloads (the full download, a parameter, a link, the revert), as above. Its line right after a restart is not shown (Busforge's probe 41 ms after it acknowledged in some captures, not in others) | At defaults into a fresh unit: verified; its restart proof's first probe is refused |
+| MDT BE-06001 universal interface (MV-0705) | Every request of ETS's four captured downloads (the full download, a parameter, a link, the revert) and of Busforge's captured full download, as above | At defaults into a fresh unit: taken without a refusal and verified |
 
 ```bash
 BUSFORGE_CORPUS=... bun run tools/sim-unit-serve.ts <unit id> --tool ETS --log ./capture.log \
@@ -622,7 +630,8 @@ BUSFORGE_CORPUS=... bun run tools/sim-unit-serve.ts <unit id> --tool ETS --log .
 
 `<unit id>` is a unit's `id` in `tools/sim-units.ts` (`meanwell-knx40e`, `theben-dali-gateway`,
 `openknx-raumcontroller`, `theben-mix2-hmg6t`, `jung-400021se`, `gvs-amma`, `abb-usu-4.2`,
-`theben-meteodata-140s`, `mdt-be02001`, `gira-ts3`). The tool connects to the proxy
+`theben-meteodata-140s`, `mdt-be02001`, `gira-ts3`, `theben-mix2-jmg4t`, `theben-mix2-rmg8t`, `auro-m0081`,
+`theben-theluxa-p300`, `mdt-be06001`). The tool connects to the proxy
 port over KNXnet/IP TCP; the simulator's own lines go to
 `<log>.sim.txt`, and Ctrl-C prints its refusals. `--override` (System B units) makes the unit answer
 another first element for a property than its collection holds, or none (`0/78=`): a deliberately wrong
@@ -656,8 +665,8 @@ value the product or another line contradicts, a line whose device value is not 
 form above is read, the values as contiguous hex; another index than `$0000`, a range or spaced octets
 are refused until a recorded line shows what they mean.
 
-`tools/sim-unit-product.test.ts` holds the product unit of each of the ten simulated units against
-the unit built from its collection and lists every difference. The manufacturer is right on all ten,
+`tools/sim-unit-product.test.ts` holds the product unit of each simulated unit against
+the unit built from its collection and lists every difference. The manufacturer is right on all of them,
 also where the application was made for another manufacturer; a compare's value is right but for its
 length where the unit answers fewer octets than the compare declares, and the bits a mask leaves out.
 Everything else a unit answers ETS before a download (its serial, order info, version, a hardware type
