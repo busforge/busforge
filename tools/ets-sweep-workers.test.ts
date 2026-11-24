@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { RowPool } from "./ets-sweep-workers.ts";
 import { tempDir } from "./test-temp.ts";
 
@@ -16,17 +17,16 @@ describe("the sweep's rows judged in worker threads", () => {
 
   test("rows run side by side up to the pool's size, the same row twice as two jobs", async () => {
     const pool = new RowPool(2, FIXTURE);
-    await pool.judge("identical");
-    const t = Date.now();
-    expect(await Promise.all([pool.judge("slow"), pool.judge("slow"), pool.judge("slow")].map(outcome))).toEqual(Array(3).fill('{"verdict":"identical"}'));
-    // Two at once, then the third: two rounds of 300 ms, not one and not three.
-    expect(Date.now() - t).toBeGreaterThanOrEqual(600);
-    expect(Date.now() - t).toBeLessThan(900);
+    const span = (p: Promise<unknown>) => p.then(() => { throw new Error("judged"); }, (e: Error) => JSON.parse(e.message) as { start: number; end: number });
+    const [a, b, c] = await Promise.all([pool.judge("span"), pool.judge("span"), pool.judge("span")].map(span));
+    // The first two at once, the third only once one of them ended.
+    expect(a.start < b.end && b.start < a.end).toBe(true);
+    expect(c.start).toBeGreaterThanOrEqual(Math.min(a.end, b.end));
   });
 
-  test("a row whose worker dies is judged again by a new worker, and rejected when that one dies too", () => {
-    const run = Bun.spawnSync(["bun", "run", new URL("./fixtures/row-pool-deaths.ts", import.meta.url).pathname, join(tempDir("row-pool-"), "died")]);
-    expect({ exit: run.exitCode, stdout: run.stdout.toString().trim().split("\n") }).toEqual({ exit: 0, stdout: [
+  test("a row whose worker dies is judged again by another worker, and rejected when that one dies too", () => {
+    const run = Bun.spawnSync([process.execPath, "run", fileURLToPath(new URL("./fixtures/row-pool-deaths.ts", import.meta.url)), join(tempDir("row-pool-"), "died")], { timeout: 30_000 });
+    expect({ exit: run.exitCode, stderr: run.stderr.toString(), stdout: run.stdout.toString().trim().split("\n") }).toEqual({ exit: 0, stderr: "", stdout: [
       '{"verdict":"identical"}',
       "rejected: the workers judging die died twice; the second: the worker died",
       "rejected: the row's run threw",

@@ -12,8 +12,11 @@ import { SWEEP_DIR } from "./ets-sweep.ts";
 const APP = "M-0083_A-00B6-32-9642";
 const PEI = "M-0002_A-A001-13-63C2-O0001";
 const deflated = (s: string) => ({ data: deflateRawSync(Buffer.from(s)), method: 8, size: Buffer.byteLength(s) });
-const hardware = (h2ps: Record<string, string[]>) => Buffer.from(`<KNX><Hardware2Programs>${Object.entries(h2ps).map(([id, refs]) =>
-  `<Hardware2Program Id="${id}" MediumTypes="MT-0">${refs.map((r) => `<ApplicationProgramRef RefId="${r}" />`).join("")}</Hardware2Program>`).join("")}</Hardware2Programs></KNX>`);
+// A Hardware.xml; a Hardware2Program without programs is written self-closing, as ETS writes it.
+const hardware = (h2ps: Record<string, string[]>) => Buffer.from(`<KNX><ManufacturerData><Manufacturer><Hardware><Hardware><Hardware2Programs>${
+  Object.entries(h2ps).map(([id, refs]) => refs.length === 0 ? `<Hardware2Program Id="${id}" MediumTypes="MT-0" />`
+    : `<Hardware2Program Id="${id}" MediumTypes="MT-0">${refs.map((r) => `<ApplicationProgramRef RefId="${r}" />`).join("")}</Hardware2Program>`).join("")
+}</Hardware2Programs></Hardware></Hardware></Manufacturer></ManufacturerData></KNX>`);
 // The project's two devices: one of M-0083 with one application, one of M-0002 whose Hardware2Program names an
 // application and a PEI program.
 const DEVICES = [
@@ -37,7 +40,7 @@ const EXPORT = zipOf([
   { name: "M-0002/M-0002_A-A002-10-0.xml", ...deflated("an application no device runs") },
   { name: "M-0083.signature", data: Buffer.from("s83") },
   { name: "M-0083/", data: Buffer.alloc(0) },
-  { name: "M-0083/Hardware.xml", data: hardware({ "m-0083_h-1_hp-00b6-32-9642": [APP] }) },
+  { name: "M-0083/Hardware.xml", data: hardware({ "M-0083_H-5_HP-0": [], "M-0083_H-1_HP-00B6-32-9642": [APP] }) },
   { name: "M-0083/Catalog.xml", data: Buffer.from("c83") },
   { name: "M-0083/Baggages.xml", data: Buffer.from("b83") },
   { name: "M-0083/Baggages/", data: Buffer.alloc(0) },
@@ -78,8 +81,26 @@ describe("an ETS export reduced to the product data of its project's devices", (
     expect([...readZip(r.bytes).keys()].filter((n) => n.startsWith("M-"))).toEqual(["M-0085/M-0085_A-0072-30-69AA.xml"]);
   });
 
+  test("keeps a program its product's manufacturer names in another manufacturer's directory", () => {
+    const oem = zipOf([
+      { name: "P-0001/0.xml", data: Buffer.from("project") },
+      { name: "M-00C8/Hardware.xml", data: hardware({ "M-00C8_H-1_HP-0001-10-AAAA": [APP] }) },
+      { name: "M-0083/", data: Buffer.alloc(0) },
+      { name: `M-0083/${APP}.xml`, data: Buffer.from("the OEM product's application") },
+      { name: "M-0083/Hardware.xml", data: Buffer.from("the program's manufacturer's own hardware") },
+    ]);
+    const r = reduceExport(oem, [{ ia: "1.1.6", productRef: "M-00C8_H-1-P-1", appRef: "M-00C8_H-1_HP-0001-10-AAAA" }]);
+    expect([...readZip(r.bytes).keys()]).toEqual(["P-0001/0.xml", "M-00C8/Hardware.xml", `M-0083/${APP}.xml`]);
+    expect(r.dropped).toEqual(["M-0083/Hardware.xml"]);
+  });
+
+  test("keeps no program for a device whose Hardware2Program names none", () => {
+    const r = reduceExport(EXPORT, [{ ia: "1.1.5", productRef: "M-0083_H-5-P-5", appRef: "M-0083_H-5_HP-0" }]);
+    expect([...readZip(r.bytes).keys()].filter((n) => n.startsWith("M-"))).toEqual(["M-0083/Hardware.xml", "M-0083/Catalog.xml"]);
+  });
+
   test("refuses a device whose application program the export does not hold, and a project without devices", () => {
-    expect(() => reduceExport(EXPORT, [{ ia: "1.1.4", productRef: "M-0083_H-1-P-1", appRef: "M-0083_H-4_HP-0137-20-7EB2" }])).toThrow("the export holds no application program m-0083_a-0137-20-7eb2 (the device 1.1.4)");
+    expect(() => reduceExport(EXPORT, [{ ia: "1.1.4", productRef: "M-0083_H-1-P-1", appRef: "M-0083_H-4_HP-0137-20-7EB2" }])).toThrow("the export holds no application program M-0083_A-0137-20-7EB2 (the device 1.1.4)");
     expect(() => reduceExport(EXPORT, [])).toThrow("the project holds no device whose product data to keep");
   });
 

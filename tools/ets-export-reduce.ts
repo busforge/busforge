@@ -14,7 +14,7 @@
 // into ETS again: without the signatures and baggages ETS may refuse it.
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { appProgramId, loadKnxproj, type Device } from "../packages/project/src/index.ts";
+import { appProgramId, hardwarePrograms, loadKnxproj, type Device } from "../packages/project/src/index.ts";
 import { readCentralDirectory, readZip } from "../packages/project/src/zip.ts";
 
 const FLAG_DATA_DESCRIPTOR = 0x0008;
@@ -22,17 +22,8 @@ const DESCRIPTOR_SIG = 0x08074b50;
 const EOCD_SIG = 0x06054b50;
 const MANUFACTURER = /^(m-[0-9a-f]{4})(?:[/.]|$)/;
 
-// The application programs (lower-cased ids) each Hardware2Program of `hardware` (a Hardware.xml) names, by its
-// lower-cased id.
-function programsOf(hardware: string): Map<string, string[]> {
-  const out = new Map<string, string[]>();
-  for (const m of hardware.matchAll(/<Hardware2Program\b[^>]*\bId="([^"]+)"[^>]*>([\s\S]*?)<\/Hardware2Program>/g)) {
-    out.set(m[1].toLowerCase(), [...m[2].matchAll(/<ApplicationProgramRef\b[^>]*\bRefId="([^"]+)"/g)].map((r) => r[1].toLowerCase()));
-  }
-  return out;
-}
-
-const programPath = (id: string) => `${id.split("_")[0]}/${id}.xml`;
+// The archive path of application program `id`, lower-cased.
+const programPath = (id: string) => `${id.split("_")[0]}/${id}.xml`.toLowerCase();
 
 // The export reduced to the product data of `devices` (the devices of its project: their ProductRefId and
 // Hardware2ProgramRefId), with the names of what was dropped. Refuses a device whose application program the
@@ -43,24 +34,23 @@ export function reduceExport(bytes: Buffer, devices: readonly Pick<Device, "ia" 
   const files = readZip(bytes);
   const at = new Map([...files.keys()].map((n) => [n.toLowerCase(), n]));
   const manufacturers = new Set(devices.map((d) => d.productRef.split("_")[0].toLowerCase()));
-  const hardware = new Map<string, string[]>();
-  for (const m of manufacturers) {
-    const name = at.get(`${m}/hardware.xml`);
-    if (name !== undefined) for (const [id, refs] of programsOf(files.get(name)!.toString("utf8"))) hardware.set(id, refs);
-  }
+  const hardware = hardwarePrograms(bytes);
   const programs = new Set<string>();
   for (const d of devices) {
     if (!d.appRef) continue;
     // Where no Hardware.xml describes the Hardware2Program, the program its id names (as readAppProgram reads it).
-    for (const r of hardware.get(d.appRef.toLowerCase()) ?? [appProgramId(d.appRef).toLowerCase()]) {
+    for (const r of hardware.get(d.appRef) ?? [appProgramId(d.appRef)]) {
       if (!at.has(programPath(r))) throw new Error(`the export holds no application program ${r} (the device ${d.ia})`);
       programs.add(programPath(r));
     }
   }
+  // A program may lie in another manufacturer's directory than its product's (the loader reads it from there).
+  const directories = new Set([...manufacturers, ...[...programs].map((p) => p.split("/")[0])]);
   const kept = (name: string): boolean => {
     const n = name.toLowerCase(), m = MANUFACTURER.exec(n)?.[1];
     if (m === undefined) return true;
-    return manufacturers.has(m) && (n === `${m}/` || n === `${m}/hardware.xml` || n === `${m}/catalog.xml` || programs.has(n));
+    if (programs.has(n) || n === `${m}/` && directories.has(m)) return true;
+    return manufacturers.has(m) && (n === `${m}/hardware.xml` || n === `${m}/catalog.xml`);
   };
   // Each entry is its local header, its data and, with bit 3, a data descriptor (12 bytes, 16 with its signature),
   // and the entries lie end to end from the archive's start to the central directory: copied by those spans, an
@@ -95,10 +85,13 @@ export function reduceExport(bytes: Buffer, devices: readonly Pick<Device, "ia" 
   eocd.writeUInt32LE(length, 16);
   eocd.writeUInt16LE(comment.length, 20);
   const out = Buffer.concat([...locals, cd, eocd, comment]);
-  // The reduced archive read back whole: the kept files, each with the export's bytes.
+  // The reduced archive read back whole: the kept files, each with the export's bytes, every program the devices
+  // need among them.
   const read = readZip(out);
   const want = [...files.keys()].filter(kept);
   if ([...read.keys()].join("\n") !== want.join("\n") || want.some((n) => !read.get(n)!.equals(files.get(n)!))) throw new Error("the reduced export does not read back as the kept files of the export");
+  const lost = [...programs].filter((p) => !want.some((n) => n.toLowerCase() === p));
+  if (lost.length) throw new Error(`the reduced export lacks the application program(s) ${lost.join(", ")}`);
   return { bytes: out, dropped };
 }
 

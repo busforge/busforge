@@ -19,8 +19,8 @@ export const ROW_WORKERS = Math.max(1, Math.floor(availableParallelism() / 2));
 interface Job { job: number; id: string; resolve: (v: Verdict) => void; reject: (e: Error) => void; deaths: number }
 
 // A pool of `size` workers (each started on demand, ended with the process): judge(id) is the row's verdict, as
-// runRow gives it, or the error its run threw. A row whose worker dies is judged once more by a new worker; the
-// second death rejects it with the worker's error. `worker` is the worker's module (this one by default).
+// runRow gives it, or the error its run threw. A row whose worker dies is judged once more by another worker;
+// the second death rejects it with the worker's error. `worker` is the worker's module (this one by default).
 export class RowPool {
   private readonly queue: Job[] = [];
   private readonly idle: Worker[] = [];
@@ -79,7 +79,8 @@ export class RowPool {
       this.pump();
     };
     w.on("error", (e) => died(e instanceof Error ? e : new Error(String(e))));
-    w.on("messageerror", (e) => died(e instanceof Error ? e : new Error(String(e))));
+    // A message that does not arrive leaves the worker running: it is ended, its row judged by another.
+    w.on("messageerror", (e) => { died(e instanceof Error ? e : new Error(String(e))); w.unref(); void w.terminate(); });
     w.on("exit", (code) => died(new Error(`the worker exited with code ${code}`)));
     return w;
   }

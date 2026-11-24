@@ -286,6 +286,19 @@ function hardwareApplicationsOf(source: ProductSource): Map<string, string> {
 }
 export const hardwareApplications = (bytes: Buffer): Map<string, string> => hardwareApplicationsOf(productsOf(bytes));
 
+// Every program each Hardware2Program a product source describes names (its ApplicationProgramRefs: the
+// application, and on two-program hardware the PEI program too), by Hardware2Program id; empty where it names none.
+export function hardwarePrograms(bytes: Buffer): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const doc of productsOf(bytes).hardware) {
+    for (const h2p of hardwareOf(doc).flatMap((hw) => kids(node(hw.Hardware2Programs)?.Hardware2Program))) {
+      const appRef = text(h2p.Id);
+      if (appRef && !out.has(appRef)) out.set(appRef, kids(h2p.ApplicationProgramRef).map((r) => text(r.RefId)).filter((id) => id !== ""));
+    }
+  }
+  return out;
+}
+
 // Extract the given application programs (ids, as hardwareApplications resolves them), keyed by id; an id
 // the source carries no program of is left out. Reads the outer zip once (unlike calling readAppProgram
 // per device), for populating the catalog at import. App programs sit plaintext in the outer archive, so
