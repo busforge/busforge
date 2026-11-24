@@ -43,6 +43,15 @@
 //
 // BESIDE THE VERDICT, where the row has ETS's project export: Busforge's images against ETS's record of the
 // download in it (LoadedImage, tools/ets-records.ts).
+//
+// THE UNIT. A row's unit is an own unit (tools/sim-units.ts, row.json's `unit` its id) or, for an application without
+// one, a catalogue unit (tools/sim-unit-catalogue.ts): a donor of the application's mask with the product's identity
+// over it, row.json's `unit` naming the donor, the rule that chose it, the identity loop's lines and the source of each
+// property the unit answers otherwise than its donor (CatalogueUnitRecord). The manifest says per row: `unitSource`
+// (own, or the donor and its rule, and the donor the rule picks now where that is another), `propertySources` (a
+// catalogue unit's sources, product or identity loop; everything else is the donor's), and `etsBranches` (where ETS
+// went by an answer of the unit, which a catalogue unit gives as its donor does: the maximum APDU, the verify mode,
+// the answer to a confirmed restart, MV-0701's read before write; function etsBranches).
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync, copyFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -50,20 +59,21 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import net from "node:net";
 import { gunzipSync } from "node:zlib";
 import { APCI, KnxIpServer, MM_CTRL_ADDR, MM_STATUS_BASE, PID, iaToNum } from "../packages/knx/src/index.ts";
-import { appProgramId, etsLoadedCompletely, etsNotDownloaded, loadKnxproj, type Project } from "../packages/project/src/index.ts";
+import { appProgramId, etsLoadedCompletely, etsNotDownloaded, extractAppPrograms, loadKnxproj, type Project } from "../packages/project/src/index.ts";
 import { isMemoryMappedLsm, parseAppConfig, parseLoadProcedures, ProductError, type ComObjectLink, type ComObjInstanceOverride, type FlashResult, type ModuleInstance } from "../packages/product/src/index.ts";
 import { downloadDeviceFull } from "../apps/server/src/deviceprofile.ts";
 import type { Connection } from "../apps/server/src/db/connections.ts";
 import { ApiError } from "../apps/server/src/errors.ts";
 import { apciName } from "./capture-index.ts";
-import { catalogueXml, corpusPath, corpusUnlistedPath } from "./corpus.ts";
+import { corpusPath, corpusUnlistedPath } from "./corpus.ts";
 import { openWithPasswords, passwords, PASSWORDS_ENV } from "./corpus-archives.ts";
 import { captureLData, capturedOnLoadedUnit, dialogueDifferences, memWriteOf, parseCapture } from "./etsdiff.ts";
 import { loadedImageComparison } from "./ets-records.ts";
 import { gitRevision } from "./evidence.ts";
 import { startProxy } from "./knxproxy.ts";
 import type { SimUnit } from "./sim-unit.ts";
-import { newSimUnit, simUnitSpec, type SimUnitSpec } from "./sim-units.ts";
+import { catalogueUnit, catalogueUnitRecord, catalogueUnitSpec, chooseDonor, isCatalogueUnit, newRowUnit, unitAppXml, type CatalogueUnitRecord, type RowUnit } from "./sim-unit-catalogue.ts";
+import { simUnitSpec } from "./sim-units.ts";
 import { removeTempDir, tempDir } from "./test-temp.ts";
 
 export const SWEEP_DIR = "captures/ets-sweep";
@@ -76,8 +86,9 @@ export const ROW_FILES = {
 
 export interface RowSpec {
   format: typeof ROW_FORMAT;
-  // The simulated unit (tools/sim-units.ts) both runs download into; its application is the row's.
-  unit: string;
+  // The simulated unit both runs download into: an own unit (tools/sim-units.ts) whose application is the row's, by its
+  // id; or a catalogue unit of the row's application (tools/sim-unit-catalogue.ts), by its donor and sources.
+  unit: string | CatalogueUnitRecord;
   // ETS's version and build, as its about box and ETS6.log name it.
   etsBuild: string;
   // The interface ETS was set to: the simulator's proxy, "<host>:<port>".
@@ -425,6 +436,76 @@ export function refusalsAfterRestart(simLines: string, run: RunState): { after: 
   return { after, others };
 }
 
+// ---- where ETS went by an answer of the unit ----
+
+// One place ETS's download went by an answer of the unit: what the unit answered and what ETS made of it, as its
+// lines show (`evidence`: the ETS6.log lines without their time, or the frames summed up). A catalogue unit answers
+// these as its donor does, so a row's verdict holds for what ETS sends a unit that answers so.
+export interface EtsBranch { on: "max-apdu" | "verify-mode" | "confirmed-restart" | "read-before-write"; answer: string; evidence: string[] }
+
+const MAX_APDU_LINE = /\[(c[ol] \S+ \w+)\] (?:PID_MAX_APDULENGTH=(\d+)|Failed to read PID_MAX_APDULENGTH \((.*)\); assuming (\d+)|NegotiateMaxApduLength -> (\d+), restricted by (\w+))/;
+const VERIFY_LINE = /Detected memory verify mode (on|off)|Switching on AutoVerifyMode/;
+const CONFIRMED_RESTART_ANSWER = /Received ConfirmedRestart_Response_ind .*Error=(\w+) ProcessTime=(\S+)/;
+const logText = (l: string) => l.replace(/^\S+ \S+ \[\d+\]\s+/, "").trim();
+
+// From a row's ETS6.log and ETS's capture of its run into the unit at `device`: the maximum APDU ETS negotiated from
+// the unit's PID 56 (each ETS task's, once), the memory verify mode ETS detected and whether it switched it on, the
+// unit's answer to a confirmed restart, and on MV-0701 (memory-mapped; ETS reads before it writes and writes only what
+// differs) how many octets ETS read before writing there and how many of them it then wrote.
+export function etsBranches(ets6log: string, capture: string, device: number, mask: string): EtsBranch[] {
+  const lines = ets6log.split(/\r?\n/);
+  const out: EtsBranch[] = [];
+  const asked = new Map<string, { answer: string; line: string }>(), negotiated = new Set<string>();
+  for (const l of lines) {
+    const m = MAX_APDU_LINE.exec(l);
+    if (!m) continue;
+    const [, task, length, failure, assumed, to, by] = m;
+    if (length !== undefined) { asked.set(task, { answer: `PID 56 answered ${length}`, line: logText(l) }); continue; }
+    if (assumed !== undefined) { asked.set(task, { answer: `PID 56 not answered (${failure}), ETS assumed ${assumed}`, line: logText(l) }); continue; }
+    const a = asked.get(task);
+    const answer = `${a?.answer ?? "PID 56 not read"}; ETS negotiated ${to}, restricted by ${by}`;
+    if (negotiated.has(answer)) continue;
+    negotiated.add(answer);
+    out.push({ on: "max-apdu", answer, evidence: [...(a ? [a.line] : []), logText(l)] });
+  }
+  const verify = lines.filter((l) => VERIFY_LINE.test(l));
+  const detected = verify.flatMap((l) => l.match(/Detected memory verify mode (on|off)/)?.[1] ?? []);
+  if (verify.length) {
+    const switched = verify.filter((l) => l.includes("Switching on AutoVerifyMode")).length;
+    out.push({ on: "verify-mode", answer: `ETS detected memory verify mode ${detected.length ? detected.join(", then ") : "nowhere"}; it switched AutoVerifyMode on ${switched} times`, evidence: [...new Set(verify.map(logText))] });
+  }
+  const restart = lines.filter((l) => CONFIRMED_RESTART_ANSWER.test(l));
+  if (restart.length) {
+    const [, error, time] = CONFIRMED_RESTART_ANSWER.exec(restart[0])!;
+    out.push({ on: "confirmed-restart", answer: `the unit answered the confirmed restart with ${error}, process time ${time}`, evidence: [...new Set(restart.map(logText))] });
+  } else if (lines.some((l) => l.includes("Send ConfirmedRestart_req"))) {
+    out.push({ on: "confirmed-restart", answer: "ETS sent a confirmed restart, and ETS6.log shows no answer of the unit", evidence: [...new Set(lines.filter((l) => l.includes("ConfirmedRestart")).map(logText))] });
+  }
+  if (isMemoryMappedLsm(mask)) {
+    // The load controls at MM_CTRL_ADDR and the load states after MM_STATUS_BASE are no memory ETS compares.
+    const compared = (a: number) => a !== MM_CTRL_ADDR && !(a > MM_STATUS_BASE && a <= MM_STATUS_BASE + 15);
+    const readFirst = new Set<number>(), written = new Set<number>();
+    let reads = 0, writes = 0;
+    for (const fr of captureLData(capture, "ETS")) {
+      if (fr.group || !fr.fromTool || fr.code !== L_DATA_REQ || fr.dst !== device || fr.tpdu.length < 4) continue;
+      const raw = ((fr.tpdu[0] & 0x03) << 8) | fr.tpdu[1];
+      if ((raw & 0x3c0) === APCI.MEMORY_READ) {
+        reads++;
+        const at = fr.tpdu.readUInt16BE(2);
+        for (let a = at; a < at + (raw & 0x3f); a++) if (compared(a) && !written.has(a)) readFirst.add(a);
+        continue;
+      }
+      const w = memWriteOf(fr.tpdu, raw);
+      if (!w || w.addr === MM_CTRL_ADDR) continue;
+      writes++;
+      w.data.forEach((_, i) => written.add(w.addr + i));
+    }
+    const rewritten = [...readFirst].filter((a) => written.has(a)).length;
+    if (readFirst.size) out.push({ on: "read-before-write", answer: `ETS read ${readFirst.size} octets of the unit's memory before writing there, then wrote ${rewritten} of them and left ${readFirst.size - rewritten} as the unit answered them`, evidence: [`${reads} memory reads, ${writes} memory writes of ETS to the unit`] });
+  }
+  return out;
+}
+
 // ---- the verdict ----
 
 export interface BusforgeRun {
@@ -456,13 +537,13 @@ export function judge(ets: { outcome: EtsOutcome; refusals: string[] }, busforge
 
 // Busforge's full download of `conf` into a fresh unit of `spec`, through the KNXnet/IP server ETS connects
 // to and the logging proxy ETS's capture is taken with: the server's own download task.
-export async function busforgeIntoSim(spec: SimUnitSpec, conf: RowConfiguration): Promise<BusforgeRun & { sim: SimUnit }> {
-  const sim = newSimUnit(spec);
+export async function busforgeIntoSim(spec: RowUnit, conf: RowConfiguration): Promise<BusforgeRun & { sim: SimUnit }> {
+  const sim = newRowUnit(spec);
   const { value, capture } = await busforgeSessionIntoSim(sim, spec, async (connection, dataDir) => {
     let result: FlashResult | null = null, refused: BusforgeRun["refused"] = null, error: string | null = null;
     try {
       result = await downloadDeviceFull({
-        projectId: "sweep", deviceId: "row", ia: conf.ia, appXml: catalogueXml(spec.catalogue), dataDir, connection,
+        projectId: "sweep", deviceId: "row", ia: conf.ia, appXml: unitAppXml(spec), dataDir, connection,
         params: new Map(conf.params), links: conf.links, moduleInstances: conf.moduleInstances, comObjectOverrides: new Map(conf.comObjectOverrides ?? []), dryRun: false,
       });
     } catch (e) {
@@ -480,7 +561,7 @@ export async function busforgeIntoSim(spec: SimUnitSpec, conf: RowConfiguration)
 // it. The capture is complete once every KNXnet/IP connection Busforge opened is closed (its T_Disconnect goes
 // before the tunnel's DISCONNECT_REQ); a session that does not end within 10 s of a result that `succeeded`
 // says the task wrote is refused, after a refusal the session may end otherwise.
-export async function busforgeSessionIntoSim<T>(sim: SimUnit, spec: SimUnitSpec, run: (connection: Connection, dataDir: string) => Promise<T>, succeeded: (value: T) => boolean): Promise<{ value: T; capture: string }> {
+export async function busforgeSessionIntoSim<T>(sim: SimUnit, spec: RowUnit, run: (connection: Connection, dataDir: string) => Promise<T>, succeeded: (value: T) => boolean): Promise<{ value: T; capture: string }> {
   const dir = tempDir("busforge-ets-sweep-");
   const port = await freePort();
   const server = new KnxIpServer({ transport: sim, maxApdu: spec.interfaceMaxApdu, port });
@@ -542,7 +623,7 @@ export function loadedImageCheck(proj: Project, appXml: string, conf: RowConfigu
 
 // ---- a row ----
 
-export interface Row { id: string; application: string; variant: string; dir: string; spec: RowSpec; unit: SimUnitSpec; conf: RowConfiguration; explained: Explained }
+export interface Row { id: string; application: string; variant: string; dir: string; spec: RowSpec; unit: RowUnit; conf: RowConfiguration; explained: Explained }
 
 // Every row in the corpus, as "<application>/<variant>".
 export function listRows(): string[] {
@@ -563,16 +644,36 @@ export function readRow(id: string): Row {
   const spec = readJson<RowSpec>(join(dir, ROW_FILES.row));
   const format: unknown = spec.format;
   if (format !== ROW_FORMAT) throw new Error(`row ${id}: ${ROW_FILES.row} is of format ${String(format)}, not ${ROW_FORMAT}`);
-  const unit = simUnitSpec(spec.unit);
-  const unitApp = unit.catalogue.replace(/\.xml\.gz$/, "");
-  if (unitApp !== application) throw new Error(`row ${id}: the simulated unit ${unit.id} runs ${unitApp}, not ${application}`);
+  if (spec.export !== undefined && !existsSync(join(dir, spec.export))) throw new Error(`row ${id}: the export ${spec.export} is missing`);
+  const unit = rowUnit(id, dir, application, spec);
   const conf = readJson<RowConfiguration>(join(dir, ROW_FILES.configuration));
   if (conf.appRef !== undefined && appProgramId(conf.appRef) !== application && appProgramId(conf.appRef) !== spec.exportApplication) throw new Error(`row ${id}: the configuration is of ${conf.appRef}, not of ${application}`);
-  if (spec.export !== undefined && !existsSync(join(dir, spec.export))) throw new Error(`row ${id}: the export ${spec.export} is missing`);
   if (spec.calibration !== undefined && !existsSync(corpusPath(spec.calibration))) throw new Error(`row ${id}: the calibration capture ${spec.calibration} is missing`);
   const from: unknown = spec.calibrationFrom;
   if (from !== undefined && (spec.calibration === undefined || typeof from !== "number" || !Number.isInteger(from) || from < 0)) throw new Error(`row ${id}: calibrationFrom ${JSON.stringify(from)} is no position of a calibration capture`);
   return { id, application, variant, dir, spec, unit, conf, explained: readJson<Explained>(join(dir, ROW_FILES.explained)) };
+}
+
+// A row's unit as row.json names it (RowSpec.unit). A catalogue unit's application program is the one in the row's
+// export (the corpus's catalogue/ holds none of a catalogue row's).
+export function rowUnit(id: string, dir: string, application: string, spec: RowSpec): RowUnit {
+  const named = spec.unit;
+  if (typeof named === "string") {
+    const unit = simUnitSpec(named);
+    const unitApp = unit.catalogue.replace(/\.xml\.gz$/, "");
+    if (unitApp !== application) throw new Error(`row ${id}: the simulated unit ${unit.id} runs ${unitApp}, not ${application}`);
+    return unit;
+  }
+  const source: unknown = named.source;
+  if (source !== "donor") throw new Error(`row ${id}: its unit's source is ${String(source)}, not donor`);
+  if (spec.export === undefined) throw new Error(`row ${id}: a catalogue unit's application program comes from the row's export, and row.json names none`);
+  const b = readFileSync(join(dir, spec.export));
+  const appXml = extractAppPrograms(spec.export.endsWith(".gz") ? gunzipSync(b) : b, [application]).get(application);
+  if (appXml === undefined) throw new Error(`row ${id}: its export ${spec.export} holds no application program ${application}`);
+  const unit = catalogueUnitSpec(application, appXml, { donor: named.donor, learned: named.identity });
+  if ("refused" in unit) throw new Error(`row ${id}: no catalogue unit: ${unit.refused}`);
+  if (unit.rule !== named.rule) throw new Error(`row ${id}: its unit was chosen by the rule "${named.rule}", the rule of its mask is now "${unit.rule}": the row is to run again`);
+  return unit;
 }
 
 export interface RowResult {
@@ -588,15 +689,24 @@ export interface RowResult {
   // Where the row is calibrated: each position ETS's dialogue with the simulator differs from its dialogue with
   // the real unit, with the cause explained.json gives it (null where none).
   calibration: { capture: string; differences: { difference: string; cause: string | null }[] } | null;
+  etsBranches: EtsBranch[];
   busforge: BusforgeRun & { sim: SimUnit };
 }
 
 export async function runRow(row: Row): Promise<RowResult> {
   const read = (f: string) => readFileSync(join(row.dir, f), "utf8");
-  const sim = newSimUnit(row.unit);
+  const sim = (() => {
+    if (!isCatalogueUnit(row.unit) || typeof row.spec.unit === "string") return newRowUnit(row.unit);
+    // The sources row.json names are the ones the unit has today: a donor's collection or the product changed since
+    // the row ran would give ETS's run another unit than the one it ran into.
+    const unit = catalogueUnit(row.unit), now = catalogueUnitRecord(unit).properties;
+    if (JSON.stringify(now) !== JSON.stringify(row.spec.unit.properties)) throw new Error(`row ${row.id}: its unit's property sources are now ${JSON.stringify(now)}, row.json names ${JSON.stringify(row.spec.unit.properties)}: the row is to run again`);
+    return unit.make();
+  })();
   if (iaToNum(row.conf.ia) !== sim.deviceIa) throw new Error(`row ${row.id}: the configuration is of ${row.conf.ia}, the simulated unit answers at another address`);
-  const mask = parseAppConfig(catalogueXml(row.unit.catalogue)).mask;
+  const mask = parseAppConfig(unitAppXml(row.unit)).mask;
   const etsText = read(ROW_FILES.ets);
+  const ets6log = readFileSync(join(row.dir, ROW_FILES.ets6log), "latin1");
   const etsRun = runState(etsText, "ETS", sim.deviceIa, mask);
   const busforge = await busforgeIntoSim(row.unit, row.conf);
   const bfRun = runState(busforge.capture, "Busforge", sim.deviceIa, mask);
@@ -604,7 +714,7 @@ export async function runRow(row: Row): Promise<RowResult> {
   // A Busforge download that ended in an error leaves no comparison whole, whatever was refused.
   const bfRefusals = busforge.error === null ? refusalsAfterRestart(busforge.sim.lines.join("\n"), bfRun) : { after: [], others: busforge.refusals };
   const verdict = judge(
-    { outcome: etsOutcome(readFileSync(join(row.dir, ROW_FILES.ets6log), "latin1"), row.conf.ia, row.spec.simulator), refusals: etsRefusals.others },
+    { outcome: etsOutcome(ets6log, row.conf.ia, row.spec.simulator), refusals: etsRefusals.others },
     { refusals: bfRefusals.others, refused: busforge.refused, writes: bfRun.writes },
     () => compareRuns(etsRun, bfRun),
   );
@@ -615,7 +725,7 @@ export async function runRow(row: Row): Promise<RowResult> {
     const bytes = exportFile.endsWith(".gz") ? gunzipSync(b) : b;
     const proj = openWithPasswords((password) => loadKnxproj(bytes, password, "export"));
     if (proj === null) return { state: "not compared", why: `the export is password-protected and none of the ${passwords().length} password(s) in ${PASSWORDS_ENV} opens it` };
-    return loadedImageCheck(proj, catalogueXml(row.unit.catalogue), row.conf, capturedOnLoadedUnit(parseCapture(etsText, sim.deviceIa)), row.spec.exportApplication);
+    return loadedImageCheck(proj, unitAppXml(row.unit), row.conf, capturedOnLoadedUnit(parseCapture(etsText, sim.deviceIa)), row.spec.exportApplication);
   })();
   const calibration = row.spec.calibration === undefined ? null : {
     capture: row.spec.calibration,
@@ -625,6 +735,7 @@ export async function runRow(row: Row): Promise<RowResult> {
   const refusals = [...etsRefusals.after.map((r) => ({ run: "ETS" as const, refusal: r })), ...bfRefusals.after.map((r) => ({ run: "Busforge" as const, refusal: r }))];
   return {
     verdict, loadedImage, busforge, calibration, refusalsAfterRestart: refusals, notTaken: { ets: etsRun.notTaken, busforge: bfRun.notTaken },
+    etsBranches: etsBranches(ets6log, etsText, sim.deviceIa, mask),
     reads: { onlyEts: [...etsRun.reads].filter((r) => !bfRun.reads.has(r)).sort(), onlyBusforge: [...bfRun.reads].filter((r) => !etsRun.reads.has(r)).sort() },
   };
 }
@@ -654,6 +765,11 @@ export interface ManifestRow {
   // Both absent in an entry kept from a manifest the tool wrote before it recorded them.
   calibration?: RowResult["calibration"];
   refusalsAfterRestart?: RowResult["refusalsAfterRestart"];
+  // The three absent in an entry kept from a manifest the tool wrote before it recorded them. `propertySources` only
+  // for a catalogue unit.
+  unitSource?: { source: "own"; unit: string } | { source: "donor"; donor: string; rule: string; rulePicksNow?: string };
+  propertySources?: Record<string, string>;
+  etsBranches?: EtsBranch[];
   files: string[];
 }
 export interface Manifest { format: typeof MANIFEST_FORMAT; busforgeRevision: string | null; rows: ManifestRow[] }
@@ -668,12 +784,20 @@ export function manifestRow(row: Row, r: RowResult): ManifestRow {
     : v.verdict === "busforge-only" ? [`Busforge wrote ${v.busforgeWrites} requests${v.busforgeRefused ? ` and then refused: ${v.busforgeRefused}` : ""}`, v.ets]
     : v.verdict === "ets-failed" ? [v.why, v.busforge ? `${v.why}; ${v.busforge}` : v.why]
     : [v.why, v.why];
-  const cfg = parseAppConfig(catalogueXml(row.unit.catalogue));
+  const appXml = unitAppXml(row.unit);
+  const cfg = parseAppConfig(appXml);
+  const unitSource: ManifestRow["unitSource"] = (() => {
+    if (!isCatalogueUnit(row.unit)) return { source: "own", unit: row.unit.id };
+    const now = chooseDonor(appXml);
+    const picks = "refused" in now ? `none: ${now.refused}` : now.donor.id;
+    return { source: "donor", donor: row.unit.donor.id, rule: row.unit.rule, ...(picks === row.unit.donor.id ? {} : { rulePicksNow: picks }) };
+  })();
   return {
     application: row.application, variant: row.variant, unit: row.unit.id, product: row.unit.name, mask: cfg.mask,
     manufacturer: row.application.split("_")[0], etsBuild: row.spec.etsBuild, verdict: v.verdict, first, cause, differences: diffs,
     reads: r.reads, notTaken: r.notTaken, loadedImage: r.loadedImage,
     calibration: r.calibration, refusalsAfterRestart: r.refusalsAfterRestart,
+    unitSource, ...(typeof row.spec.unit === "string" ? {} : { propertySources: row.spec.unit.properties }), etsBranches: r.etsBranches,
     files: readdirSync(row.dir).sort().map((f) => `${SWEEP_DIR}/${row.id}/${f}`),
   };
 }

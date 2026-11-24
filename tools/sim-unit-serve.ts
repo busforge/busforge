@@ -5,14 +5,23 @@
 //
 //   BUSFORGE_CORPUS=... bun run tools/sim-unit-serve.ts <unit> --tool ETS --log ./capture.log \
 //     [--port 3700] [--proxy-port 3701] [--advertise <this host's ip>] [--override <object>/<PID>=<hex>]...
+//   BUSFORGE_CORPUS=... bun run tools/sim-unit-serve.ts <application id> --product <file> --tool ETS --log ./capture.log \
+//     [--donor <unit>] [--learned-from <ETS6.log>]... [--port ...] [--proxy-port ...] [--advertise ...]
+//
+// <unit> is an own unit (tools/sim-units.ts); an application id without one serves its catalogue unit
+// (tools/sim-unit-catalogue.ts) of the application program in --product (a .knxproj or .knxprod holding it, or its
+// manufacturer XML): the donor its mask's rule picks (or --donor), with what the identity loop learned from each
+// --learned-from ETS6.log, in order.
 //
 // The tool connects to --proxy-port over KNXnet/IP TCP (ETS: a KNXnet/IP interface at this host); --advertise
 // puts that endpoint into the search answers, as knxproxy's PROXY_ADVERTISE does. The simulator's own lines,
 // every refusal among them, go to <log>.sim.txt. Ctrl-C stops it and prints the refusals.
-import { appendFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import { KnxIpServer, numToIa } from "../packages/knx/src/index.ts";
 import { startProxy, parseEndpoint, toolLabel } from "./knxproxy.ts";
-import { newSimUnit, simUnitSpec } from "./sim-units.ts";
+import { extractAppPrograms } from "../packages/project/src/index.ts";
+import { catalogueUnit, catalogueUnitSpec, learnIdentity, type CatalogueUnitSpec } from "./sim-unit-catalogue.ts";
+import { newSimUnit, SIM_UNITS, simUnitSpec } from "./sim-units.ts";
 
 const args = process.argv.slice(2);
 const flag = (name: string) => { const i = args.indexOf(`--${name}`); return i >= 0 ? args[i + 1] : undefined; };
@@ -25,8 +34,25 @@ const port = Number(flag("port") ?? 3700), proxyPort = Number(flag("proxy-port")
 const advertise = flag("advertise");
 if (advertise !== undefined && !/^\d+\.\d+\.\d+\.\d+$/.test(advertise)) throw new Error(`--advertise ${advertise} is not an IPv4 address`);
 
-const spec = simUnitSpec(id);
 const simLog = `${log}.sim.txt`;
+const flags = (name: string) => args.flatMap((a, i) => (a === `--${name}` ? [args[i + 1] ?? ""] : []));
+// A catalogue unit, with each ETS6.log's lines learned in turn.
+const catalogue = (): CatalogueUnitSpec => {
+  const product = flag("product");
+  if (!product) throw new Error(`${id} is no own unit; its catalogue unit takes the application program from --product <file>`);
+  const appXml = extractAppPrograms(readFileSync(product), [id]).get(id);
+  if (appXml === undefined) throw new Error(`${product} holds no application program ${id}`);
+  const u = catalogueUnitSpec(id, appXml, { donor: flag("donor") });
+  if ("refused" in u) throw new Error(`sim-refused ${u.refused}`);
+  return flags("learned-from").reduce((at, file) => {
+    const r = learnIdentity(at, readFileSync(file));
+    if ("refused" in r) throw new Error(`sim-refused ${file}: ${r.refused}`);
+    return r.spec;
+  }, u);
+};
+const own = SIM_UNITS.some((u) => u.id === id);
+if (own && (flag("donor") !== undefined || flag("product") !== undefined || flags("learned-from").length)) throw new Error("--product, --donor and --learned-from are for an application without an own unit");
+const spec = own ? simUnitSpec(id) : catalogue();
 // --override <object>/<PID>=<hex>, repeatable: the unit answers <hex> as the property's first element in place of
 // what its collection holds (of the same length; empty: it answers the property with no element). A deliberately
 // wrong identity, to see what ETS makes of it (the identity loop, tools/sim-unit-product.ts); the
@@ -36,10 +62,15 @@ const overrides = args.flatMap((a, i) => (a === "--override" ? [args[i + 1] ?? "
   if (!m) throw new Error(`--override ${o} is not <object>/<PID>=<hex>`);
   return [m[1], m[2].toLowerCase()] as const;
 });
-if (overrides.length && (spec.memoryMapped || spec.propertyMapped)) throw new Error(`--override is for a System B unit's properties; ${spec.id} is a System 7 unit`);
-const state = "stateInCaptures" in spec.behaviour ? spec.behaviour.stateInCaptures : undefined;
-const behaviour = overrides.length ? { stateInCaptures: { properties: { ...state?.properties, ...Object.fromEntries(overrides) }, functionStates: state?.functionStates ?? {} } } : {};
-const sim = newSimUnit(spec, { log: (line) => appendFileSync(simLog, `${new Date().toISOString()} ${line}\n`) }, behaviour);
+if (overrides.length && !own) throw new Error("--override is for an own unit; a catalogue unit takes what ETS required with --learned-from");
+if (overrides.length && own && (simUnitSpec(id).memoryMapped || simUnitSpec(id).propertyMapped)) throw new Error(`--override is for a System B unit's properties; ${spec.id} is a System 7 unit`);
+const simOpts = { log: (line: string) => appendFileSync(simLog, `${new Date().toISOString()} ${line}\n`) };
+const sim = (() => {
+  if ("donor" in spec) return catalogueUnit(spec).make(simOpts);
+  const state = "stateInCaptures" in spec.behaviour ? spec.behaviour.stateInCaptures : undefined;
+  const behaviour = overrides.length ? { stateInCaptures: { properties: { ...state?.properties, ...Object.fromEntries(overrides) }, functionStates: state?.functionStates ?? {} } } : {};
+  return newSimUnit(spec, simOpts, behaviour);
+})();
 if (overrides.length) appendFileSync(simLog, `${new Date().toISOString()} overridden, not the product's identity: ${overrides.map(([k, v]) => `${k}=${v}`).join(", ")}\n`);
 const server = new KnxIpServer({ transport: sim, maxApdu: spec.interfaceMaxApdu, port, name: `Busforge sim ${spec.id}`, log: (l) => appendFileSync(simLog, `${new Date().toISOString()} server: ${l}\n`) });
 await server.start();
