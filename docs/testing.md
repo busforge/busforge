@@ -924,7 +924,9 @@ One row, step by step:
    project and exports them all. Every entry outside the manufacturers' product data stays (the project with its
    signature and certificate, `knx_master.xml`, `.validation`), and of each manufacturer of a device its
    `Hardware.xml`, `Catalog.xml` and the application programs the devices' Hardware2Program entries name, each
-   entry byte for byte as ETS wrote it; baggages, the other products and the manufacturers' signatures go. The row
+   entry byte for byte as ETS wrote it; baggages, the other products and the manufacturers' signatures go. A
+   Hardware2Program described twice, or naming a program without its id, refuses the reduction: which programs to
+   keep is then not said. The row
    is written from the reduced export, which then replaces ETS's; it is a record for Busforge to read, not a
    project to import into ETS again. Where the project holds the unit's application
    under another build's id (same manufacturer, number and version, another content hash: the OpenKNX

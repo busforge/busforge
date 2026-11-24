@@ -7,7 +7,7 @@ import { KnxprojError } from "./errors.ts";
 // and traditional PKWARE encryption (ZipCrypto, ETS 4 and 5). Returns each entry's decompressed
 // (and decrypted) bytes keyed by name.
 
-const EOCD_SIG = 0x06054b50;
+export const EOCD_SIG = 0x06054b50;
 const CD_SIG = 0x02014b50;
 const LFH_SIG = 0x04034b50;
 const ZIP64_LOCATOR_SIG = 0x07064b50;
@@ -25,7 +25,7 @@ export const ZIP_TOTAL_LIMIT = 1024 * 1024 * 1024;
 
 // General-purpose bit flags (APPNOTE 4.4.4).
 const FLAG_ENCRYPTED = 0x0001;
-const FLAG_DATA_DESCRIPTOR = 0x0008;
+export const FLAG_DATA_DESCRIPTOR = 0x0008;
 const FLAG_STRONG_ENCRYPTION = 0x0040;
 
 // Every offset and length an archive declares is checked against the bytes it has before it is read,

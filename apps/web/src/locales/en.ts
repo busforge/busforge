@@ -184,6 +184,7 @@ const en = {
     KNXPROJ_SEVERAL_PROJECTS: "This file holds more than one project. An ETS export holds one; Busforge does not pick one of them. Nothing was imported.",
     ARCHIVE_DUPLICATE_ENTRY: "This file holds one entry twice, under one name or under names that differ in case only. Busforge does not pick one of them. Nothing was imported.",
     HARDWARE_XML_MALFORMED: "A manufacturer's product data (Hardware.xml) in this file is not well-formed XML. Busforge cannot read it. Nothing was imported.",
+    HARDWARE_PROGRAMS_AMBIGUOUS: "A manufacturer's product data in this file describe a device's programs twice, or name one without its id. Which programs the device runs is not clear.",
     ARCHIVE_TOO_LARGE: "The file unpacks to more than Busforge accepts: 512 MiB for one file inside it and 1 GiB for one archive, where an archive inside the file counts as its own. Nothing was imported.",
     ZIP64_UNSUPPORTED: "The file is a ZIP64 archive, which Busforge does not read. Nothing was imported.",
     FILE_MISSING: "No file was provided.",

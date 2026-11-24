@@ -182,10 +182,14 @@ export function readAppProgram(bytes: Buffer, appRef: string): string | null {
   return (id && products.program(id)) || null;
 }
 
-// The archive entry of application program `id` (M-XXXX_A-…): M-XXXX/<id>.xml.
-const programEntry = (outer: Map<string, Buffer>, id: string): Buffer | undefined => {
+// The name of the archive entry of application program `id` (M-XXXX_A-…): M-XXXX/<id>.xml; undefined where the
+// archive holds none.
+export const programEntryName = (outer: Map<string, Buffer>, id: string): string | undefined => {
   const path = `${id.split("_")[0]}/${id}.xml`;
-  const name = PROGRAM_PLACE.test(path.toLowerCase()) ? entryAt(outer, path) : undefined;
+  return PROGRAM_PLACE.test(path.toLowerCase()) ? entryAt(outer, path) : undefined;
+};
+const programEntry = (outer: Map<string, Buffer>, id: string): Buffer | undefined => {
+  const name = programEntryName(outer, id);
   return name === undefined ? undefined : outer.get(name);
 };
 
@@ -257,6 +261,9 @@ const productsOf = (bytes: Buffer): ProductSource => (isZip(bytes) ? zipProducts
 
 const hardwareOf = (doc: XmlNode): XmlNode[] =>
   kids(node(node(doc.KNX)?.ManufacturerData)?.Manufacturer).flatMap((manu) => kids(node(manu.Hardware)?.Hardware));
+// Every Hardware2Program a product source describes, in the order of its documents.
+const hardware2ProgramsOf = (source: ProductSource): XmlNode[] =>
+  source.hardware.flatMap((doc) => hardwareOf(doc).flatMap((hw) => kids(node(hw.Hardware2Programs)?.Hardware2Program)));
 
 // The application program a Hardware2Program names, or "" where it names none. One ApplicationProgramRef
 // is the application. The schema allows a second: two-application hardware, an application and a PEI
@@ -276,11 +283,9 @@ function applicationOf(h2p: XmlNode, source: ProductSource): string {
 // ("" where it names none, or none Busforge can tell apart from a PEI program: applicationOf).
 function hardwareApplicationsOf(source: ProductSource): Map<string, string> {
   const out = new Map<string, string>();
-  for (const doc of source.hardware) {
-    for (const h2p of hardwareOf(doc).flatMap((hw) => kids(node(hw.Hardware2Programs)?.Hardware2Program))) {
-      const appRef = text(h2p.Id);
-      if (appRef && !out.has(appRef)) out.set(appRef, applicationOf(h2p, source));
-    }
+  for (const h2p of hardware2ProgramsOf(source)) {
+    const appRef = text(h2p.Id);
+    if (appRef && !out.has(appRef)) out.set(appRef, applicationOf(h2p, source));
   }
   return out;
 }
@@ -288,13 +293,17 @@ export const hardwareApplications = (bytes: Buffer): Map<string, string> => hard
 
 // Every program each Hardware2Program a product source describes names (its ApplicationProgramRefs: the
 // application, and on two-program hardware the PEI program too), by Hardware2Program id; empty where it names none.
-export function hardwarePrograms(bytes: Buffer): Map<string, string[]> {
+// The source: a .knxproj, a .knxprod or a plain manufacturer XML, or a zip already read. Refused where a
+// Hardware2Program is described twice or names a program without its RefId: which programs it runs is then not said.
+export function hardwarePrograms(source: Buffer | Map<string, Buffer>): Map<string, string[]> {
   const out = new Map<string, string[]>();
-  for (const doc of productsOf(bytes).hardware) {
-    for (const h2p of hardwareOf(doc).flatMap((hw) => kids(node(hw.Hardware2Programs)?.Hardware2Program))) {
-      const appRef = text(h2p.Id);
-      if (appRef && !out.has(appRef)) out.set(appRef, kids(h2p.ApplicationProgramRef).map((r) => text(r.RefId)).filter((id) => id !== ""));
-    }
+  for (const h2p of hardware2ProgramsOf(source instanceof Map ? zipProducts(source) : productsOf(source))) {
+    const appRef = text(h2p.Id);
+    if (!appRef) continue;
+    if (out.has(appRef)) throw new KnxprojError("HARDWARE_PROGRAMS_AMBIGUOUS", `the product data describe the Hardware2Program ${appRef} twice`);
+    const refs = kids(h2p.ApplicationProgramRef).map((r) => text(r.RefId));
+    if (refs.includes("")) throw new KnxprojError("HARDWARE_PROGRAMS_AMBIGUOUS", `the Hardware2Program ${appRef} names an application program without its RefId`);
+    out.set(appRef, refs);
   }
   return out;
 }

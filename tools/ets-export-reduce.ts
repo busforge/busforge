@@ -14,16 +14,11 @@
 // into ETS again: without the signatures and baggages ETS may refuse it.
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { appProgramId, hardwarePrograms, loadKnxproj, type Device } from "../packages/project/src/index.ts";
-import { readCentralDirectory, readZip } from "../packages/project/src/zip.ts";
+import { appProgramId, hardwarePrograms, loadKnxproj, programEntryName, type Device } from "../packages/project/src/index.ts";
+import { EOCD_SIG, FLAG_DATA_DESCRIPTOR, readCentralDirectory, readZip } from "../packages/project/src/zip.ts";
 
-const FLAG_DATA_DESCRIPTOR = 0x0008;
 const DESCRIPTOR_SIG = 0x08074b50;
-const EOCD_SIG = 0x06054b50;
 const MANUFACTURER = /^(m-[0-9a-f]{4})(?:[/.]|$)/;
-
-// The archive path of application program `id`, lower-cased.
-const programPath = (id: string) => `${id.split("_")[0]}/${id}.xml`.toLowerCase();
 
 // The export reduced to the product data of `devices` (the devices of its project: their ProductRefId and
 // Hardware2ProgramRefId), with the names of what was dropped. Refuses a device whose application program the
@@ -32,16 +27,17 @@ export function reduceExport(bytes: Buffer, devices: readonly Pick<Device, "ia" 
   if (devices.length === 0) throw new Error("the project holds no device whose product data to keep");
   const { entries, start, comment } = readCentralDirectory(bytes);
   const files = readZip(bytes);
-  const at = new Map([...files.keys()].map((n) => [n.toLowerCase(), n]));
   const manufacturers = new Set(devices.map((d) => d.productRef.split("_")[0].toLowerCase()));
-  const hardware = hardwarePrograms(bytes);
+  const hardware = hardwarePrograms(files);
+  // The archive paths of the programs the devices run, lower-cased, where the loader reads them (programEntryName).
   const programs = new Set<string>();
   for (const d of devices) {
     if (!d.appRef) continue;
     // Where no Hardware.xml describes the Hardware2Program, the program its id names (as readAppProgram reads it).
     for (const r of hardware.get(d.appRef) ?? [appProgramId(d.appRef)]) {
-      if (!at.has(programPath(r))) throw new Error(`the export holds no application program ${r} (the device ${d.ia})`);
-      programs.add(programPath(r));
+      const name = programEntryName(files, r);
+      if (name === undefined) throw new Error(`the export holds no application program ${r} (the device ${d.ia})`);
+      programs.add(name.toLowerCase());
     }
   }
   // A program may lie in another manufacturer's directory than its product's (the loader reads it from there).
@@ -90,8 +86,6 @@ export function reduceExport(bytes: Buffer, devices: readonly Pick<Device, "ia" 
   const read = readZip(out);
   const want = [...files.keys()].filter(kept);
   if ([...read.keys()].join("\n") !== want.join("\n") || want.some((n) => !read.get(n)!.equals(files.get(n)!))) throw new Error("the reduced export does not read back as the kept files of the export");
-  const lost = [...programs].filter((p) => !want.some((n) => n.toLowerCase() === p));
-  if (lost.length) throw new Error(`the reduced export lacks the application program(s) ${lost.join(", ")}`);
   return { bytes: out, dropped };
 }
 
@@ -105,6 +99,7 @@ if (import.meta.main) {
   try {
     if (!from || !to || rest.length || (flag !== undefined && (flag !== "--password-env" || !env))) throw new Error("usage: bun run tools/ets-export-reduce.ts <export.knxproj> <out.knxproj> [--password-env <VAR>]");
     if (resolve(from) === resolve(to)) throw new Error("the reduced export goes to another file than the export");
+    if (env !== undefined && process.env[env] === undefined) throw new Error(`--password-env ${env}: the variable is not set`);
     const r = reduceProjectExport(readFileSync(from), env === undefined ? undefined : process.env[env]);
     writeFileSync(to, r.bytes);
     console.log(`${to}: ${r.bytes.length} bytes; dropped ${r.dropped.length} entries`);

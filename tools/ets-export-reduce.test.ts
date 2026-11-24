@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { deflateRawSync } from "node:zlib";
 import { loadKnxproj } from "../packages/project/src/index.ts";
 import { readZip } from "../packages/project/src/zip.ts";
@@ -121,6 +122,19 @@ describe("an ETS export reduced to the product data of its project's devices", (
 
   test("refuses what is no zip", () => {
     expect(() => reduceExport(Buffer.from("no zip at all, just text"), DEVICES)).toThrow("no end of central directory record");
+  });
+
+  test("refuses a Hardware2Program described twice or naming a program without its RefId: which programs to keep is not said", () => {
+    const device = [DEVICES[0]];
+    const withHardware = (...docs: [string, Buffer][]) => zipOf([{ name: "P-0001/0.xml", data: Buffer.from("project") }, ...docs.map(([name, data]) => ({ name, data })), { name: `M-0083/${APP}.xml`, data: Buffer.from("application") }]);
+    const h2p = { [DEVICES[0].appRef]: [APP] };
+    expect(() => reduceExport(withHardware(["M-0083/Hardware.xml", hardware(h2p)], ["M-0084/Hardware.xml", hardware(h2p)]), device)).toThrow(`the product data describe the Hardware2Program ${DEVICES[0].appRef} twice`);
+    expect(() => reduceExport(withHardware(["M-0083/Hardware.xml", hardware({ [DEVICES[0].appRef]: [APP, ""] })]), device)).toThrow(`the Hardware2Program ${DEVICES[0].appRef} names an application program without its RefId`);
+  });
+
+  test("its command refuses a password variable that is not set", () => {
+    const run = Bun.spawnSync([process.execPath, "run", fileURLToPath(new URL("./ets-export-reduce.ts", import.meta.url)), "in.knxproj", "out.knxproj", "--password-env", "BUSFORGE_NO_SUCH_VARIABLE"], { env: { PATH: process.env.PATH ?? "" } });
+    expect([run.exitCode, run.stderr.toString().trim()]).toEqual([2, "ets-export-reduce: --password-env BUSFORGE_NO_SUCH_VARIABLE: the variable is not set"]);
   });
 });
 
