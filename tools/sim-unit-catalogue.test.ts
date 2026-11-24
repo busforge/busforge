@@ -9,7 +9,7 @@ import { etsBranches, rowUnit, ROW_FORMAT, SWEEP_DIR, type RowSpec } from "./ets
 import { tempDir } from "./test-temp.ts";
 import type { SimUnit } from "./sim-unit.ts";
 import type { SystemBBehaviour } from "./sim-unit-model.ts";
-import { catalogueUnit, catalogueUnitRecord, catalogueUnitSpec, chooseDonor, donorUnfit, DONOR_RULES, learnIdentity, unitMask, type CatalogueUnitSpec } from "./sim-unit-catalogue.ts";
+import { catalogueUnit, catalogueUnitRecord, catalogueUnitSpec, chooseDonor, donorDigest, donorUnfit, DONOR_RULES, learnIdentity, unitMask, type CatalogueUnitSpec } from "./sim-unit-catalogue.ts";
 import { mismatchLines } from "./sim-unit-product.ts";
 import { framePairs, replayCapture } from "./sim-unit-replay.ts";
 import { MEANWELL_KNX40E, newSimUnit, SIM_UNITS, type SimUnitSpec } from "./sim-units.ts";
@@ -72,7 +72,8 @@ corpusDescribe("a catalogue unit's donor", () => {
       ["M-0083_A-0138-21-F18E-O0072", "no donor for MV-0012: no rule for it, the simulator models MV-07B0, MV-0701, MV-0705"],
       ["M-0085_A-0072-30-69AA", "gvs-amma"],
       ["M-008E_A-7079-10-9C41", "mdt-be02001"],
-      ["M-00FA_A-A012-55-0000", "meanwell-knx40e"],
+      // With extended memory services ETS writes A_MemoryExtended_Write, which the MEAN WELL's captures do not show.
+      ["M-00FA_A-A012-55-0000", "openknx-raumcontroller"],
       ["M-0162_A-0004-11-F245", "meanwell-knx40e"],
     ]);
   });
@@ -127,6 +128,14 @@ corpusDescribe("a catalogue unit", () => {
     expect(whole.sim.refusals[0]).toBe("sim-refused A_PropertyValue_Write 1/5 0302400001008300b632: a task segment for application 008300b632, where the unit holds 008300b432");
   });
 
+  test("answers its load states as memory from what its donor held at the start", async () => {
+    const unit = catalogueUnit(spec("M-0083_A-00B4-32-3919", "mdt-be02001")).make();
+    // A connection, then A_Memory_Read of the four load states at 0xB6EA.
+    await unit.sendCemi(cemiLData(0x11ff, unit.deviceIa, Buffer.from([0x80])));
+    await unit.sendCemi(cemiLData(0x11ff, unit.deviceIa, Buffer.from([0x42, 0x04, 0xb6, 0xea])));
+    expect([unit.refusals, unit.lines.at(-1)]).toEqual([[], "answered A_Memory_Read 4 at 0xb6ea: donor mdt-be02001"]);
+  });
+
   test("refuses a property neither the product nor the donor gives, with its reason", async () => {
     const unit = catalogueUnit(spec("M-0083_A-0137-20-7EB2", "gvs-amma")).make();
     const read = (o: number, pid: number) => cemiLData(0x11ff, unit.deviceIa, Buffer.from([0x03, 0xd5, o, pid, 0x10, 0x01]));
@@ -164,6 +173,8 @@ corpusDescribe("a catalogue row's unit", () => {
     expect(() => rowUnit("r", dir, application, row(record))).toThrow("a catalogue unit's application program comes from the row's export, and row.json names none");
     expect(() => rowUnit("r", dir, "M-0083_A-0137-20-7EB3", row(record, "export.xml"))).toThrow("holds no application program M-0083_A-0137-20-7EB3");
     expect(() => rowUnit("r", dir, application, row({ ...record, rule: "MV-07B0: an older rule" }, "export.xml"))).toThrow("the row is to run again");
+    expect(() => rowUnit("r", dir, application, row({ ...record, donorDigest: "0".repeat(64) }, "export.xml"))).toThrow("its donor gvs-amma was collected again or given another behaviour since the row ran");
+    expect(() => rowUnit("r", dir, application, row({ ...record, donor: undefined as unknown as string }, "export.xml"))).toThrow("its unit names no donor and identity loop lines");
     expect(() => rowUnit("r", dir, application, row({ ...record, donor: "meanwell-knx40e" }, "export.xml"))).toThrow("the donor meanwell-knx40e does not fit the rule: its captures show no confirmed restart");
     // An own unit is named by its id, and runs the row's application.
     expect(() => rowUnit("r", dir, application, row("gvs-amma"))).toThrow("the simulated unit gvs-amma runs M-0085_A-0072-30-69AA, not M-0083_A-0137-20-7EB2");
@@ -181,7 +192,7 @@ corpusDescribe("a catalogue unit's identity loop", () => {
     // The MDT SCN-IP000.03 (MV-07B0, Data Secure) on the GVS AMMA.
     const s = spec("M-0083_A-0137-20-7EB2", "gvs-amma");
     const unit = catalogueUnit(s);
-    const answers = unit.model.objects.get(0)!.get(78)!.elements![0].toString("hex");
+    const answers = unit.objects.get(0)!.get(78)!.elements![0].toString("hex");
     // The line of the MEAN WELL run names another unit's answer.
     expect(learnIdentity(s, readFileSync(WRONG))).toEqual({ refused: `ETS saw 620100000005 in 0/78, which this identity does not answer: the log is of another run (${mismatchLines(readFileSync(WRONG))[0].line})` });
     // The same line, as ETS would write it for this unit: what it answers, and a value ETS requires instead.
@@ -189,14 +200,17 @@ corpusDescribe("a catalogue unit's identity loop", () => {
     const learned = learnIdentity(s, line);
     if ("refused" in learned) throw new Error(learned.refused);
     const next = catalogueUnit(learned.spec);
-    expect(next.model.objects.get(0)!.get(78)!.elements![0].toString("hex")).toBe("0085000000ab");
+    expect(next.objects.get(0)!.get(78)!.elements![0].toString("hex")).toBe("0085000000ab");
     expect(next.properties.get("0/78")).toBe(`identity loop: ETS6.log "${line}"`);
-    expect(catalogueUnitRecord(next)).toEqual({ source: "donor", donor: "gvs-amma", rule: DONOR_RULES["MV-07B0"], identity: [line], properties: Object.fromEntries(next.properties) });
+    expect(catalogueUnitRecord(next)).toEqual({ source: "donor", donor: "gvs-amma", donorDigest: donorDigest(s.donor), rule: DONOR_RULES["MV-07B0"], identity: [line], properties: Object.fromEntries(next.properties) });
     // Run again with it, the line no longer applies: the unit answers what ETS required.
     expect(learnIdentity(learned.spec, line)).toEqual({ refused: expect.stringContaining("ETS saw") });
-    // A value longer than the donor's element is not filled in.
+    // A value longer than the donor's element is not filled in, nor one shorter.
     const longer = line.replace("0085000000AB", "0085000000AB01");
     expect(learnIdentity(s, longer)).toEqual({ refused: expect.stringContaining("past the donor's 6, and not zero there") });
+    expect(learnIdentity(s, line.replace("0085000000AB", "01"))).toEqual({ refused: expect.stringContaining("gives 1 octets 01, the donor answers 6; what the unit answers after them is not given") });
+    // A value with a zero tail past the donor's element leaves the unit's answer as it was: a rerun would fail the same.
+    expect(learnIdentity(s, line.replace("0085000000AB", `${answers.toUpperCase()}0000`))).toEqual({ refused: "the unit answers 0/78 as before with what ETS required: a rerun fails the same" });
   });
 });
 
@@ -214,7 +228,7 @@ corpusDescribe("where ETS went by an answer of the unit", () => {
     ]);
     expect(branches("M-0002_A-A001-13-63C2/defaults", "1.1.201", "MV-0701")).toEqual([
       ["max-apdu", "PID 56 not answered (Lesen von Property(0/56, 1, 1) fehlgeschlagen: Empty response), ETS assumed 15; ETS negotiated 15, restricted by ByTargetDevice"],
-      ["read-before-write", "ETS read 229 octets of the unit's memory before writing there, then wrote 19 of them and left 210 as the unit answered them"],
+      ["read-before-write", "the unit answered ETS 229 octets of its memory before ETS wrote there; ETS then wrote 19 of them and left 210 as the unit answered them"],
     ]);
   });
 });

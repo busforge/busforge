@@ -58,7 +58,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import net from "node:net";
 import { gunzipSync } from "node:zlib";
-import { APCI, KnxIpServer, MM_CTRL_ADDR, MM_STATUS_BASE, PID, iaToNum } from "../packages/knx/src/index.ts";
+import { APCI, KnxIpServer, MM_CTRL_ADDR, MM_STATUS_BASE, PID, iaToNum, numToIa } from "../packages/knx/src/index.ts";
 import { appProgramId, etsLoadedCompletely, etsNotDownloaded, extractAppPrograms, loadKnxproj, type Project } from "../packages/project/src/index.ts";
 import { isMemoryMappedLsm, parseAppConfig, parseLoadProcedures, ProductError, type ComObjectLink, type ComObjInstanceOverride, type FlashResult, type ModuleInstance } from "../packages/product/src/index.ts";
 import { downloadDeviceFull } from "../apps/server/src/deviceprofile.ts";
@@ -72,7 +72,7 @@ import { loadedImageComparison } from "./ets-records.ts";
 import { gitRevision } from "./evidence.ts";
 import { startProxy } from "./knxproxy.ts";
 import type { SimUnit } from "./sim-unit.ts";
-import { catalogueUnit, catalogueUnitRecord, catalogueUnitSpec, chooseDonor, isCatalogueUnit, newRowUnit, unitAppXml, type CatalogueUnitRecord, type RowUnit } from "./sim-unit-catalogue.ts";
+import { catalogueUnit, catalogueUnitRecord, catalogueUnitSpec, chooseDonor, donorDigest, isCatalogueUnit, loadStateMachineAt, newRowUnit, unitAppXml, type CatalogueUnitRecord, type RowUnit } from "./sim-unit-catalogue.ts";
 import { simUnitSpec } from "./sim-units.ts";
 import { removeTempDir, tempDir } from "./test-temp.ts";
 
@@ -196,17 +196,13 @@ export interface RunState {
 
 const hexOf = (b: Buffer) => b.toString("hex");
 
-// A capture's frames between `tool` and the unit at `device`, as tools/knxproxy.ts logs them.
-export function runState(text: string, tool: string, device: number, mask: string): RunState {
-  const s: RunState = { memory: new Map(), memoryService: new Map(), properties: new Map(), loadControls: new Map(), functionCalls: [], loadStates: new Map(), tableReferences: new Map(), restarts: [], other: [], reads: new Set(), notTaken: [], unplaced: [], writes: 0, changesAfterRestart: null };
-  const memoryMapped = isMemoryMappedLsm(mask);
-  const r: Replay = { s, memoryMapped, order: new Map(), fills: [], mmStates: new Map(), n: 0 };
-  // Each request with its confirmation on the line, and the unit's frames, in order.
-  type Item = { request: true; t: Buffer; neg: boolean } | { request: false; t: Buffer };
-  const items: Item[] = [], pending: { t: Buffer; neg: boolean }[] = [];
+// Each request of `tool` to the unit at `device` with its confirmation on the line, and the unit's frames, in order.
+type LineItem = { request: true; t: Buffer; neg: boolean } | { request: false; t: Buffer };
+function lineItems(text: string, tool: string, device: number): LineItem[] {
+  const items: LineItem[] = [], pending: { t: Buffer; neg: boolean }[] = [];
   for (const fr of captureLData(text, tool)) {
     if (fr.group) continue;
-    if (fr.fromTool && fr.code === L_DATA_REQ && fr.dst === device) { const it: Item = { request: true, t: fr.tpdu, neg: false }; items.push(it); pending.push(it); }
+    if (fr.fromTool && fr.code === L_DATA_REQ && fr.dst === device) { const it: LineItem = { request: true, t: fr.tpdu, neg: false }; items.push(it); pending.push(it); }
     else if (!fr.fromTool && fr.code === L_DATA_CON && fr.dst === device) {
       // The confirmation repeats the request's frame: it confirms the oldest request still waiting with it.
       const i = pending.findIndex((p) => p.t.equals(fr.tpdu));
@@ -214,6 +210,15 @@ export function runState(text: string, tool: string, device: number, mask: strin
     }
     else if (!fr.fromTool && fr.code === L_DATA_IND && fr.src === device) items.push({ request: false, t: fr.tpdu });
   }
+  return items;
+}
+
+// A capture's frames between `tool` and the unit at `device`, as tools/knxproxy.ts logs them.
+export function runState(text: string, tool: string, device: number, mask: string): RunState {
+  const s: RunState = { memory: new Map(), memoryService: new Map(), properties: new Map(), loadControls: new Map(), functionCalls: [], loadStates: new Map(), tableReferences: new Map(), restarts: [], other: [], reads: new Set(), notTaken: [], unplaced: [], writes: 0, changesAfterRestart: null };
+  const memoryMapped = isMemoryMappedLsm(mask);
+  const r: Replay = { s, memoryMapped, order: new Map(), fills: [], mmStates: new Map(), n: 0 };
+  const items = lineItems(text, tool, device);
   // The transport connection as the unit keeps it (KNX 3/3/4): a T_Connect while connected is taken as
   // nothing, so only a new connection, after a disconnect or a restart, starts the sequence numbers again.
   let connected = false, lastSeq: number | null = null;
@@ -450,16 +455,19 @@ const logText = (l: string) => l.replace(/^\S+ \S+ \[\d+\]\s+/, "").trim();
 
 // From a row's ETS6.log and ETS's capture of its run into the unit at `device`: the maximum APDU ETS negotiated from
 // the unit's PID 56 (each ETS task's, once), the memory verify mode ETS detected and whether it switched it on, the
-// unit's answer to a confirmed restart, and on MV-0701 (memory-mapped; ETS reads before it writes and writes only what
-// differs) how many octets ETS read before writing there and how many of them it then wrote.
+// unit's answers to confirmed restarts (the lines of `device`; the verify-mode lines name no device, the row's ETS6.log
+// is of its one download), and on MV-0701 (memory-mapped; ETS reads before it writes and writes only what
+// differs) how many octets the unit answered ETS before ETS wrote there and how many of them ETS then wrote; a write
+// the line confirmed negatively is none.
 export function etsBranches(ets6log: string, capture: string, device: number, mask: string): EtsBranch[] {
-  const lines = ets6log.split(/\r?\n/);
+  const lines = ets6log.split(/\r?\n/), ia = numToIa(device);
   const out: EtsBranch[] = [];
   const asked = new Map<string, { answer: string; line: string }>(), negotiated = new Set<string>();
   for (const l of lines) {
     const m = MAX_APDU_LINE.exec(l);
     if (!m) continue;
     const [, task, length, failure, assumed, to, by] = m;
+    if (task.split(" ")[1] !== ia) continue;
     if (length !== undefined) { asked.set(task, { answer: `PID 56 answered ${length}`, line: logText(l) }); continue; }
     if (assumed !== undefined) { asked.set(task, { answer: `PID 56 not answered (${failure}), ETS assumed ${assumed}`, line: logText(l) }); continue; }
     const a = asked.get(task);
@@ -474,34 +482,38 @@ export function etsBranches(ets6log: string, capture: string, device: number, ma
     const switched = verify.filter((l) => l.includes("Switching on AutoVerifyMode")).length;
     out.push({ on: "verify-mode", answer: `ETS detected memory verify mode ${detected.length ? detected.join(", then ") : "nowhere"}; it switched AutoVerifyMode on ${switched} times`, evidence: [...new Set(verify.map(logText))] });
   }
-  const restart = lines.filter((l) => CONFIRMED_RESTART_ANSWER.test(l));
-  if (restart.length) {
-    const [, error, time] = CONFIRMED_RESTART_ANSWER.exec(restart[0])!;
-    out.push({ on: "confirmed-restart", answer: `the unit answered the confirmed restart with ${error}, process time ${time}`, evidence: [...new Set(restart.map(logText))] });
-  } else if (lines.some((l) => l.includes("Send ConfirmedRestart_req"))) {
+  // The unit's answers to confirmed restarts, each distinct one once (ETS logs each answer twice).
+  const restart = lines.filter((l) => CONFIRMED_RESTART_ANSWER.test(l) && l.includes(`<- ${ia} `));
+  const answers = new Map<string, string[]>();
+  for (const l of restart) { const [, error, time] = CONFIRMED_RESTART_ANSWER.exec(l)!; (answers.get(`${error}, process time ${time}`) ?? answers.set(`${error}, process time ${time}`, []).get(`${error}, process time ${time}`)!).push(logText(l)); }
+  for (const [answer, evidence] of answers) out.push({ on: "confirmed-restart", answer: `the unit answered the confirmed restart with ${answer}`, evidence: [...new Set(evidence)] });
+  if (!answers.size && lines.some((l) => l.includes(`Send ConfirmedRestart_req -> ${ia} `))) {
     out.push({ on: "confirmed-restart", answer: "ETS sent a confirmed restart, and ETS6.log shows no answer of the unit", evidence: [...new Set(lines.filter((l) => l.includes("ConfirmedRestart")).map(logText))] });
   }
   if (isMemoryMappedLsm(mask)) {
     // The load controls at MM_CTRL_ADDR and the load states after MM_STATUS_BASE are no memory ETS compares.
-    const compared = (a: number) => a !== MM_CTRL_ADDR && !(a > MM_STATUS_BASE && a <= MM_STATUS_BASE + 15);
+    // The load-control register is 11 octets (packages/knx/src/flash.ts).
+    const compared = (a: number) => !(a >= MM_CTRL_ADDR && a < MM_CTRL_ADDR + 11) && loadStateMachineAt(a) === null;
     const readFirst = new Set<number>(), written = new Set<number>();
     let reads = 0, writes = 0;
-    for (const fr of captureLData(capture, "ETS")) {
-      if (fr.group || !fr.fromTool || fr.code !== L_DATA_REQ || fr.dst !== device || fr.tpdu.length < 4) continue;
-      const raw = ((fr.tpdu[0] & 0x03) << 8) | fr.tpdu[1];
-      if ((raw & 0x3c0) === APCI.MEMORY_READ) {
-        reads++;
-        const at = fr.tpdu.readUInt16BE(2);
+    for (const it of lineItems(capture, "ETS", device)) {
+      if (it.t.length < 4) continue;
+      const raw = ((it.t[0] & 0x03) << 8) | it.t[1];
+      // The octets the unit answered, which ETS compares with what it would write.
+      if (!it.request) {
+        if ((raw & 0x3c0) !== APCI.MEMORY_RESPONSE) continue;
+        const at = it.t.readUInt16BE(2);
+        if (compared(at)) reads++;
         for (let a = at; a < at + (raw & 0x3f); a++) if (compared(a) && !written.has(a)) readFirst.add(a);
         continue;
       }
-      const w = memWriteOf(fr.tpdu, raw);
+      const w = it.neg ? null : memWriteOf(it.t, raw);
       if (!w || w.addr === MM_CTRL_ADDR) continue;
       writes++;
       w.data.forEach((_, i) => written.add(w.addr + i));
     }
     const rewritten = [...readFirst].filter((a) => written.has(a)).length;
-    if (readFirst.size) out.push({ on: "read-before-write", answer: `ETS read ${readFirst.size} octets of the unit's memory before writing there, then wrote ${rewritten} of them and left ${readFirst.size - rewritten} as the unit answered them`, evidence: [`${reads} memory reads, ${writes} memory writes of ETS to the unit`] });
+    if (readFirst.size) out.push({ on: "read-before-write", answer: `the unit answered ETS ${readFirst.size} octets of its memory before ETS wrote there; ETS then wrote ${rewritten} of them and left ${readFirst.size - rewritten} as the unit answered them`, evidence: [`${reads} memory answers of the unit, ${writes} memory writes of ETS the line took`] });
   }
   return out;
 }
@@ -537,8 +549,8 @@ export function judge(ets: { outcome: EtsOutcome; refusals: string[] }, busforge
 
 // Busforge's full download of `conf` into a fresh unit of `spec`, through the KNXnet/IP server ETS connects
 // to and the logging proxy ETS's capture is taken with: the server's own download task.
-export async function busforgeIntoSim(spec: RowUnit, conf: RowConfiguration): Promise<BusforgeRun & { sim: SimUnit }> {
-  const sim = newRowUnit(spec);
+// `sim`: the fresh unit, where the caller built it already.
+export async function busforgeIntoSim(spec: RowUnit, conf: RowConfiguration, sim: SimUnit = newRowUnit(spec)): Promise<BusforgeRun & { sim: SimUnit }> {
   const { value, capture } = await busforgeSessionIntoSim(sim, spec, async (connection, dataDir) => {
     let result: FlashResult | null = null, refused: BusforgeRun["refused"] = null, error: string | null = null;
     try {
@@ -664,16 +676,23 @@ export function rowUnit(id: string, dir: string, application: string, spec: RowS
     if (unitApp !== application) throw new Error(`row ${id}: the simulated unit ${unit.id} runs ${unitApp}, not ${application}`);
     return unit;
   }
-  const source: unknown = named.source;
+  const source: unknown = named.source, donor: unknown = named.donor, identity: unknown = named.identity;
   if (source !== "donor") throw new Error(`row ${id}: its unit's source is ${String(source)}, not donor`);
+  if (typeof donor !== "string" || !Array.isArray(identity) || identity.some((l) => typeof l !== "string")) throw new Error(`row ${id}: its unit names no donor and identity loop lines`);
   if (spec.export === undefined) throw new Error(`row ${id}: a catalogue unit's application program comes from the row's export, and row.json names none`);
-  const b = readFileSync(join(dir, spec.export));
-  const appXml = extractAppPrograms(spec.export.endsWith(".gz") ? gunzipSync(b) : b, [application]).get(application);
+  const appXml = extractAppPrograms(exportBytes(dir, spec.export), [application]).get(application);
   if (appXml === undefined) throw new Error(`row ${id}: its export ${spec.export} holds no application program ${application}`);
   const unit = catalogueUnitSpec(application, appXml, { donor: named.donor, learned: named.identity });
   if ("refused" in unit) throw new Error(`row ${id}: no catalogue unit: ${unit.refused}`);
   if (unit.rule !== named.rule) throw new Error(`row ${id}: its unit was chosen by the rule "${named.rule}", the rule of its mask is now "${unit.rule}": the row is to run again`);
+  if (donorDigest(unit.donor) !== named.donorDigest) throw new Error(`row ${id}: its donor ${donor} was collected again or given another behaviour since the row ran: the row is to run again`);
   return unit;
+}
+
+// A row's export file, unzipped where it is gzipped.
+function exportBytes(dir: string, file: string): Buffer {
+  const b = readFileSync(join(dir, file));
+  return file.endsWith(".gz") ? gunzipSync(b) : b;
 }
 
 export interface RowResult {
@@ -697,10 +716,11 @@ export async function runRow(row: Row): Promise<RowResult> {
   const read = (f: string) => readFileSync(join(row.dir, f), "utf8");
   const sim = (() => {
     if (!isCatalogueUnit(row.unit) || typeof row.spec.unit === "string") return newRowUnit(row.unit);
-    // The sources row.json names are the ones the unit has today: a donor's collection or the product changed since
-    // the row ran would give ETS's run another unit than the one it ran into.
+    // The property sources row.json names are the ones the unit has today (readRow held the donor to its digest): the
+    // product or the identity loop's lines read otherwise would give ETS's run another unit than the one it ran into.
     const unit = catalogueUnit(row.unit), now = catalogueUnitRecord(unit).properties;
-    if (JSON.stringify(now) !== JSON.stringify(row.spec.unit.properties)) throw new Error(`row ${row.id}: its unit's property sources are now ${JSON.stringify(now)}, row.json names ${JSON.stringify(row.spec.unit.properties)}: the row is to run again`);
+    const sorted = (x: Record<string, string>) => JSON.stringify(Object.entries(x).sort(([a], [b]) => a.localeCompare(b)));
+    if (sorted(now) !== sorted(row.spec.unit.properties)) throw new Error(`row ${row.id}: its unit's property sources are now ${JSON.stringify(now)}, row.json names ${JSON.stringify(row.spec.unit.properties)}: the row is to run again`);
     return unit.make();
   })();
   if (iaToNum(row.conf.ia) !== sim.deviceIa) throw new Error(`row ${row.id}: the configuration is of ${row.conf.ia}, the simulated unit answers at another address`);
@@ -708,7 +728,7 @@ export async function runRow(row: Row): Promise<RowResult> {
   const etsText = read(ROW_FILES.ets);
   const ets6log = readFileSync(join(row.dir, ROW_FILES.ets6log), "latin1");
   const etsRun = runState(etsText, "ETS", sim.deviceIa, mask);
-  const busforge = await busforgeIntoSim(row.unit, row.conf);
+  const busforge = await busforgeIntoSim(row.unit, row.conf, sim);
   const bfRun = runState(busforge.capture, "Busforge", sim.deviceIa, mask);
   const etsRefusals = refusalsAfterRestart(read(ROW_FILES.etsSim), etsRun);
   // A Busforge download that ended in an error leaves no comparison whole, whatever was refused.
@@ -721,8 +741,7 @@ export async function runRow(row: Row): Promise<RowResult> {
   const exportFile = row.spec.export;
   const loadedImage: LoadedImageCheck = (() => {
     if (exportFile === undefined) return { state: "no export" };
-    const b = readFileSync(join(row.dir, exportFile));
-    const bytes = exportFile.endsWith(".gz") ? gunzipSync(b) : b;
+    const bytes = exportBytes(row.dir, exportFile);
     const proj = openWithPasswords((password) => loadKnxproj(bytes, password, "export"));
     if (proj === null) return { state: "not compared", why: `the export is password-protected and none of the ${passwords().length} password(s) in ${PASSWORDS_ENV} opens it` };
     return loadedImageCheck(proj, unitAppXml(row.unit), row.conf, capturedOnLoadedUnit(parseCapture(etsText, sim.deviceIa)), row.spec.exportApplication);
