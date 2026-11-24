@@ -12,10 +12,9 @@ import { mismatchLines, productAgainstUnit, productUnit, rerunIdentity, type Pro
 // (docs/testing.md, "Timeouts of heavy tests").
 setDefaultTimeout(140_000);
 
-// No ETS6.log in the corpus holds a `Required data mismatch` line: every ETS download there went into a real unit
-// of the product, whose identity fits. The lines below are of the form decision 0004 §1 quotes from ETS
-// ("Required data mismatch at SystemProperty(0/78)[$0000]: <device> instead of <required>"), the values as
-// contiguous hex; the parser is to be checked against the first real line a sweep row records.
+// The lines below are of the form decision 0004 §1 quotes from ETS ("Required data mismatch at
+// SystemProperty(0/78)[$0000]: <device> instead of <required>"), the values as contiguous hex; the one line a sweep
+// row records (a MEAN WELL unit answering a wrong hardware type) is read in tools/sim-unit-catalogue.test.ts.
 const at = (rest: string) => `2026-11-20 10:00:00,000 [12] WARN  Knx.Ets.Hawk.LoadDeviceTask - Required data mismatch at ${rest}`;
 
 describe("ETS's Required data mismatch lines", () => {
