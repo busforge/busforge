@@ -174,6 +174,19 @@ export function simUnit0705Model(collection: CollectPackage, appXml: string, beh
     if (ref && (segs.length === 0 || ref.readUInt16BE(0) !== segs[0].at)) refuse(`object ${lsm} references 0x${ref.toString("hex")}, ${segs.length ? `its first segment is at 0x${segs[0].at.toString(16)}` : "it holds no segment"}`);
     held.set(lsm, segs);
   }
+  return {
+    ...behaviour,
+    ia: iaToNum(collection.ia), mask, maxApdu: pm.maxApdu, objects, descriptions, functionStates, memoryExtendedRead,
+    crcConvention: crc, memory: { bytes, known }, held, programId: Buffer.from(programId), ...declaredTasks(appXml), propertyMapped: pm,
+  };
+}
+
+export type DeclaredTasks = Pick<SimUnit0705Model, "declaredTaskSegment" | "declaredTaskControl1">;
+
+// The task segment and task control 1 of each load-state machine as the application declares them, which the unit
+// running it checks a download's against.
+export function declaredTasks(appXml: string): DeclaredTasks {
+  const steps = flattenSteps(parseLoadProcedures(appXml), "full");
   const declaredTaskSegment = new Map<number, number>();
   for (const s of steps.filter((x) => x.verb === "LdCtrlTaskSegment")) {
     const lsm = lsmIdx(s), at = stepAddress(s);
@@ -186,11 +199,16 @@ export function simUnit0705Model(collection: CollectPackage, appXml: string, beh
     if (typeof t === "string") refuse(`the application's task control 1: ${t}`);
     else declaredTaskControl1.set(t.lsm, { address: t.address, count: t.count });
   }
-  return {
-    ...behaviour,
-    ia: iaToNum(collection.ia), mask, maxApdu: pm.maxApdu, objects, descriptions, functionStates, memoryExtendedRead,
-    crcConvention: crc, memory: { bytes, known }, held, programId: Buffer.from(programId), declaredTaskSegment, declaredTaskControl1, propertyMapped: pm,
-  };
+  return { declaredTaskSegment, declaredTaskControl1 };
+}
+
+// The load-state machines of objects 1 to 3 whose task segment the application declares at an address that starts
+// none of the absolute segments it declares for the machine (a unit takes that only where `taskAtDeclaredAddress`
+// names the machine).
+export function taskAtDeclaredMachines(appXml: string): number[] {
+  const steps = flattenSteps(parseLoadProcedures(appXml), "full");
+  const { declaredTaskSegment } = declaredTasks(appXml);
+  return LSMS.filter((lsm) => declaredTaskSegment.has(lsm) && !steps.some((s) => s.verb === "LdCtrlAbsSegment" && lsmIdx(s) === lsm && stepAddress(s) === declaredTaskSegment.get(lsm)));
 }
 
 export class SimUnit0705 extends SimUnit {

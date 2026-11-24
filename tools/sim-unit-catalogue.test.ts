@@ -2,7 +2,7 @@ import { test, expect, setDefaultTimeout } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { APCI, cemiLData, iaToNum } from "../packages/knx/src/index.ts";
-import { catalogueXml, corpusPath, listCatalogue } from "./corpus.ts";
+import { captureText, catalogueXml, corpusPath, listCatalogue } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { captureLData } from "./etsdiff.ts";
 import { etsBranches, rowUnit, ROW_FORMAT, SWEEP_DIR, type RowSpec } from "./ets-sweep.ts";
@@ -59,19 +59,21 @@ corpusDescribe("a catalogue unit's donor", () => {
       // A System B download with Data Secure ends with the confirmed restart: of the units that show it, the MIX 2's and
       // the Jung's applications change their memory after a restart.
       ["M-0004_A-7072-21-99A7-O000A", "gvs-amma"],
-      ["M-0008_A-10D7-11-2783-O000A", "mdt-be02001"],
-      ["M-0048_A-107E-12-5B58", "mdt-be02001"],
+      // An MV-0705 application declaring a task control 1 and a task segment inside a segment: of the units that show
+      // both, the Auro and the theLuxa P300 leave as many answers unshown, and the Auro comes first by id.
+      ["M-0008_A-10D7-11-2783-O000A", "auro-m0081"],
+      ["M-0048_A-107E-12-5B58", "auro-m0081"],
       ["M-0048_A-140C-14-EB70", "no donor for MV-0701: abb-usu-4.2: its captures show no task-control-1; theben-meteodata-140s: its application changes its memory after a restart"],
       ["M-0048_A-493B-21-B471", "gvs-amma"],
       ["M-0048_A-9071-20-F258-O00EF", "meanwell-knx40e"],
-      ["M-0081_A-FE01-11-75D9", "mdt-be02001"],
-      ["M-0081_A-FF31-31-D6FF", "mdt-be02001"],
+      ["M-0081_A-FE01-11-75D9", "auro-m0081"],
+      ["M-0081_A-FF31-31-D6FF", "auro-m0081"],
       ["M-0083_A-00B4-32-3919", "mdt-be02001"],
       ["M-0083_A-00B6-32-9642", "mdt-be02001"],
       ["M-0083_A-0137-20-7EB2", "gvs-amma"],
       ["M-0083_A-0138-21-F18E-O0072", "no donor for MV-0012: no rule for it, the simulator models MV-07B0, MV-0701, MV-0705"],
       ["M-0085_A-0072-30-69AA", "gvs-amma"],
-      ["M-008E_A-7079-10-9C41", "mdt-be02001"],
+      ["M-008E_A-7079-10-9C41", "auro-m0081"],
       // With extended memory services ETS writes A_MemoryExtended_Write, which the MEAN WELL's captures do not show.
       ["M-00FA_A-A012-55-0000", "openknx-raumcontroller"],
       ["M-0162_A-0004-11-F245", "meanwell-knx40e"],
@@ -96,7 +98,8 @@ corpusDescribe("a catalogue unit's donor", () => {
 
 corpusDescribe("a catalogue unit", () => {
   test("answers ETS's reads of its donor's calibration row, each with its source, the product's identity where it gives one", async () => {
-    // The MDT BE-06001.02 on the MDT BE-02001.02, whose defaults row is calibrated against the real unit.
+    // The MDT BE-06001 on the MDT BE-02001.02, whose defaults row is calibrated against the real unit: the one MV-0705
+    // donor with a row, and the one other MV-0705 application it fits. The BE-06001's own rows take its own unit.
     const s = spec("M-0083_A-00B4-32-3919", "mdt-be02001");
     const text = readsOnly(readFileSync(row("M-0083_A-00B6-32-9642/defaults", "ets.log"), "utf8"));
     const own = await replay((o) => newSimUnit(s.donor, o), s.donor.interfaceIa, text);
@@ -128,6 +131,34 @@ corpusDescribe("a catalogue unit", () => {
     expect(whole.sim.refusals[0]).toBe("sim-refused A_PropertyValue_Write 1/5 0302400001008300b632: a task segment for application 008300b632, where the unit holds 008300b432");
   });
 
+  test("of an application without an own unit answers ETS's reads of its donor's captured download, the product's identity where it gives one", async () => {
+    // The Steinel True Presence on the Auro presence detector, the donor its rule picks.
+    const s = spec("M-008E_A-7079-10-9C41", "auro-m0081");
+    const capture = captureText("auro-m0081-ets-fulldownload.log");
+    const text = readsOnly(capture);
+    const own = await replay((o) => newSimUnit(s.donor, o), s.donor.interfaceIa, text);
+    const unit = catalogueUnit(s);
+    const cat = await replay((o) => unit.make(o), s.interfaceIa, text);
+    expect([own.sim.refusals, cat.sim.refusals]).toEqual([[], []]);
+    // Its frames are the donor's but for the manufacturer, which the product gives.
+    const differ = own.frames.flatMap((f, i) => (f === cat.frames[i] ? [] : [[f, cat.frames[i]]]));
+    expect(differ).toEqual([["b0 53d6000c10010081", "b0 53d6000c1001008e"]]);
+    expect(cat.sim.lines.filter((l) => l.startsWith("source"))).toEqual([
+      "source of 0/12: product: the application's manufacturer M-008E",
+      "source of 3/13: product: the application's program id 008e707910",
+      "source of PEI type: product: the application's PEI type 0",
+    ]);
+    // It holds the product's application: the donor's own task segment, in the donor's capture, it refuses.
+    const whole = await replay((o) => unit.make(o), s.interfaceIa, capture);
+    expect(whole.sim.refusals[0]).toBe("sim-refused A_PropertyValue_Write 1/5 03024000000081fe0111: a task segment for application 0081fe0111, where the unit holds 008e707910");
+    // And the task segment and task control 1 the product declares, not the donor's: the application's segment, its
+    // task segment inside it and its task control 1 taken, the donor's task control 1 (0/0) refused.
+    const sim = unit.make();
+    const send = (tpdu: string) => sim.sendCemi(cemiLData(s.interfaceIa, sim.deviceIa, Buffer.from(tpdu, "hex")));
+    for (const t of ["80", "43d70305100104000000000000000000", "c2", "47d70305100101000000000000000000", "c6", "4bd703051001030043ec02eef2038000", "ca", "4fd703051001030246ce00008e707910", "ce", "53d703051001030446bb010000000000", "d2", "57d70305100103040000000000000000"]) await send(t);
+    expect(sim.refusals).toEqual(["sim-refused A_PropertyValue_Write 3/5 03040000000000000000: a task control 1 at 0x0 with count 0, which the application does not declare for object 3"]);
+  });
+
   test("answers its load states as memory from what its donor held at the start", async () => {
     const unit = catalogueUnit(spec("M-0083_A-00B4-32-3919", "mdt-be02001")).make();
     // A connection, then A_Memory_Read of the four load states at 0xB6EA.
@@ -146,13 +177,15 @@ corpusDescribe("a catalogue unit", () => {
   });
 
   test("of an own unit's application on that unit answers ETS's whole download as the own unit does", async () => {
-    // Every own unit that fits the rule for its own application: the product's identity over it is its own.
-    const rows: Record<string, string> = Object.fromEntries(SIM_UNITS.map((u) => [u.id, `${u.catalogue.replace(/\.xml\.gz$/, "")}/defaults`]));
+    // Every own unit that fits the rule for its own application: the product's identity over it is its own. ETS's
+    // download of its defaults row, or for a unit without a sweep row yet its captured full download into the real unit.
+    // The Gira's captures show no task control 1, which its application declares.
+    const rowless: Record<string, string> = { "auro-m0081": "auro-m0081-ets-fulldownload.log", "theben-theluxa-p300": "theluxa-p300-ets-fulldownload.log", "mdt-be06001": "mdtui-ets-fulldownload.log" };
     const fit = SIM_UNITS.filter((u) => donorUnfit(u, catalogueXml(u.catalogue)) === null);
-    expect(fit.map((u) => u.id)).toEqual(["meanwell-knx40e", "theben-dali-gateway", "openknx-raumcontroller", "gvs-amma", "abb-usu-4.2", "mdt-be02001", "gira-ts3"]);
+    expect(fit.map((u) => u.id)).toEqual(["meanwell-knx40e", "theben-dali-gateway", "openknx-raumcontroller", "gvs-amma", "abb-usu-4.2", "mdt-be02001", "auro-m0081", "theben-theluxa-p300", "mdt-be06001"]);
     for (const u of fit) {
       const s: CatalogueUnitSpec = { id: `${u.id}@${u.id}`, name: u.name, application: u.catalogue.replace(/\.xml\.gz$/, ""), appXml: catalogueXml(u.catalogue), interfaceIa: u.interfaceIa, interfaceMaxApdu: u.interfaceMaxApdu, donor: u, rule: DONOR_RULES[unitMask(u)], learned: [] };
-      const text = readFileSync(row(rows[u.id], "ets.log"), "utf8");
+      const text = rowless[u.id] ? captureText(rowless[u.id]) : readFileSync(row(`${s.application}/defaults`, "ets.log"), "utf8");
       const own = await replay((o) => newSimUnit(u, o), u.interfaceIa, text);
       const cat = await replay((o) => catalogueUnit(s).make(o), u.interfaceIa, text);
       expect([u.id, cat.frames, cat.sim.refusals]).toEqual([u.id, own.frames, own.sim.refusals]);

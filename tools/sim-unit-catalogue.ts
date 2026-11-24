@@ -23,7 +23,7 @@ import { catalogueXml, corpusPath } from "./corpus.ts";
 import { SimUnit, type AnswerSources, type SimProperty, type SimUnitCoreModel } from "./sim-unit.ts";
 import { simUnitModel } from "./sim-unit-model.ts";
 import { SimUnit0701, simUnit0701Model, type AdditionalControl } from "./sim-unit-0701.ts";
-import { SimUnit0705, simUnit0705Model } from "./sim-unit-0705.ts";
+import { declaredTasks, SimUnit0705, simUnit0705Model, taskAtDeclaredMachines, type DeclaredTasks } from "./sim-unit-0705.ts";
 import { productUnit, rerunIdentity, type IdentityValue, type Mismatch, type ProductUnit } from "./sim-unit-product.ts";
 import { newSimUnit, SIM_UNITS, type SimUnitSpec } from "./sim-units.ts";
 
@@ -64,25 +64,27 @@ export const unitMask = (u: SimUnitSpec): Mask => (u.memoryMapped ? "MV-0701" : 
 
 const COMMON_RULE = "an own unit of the mask whose application leaves its memory as written after a restart (another application's would not) and whose captures show its answer to each restart a download of the application ends with; of those, the one whose captures leave the fewest of its answers unshown, then one collected in the state its captures show, then by id";
 // The rule per mask. MV-07B0 asks besides for A_MemoryExtended_Write where the application declares extended memory
-// services, MV-0701 for the additional load controls the application declares, which its units take or refuse as
-// their captures show.
+// services, MV-0701 for the additional load controls the application declares, MV-0705 for its task control 1 and a
+// task segment at an address that starts none of its declared segments, which its units take or refuse as their
+// captures show.
 export const DONOR_RULES: Record<Mask, string> = {
   "MV-07B0": `MV-07B0: ${COMMON_RULE}; and whose captures show A_MemoryExtended_Write where the application declares extended memory services`,
   "MV-0701": `MV-0701: ${COMMON_RULE}; and that takes every additional load control the application declares`,
-  "MV-0705": `MV-0705: ${COMMON_RULE}`,
+  "MV-0705": `MV-0705: ${COMMON_RULE}; and whose captures show the task control 1 and a task segment at an address that starts no declared segment where the application declares them`,
 };
 
 const ADDITIONAL_VERBS: Record<string, AdditionalControl> = { LdCtrlAbsSegment: "absolute-segment", LdCtrlTaskSegment: "task-segment", LdCtrlTaskCtrl1: "task-control-1" };
 
 type AppConfig = ReturnType<typeof parseAppConfig>;
-type Needs = { basic: boolean; confirmed: boolean; extendedWrite: boolean; additional: AdditionalControl[] };
+type Needs = { basic: boolean; confirmed: boolean; extendedWrite: boolean; additional: AdditionalControl[]; taskControl1: boolean; taskAtDeclared: number[] };
 
 // What a download of the application needs of its unit beyond the mask: a basic restart at its end (System 7's
 // LdCtrlRestart; a System B download without Data Secure, whose closing ETS takes from the mask), a confirmed restart
 // (a System B download with Data Secure, as ETS's downloads of the Theben MIX 2, the Jung 400021SE and the GVS AMMA
 // show; a declared LdCtrlMasterReset), A_MemoryExtended_Write (a System B application with extended memory services,
-// whose memory ETS writes so: packages/product/src/loadproc.ts), the additional load controls it declares on MV-0701.
-function needs(cfg: AppConfig): Needs {
+// whose memory ETS writes so: packages/product/src/loadproc.ts), the additional load controls it declares on MV-0701,
+// on MV-0705 the task control 1 it declares and the machines whose task segment starts none of their segments.
+function needs(cfg: AppConfig, appXml: string): Needs {
   const proc = cfg.loadProcedures;
   const systemB = cfg.mask === "MV-07B0";
   return {
@@ -90,6 +92,8 @@ function needs(cfg: AppConfig): Needs {
     confirmed: (systemB && proc.secureEnabled) || proc.verbs.includes("LdCtrlMasterReset"),
     extendedWrite: systemB && proc.extendedMemoryServices,
     additional: cfg.mask === "MV-0701" ? [...new Set(proc.verbs.flatMap((v) => (ADDITIONAL_VERBS[v] ? [ADDITIONAL_VERBS[v]] : [])))] : [],
+    taskControl1: cfg.mask === "MV-0705" && proc.verbs.includes("LdCtrlTaskCtrl1"),
+    taskAtDeclared: cfg.mask === "MV-0705" ? taskAtDeclaredMachines(appXml) : [],
   };
 }
 
@@ -103,17 +107,20 @@ function unfit(u: SimUnitSpec, need: Needs): string | null {
   if (need.extendedWrite && !b.memoryExtendedWrite) return "its captures show no A_MemoryExtended_Write";
   const missing = need.additional.filter((a) => !u.memoryMapped?.additional.includes(a));
   if (missing.length) return `its captures show no ${missing.join(", ")}`;
+  if (need.taskControl1 && !u.propertyMapped?.taskControl1) return "its captures show no task control 1";
+  const elsewhere = need.taskAtDeclared.filter((lsm) => !u.propertyMapped?.taskAtDeclaredAddress.includes(lsm));
+  if (elsewhere.length) return `its captures show no task segment of object ${elsewhere.join(", ")} at an address that starts no segment`;
   return null;
 }
 
 // Why the own unit `u` cannot be a donor for `appXml` (of its mask), or null where it can.
-export const donorUnfit = (u: SimUnitSpec, appXml: string): string | null => unfit(u, needs(parseAppConfig(appXml)));
+export const donorUnfit = (u: SimUnitSpec, appXml: string): string | null => unfit(u, needs(parseAppConfig(appXml), appXml));
 
 // How many of its answers the unit's captures leave unshown.
 function unshown(u: SimUnitSpec): number {
   const b = u.behaviour;
-  const stops = u.propertyMapped ? u.propertyMapped.unloadStopsApplication : u.memoryMapped ? undefined : "unloadStopsApplication" in b ? b.unloadStopsApplication : undefined;
-  return [b.restart.basic, b.restart.deadConnection, b.restart.confirmedRestartSeconds, b.programmingMode, b.serialNumberResponseTail, b.descriptionIndex, stops].filter((x) => x === null).length;
+  const stops = u.propertyMapped ? [u.propertyMapped.unloadStopsApplication, u.propertyMapped.loadStopsApplication] : u.memoryMapped ? [] : "unloadStopsApplication" in b ? [b.unloadStopsApplication] : [];
+  return [b.restart.basic, b.restart.deadConnection, b.restart.confirmedRestartSeconds, b.programmingMode, b.serialNumberResponseTail, b.descriptionIndex, ...stops].filter((x) => x === null).length;
 }
 const collectedInAnotherState = (u: SimUnitSpec) => "stateInCaptures" in u.behaviour && u.behaviour.stateInCaptures !== undefined;
 
@@ -121,12 +128,12 @@ export type DonorChoice = { donor: SimUnitSpec; rule: string } | { refused: stri
 
 // The donor of `appXml` by the rule of its mask, among `units`.
 export function chooseDonor(appXml: string, units: readonly SimUnitSpec[] = SIM_UNITS): DonorChoice {
-  return chooseDonorFor(parseAppConfig(appXml), units);
+  return chooseDonorFor(parseAppConfig(appXml), appXml, units);
 }
-function chooseDonorFor(cfg: AppConfig, units: readonly SimUnitSpec[]): DonorChoice {
+function chooseDonorFor(cfg: AppConfig, appXml: string, units: readonly SimUnitSpec[]): DonorChoice {
   const mask = cfg.mask;
   if (!(MASKS as readonly string[]).includes(mask)) return { refused: `no donor for ${mask}: no rule for it, the simulator models ${MASKS.join(", ")}` };
-  const need = needs(cfg);
+  const need = needs(cfg, appXml);
   const same = units.filter((u) => unitMask(u) === mask);
   const why = same.map((u) => ({ u, why: unfit(u, need) }));
   const fit = why.filter((x) => x.why === null).map((x) => x.u);
@@ -145,12 +152,12 @@ export function catalogueUnitSpec(application: string, appXml: string, opts: { d
   const cfg = parseAppConfig(appXml);
   if (cfg.id !== application) return { refused: `the application program given is ${cfg.id}, not ${application}` };
   let choice: DonorChoice;
-  if (opts.donor === undefined) choice = chooseDonorFor(cfg, units);
+  if (opts.donor === undefined) choice = chooseDonorFor(cfg, appXml, units);
   else {
     const named = units.find((u) => u.id === opts.donor);
     if (!named) return { refused: `no own unit ${opts.donor} to borrow` };
     if (unitMask(named) !== cfg.mask) return { refused: `the donor ${named.id} is of ${unitMask(named)}, the application of ${cfg.mask}` };
-    const why = unfit(named, needs(cfg));
+    const why = unfit(named, needs(cfg, appXml));
     if (why) return { refused: `the donor ${named.id} does not fit the rule: ${why}` };
     choice = { donor: named, rule: DONOR_RULES[cfg.mask as Mask] };
   }
@@ -185,9 +192,10 @@ const sourceOf = (v: IdentityValue) => v.sources.map((s) => (s.from === "product
 
 type SimOpts = ConstructorParameters<typeof SimUnit>[2];
 type Objects = SimUnitCoreModel["objects"];
-// What the catalogue unit puts over its donor's model: its properties and their sources, and on System 7 the program
-// id and PEI type its task segments carry, which the unit checks them against.
-type Over = { objects: Objects; sources: AnswerSources; programId: Buffer; peiType: number };
+// What the catalogue unit puts over its donor's model: its properties and their sources, on System 7 the program id
+// and PEI type its task segments carry, which the unit checks them against, and on MV-0705 the task segments and
+// task control 1 its application declares.
+type Over = { objects: Objects; sources: AnswerSources; programId: Buffer; peiType: number; tasks: DeclaredTasks | null };
 type DonorModel = { core: SimUnitCoreModel; make: (over: Over, opts: SimOpts) => SimUnit; memoryAt: (a: number) => number | undefined };
 
 // The load-state machine (1 to 15) whose state a System 7 unit answers at memory address `a`, or null.
@@ -203,7 +211,7 @@ function donorModel(donor: SimUnitSpec): DonorModel {
   const opts = (o: SimOpts): SimOpts => ({ interfaceMaxApdu: donor.interfaceMaxApdu, ...o });
   if (donor.propertyMapped) {
     const m = simUnit0705Model(collection, xml, donor.behaviour, donor.propertyMapped);
-    const make = ({ objects, sources, programId, peiType }: Over, o: SimOpts) => new SimUnit0705({ ...m, objects, sources, programId, propertyMapped: { ...m.propertyMapped, peiType } }, donor.interfaceIa, opts(o));
+    const make = ({ objects, sources, programId, peiType, tasks }: Over, o: SimOpts) => new SimUnit0705({ ...m, ...tasks, objects, sources, programId, propertyMapped: { ...m.propertyMapped, peiType } }, donor.interfaceIa, opts(o));
     return { core: m, make, memoryAt: (a) => (m.memory.known[a] ? m.memory.bytes[a] : loadStateAt(m, a)) };
   }
   if (donor.memoryMapped) {
@@ -260,7 +268,7 @@ export function catalogueUnit(spec: CatalogueUnitSpec): CatalogueUnit {
   const appXml = spec.appXml;
   const cfg = parseAppConfig(appXml);
   if (cfg.mask !== unitMask(spec.donor)) refuse(`the application is for ${cfg.mask}, the donor ${spec.donor.id} is ${unitMask(spec.donor)}`);
-  const why = unfit(spec.donor, needs(cfg));
+  const why = unfit(spec.donor, needs(cfg, appXml));
   if (why) refuse(`the donor ${spec.donor.id} does not fit the rule: ${why}`);
   const donor = donorModel(spec.donor);
   const compose = (identity: ProductUnit) => {
@@ -302,7 +310,7 @@ export function catalogueUnit(spec: CatalogueUnitSpec): CatalogueUnit {
     memoryAt: donor.memoryAt,
   };
   if (spec.donor.propertyMapped || spec.donor.memoryMapped) properties.set("PEI type", `product: the application's PEI type ${cfg.appPeiType}`);
-  const overlay: Over = { objects, sources, programId: Buffer.from(programId), peiType: cfg.appPeiType };
+  const overlay: Over = { objects, sources, programId: Buffer.from(programId), peiType: cfg.appPeiType, tasks: spec.donor.propertyMapped ? declaredTasks(appXml) : null };
   return { spec, identity, objects, properties, make: (opts = {}) => donor.make(overlay, opts) };
 }
 
