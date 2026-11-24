@@ -35,6 +35,21 @@
    "mask": "0012",
    "manufacturer": "M-FFF9",
    "outcome": "skipped-mask"
+  },
+  "M-FFF2_A-0012-10-3456": {
+   "mask": "07B0",
+   "manufacturer": "M-FFF2",
+   "outcome": "captured"
+  },
+  "M-FFF2_A-0016-10-8901-O0001": {
+   "mask": "07B0",
+   "manufacturer": "M-FFF2",
+   "outcome": "captured"
+  },
+  "M-FFF2_A-0010-13-AAAA-O0002": {
+   "mask": "0705",
+   "manufacturer": "M-FFF2",
+   "outcome": "captured"
   }
  }
 }

@@ -865,7 +865,8 @@ product gives that ETS contradicts is not overwritten).
 ### The catalogue's rows
 
 The sweep's rows come from ETS's online catalogue, as ETS keeps it on the bench host's disk; nothing
-is read from a manufacturer's file by another route, and nothing of ETS's is written.
+is read from a manufacturer's file by another route. ETS's files are only read: ETS itself fills its
+product store when the driver clicks its catalogue's "Herunterladen".
 
 ```bash
 bun run tools/ets-driver.ts catalogue-download [--batch <rows>] [--from <row>] [--out <dir>]
@@ -890,9 +891,13 @@ bun run tools/ets-catalogue.ts list <fetched dir> --json <file> --md <file> [--m
 - **`list`** builds one row per application the market offers at the given masks: its mask from the
   product data (an application not loaded has no row and is listed as such, never guessed from its
   name), its version as ETS shows it, every order number it is offered under, and one to search for,
-  where it stands alone at its version. Two applications under one order number and version are both
-  rows, each naming the other, so the sweep selects them by application id. An entry whose id,
-  application identifier, fingerprint or product data disagree is refused with the reason. With
+  where it stands alone at its version (an order number is searched across the whole catalogue). Two
+  applications under one order number and version are both rows, each naming the other; a row without
+  an order number of its own is flagged, as the driver refuses an order number with two applications at
+  the unit's version. A hardware's second program beside the application (a PEI program, or a second
+  application) is named on the row with its type from the product data. An entry whose id,
+  application identifier, fingerprint or manufacturer disagree, and an application whose product data
+  does not fit it, is refused with the reason. With
   bussard's manifest it lists the applications in either list and not the other, each with the reason
   the lists show. The Markdown's generated part is rewritten between its markers; text around it
   stays.

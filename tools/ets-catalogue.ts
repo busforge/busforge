@@ -14,13 +14,15 @@
 // loaded (`tools/ets-driver.ts catalogue-download` loads the whole catalogue).
 //
 // LIST builds the rows. An entry counts when the market's catalogue ids name it and it carries an application
-// (its id `…_HP-<number>-<version>-<fingerprint>[-O<n>]_CI-…`, checked against the entry's application
+// (its id `…_HP-<number>-<version>-<fingerprint>[-O<n>][-<second program>]_CI-…`, checked against the entry's application
 // identifier and fingerprint). Its mask is the product data's MaskVersion; an application ETS has not loaded
 // has none and is listed as unloaded, never guessed from its name. A row is one application at one of the
 // masks: its manufacturer, version (as ETS's catalogue shows it), name and every order number it is offered
-// under. Two applications under one order number and version are both rows, each flagged with the other: the
-// sweep selects them by application id. The row's order number is one under which it stands alone at its
-// version where there is one. bussard's manifest (its swept applications by mask) is compared both ways, each
+// under. Two applications under one order number and version are both rows, each flagged with the other; the
+// row's order number is one under which it stands alone at its version, and a row without one is flagged
+// (tools/ets-driver.ts refuses an order number with two applications at the unit's version). A hardware's second
+// program beside the application (a PEI program, or a second application) is named on the row with its type.
+// bussard's manifest (its swept applications by mask) is compared both ways, each
 // difference with the reason the two lists show.
 //
 // The Markdown file's part between GENERATED_START and GENERATED_END is rewritten; text around it is kept.
@@ -28,7 +30,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { host, ssh } from "./ets-driver.ts";
+import { catalogueVersion, host, q, ssh, xmlUnescape } from "./ets-driver.ts";
 
 export const LIST_FORMAT = "busforge-ets-catalogue-list/1";
 export const SWEEP_MASKS = ["07B0", "0701", "0705"];
@@ -50,41 +52,39 @@ export interface IndexFile {
 export interface MarketFile { Version: number; Markets: { Id: string; DefaultName: string }[] }
 // An application's element in ETS's product store, by attribute.
 export type ApplicationHeader = Record<string, string>;
-export interface Source { ets: string; licence: string; catalogueDate: string; fetched: string; host: string }
+export interface Source { ets: string; licence: string; catalogueDate: string; fetched: string }
 export interface Fetched { indexes: IndexFile[]; market: MarketFile; applications: Map<string, ApplicationHeader>; source: Source }
 
-const json = <T>(text: string): T => JSON.parse(text.replace(/^﻿/, "")) as T;
+const json = <T>(text: string): T => JSON.parse(text.replace(/^\uFEFF/, "")) as T;
 
-const XML_ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
 // The attributes of one XML start tag.
 export function attributes(tag: string): ApplicationHeader {
   const out: ApplicationHeader = {};
-  for (const m of tag.matchAll(/([A-Za-z_][\w.-]*)="([^"]*)"/g)) {
-    out[m[1]] = m[2].replace(/&(#x[0-9a-fA-F]+|#\d+|\w+);/g, (all, e: string) =>
-      e.startsWith("#x") ? String.fromCodePoint(parseInt(e.slice(2), 16)) : e.startsWith("#") ? String.fromCodePoint(Number(e.slice(1))) : XML_ENTITIES[e] ?? all);
-  }
+  for (const m of tag.matchAll(/([A-Za-z_][\w.-]*)="([^"]*)"/g)) out[m[1]] = xmlUnescape(m[2]);
   return out;
 }
 
 // ---- fetch ----
 
-const q = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
-
 function fetchCatalogue(out: string): void {
   const h = host();
-  const store = `${h.prefix}/drive_c/ProgramData/KNX/ETS6`;
+  const store = h.data;
   if (existsSync(out) && readdirSync(out).length) throw new Error(`${out} exists and is not empty`);
   mkdirSync(out, { recursive: true });
-  const tar = ssh(`cd ${q(`${store}/OC`)} && tar cf - IndexFiles/*.idx MarketFile/MarketFile.mf`, "", { timeoutMs: 300_000 });
-  execFileSync("tar", ["xf", "-", "-C", out], { input: tar });
+  const tar = ssh(`cd ${q(`${store}/OC`)} && tar czf - IndexFiles/*.idx MarketFile/MarketFile.mf`, "", { timeoutMs: 300_000 });
+  execFileSync("tar", ["xzf", "-", "-C", out], { input: tar });
   // One line per application in the store: its directory and its <AP …> start tag (empty where none reads).
   const aps = ssh(`cd ${q(`${store}/ProductStore`)} && for f in M-*/M-*_A-*/A; do [ -e "$f" ] || continue; printf '%s\\t' "$f"; grep -a -m1 -o '<AP [^>]*>' "$f" || echo; done`, "", { timeoutMs: 900_000 });
   writeFileSync(join(out, "applications.tsv"), aps);
-  const facts = ssh("bash -s", `cd ${q(store)}/OC/IndexFiles && date -u -r "$(ls -t *.idx | head -1)" '+%Y-%m-%dT%H:%M:%SZ'
-cd ${q(h.etsLog)} && cat $(ls -r ETS6.log.* ETS6.log 2>/dev/null) | grep -a 'StartupLogging - Version:' | tail -1 | sed 's/.*Version: //'
-cat $(ls -r ETS6.log.* ETS6.log 2>/dev/null) | grep -a -o 'LICENSE="[^"]*"' | tail -1`, { timeoutMs: 120_000 }).toString("latin1").split("\n").map((l) => l.trim());
-  const source: Source = { catalogueDate: facts[0], ets: facts[1], licence: facts[2]?.replace(/^LICENSE="|"$/g, "") ?? "", fetched: new Date().toISOString(), host: process.env.ETS_HOST ?? "bench host" };
-  if (!source.catalogueDate || !source.ets) throw new Error(`the bench host names no catalogue date or ETS version: ${JSON.stringify(facts)}`);
+  // ETS6.log and its rotations, oldest first (ETS6.log.<n> is older the higher its n).
+  // Each fact on a line of its own, named, so one that is missing leaves the others in place.
+  const said = ssh("bash -s", `cd ${q(store)}/OC/IndexFiles && echo "date=$(date -u -r "$(ls -t *.idx | head -1)" '+%Y-%m-%dT%H:%M:%SZ')"
+cd ${q(h.etsLog)} && logs=$(ls ETS6.log ETS6.log.* 2>/dev/null | sort -t. -k3,3nr) && [ -n "$logs" ] || exit 1
+echo "ets=$(cat $logs | grep -a 'StartupLogging - Version:' | tail -1 | sed 's/.*Version: //' | tr -d '\r')"
+echo "licence=$(cat $logs | grep -a -o 'LICENSE="[^"]*"' | tail -1 | sed 's/^LICENSE="//; s/"$//')"`, { timeoutMs: 120_000 }).toString("latin1");
+  const fact = (name: string) => said.match(new RegExp(`^${name}=(.+)$`, "m"))?.[1].trim() ?? "";
+  const source: Source = { catalogueDate: fact("date"), ets: fact("ets"), licence: fact("licence"), fetched: new Date().toISOString() };
+  if (!source.catalogueDate || !source.ets || !source.licence) throw new Error(`the bench host names no catalogue date, ETS version or licence: ${said.trim()}`);
   writeFileSync(join(out, "source.json"), `${JSON.stringify(source, null, 1)}\n`);
   const n = readdirSync(join(out, "IndexFiles")).length, a = aps.toString().split("\n").filter(Boolean).length;
   console.log(`${out}: ${n} index files, ${a} applications in ETS's product store`);
@@ -95,8 +95,10 @@ export function readFetched(dir: string): Fetched {
     .map((f) => json<IndexFile>(readFileSync(join(dir, "IndexFiles", f), "utf8")));
   const applications = new Map<string, ApplicationHeader>();
   for (const line of readFileSync(join(dir, "applications.tsv"), "utf8").split("\n")) {
-    const [path, tag] = line.split("\t");
-    if (!path) continue;
+    if (!line) continue;
+    const tab = line.indexOf("\t");
+    if (tab < 1) throw new Error(`applications.tsv holds a line without a path: ${line.slice(0, 120)}`);
+    const path = line.slice(0, tab), tag = line.slice(tab + 1);
     const id = path.split("/")[1];
     if (!tag?.trim()) throw new Error(`${path} in ETS's product store holds no <AP> element`);
     const a = attributes(tag);
@@ -112,8 +114,9 @@ export interface Row {
   application: string; manufacturer: string; manufacturerName: string; mask: string; version: string; name: string;
   // The order number the sweep searches the catalogue for, and every order number the market offers it under.
   orderNumber: string; orderNumbers: string[]; catalogueEntries: number;
-  // Other applications under one of its order numbers at its version (any mask).
-  sameOrderAndVersion?: { orderNumber: string; applications: string[] }[];
+  // Other applications under one of its order numbers at its version (any mask); noOwnOrderNumber where that
+  // holds for every one of its order numbers.
+  sameOrderAndVersion?: { orderNumber: string; applications: string[] }[]; noOwnOrderNumber?: true;
   // The hardware's second program beside the application, its type from the product data (null: not loaded).
   secondProgram?: { application: string; programType: string | null }[];
   secure?: true; pluginRequired?: true; externalSoftware?: true; downloadInfoIncomplete?: true;
@@ -127,12 +130,18 @@ export interface BussardCheck {
 export interface CatalogueList {
   format: string; source: Source & { market: string; indexFiles: number; masks: string[] };
   counts: {
-    indexEntries: number; marketEntries: number; withoutApplication: number; applications: number; loaded: number; unloaded: number;
+    // applications = loaded + unloaded + refusedApplications.
+    indexEntries: number; marketEntries: number; withoutApplication: number; refusedEntries: number;
+    applications: number; loaded: number; unloaded: number; refusedApplications: number;
     byMask: Record<string, number>; rows: number; rowsByManufacturer: Record<string, Record<string, number>>; sameOrderAndVersion: number;
+    // Catalogue ids of the market that name no entry of the index; second programs that are applications.
+    marketIdsWithoutEntry: number; secondApplications: number;
   };
   rows: Row[];
   unloaded: { application: string; orderNumbers: string[] }[];
-  refused: { entry: string; why: string }[];
+  // An index entry whose parts disagree (no application counted), an application or a second program whose
+  // product data does not fit it.
+  refused: { kind: "entry" | "application" | "second program"; entry: string; why: string }[];
   bussard?: BussardCheck;
 }
 
@@ -145,11 +154,13 @@ const ENTRY_WITHOUT_APPLICATION = /_HP_CI-/;
 
 // The application an entry carries, checked against its application identifier and fingerprint; null for an
 // entry without one; a string for an entry whose parts disagree.
-function entryApplication(e: IndexEntry): { id: string; manufacturer: string; version: number; second?: string } | null | string {
+function entryApplication(e: IndexEntry, manufacturerId: number): { id: string; manufacturer: string; version: number; second?: string } | null | string {
   if (ENTRY_WITHOUT_APPLICATION.test(e.Id)) return null;
   const m = e.Id.match(ENTRY_APPLICATION);
   if (!m) return "its id names no application";
   const [, manufacturer, number, version, fingerprint, suffix, ...second] = m;
+  if (manufacturer !== `M-${hex(manufacturerId, 4)}`) return `it stands in manufacturer M-${hex(manufacturerId, 4)}'s index`;
+  if (!Number.isInteger(e.FingerPrint)) return `its fingerprint is ${JSON.stringify(e.FingerPrint)}`;
   const ai = e.ApplicationIdentifier;
   const fromIdentifier = ai?.length === 5 ? `M-${hex(ai[0] * 256 + ai[1], 4)}_A-${hex(ai[2] * 256 + ai[3], 4)}-${hex(ai[4], 2)}` : "";
   if (fromIdentifier !== `${manufacturer}_A-${number}-${version}`) return `its application identifier [${ai?.join(",")}] is no ${manufacturer}_A-${number}-${version}`;
@@ -158,25 +169,34 @@ function entryApplication(e: IndexEntry): { id: string; manufacturer: string; ve
   return { id, manufacturer, version: parseInt(version, 16), ...(second[0] ? { second: `${manufacturer}_A-${second[0]}-${second[1]}-${second[2]}${second[3]}` } : {}) };
 }
 
-const shownVersion = (v: number) => `${v >> 4}.${v & 15}`;
 const germanName = (e: IndexEntry) => e.Translations?.find((t) => t.Language === "de-DE")?.Translation.ApplicationProgramName ?? e.ApplicationProgramName;
 const byText = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
+// Why ETS's product data for program `id` does not name it (its number and version), or null.
+function headerMismatch(id: string, h: ApplicationHeader): string | null {
+  const [, number, version] = id.match(/_A-([0-9A-F]{4})-([0-9A-F]{2})/)!;
+  const is = (v: string | undefined, n: string) => v !== undefined && /^\d+$/.test(v) && Number(v) === parseInt(n, 16);
+  return is(h.ApplicationNumber, number) && is(h.ApplicationVersion, version)
+    ? null : `ETS's product data names application number ${h.ApplicationNumber} version ${h.ApplicationVersion}`;
+}
 
 export function catalogueList(f: Fetched, marketName: string, masks: string[], bussard?: BussardManifest): CatalogueList {
   const market = f.market.Markets.find((m) => m.DefaultName === marketName) ?? (() => { throw new Error(`ETS's market file holds no market ${marketName}`); })();
   const refused: CatalogueList["refused"] = [];
-  let indexEntries = 0, marketEntries = 0, withoutApplication = 0;
+  let indexEntries = 0, marketEntries = 0, withoutApplication = 0, marketIdsWithoutEntry = 0;
   interface App { id: string; manufacturer: string; manufacturerName: string; version: number; name: string; second: Set<string>; entries: IndexEntry[] }
   const apps = new Map<string, App>();
   for (const file of f.indexes) {
     const offered = new Set(file.Markets?.find((m) => m.Id === market.Id)?.CatalogIds ?? []);
+    const ids = new Set(file.Entries.map((e) => e.Id));
+    marketIdsWithoutEntry += [...offered].filter((id) => !ids.has(id)).length;
     for (const e of file.Entries) {
       indexEntries++;
       if (!offered.has(e.Id)) continue;
       marketEntries++;
-      const a = entryApplication(e);
+      const a = entryApplication(e, file.ManufacturerId);
       if (a === null) { withoutApplication++; continue; }
-      if (typeof a === "string") { refused.push({ entry: e.Id, why: a }); continue; }
+      if (typeof a === "string") { refused.push({ kind: "entry", entry: e.Id, why: a }); continue; }
       const app = apps.get(a.id) ?? { id: a.id, manufacturer: a.manufacturer, manufacturerName: file.ManufacturerName, version: a.version, name: germanName(e), second: new Set(), entries: [] };
       app.entries.push(e);
       if (a.second) app.second.add(a.second);
@@ -188,20 +208,28 @@ export function catalogueList(f: Fetched, marketName: string, masks: string[], b
   for (const app of apps.values()) {
     const h = f.applications.get(app.id);
     if (!h) continue;
-    const [, number, version] = app.id.match(/_A-([0-9A-F]{4})-([0-9A-F]{2})/)!;
-    if (Number(h.ApplicationNumber) !== parseInt(number, 16) || Number(h.ApplicationVersion) !== parseInt(version, 16)) {
-      refused.push({ entry: app.id, why: `ETS's product data names application number ${h.ApplicationNumber} version ${h.ApplicationVersion}` });
-      continue;
-    }
-    if (h.ProgramType !== "ApplicationProgram") { refused.push({ entry: app.id, why: `ETS's product data holds it as ${h.ProgramType ?? "no program type"}` }); continue; }
+    const mismatch = headerMismatch(app.id, h);
+    const refuse = (why: string) => refused.push({ kind: "application", entry: app.id, why });
+    if (mismatch) { refuse(mismatch); continue; }
+    if (h.ProgramType !== "ApplicationProgram") { refuse(`ETS's product data holds it as ${h.ProgramType ?? "no program type"}`); continue; }
     const m = h.MaskVersion?.match(/^MV-([0-9A-F]{4})$/);
-    if (!m) { refused.push({ entry: app.id, why: `ETS's product data holds no mask (MaskVersion ${h.MaskVersion ?? "missing"})` }); continue; }
+    if (!m) { refuse(`ETS's product data holds no mask (MaskVersion ${h.MaskVersion ?? "missing"})`); continue; }
     maskOf.set(app.id, m[1]);
   }
-  // Applications under one order number at one version, over every application of the market.
+  // The second programs' type from the product data (null: not loaded); one whose data names another program refused.
+  const secondType = new Map<string, string | null>(), secondOf = new Map<string, string>();
+  for (const app of apps.values()) for (const id of app.second) {
+    secondOf.set(id, app.id);
+    if (secondType.has(id)) continue;
+    const h = f.applications.get(id), mismatch = h && headerMismatch(id, h);
+    if (mismatch) refused.push({ kind: "second program", entry: id, why: mismatch });
+    secondType.set(id, h && !mismatch ? h.ProgramType ?? null : null);
+  }
+  // Applications under one order number at one version, over every application of the market: the driver searches
+  // the whole catalogue by order number.
   const atOrder = new Map<string, Set<string>>();
   for (const app of apps.values()) for (const e of app.entries) {
-    const k = `${app.manufacturer}\t${e.OrderNumber}\t${app.version}`;
+    const k = `${e.OrderNumber}\t${app.version}`;
     atOrder.set(k, (atOrder.get(k) ?? new Set()).add(app.id));
   }
   const byMask: Record<string, number> = {};
@@ -211,20 +239,23 @@ export function catalogueList(f: Fetched, marketName: string, masks: string[], b
   for (const app of [...apps.values()].sort((a, b) => byText(a.id, b.id))) {
     const mask = maskOf.get(app.id);
     if (!mask) {
-      if (!refused.some((r) => r.entry === app.id)) unloaded.push({ application: app.id, orderNumbers: orderNumbersOf(app) });
+      if (!refused.some((r) => r.kind === "application" && r.entry === app.id)) unloaded.push({ application: app.id, orderNumbers: orderNumbersOf(app) });
       continue;
     }
     byMask[mask] = (byMask[mask] ?? 0) + 1;
     if (!masks.includes(mask)) continue;
     const orderNumbers = orderNumbersOf(app);
-    const others = orderNumbers.map((o) => ({ orderNumber: o, applications: [...atOrder.get(`${app.manufacturer}\t${o}\t${app.version}`)!].filter((x) => x !== app.id).sort(byText) }));
+    const others = orderNumbers.map((o) => ({ orderNumber: o, applications: [...atOrder.get(`${o}\t${app.version}`)!].filter((x) => x !== app.id).sort(byText) }));
     const shared = others.filter((o) => o.applications.length);
+    // An empty order number is none to search for.
+    const own = others.find((o) => o.orderNumber && !o.applications.length);
     const row: Row = {
-      application: app.id, manufacturer: app.manufacturer, manufacturerName: app.manufacturerName, mask, version: shownVersion(app.version), name: app.name,
-      orderNumber: (others.find((o) => !o.applications.length) ?? others[0]).orderNumber, orderNumbers, catalogueEntries: app.entries.length,
+      application: app.id, manufacturer: app.manufacturer, manufacturerName: app.manufacturerName, mask, version: catalogueVersion(app.version), name: app.name,
+      orderNumber: (own ?? others.find((o) => o.orderNumber) ?? others[0]).orderNumber, orderNumbers, catalogueEntries: app.entries.length,
     };
     if (shared.length) row.sameOrderAndVersion = shared;
-    if (app.second.size) row.secondProgram = [...app.second].sort(byText).map((id) => ({ application: id, programType: f.applications.get(id)?.ProgramType ?? null }));
+    if (!own) row.noOwnOrderNumber = true;
+    if (app.second.size) row.secondProgram = [...app.second].sort(byText).map((id) => ({ application: id, programType: secondType.get(id) ?? null }));
     if (app.entries.some((e) => e.SecurityInfo !== 0)) row.secure = true;
     if (app.entries.some((e) => e.NoDownloadWithoutPlugin)) row.pluginRequired = true;
     if (app.entries.some((e) => e.RequiresExternalSoftware)) row.externalSoftware = true;
@@ -241,12 +272,20 @@ export function catalogueList(f: Fetched, marketName: string, masks: string[], b
     format: LIST_FORMAT,
     source: { ...f.source, market: marketName, indexFiles: f.indexes.length, masks },
     counts: {
-      indexEntries, marketEntries, withoutApplication, applications: apps.size, loaded: maskOf.size, unloaded: unloaded.length, byMask, rows: rows.length,
+      indexEntries, marketEntries, withoutApplication, refusedEntries: refused.filter((r) => r.kind === "entry").length,
+      applications: apps.size, loaded: maskOf.size, unloaded: unloaded.length, refusedApplications: refused.filter((r) => r.kind === "application").length,
+      byMask, rows: rows.length,
       rowsByManufacturer, sameOrderAndVersion: rows.filter((r) => r.sameOrderAndVersion).length,
+      marketIdsWithoutEntry, secondApplications: [...secondType.values()].filter((t) => t === "ApplicationProgram").length,
     },
     rows, unloaded, refused,
   };
-  if (bussard) list.bussard = compareBussard(rows, new Map([...apps.keys()].map((id) => [id, maskOf.get(id)])), bussard, masks);
+  if (bussard) {
+    const why = new Map(refused.filter((r) => r.kind === "application").map((r) => [r.entry, r.why]));
+    const offered = new Map<string, Offered>([...apps.keys()].map((id) => [id, maskOf.has(id) ? { mask: maskOf.get(id)! } : why.has(id) ? { refused: why.get(id)! } : {}]));
+    for (const [id, first] of secondOf) if (!offered.has(id)) offered.set(id, { secondOf: first });
+    list.bussard = compareBussard(rows, offered, bussard, masks);
+  }
   return list;
 }
 
@@ -254,26 +293,40 @@ export function catalogueList(f: Fetched, marketName: string, masks: string[], b
 
 export interface BussardManifest { generated: string; apps: Record<string, { mask: string; manufacturer: string; outcome: string }> }
 
-const applicationNumber = (id: string) => id.match(/^(M-[0-9A-F]{4}_A-[0-9A-F]{4})-/)?.[1] ?? id;
+// An application without its version and fingerprint: M-0002_A-4758-O0007 for M-0002_A-4758-11-0055-O0007.
+const applicationKey = (id: string) => id.replace(/-[0-9A-F]{2}-[0-9A-F]{4}(?=(-O[0-9A-F]+)?$)/, "");
 
-// bussard's applications at `masks` against the rows, both ways; `offered`: every application of the market with
-// its mask (undefined where its product data is not loaded).
-function compareBussard(rows: Row[], offered: Map<string, string | undefined>, manifest: BussardManifest, masks: string[]): BussardCheck {
+// Ids by their application key.
+function byKey(ids: Iterable<string>): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const id of ids) out.set(applicationKey(id), [...(out.get(applicationKey(id)) ?? []), id]);
+  return out;
+}
+
+// A program the market offers: an application with its mask or why its product data was refused (neither: not
+// loaded), or a second program beside an application.
+interface Offered { mask?: string; refused?: string; secondOf?: string }
+
+// bussard's applications at `masks` against the rows, both ways.
+function compareBussard(rows: Row[], offered: Map<string, Offered>, manifest: BussardManifest, masks: string[]): BussardCheck {
   const theirs = new Map(Object.entries(manifest.apps).filter(([, a]) => masks.includes(a.mask)));
   const ours = new Map(rows.map((r) => [r.application, r]));
-  const otherVersions = (ids: Iterable<string>, id: string) => [...ids].filter((x) => x !== id && applicationNumber(x) === applicationNumber(id)).sort(byText);
+  const offeredByKey = byKey(offered.keys()), theirsByKey = byKey(Object.keys(manifest.apps));
+  const otherVersions = (index: Map<string, string[]>, id: string) => (index.get(applicationKey(id)) ?? []).filter((x) => x !== id).sort(byText);
   const theirManufacturers = new Set(Object.values(manifest.apps).map((a) => a.manufacturer));
   const theirsNotOurs: BussardDifference[] = [], oursNotTheirs: BussardDifference[] = [], maskDiffers: BussardCheck["maskDiffers"] = [];
   for (const [id, a] of theirs) {
     const row = ours.get(id);
     if (row) { if (row.mask !== a.mask) maskDiffers.push({ application: id, ours: row.mask, theirs: a.mask }); continue; }
     const d: BussardDifference = { application: id, mask: a.mask, reason: "", outcome: a.outcome };
-    if (offered.has(id)) {
-      const mask = offered.get(id);
-      if (mask === undefined) d.reason = "in the catalogue, its product data not loaded here";
-      else { d.reason = "in the catalogue at another mask by its product data here"; d.detail = mask; }
+    const here = offered.get(id);
+    if (here) {
+      if (here.secondOf) { d.reason = "in the catalogue as the second program beside another application"; d.detail = here.secondOf; }
+      else if (here.mask) { d.reason = "in the catalogue at another mask by its product data here"; d.detail = here.mask; }
+      else if (here.refused) { d.reason = "in the catalogue, its product data refused here"; d.detail = here.refused; }
+      else d.reason = "in the catalogue, its product data not loaded here";
     } else {
-      const others = otherVersions(offered.keys(), id);
+      const others = otherVersions(offeredByKey, id);
       if (others.length) { d.reason = "not in the catalogue; another version of its application is"; d.detail = others.join(", "); }
       else d.reason = "not in the catalogue for this market";
     }
@@ -283,7 +336,7 @@ function compareBussard(rows: Row[], offered: Map<string, string | undefined>, m
     if (theirs.has(id)) continue;
     const d: BussardDifference = { application: id, mask: r.mask, reason: "" };
     const other = manifest.apps[id];
-    const versions = otherVersions(Object.keys(manifest.apps), id);
+    const versions = otherVersions(theirsByKey, id);
     if (other) { d.reason = "in bussard's manifest at another mask"; d.detail = other.mask; }
     else if (versions.length) { d.reason = "bussard holds another version of its application"; d.detail = versions.map((v) => `${v} (${manifest.apps[v].outcome})`).join(", "); }
     else d.reason = theirManufacturers.has(r.manufacturer) ? "not in bussard's manifest; its manufacturer is" : "not in bussard's manifest, nor its manufacturer";
@@ -320,12 +373,16 @@ export function markdown(list: CatalogueList): string {
     `| index entries | ${c.indexEntries} |`,
     `| offered in ${s.market} | ${c.marketEntries} |`,
     `| of them without an application | ${c.withoutApplication} |`,
+    `| of them refused (id, identifier, fingerprint or manufacturer disagree) | ${c.refusedEntries} |`,
     `| applications | ${c.applications} |`,
     `| with product data loaded (mask known) | ${c.loaded} |`,
     `| not loaded (no mask, no row) | ${c.unloaded} |`,
-    `| refused (parts disagree) | ${list.refused.length} |`,
+    `| refused (the product data does not fit) | ${c.refusedApplications} |`,
     `| **rows (${s.masks.join(", ")})** | **${c.rows}** |`,
     `| rows sharing an order number and version with another application | ${c.sameOrderAndVersion} |`,
+    `| of them without an order number of their own | ${list.rows.filter((r) => r.noOwnOrderNumber).length} |`,
+    `| second programs that are applications (no row of their own) | ${c.secondApplications} |`,
+    `| catalogue ids of the market naming no index entry | ${c.marketIdsWithoutEntry} |`,
     "",
     "### Applications per mask (product data)",
     "",
@@ -350,7 +407,7 @@ export function markdown(list: CatalogueList): string {
     ...Object.entries(Object.groupBy(list.rows.flatMap((r) => r.secondProgram ?? []), (p) => p.programType ?? "not loaded"))
       .sort((a, b) => byText(a[0], b[0])).map(([t, ps]) => `- a second program beside the application, ${t}: ${ps?.length ?? 0}`),
   ];
-  if (list.refused.length) lines.push("", "### Refused entries", "", ...list.refused.map((r) => `- \`${r.entry}\`: ${r.why}`));
+  if (list.refused.length) lines.push("", "### Refused", "", ...list.refused.map((r) => `- ${r.kind} \`${r.entry}\`: ${r.why}`));
   const b = list.bussard;
   if (b) {
     lines.push(
@@ -368,10 +425,14 @@ export function markdown(list: CatalogueList): string {
 }
 
 // The generated part put into `old` (an existing file's text) between its markers, or below its text.
+// The markers must stand once each, in order; a file without them gets the generated part below its text.
 export function withGenerated(old: string | null, generated: string): string {
   if (!old) return `# ETS online catalogue: the sweep's list\n\n${generated}`;
+  const count = (m: string) => old.split(m).length - 1;
+  const [starts, ends] = [count(GENERATED_START), count(GENERATED_END)];
+  if (starts === 0 && ends === 0) return `${old.trimEnd()}\n\n${generated}`;
   const a = old.indexOf(GENERATED_START), b = old.indexOf(GENERATED_END);
-  if (a < 0 || b < a) return `${old.trimEnd()}\n\n${generated}`;
+  if (starts !== 1 || ends !== 1 || b < a) throw new Error(`the Markdown file holds its markers ${starts} and ${ends} times${b < a ? ", the end first" : ""}: not rewritten`);
   return old.slice(0, a) + generated.trimEnd() + old.slice(b + GENERATED_END.length);
 }
 
@@ -381,8 +442,11 @@ function main(): number {
   const [cmd, ...rest] = process.argv.slice(2);
   const opts = new Map<string, string>(), args: string[] = [];
   for (let i = 0; i < rest.length; i++) {
-    if (rest[i].startsWith("--")) { if (rest[i + 1] === undefined) throw new Error(`${rest[i]} takes a value`); opts.set(rest[i].slice(2), rest[++i]); }
-    else args.push(rest[i]);
+    if (!rest[i].startsWith("--")) { args.push(rest[i]); continue; }
+    const [name, value] = [rest[i].slice(2), rest[++i]];
+    if (value === undefined || value.startsWith("--")) throw new Error(`--${name} takes a value`);
+    if (opts.has(name)) throw new Error(`--${name} is given twice`);
+    opts.set(name, value);
   }
   const usage = "usage: bun run tools/ets-catalogue.ts fetch [--out <dir>] | list <fetched dir> --json <file> --md <file> [--market Germany] [--masks 07B0,0701,0705] [--bussard <manifest.json>]";
   if (cmd === "fetch") {
@@ -393,10 +457,12 @@ function main(): number {
   if (cmd === "list") {
     const jsonOut = opts.get("json"), mdOut = opts.get("md");
     if (args.length !== 1 || !jsonOut || !mdOut || [...opts.keys()].some((k) => !["json", "md", "market", "masks", "bussard"].includes(k))) throw new Error(usage);
+    const masks = [...new Set(opts.get("masks")?.split(",") ?? SWEEP_MASKS)];
+    if (masks.some((m) => !/^[0-9A-F]{4}$/.test(m))) throw new Error(`--masks takes masks as four upper-case hex digits (07B0), not ${opts.get("masks")}`);
     const f = readFetched(args[0]);
     const bussard = opts.get("bussard");
-    const list = catalogueList(f, opts.get("market") ?? "Germany", opts.get("masks")?.split(",") ?? SWEEP_MASKS,
-      bussard ? JSON.parse(readFileSync(bussard, "utf8")) as BussardManifest : undefined);
+    const list = catalogueList(f, opts.get("market") ?? "Germany", masks,
+      bussard ? json<BussardManifest>(readFileSync(bussard, "utf8")) : undefined);
     writeFileSync(jsonOut, `${JSON.stringify(list, null, 1)}\n`);
     writeFileSync(mdOut, withGenerated(existsSync(mdOut) && statSync(mdOut).size ? readFileSync(mdOut, "utf8") : null, markdown(list)));
     const c = list.counts;

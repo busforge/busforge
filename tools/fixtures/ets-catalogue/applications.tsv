@@ -8,3 +8,5 @@ M-FFF2/M-FFF2_A-0012-10-3456/A	<AP Id="M-FFF2_A-0012-10-3456" ApplicationNumber=
 M-FFF2/M-FFF2_A-0013-10-4567/A	<AP Id="M-FFF2_A-0013-10-4567" ApplicationNumber="19" ApplicationVersion="16" ProgramType="ApplicationProgram" MaskVersion="MV-07B0" Name="With PEI">
 M-FFF2/M-FFF2_A-0013-20-5678/A	<AP Id="M-FFF2_A-0013-20-5678" ApplicationNumber="19" ApplicationVersion="32" ProgramType="PeiProgram" MaskVersion="MV-07B0" Name="With PEI">
 M-FFF2/M-FFF2_A-0014-10-6789/A	<AP Id="M-FFF2_A-0014-10-6789" ApplicationNumber="20" ApplicationVersion="16" ProgramType="PeiProgram" MaskVersion="MV-07B0" Name="Program only">
+M-FFF2/M-FFF2_A-0015-20-7890-O0001/A	<AP Id="M-FFF2_A-0015-20-7890-O0001" ApplicationNumber="21" ApplicationVersion="32" ProgramType="ApplicationProgram" MaskVersion="MV-07B0" Name="Two programs">
+M-FFF2/M-FFF2_A-0016-10-8901-O0001/A	<AP Id="M-FFF2_A-0016-10-8901-O0001" ApplicationNumber="22" ApplicationVersion="16" ProgramType="ApplicationProgram" MaskVersion="MV-07B0" Name="Second application">
