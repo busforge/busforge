@@ -39,7 +39,9 @@ const refuse = (why: string): never => { throw new Error(`no simulated unit: ${w
 const PID_LOAD_STATE = PID.LOAD_STATE_CONTROL, PID_TABLE_REFERENCE = PID.TABLE_REFERENCE, PID_PROGRAM_ID = PID.PROGRAM_ID, PID_DEVICE_CONTROL = PID.DEVICE_CONTROL, PID_MCB = PID.MCB_TABLE;
 const EVENT = { ...LSM, ADDITIONAL: 3 } as const;
 const SEGMENT = { DATA: 0x00, STACK: 0x01, TASK: 0x02, TASK_CONTROL_1: 0x04 } as const;
-const LSMS = [1, 2, 3], APPLICATION_LSM = 3;
+const LSMS = [1, 2, 3];
+// The application's load-state machine.
+export const APPLICATION_LSM = 3;
 const MEMORY_TYPE = { RAM: 2, EEPROM: 3 } as const;
 // The segment flag of a segment the unit reports in its memory-control block.
 const MCB_FLAG = 0x80;
@@ -59,7 +61,7 @@ export interface PropertyMappedBehaviour {
   // (PID 14 bit 0) until its restart; null where no capture shows it, and the device control is then unknown.
   unloadStopsApplication: boolean | null;
   // The same for a load of its application while it is loaded (ETS's partial form); null where no capture shows it,
-  // a read of the device control then refused until it is written, the unit restarts or a shown stop sets the bit.
+  // a read of the device control then refused until it is written or the unit restarts.
   loadStopsApplication: boolean | null;
   // Where `loadStopsApplication` is null: whether its captures show its memory writes after such a load answered as
   // before it; where not, they are refused as after an unshown unload.
@@ -119,7 +121,7 @@ export function simUnit0705Model(collection: CollectPackage, appXml: string, beh
   const { records, mask, objects, descriptions, functionStates, memoryExtendedRead } = collectedUnit(collection, appXml, refuse);
   if (collection.maxApdu !== null && collection.maxApdu !== pm.maxApdu) refuse(`the unit reports a maximum APDU of ${collection.maxApdu}, the spec ${pm.maxApdu}`);
   const programId = objects.get(APPLICATION_LSM)?.get(PID_PROGRAM_ID)?.elements?.[0] ?? refuse("the collection did not read the program id (object 3 PID 13)");
-  const steps = flattenSteps(parseLoadProcedures(appXml), "full");
+  const steps = fullSteps(parseLoadProcedures(appXml));
   const tasks = declaredTasks(steps);
   if (typeof tasks === "string") return refuse(tasks);
   const segments = declaredSegments(steps);
@@ -234,6 +236,8 @@ export function declaredTasks(steps: FullSteps): DeclaredTasks | string {
   }
   const declaredTaskControl1 = new Map<number, { address: number; count: number }>();
   for (const s of steps.filter((x) => x.verb === "LdCtrlTaskCtrl1")) {
+    // taskCtrl1Of reads "" as 0; the unit takes the decimal form alone, as for the segments.
+    if (lsmAttr(s) === undefined || intAttr(s, "Address", ADDRESS_MAX) === undefined || intAttr(s, "Count", OCTET_MAX) === undefined) return `the application declares a task control 1 ${JSON.stringify(s.attrs)} without a machine, an address and a count of their form`;
     const t = taskCtrl1Of(s);
     if (typeof t === "string") return `the application's task control 1: ${t}`;
     if (declaredTaskControl1.has(t.lsm)) return `the application declares two task controls 1 for object ${t.lsm}`;

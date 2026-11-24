@@ -647,7 +647,7 @@ type SimOpts = ConstructorParameters<typeof SimUnit>[2];
 
 // The spec's unit as `collectionPath` shows it: its own collection, or another collection of the same unit (the
 // same address and serial), taken at another time.
-function collectionOf(spec: SimUnitSpec, collectionPath: string): CollectPackage {
+export function collectionOf(spec: SimUnitSpec, collectionPath = spec.collection): CollectPackage {
   const read = (path: string) => JSON.parse(readFileSync(corpusPath(path), "utf8")) as CollectPackage;
   const c = read(collectionPath);
   if (collectionPath === spec.collection) return c;

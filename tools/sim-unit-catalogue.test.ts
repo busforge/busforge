@@ -13,7 +13,7 @@ import type { SystemBBehaviour, UnitBehaviour } from "./sim-unit-model.ts";
 import { catalogueUnit, catalogueUnitRecord, catalogueUnitSpec, chooseDonor, donorDigest, donorUnfit, DONOR_RULES, learnIdentity, unitMask, type CatalogueUnitSpec } from "./sim-unit-catalogue.ts";
 import { mismatchLines } from "./sim-unit-product.ts";
 import { framePairs, replayCapture } from "./sim-unit-replay.ts";
-import { AURO_M0081, MDT_BE02001, MEANWELL_KNX40E, newSimUnit, OPENKNX_RAUMCONTROLLER, SIM_UNITS, type SimUnitSpec } from "./sim-units.ts";
+import { AURO_M0081, GIRA_TS3, MDT_BE02001, MEANWELL_KNX40E, newSimUnit, OPENKNX_RAUMCONTROLLER, SIM_UNITS, THEBEN_DALI_GATEWAY, type SimUnitSpec } from "./sim-units.ts";
 
 // Parsing an application takes up to 6.7 s alone (the OpenKNX RaumController's); the replays below run every unit's
 // sweep row on its capture's clock. Twenty times that under a loaded full check (docs/testing.md, "Timeouts of heavy
@@ -64,8 +64,9 @@ corpusDescribe("a catalogue unit's donor", () => {
       // the task segment at the end of a segment and a task control 1 of count 0 at address 0, the theLuxa P300 the
       // task segment inside a segment and a task control 1 of count 1 at an address inside a segment; the Gira's
       // application asks for a task control 1 of count 0 at address 0 and its task segment inside a segment.
-      // It reads the memory-control blocks at its end, which both MDT units refuse.
-      ["M-0008_A-10D7-11-2783-O000A", "no donor for MV-0705: mdt-be02001: its collection shows it refuse property 1/27, which the application's LdCtrlLoadImageProp reads; gira-ts3: its captures show no task control 1 of object 3 with count 0 at address 0; auro-m0081: its captures show no task segment of object 3 inside a segment; theben-theluxa-p300: its captures show no task control 1 of object 3 with count 0 at address 0; mdt-be06001: its collection shows it refuse property 1/27, which the application's LdCtrlLoadImageProp reads"],
+      // It reads the memory-control blocks at its end, which both MDT units refuse; its full download unloads the
+      // application, after which the Gira's captures show no device control.
+      ["M-0008_A-10D7-11-2783-O000A", "no donor for MV-0705: mdt-be02001: its collection shows it refuse property 1/27, which the application's LdCtrlLoadImageProp reads; gira-ts3: its captures show no device control after its application's unload, which decides whether its A_Memory_Write is echoed; auro-m0081: its captures show no task segment of object 3 inside a segment; theben-theluxa-p300: its captures show no task control 1 of object 3 with count 0 at address 0; mdt-be06001: its collection shows it refuse property 1/27, which the application's LdCtrlLoadImageProp reads"],
       ["M-0048_A-107E-12-5B58", "theben-theluxa-p300"],
       ["M-0048_A-140C-14-EB70", "no donor for MV-0701: abb-usu-4.2: its captures show no task-control-1; theben-meteodata-140s: its application changes its memory after a restart"],
       ["M-0048_A-493B-21-B471", "gvs-amma"],
@@ -112,6 +113,13 @@ corpusDescribe("a catalogue unit's donor", () => {
     expect([donorUnfit(MDT_BE02001, catalogueXml("M-0083_A-00B4-32-3919.xml.gz")), donorUnfit(MDT_BE02001, be06001)]).toEqual([null, "its collection shows it refuse property 1/27, which the application's LdCtrlLoadImageProp reads"]);
     const c = chooseDonor(be06001);
     expect("donor" in c && c.donor.id).toBe("auro-m0081");
+    // A count alone answers only where the unit's captures show what the block reports after a load: the
+    // DALI-Gateway's object 5 answered count 0 and no element.
+    const object5 = catalogueXml("M-0162_A-0004-11-F245.xml.gz").replace(/(<LdCtrlLoadImageProp ObjIdx="4" PropId="27" \/>)/, '$1<LdCtrlLoadImageProp ObjIdx="5" PropId="27" />');
+    expect(object5).toContain('ObjIdx="5" PropId="27"');
+    expect([donorUnfit(MEANWELL_KNX40E, object5)?.startsWith("its collection"), donorUnfit(THEBEN_DALI_GATEWAY, object5)]).toEqual([true, "its collection shows only the element count of property 5/27, which the application's LdCtrlLoadImageProp reads"]);
+    // An MV-0705 download unloads the application: the Gira Tastsensor 3's captures show no device control after that.
+    expect(donorUnfit(GIRA_TS3, catalogueXml("M-0083_A-00B4-32-3919.xml.gz"))).toBe("its captures show no device control after its application's unload, which decides whether its A_Memory_Write is echoed");
   });
 
   test("refuses an MV-0705 application whose task declarations it cannot read or no unit of the mask takes", () => {
@@ -119,6 +127,7 @@ corpusDescribe("a catalogue unit's donor", () => {
     const refused = (xml: string) => { const c = chooseDonor(xml); return "refused" in c ? c.refused : c.donor.id; };
     expect(refused(be06001.replace('<LdCtrlTaskSegment LsmIdx="3" Address="17408" />', '<LdCtrlTaskSegment LsmIdx="3" Address="abc" />'))).toBe('no donor for MV-0705: the application declares a task segment {"LsmIdx":"3","Address":"abc"} without a machine and an address of their form');
     expect(refused(be06001.replace('Address="17408" Size="200"', 'Address="" Size="200"'))).toContain("the application declares an absolute segment");
+    expect(refused(be06001.replace("<LdCtrlRestart />", '<LdCtrlTaskCtrl1 LsmIdx="3" Address="" Count="" /><LdCtrlRestart />'))).toBe('no donor for MV-0705: the application declares a task control 1 {"LsmIdx":"3","Address":"","Count":""} without a machine, an address and a count of their form');
     expect(refused(be06001.replace("<LdCtrlRestart />", '<LdCtrlTaskSegment LsmIdx="4" Address="17408" /><LdCtrlRestart />'))).toBe("no donor for MV-0705: the application declares a segment or task on object 4, whose load-state machine no unit of the mask shows");
     // ETS never sends a task segment on machine 5 (the Gira Tastsensor 3's application declares one).
     expect(refused(be06001.replace("<LdCtrlRestart />", '<LdCtrlRestart /><LdCtrlTaskSegment LsmIdx="5" Address="17408" />'))).toBe("mdt-be02001");
@@ -237,7 +246,7 @@ corpusDescribe("a catalogue row's unit", () => {
     expect(() => rowUnit("r", dir, application, row(record))).toThrow("a catalogue unit's application program comes from the row's export, and row.json names none");
     expect(() => rowUnit("r", dir, "M-0083_A-0137-20-7EB3", row(record, "export.xml"))).toThrow("holds no application program M-0083_A-0137-20-7EB3");
     expect(() => rowUnit("r", dir, application, row({ ...record, rule: "MV-07B0: an older rule" }, "export.xml"))).toThrow("the row is to run again");
-    expect(() => rowUnit("r", dir, application, row({ ...record, donorDigest: "0".repeat(64) }, "export.xml"))).toThrow("its donor gvs-amma was collected again or given another behaviour since the row ran");
+    expect(() => rowUnit("r", dir, application, row({ ...record, donorDigest: "0".repeat(64) }, "export.xml"))).toThrow("its donor gvs-amma was collected again, run on another application program or given another behaviour since the row ran");
     expect(() => rowUnit("r", dir, application, row({ ...record, donor: undefined as unknown as string }, "export.xml"))).toThrow("its unit names no donor and identity loop lines");
     expect(() => rowUnit("r", dir, application, row({ ...record, donor: "meanwell-knx40e" }, "export.xml"))).toThrow("the donor meanwell-knx40e does not fit the rule: its captures show no confirmed restart");
     // An own unit is named by its id, and runs the row's application.

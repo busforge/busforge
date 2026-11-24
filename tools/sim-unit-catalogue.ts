@@ -20,13 +20,13 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { declaredPropMatches, MM_STATUS_BASE, PID } from "../packages/knx/src/index.ts";
-import { closingSteps, declaredPropChecks, maskInfo, parseAppConfig, programIdStamp, type CollectPackage } from "../packages/product/src/index.ts";
+import { closingSteps, declaredPropChecks, maskInfo, parseAppConfig, programIdStamp } from "../packages/product/src/index.ts";
 import { catalogueXml, corpusPath } from "./corpus.ts";
 import { type AnswerSources, type SimProperty, type SimUnit, type SimUnitCoreModel } from "./sim-unit.ts";
 import type { AdditionalControl } from "./sim-unit-0701.ts";
-import { declaredSegments, declaredTaskForms, declaredTasks, fullSteps, PLACE_TEXT, type DeclaredTaskForms, type DeclaredTasks } from "./sim-unit-0705.ts";
+import { APPLICATION_LSM as PROPERTY_MAPPED_APPLICATION_LSM, declaredSegments, declaredTaskForms, declaredTasks, fullSteps, PLACE_TEXT, type DeclaredTaskForms, type DeclaredTasks } from "./sim-unit-0705.ts";
 import { productUnit, rerunIdentity, type IdentityValue, type Mismatch, type ProductUnit } from "./sim-unit-product.ts";
-import { newSimUnit, SIM_UNITS, simUnitOf, unitModel, type SimUnitSpec, type UnitModel } from "./sim-units.ts";
+import { collectionOf, newSimUnit, SIM_UNITS, simUnitOf, unitModel, type SimUnitSpec, type UnitModel } from "./sim-units.ts";
 
 // A catalogue row's unit: the application, the donor, the rule that chose it, and the ETS6.log lines the identity
 // loop learned from, in the order it took them.
@@ -69,19 +69,20 @@ const COMMON_RULE = "an own unit of the mask whose application leaves its memory
 // The rule per mask. MV-07B0 asks besides for A_MemoryExtended_Write where the application declares extended memory
 // services, and for the device control after the application's unload where it declares none (ETS and Busforge then
 // write its memory with A_Memory_Write, echoed in verify mode, which that octet holds); MV-0701 for the additional load
-// controls the application declares; MV-0705 for its task controls 1 (by machine, count and where the address lies)
-// and its task segments at an address that starts no declared segment (by machine and where the address lies), which
-// its units take or refuse as their captures show.
+// controls the application declares; MV-0705 for the device control after the application's unload where its full
+// download unloads it (its memory is always written with A_Memory_Write), its task controls 1 (by machine, count and
+// where the address lies) and its task segments at an address that starts no declared segment (by machine and where
+// the address lies), which its units take or refuse as their captures show.
 export const DONOR_RULES: Record<Mask, string> = {
   "MV-07B0": `MV-07B0: ${COMMON_RULE}; and whose captures show A_MemoryExtended_Write where the application declares extended memory services, and its device control after its application's unload where the application declares none`,
   "MV-0701": `MV-0701: ${COMMON_RULE}; and that takes every additional load control the application declares`,
-  "MV-0705": `MV-0705: ${COMMON_RULE}; and whose captures show each task control 1 the application declares, of its machine and count with its address 0 or at the same place, and each task segment it declares at an address that starts no declared segment, of its machine and at the same place (the end of a segment, or inside one)`,
+  "MV-0705": `MV-0705: ${COMMON_RULE}; and whose captures show its device control after its application's unload where the application's full download unloads it, each task control 1 the application declares, of its machine and count with its address 0 or at the same place, and each task segment it declares at an address that starts no declared segment, of its machine and at the same place (the end of a segment, or inside one)`,
 };
 
 const ADDITIONAL_VERBS: Record<string, AdditionalControl> = { LdCtrlAbsSegment: "absolute-segment", LdCtrlTaskSegment: "task-segment", LdCtrlTaskCtrl1: "task-control-1" };
 
 type AppConfig = ReturnType<typeof parseAppConfig>;
-type Needs = { basic: boolean; confirmed: boolean; extendedWrite: boolean; classicWrite: boolean; loadImage: { obj: number; pid: number }[]; additional: AdditionalControl[] } & DeclaredTaskForms;
+type Needs = { basic: boolean; confirmed: boolean; extendedWrite: boolean; controlAfterUnload: boolean; loadImage: { obj: number; pid: number }[]; additional: AdditionalControl[] } & DeclaredTaskForms;
 const NO_TASKS: DeclaredTaskForms = { taskPlaces: [], taskControls1: [] };
 
 // What a download of the application needs of its unit beyond the mask: a basic restart at its end (System 7's
@@ -89,7 +90,8 @@ const NO_TASKS: DeclaredTaskForms = { taskPlaces: [], taskControls1: [] };
 // (a System B download with Data Secure, as ETS's downloads of the Theben MIX 2, the Jung 400021SE and the GVS AMMA
 // show; a declared LdCtrlMasterReset), on System B A_MemoryExtended_Write (an application with extended memory services,
 // whose memory ETS writes so: packages/product/src/loadproc.ts) or else the device control after the application's
-// unload (its memory written with A_Memory_Write, echoed where the octet holds verify mode), an answer to each
+// unload (its memory written with A_Memory_Write, echoed where the octet holds verify mode), the same on MV-0705 where
+// its full download unloads the application (object 3), an answer to each
 // property its LdCtrlLoadImageProp reads at the download's end, the additional load controls it declares on MV-0701,
 // on MV-0705 the task controls 1 and the task segments at an address that starts none of the machine's declared
 // segments its full download declares. Or why the application's declarations cannot be read.
@@ -98,13 +100,15 @@ function needs(cfg: AppConfig): Needs | string {
   const systemB = cfg.mask === "MV-07B0";
   let loadImage: Needs["loadImage"];
   try { loadImage = closingSteps(proc, "full").flatMap((c) => (c.kind === "read" ? [{ obj: c.obj, pid: c.pid }] : [])); } catch (e) { return (e as Error).message; }
-  const forms = cfg.mask === "MV-0705" ? taskForms(fullSteps(proc)) : NO_TASKS;
+  const steps = fullSteps(proc);
+  const forms = cfg.mask === "MV-0705" ? taskForms(steps) : NO_TASKS;
   if (typeof forms === "string") return forms;
+  const unloadsApplication = steps.some((s) => s.verb === "LdCtrlUnload" && s.attrs.LsmIdx === String(PROPERTY_MAPPED_APPLICATION_LSM));
   return {
     basic: systemB ? !proc.secureEnabled : proc.verbs.includes("LdCtrlRestart"),
     confirmed: (systemB && proc.secureEnabled) || proc.verbs.includes("LdCtrlMasterReset"),
     extendedWrite: systemB && proc.extendedMemoryServices,
-    classicWrite: systemB && !proc.extendedMemoryServices,
+    controlAfterUnload: (systemB && !proc.extendedMemoryServices) || (cfg.mask === "MV-0705" && unloadsApplication),
     loadImage,
     additional: cfg.mask === "MV-0701" ? [...new Set(proc.verbs.flatMap((v) => (ADDITIONAL_VERBS[v] ? [ADDITIONAL_VERBS[v]] : [])))] : [],
     ...forms,
@@ -118,21 +122,25 @@ function taskForms(steps: ReturnType<typeof fullSteps>): DeclaredTaskForms | str
   return typeof segments === "string" ? segments : declaredTaskForms(segments, tasks);
 }
 
-// What a unit's collection shows of property `<object>/<PID>`: answered (any element or its count), refused, or not
-// read; by collection, as the collections do not change while a process runs.
-const collected = new Map<string, Map<string, "answered" | "refused">>();
-function collectedProperty(u: SimUnitSpec, key: string): "answered" | "refused" | "not read" {
-  let shown = collected.get(u.collection);
+// What a unit's collection shows of property `<object>/<PID>`, as its captures leave it at the start
+// (`stateInCaptures`): an element answered, its count alone, refused, or not read; by unit, as neither changes while a
+// process runs.
+type Shown = "element" | "count" | "refused" | "not read";
+const collected = new Map<string, Map<string, Shown>>();
+function collectedProperty(u: SimUnitSpec, key: string): Shown {
+  let shown = collected.get(u.id);
   if (!shown) {
     shown = new Map();
-    for (const r of (JSON.parse(readFileSync(corpusPath(u.collection), "utf8")) as CollectPackage).records) {
-      const t = r.target as { object?: number; pid?: number };
+    for (const r of collectionOf(u).records) {
+      const t = r.target as { object?: number; pid?: number; start?: number };
       if (r.space !== "property" || t.object === undefined || t.pid === undefined) continue;
-      const k = `${t.object}/${t.pid}`;
+      const k = `${t.object}/${t.pid}`, had = shown.get(k);
       if (r.outcome === "refused") shown.set(k, "refused");
-      else if (r.outcome === "bytes" && !shown.has(k)) shown.set(k, "answered");
+      else if (r.outcome === "bytes" && had !== "refused") shown.set(k, (t.start ?? 1) === 0 && had !== "element" ? "count" : "element");
     }
-    collected.set(u.collection, shown);
+    const state = "stateInCaptures" in u.behaviour ? u.behaviour.stateInCaptures?.properties : undefined;
+    for (const [k, hex] of Object.entries(state ?? {})) shown.set(k, hex === "" ? "refused" : "element");
+    collected.set(u.id, shown);
   }
   return shown.get(key) ?? "not read";
 }
@@ -145,10 +153,15 @@ function unfit(u: SimUnitSpec, need: Needs): string | null {
   if (need.basic && b.restart.basic === null) return "its captures show no basic restart";
   if (need.confirmed && b.restart.confirmedRestartSeconds === null) return "its captures show no confirmed restart";
   if (need.extendedWrite && !b.memoryExtendedWrite) return "its captures show no A_MemoryExtended_Write";
-  if (need.classicWrite && "unloadStopsApplication" in b && b.unloadStopsApplication === null) return "its captures show no device control after its application's unload, which decides whether its A_Memory_Write is echoed";
+  const stops = u.propertyMapped ? u.propertyMapped.unloadStopsApplication : "unloadStopsApplication" in b ? b.unloadStopsApplication : undefined;
+  if (need.controlAfterUnload && stops === null) return "its captures show no device control after its application's unload, which decides whether its A_Memory_Write is echoed";
+  // Whether it answers the property, not how many elements: those the simulator computes from the download's
+  // segments at its load completed (the collection read the donor's own), and a read past them it refuses. A count
+  // alone is an answer only where its captures show what the block reports after a load (System B's `mcb`).
   for (const { obj, pid } of need.loadImage) {
     const shown = collectedProperty(u, `${obj}/${pid}`);
-    if (shown !== "answered") return `its collection ${shown === "refused" ? "shows it refuse" : "did not read"} property ${obj}/${pid}, which the application's LdCtrlLoadImageProp reads`;
+    const answers = shown === "element" || (shown === "count" && "mcb" in b && b.mcb !== undefined);
+    if (!answers) return `its collection ${shown === "refused" ? "shows it refuse" : shown === "count" ? "shows only the element count of" : "did not read"} property ${obj}/${pid}, which the application's LdCtrlLoadImageProp reads`;
   }
   const missing = need.additional.filter((a) => !u.memoryMapped?.additional.includes(a));
   if (missing.length) return `its captures show no ${missing.join(", ")}`;

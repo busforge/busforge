@@ -300,9 +300,9 @@ export function hardwarePrograms(source: Buffer | Map<string, Buffer>): Map<stri
   for (const h2p of hardware2ProgramsOf(source instanceof Map ? zipProducts(source) : productsOf(source))) {
     const appRef = text(h2p.Id);
     if (!appRef) continue;
-    if (out.has(appRef)) throw new KnxprojError("HARDWARE_PROGRAMS_AMBIGUOUS", `the product data describe the Hardware2Program ${appRef} twice`);
+    if (out.has(appRef)) throw new Error(`the product data describe the Hardware2Program ${appRef} twice`);
     const refs = kids(h2p.ApplicationProgramRef).map((r) => text(r.RefId));
-    if (refs.includes("")) throw new KnxprojError("HARDWARE_PROGRAMS_AMBIGUOUS", `the Hardware2Program ${appRef} names an application program without its RefId`);
+    if (refs.includes("")) throw new Error(`the Hardware2Program ${appRef} names an application program without its RefId`);
     out.set(appRef, refs);
   }
   return out;

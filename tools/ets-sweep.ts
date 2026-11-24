@@ -659,10 +659,16 @@ export function listRows(): string[] {
 
 const readJson = <T>(path: string): T => JSON.parse(readFileSync(path, "utf8")) as T;
 
-export function readRow(id: string): Row {
+// A row's directory in the corpus.
+function rowDir(id: string): string {
   const [application, variant, ...rest] = id.split("/");
   if (!application || !variant || rest.length) throw new Error(`a row is named "<application>/<variant>", not "${id}"`);
-  const dir = corpusPath(`${SWEEP_DIR}/${id}`);
+  return corpusPath(`${SWEEP_DIR}/${id}`);
+}
+
+export function readRow(id: string): Row {
+  const dir = rowDir(id);
+  const [application, variant] = id.split("/");
   const missing = Object.values(ROW_FILES).filter((f) => !existsSync(join(dir, f)));
   if (missing.length) throw new Error(`row ${id} lacks ${missing.join(", ")}`);
   const spec = readJson<RowSpec>(join(dir, ROW_FILES.row));
@@ -697,7 +703,7 @@ export function rowUnit(id: string, dir: string, application: string, spec: RowS
   const unit = catalogueUnitSpec(application, appXml, { donor: named.donor, learned: named.identity });
   if ("refused" in unit) throw new Error(`row ${id}: no catalogue unit: ${unit.refused}`);
   if (unit.rule !== named.rule) throw new Error(`row ${id}: its unit was chosen by the rule "${named.rule}", the rule of its mask is now "${unit.rule}": the row is to run again`);
-  if (donorDigest(unit.donor) !== named.donorDigest) throw new Error(`row ${id}: its donor ${donor} was collected again or given another behaviour since the row ran: the row is to run again`);
+  if (donorDigest(unit.donor) !== named.donorDigest) throw new Error(`row ${id}: its donor ${donor} was collected again, run on another application program or given another behaviour since the row ran: the row is to run again`);
   return unit;
 }
 
@@ -768,8 +774,9 @@ export async function runRow(row: Row): Promise<RowResult> {
 // A difference found, with the cause `given` (explained.json's list) names for it; null where it names none.
 export const withCause = (difference: string, given: Explained["differences"] | undefined) => ({ difference, cause: given?.find((e) => e.difference === difference)?.cause ?? null });
 
-// A refusal's time after the restart as `<n> ms`: Busforge's run is timed by the wall clock, so it moves from run to run.
-export const timeless = (x: string): string => x.replace(/\b\d+ ms after the restart:/g, "<n> ms after the restart:");
+// A refusal's time after the restart as `<n> ms` (tools/sim-unit.ts writes it "<n> ms after the restart:" and "while the
+// unit restarts (<n> ms)"): Busforge's run is timed by the wall clock, so it moves from run to run.
+export const timeless = (x: string): string => x.replace(/\b\d+ ms after the restart:/g, "<n> ms after the restart:").replace(/while the unit restarts \(\d+ ms\)/g, "while the unit restarts (<n> ms)");
 
 // A verdict other than identical and differs without its kind, every time after a restart in it timeless: what
 // explained.json's `detail` holds of it. Undefined for identical and differs, whose differences explained.json holds.
@@ -903,6 +910,7 @@ export function movedSince(before: ManifestRow | undefined, m: ManifestRow): str
   const out: string[] = [];
   if (before.verdict !== m.verdict) out.push(`verdict: ${before.verdict} -> ${m.verdict}`);
   if (before.first !== m.first) out.push(timeless(before.first ?? "none") === timeless(m.first ?? "none") ? "first: only its time after the restart moved" : `first: ${before.first ?? "none"} -> ${m.first ?? "none"}`);
+  if (JSON.stringify(before.detail ?? null) !== JSON.stringify(m.detail ?? null)) out.push(`detail: ${JSON.stringify(before.detail ?? null)} -> ${JSON.stringify(m.detail ?? null)}`);
   // Each item whose count moved.
   const items = (what: string, a: string[], b: string[]) => {
     const n = (xs: string[], x: string) => xs.filter((y) => y === x).length;
@@ -1000,7 +1008,8 @@ async function main(): Promise<number> {
   if (todo.length === 0) throw new Error(`no row under ${SWEEP_DIR}`);
   // Before the rows run, so a wrong --out is refused at once.
   const root = rejudging ? rejudgeRoot(out, inPlace) : null;
-  const olds = new Map(todo.map((id) => [id, readRow(id)]));
+  // What the rows' explained.json hold before the run; each worker reads and checks its row itself.
+  const olds = new Map(todo.map((id) => [id, readJson<Explained>(join(rowDir(id), ROW_FILES.explained))]));
   // The rows side by side, as tools/ets-sweep.test.ts judges them; imported here, as the pool's workers import this
   // module.
   const { RowPool } = await import("./ets-sweep-workers.ts");
@@ -1008,16 +1017,15 @@ async function main(): Promise<number> {
   let results: ManifestRow[];
   try {
     results = await Promise.all(todo.map(async (id) => {
-      const row = olds.get(id)!;
       const { manifest: m, kept } = await pool.judge(id, { manifest: true, keep: keep !== undefined });
-      printRow(row, m!, keep, kept);
+      printRow(id, m!, keep, kept);
       return m!;
     }));
   } finally { pool.close(); }
   const before = readManifest();
   const manifest = updateManifest(before, results, present);
   if (root !== null) {
-    const { report, exit } = writeRejudged(root, results, new Map([...olds].map(([id, row]) => [id, row.explained])), before, manifest);
+    const { report, exit } = writeRejudged(root, results, olds, before, manifest);
     for (const l of report) console.log(l);
     return exit;
   }
@@ -1028,8 +1036,7 @@ async function main(): Promise<number> {
 
 // A row's verdict and what was recorded beside it, as the tool prints it once the row is judged; with --keep,
 // Busforge's capture and the simulator's lines kept under `keep`.
-function printRow(row: Row, m: ManifestRow, keep: string | undefined, kept: { capture: string; simLines: string[] } | undefined): void {
-  const id = row.id;
+function printRow(id: string, m: ManifestRow, keep: string | undefined, kept: { capture: string; simLines: string[] } | undefined): void {
   console.log(`${id}: ${m.verdict}${m.first ? `: ${m.first}` : ""}`);
   for (const d of m.differences) console.log(`  ${d.difference}\n    cause: ${d.cause ?? "NOT EXPLAINED"}`);
   if (m.reads.onlyEts.length || m.reads.onlyBusforge.length) console.log(`  reads only ETS made: ${list(m.reads.onlyEts)}\n  reads only Busforge made: ${list(m.reads.onlyBusforge)}`);
@@ -1041,7 +1048,7 @@ function printRow(row: Row, m: ManifestRow, keep: string | undefined, kept: { ca
     mkdirSync(out, { recursive: true });
     writeFileSync(join(out, "busforge.log"), kept.capture);
     writeFileSync(join(out, "busforge.log.sim.txt"), kept.simLines.join("\n") + "\n");
-    copyFileSync(join(row.dir, ROW_FILES.ets), join(out, "ets.log"));
+    copyFileSync(join(rowDir(id), ROW_FILES.ets), join(out, "ets.log"));
     console.log(`  kept in ${out}`);
   }
 }

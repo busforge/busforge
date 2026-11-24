@@ -396,6 +396,9 @@ describe("rejudging a row (--rejudge)", () => {
     expect([exit, JSON.parse(readFileSync(explainedAt(root), "utf8"))]).toEqual([1, { verdict: "sim-refused", differences: [], detail: now }]);
     // The same detail stays unwritten.
     expect(rejudge({ ...old, detail: now }, m).moved).toBe(false);
+    // And notes.md hears of it.
+    expect(movedSince(entry(old, "sim-refused", [], { first: "sim-refused y", detail: was }), m)).toEqual([`detail: ${JSON.stringify(was)} -> ${JSON.stringify(now)}`]);
+    expect(verdictDetail({ verdict: "sim-refused", run: "Busforge", refusals: ["sim-refused broadcast 0100 from 1.1.255 while the unit restarts (412 ms): whether it answers is not known"] })).toEqual({ run: "Busforge", refusals: ["sim-refused broadcast 0100 from 1.1.255 while the unit restarts (<n> ms): whether it answers is not known"] });
   });
 
   test("a verdict moved to a refusal or a failure: the exit 1, the dropped causes named", () => {

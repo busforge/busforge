@@ -79,6 +79,8 @@ export function collectedUnit(collection: CollectPackage, appXml: string, refuse
       // An element answered contradicts the refusal of the first, in either order; a count does not (below).
       if (p.elements !== null && p.elements.some((e) => e !== undefined)) refuse(`the unit answered property ${o}/${pid} and refused it`);
       p.elements = null;
+      p.countKnown = false;
+      counts.delete(`${o}/${pid}`);
       continue;
     }
     if (r.outcome !== "bytes" || !r.bytes) continue;

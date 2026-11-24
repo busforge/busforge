@@ -711,12 +711,15 @@ a unit of the mask qualifies where its application leaves its memory as written 
 application's would not), its captures show its answer to each restart a download of the application ends
 with (a confirmed restart for a System B application with Data Secure or a declared master reset, a basic
 restart otherwise), and its collection shows its answer to each property the application's `LdCtrlLoadImageProp`
-reads at the end of the download (the memory-control blocks, which both MDT units refuse). On MV-07B0 its captures
+reads at the end of the download (the memory-control blocks, which both MDT units refuse): an element of it, or its
+count alone where the unit's captures show what the block reports after a load; how many elements it then holds the
+simulator computes from the download's segments, and a read past them it refuses. On MV-07B0 its captures
 must also show `A_MemoryExtended_Write` where the application declares extended memory services (ETS writes its
 memory so), and where it declares none, its device control after its application's unload (the memory is then
 written with `A_Memory_Write`, which the unit echoes in the verify mode that octet holds); on MV-0701 it must take
-every additional load control the application declares; on MV-0705 its captures must show each task control 1 the
-application declares (of its machine and count, its address 0 or at the same place against the segments) and each
+every additional load control the application declares; on MV-0705 its captures must show its device control after
+its application's unload where the full download unloads it (the memory is always written with `A_Memory_Write`),
+each task control 1 the application declares (of its machine and count, its address 0 or at the same place against the segments) and each
 task segment it declares at an address that starts no declared segment (of its machine, at the end of a segment or
 inside one as declared), and an application that declares a segment or task on another machine than objects 1 to 3
 has no donor (the task segment on machine 5, which ETS never sends, aside). Of the
@@ -731,10 +734,11 @@ A mask without a qualifying unit refuses the row, naming each unit and why. With
 | MV-07B0 with Data Secure and extended memory services | GVS AMMA-04/06.S | the Theben MIX 2 and the Jung 400021SE change their memory after a restart; the others show no confirmed restart |
 | MV-07B0 with Data Secure, without extended memory services | none | the GVS AMMA shows no device control after its application's unload; the Theben MIX 2 and the Jung 400021SE change their memory after a restart; the others show no confirmed restart |
 | MV-0701 | ABB US/U 4.2 | the Theben Meteodata 140 S clears a download marker at its restart; an application that declares task control 1 has no donor |
-| MV-0705 without a task control 1, every task segment at the start of a declared segment | MDT BE-02001.02 | the Auro presence detector, the Theben theLuxa P300 and the MDT BE-06001 leave more unshown (four answers to its three), the Gira Tastsensor 3 five |
+| MV-0705 without a task control 1 or a closing read of the memory-control blocks, every task segment at the start of a declared segment | MDT BE-02001.02 | the Auro presence detector, the Theben theLuxa P300 and the MDT BE-06001 leave more unshown (four answers to its three); the Gira Tastsensor 3 shows no device control after its application's unload |
+| the same with a closing read of the memory-control blocks | Auro presence detector | both MDT units refuse the blocks; the Theben theLuxa P300 ranks after it by id |
 | MV-0705 with a task control 1 of count 0 at address 0 and the application's task segment at the end of a segment | Auro presence detector | the others show no task control 1 of count 0 at address 0 or no task segment at the end of a segment |
 | MV-0705 with a task control 1 of count 1 at an address inside a segment and the application's task segment inside a segment | Theben theLuxa P300 | the others show no task control 1 of count 1 inside a segment or no task segment inside a segment |
-| MV-0705 with a task control 1 or a task segment place no single unit's captures cover with the rest (the Gira Tastsensor 3's application: count 0 at address 0, its task segment inside a segment) | none | the Auro shows the count, the theLuxa P300 the place, no unit both |
+| MV-0705 with a task control 1 or a task segment place no single unit's captures cover with the rest (the Gira Tastsensor 3's application: count 0 at address 0, its task segment inside a segment) | none | the Auro shows the count, the theLuxa P300 the place, no unit both; both MDT units refuse the memory-control blocks the application reads at its end |
 
 **Sources in the log.** The unit's log begins with what it is (application, donor, rule) and the source of each
 property it answers otherwise than its donor; each read it answers is noted with its source: the product, the
@@ -811,8 +815,8 @@ images for the row's configuration are held against ETS's own record of that dow
 runs over the corpus projects; its result stands beside the verdict.
 
 **A row in the corpus** is a directory `captures/ets-sweep/<application id>/<variant>/` holding
-`row.json` (the simulated unit: an own unit's id, or for a catalogue unit its donor with a digest of its collection
-and behaviour, the rule that chose it, the identity loop's lines and the source of each property it answers
+`row.json` (the simulated unit: an own unit's id, or for a catalogue unit its donor with a digest of its collection,
+its application program and its behaviour, the rule that chose it, the identity loop's lines and the source of each property it answers
 otherwise than its donor, each held against the unit built today, so a row whose unit moved runs again; ETS's build, the simulator's endpoint ETS was set to, the export
 where there is one, the calibration where there is one), `configuration.json` (the device's
 configuration ETS downloaded, which Busforge downloads), ETS's capture `ets.log` with the simulator's
@@ -844,14 +848,14 @@ BUSFORGE_CORPUS=... bun run tools/ets-sweep.ts --rejudge [<application>/<variant
 ```
 
 It reruns the rows as above and writes, in the corpus's layout, the manifest with their entries and
-the `explained.json` of each row whose verdict or differences moved (a row where nothing moved keeps
+the `explained.json` of each row whose verdict, differences or `detail` moved (a row where nothing moved keeps
 its file). A difference or calibrated position that stays keeps its cause; a new one gets cause `null`,
 never an invented one, and the command exits 1 naming it, so the row stays red until it is explained.
 It exits 1 as well where the verdict moved to a refusal or a failure, and where a refusal's or failure's
 `detail` moved (a refusal of another cause, or one recorded for the first time), whose reason only `notes.md`
 gives, and names each explained difference that is gone with the cause it had. `notes.md` is
 not written: the output names what moved since the manifest for it (the verdict and its first
-difference or refusal, differences, calibrated positions, refusals beside the verdict, reads, the
+difference or refusal, a refusal's or failure's detail, differences, calibrated positions, refusals beside the verdict, reads, the
 requests the unit did not take, the second check). The output goes to `--out`, an empty directory
 outside the corpus (by default a new one under the system's temporary directory), to be checked before
 it is copied in; it goes straight into the corpus only with `--in-place`.
@@ -869,7 +873,9 @@ names where not.
 differences and a refusal's or failure's `detail` to `explained.json`: a new difference fails, and so does an
 explained one that is gone, and a refusal of another cause than the one held; the same holds for a calibrated
 row's positions. The rows run side by side, one per worker thread (`tools/ets-sweep-workers.ts`, as many workers
-as half the cores), each row's time limit counted from when a worker takes it, and a row past it ends its worker:
+as half the cores), each row's time limit counted from when a worker takes it; a row past it is rejected and its worker retired, not
+ended (on Bun 1.3.8 a worker thread that ends while the process runs on crashes the process), so its job runs on
+unheard until the process exits:
 Busforge's run into a simulated unit spends nearly all its time waiting on the simulated line, but each row needs
 an event loop of its own, because one row's parse of a large application would hold up the timers of every other
 row's line. Busy threads beyond the cores (the workers, and the other workspaces' tests `bun run check` runs at the

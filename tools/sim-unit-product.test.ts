@@ -217,7 +217,7 @@ corpusDescribe("a collected unit's property answered with a count and refused", 
     expect(of224.map((r) => [(r.target as { start: number }).start, r.outcome])).toEqual([[0, "bytes"], [1, "refused"]]);
     const unit = (records: CollectPackage["records"]) => collectedUnit({ ...collection, records }, xml, (why) => { throw new Error(why); }).objects.get(0)!.get(224);
     const rest = collection.records.filter((r) => !is224(r));
-    expect([unit(collection.records)?.elements, unit([...rest, ...[...of224].reverse()])?.elements]).toEqual([null, null]);
+    expect([unit(collection.records), unit([...rest, ...[...of224].reverse()])]).toEqual([{ elements: null, countKnown: false }, { elements: null, countKnown: false }]);
     const answered = { ...of224[1], target: { ...(of224[1].target as object), start: 1 }, outcome: "bytes", bytes: "00" } as CollectPackage["records"][number];
     expect(() => unit([...rest, answered, of224[1]])).toThrow("the unit answered property 0/224 and refused it");
     expect(() => unit([...rest, of224[1], answered])).toThrow("the unit refused property 0/224 and answered it");
