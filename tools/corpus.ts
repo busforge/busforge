@@ -89,6 +89,21 @@ export const BUSSARD_SYNTHETIC_TESTED: readonly (readonly [product: string, appl
 export const BUSSARD_LOAD_STEP_PRODUCTS: readonly (readonly [product: string, application: string])[] = [
   ["syn-s7-delay", "2827-10"], ["syn-s7-master-reset", "2830-10"], ["syn-s7-taskptr", "2811-10"], ["syn-s7-pid204", "2821-11"], ["syn-s7-0705", "2800-10"],
 ].map(([p, a]) => [p, `M-00FA_A-${a}-0000`] as const);
+// Full-resolution screenshots of ETS 6.4.1 on the bench host's display, taken on real driver runs, that
+// tools/ets-driver-screens.test.ts reads with the driver's screen readers (what each shows: README.md beside them).
+export const DRIVER_SCREENS_DIR = "internal/ets-sweep/driver-screens";
+export const DRIVER_SCREENS = [
+  "overview-no-project", "tabs-overview-in-front", "tabs-one-project-line-collapsed", "tabs-extra-tab-behind", "tabs-extra-tab-in-front",
+  "tree-main-line-collapsed", "tree-line-selected-device-below", "tree-line-selected-empty",
+  "catalogue-two-groups-katalog-tab", "catalogue-two-groups-applikation-tab", "catalogue-group-closed", "catalogue-application-name-digits",
+  "properties-fingerprint-misread-1", "properties-fingerprint-misread-2", "properties-fingerprint-leading-zero", "properties-hex-values",
+  "compatibility-warning-insert", "compatibility-warning-download", "dialog-connection-not-available", "dialog-compress-question",
+  "catalogue-download-refused", "catalogue-download-progress",
+  "catalogue-one-row-selected", "catalogue-one-row-loaded", "catalogue-rows-selected", "catalogue-selection-bottom-edge",
+] as const;
+export type DriverScreen = (typeof DRIVER_SCREENS)[number];
+export const driverScreenFile = (name: DriverScreen) => `${DRIVER_SCREENS_DIR}/${name}.png`;
+
 export const bussardCapture = (product: string, variant: string, file = "ets.pcapng") => `${BUSSARD_SYNTHETIC_DIR}/captures/${product}/${variant}/${file}`;
 export const bussardApplication = (product: string, application: string) => `${BUSSARD_SYNTHETIC_DIR}/products/${product}/xml/M-00FA/${application}.xml`;
 
@@ -351,6 +366,7 @@ export const CORPUS_FILES: readonly string[] = [
   "dca-theben-dali-e64/backup-store.dat",
   "dca-theben-dali-e64/backup-store.expected.json",
   ...IN_SERVICE_COLLECTIONS.map(inServiceCollection),
+  ...DRIVER_SCREENS.map(driverScreenFile),
   ...DEMO_PRODUCT_FILES,
   ...OPENKNX_RELEASES.map((r) => `${OPENKNX_DEMO_DIR}/${r.asset}`),
   `${BUSSARD_SYNTHETIC_DIR}/LICENSE`,
