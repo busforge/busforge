@@ -982,15 +982,16 @@ interface CatalogueFailure { row: number; dialog: string; screenshot: string }
 const downloadEnabled = (png: string) => measure(png, CATALOGUE.downloadText, ["-colorspace", "Gray", "-format", "%[fx:minima]"]) < 0.4;
 
 // The catalogue grid once it holds still (the keys sent to it worked off): a screenshot and the grid's pixels as
-// one hash.
-async function settledGrid(s: Screen): Promise<{ png: string; hash: string }> {
+// one hash. ETS works off the keys of a walk down thousands of rows for minutes: `timeoutMs` grows with them.
+async function settledGrid(s: Screen, timeoutMs = 60_000): Promise<{ png: string; hash: string }> {
+  const until = Date.now() + timeoutMs;
   let before = "";
-  for (let i = 0; ; i++) {
+  for (;;) {
     await sleep(500);
     const png = s.snap();
     const hash = execFileSync("magick", [png, ...crop(AT.catalogueGrid), "-format", "%#", "info:"], { encoding: "utf8" }).trim();
     if (hash === before) return { png, hash };
-    if (i === 120) fail("the catalogue grid does not hold still");
+    if (Date.now() > until) fail(`the catalogue grid does not hold still within ${timeoutMs / 1000} s`);
     before = hash;
   }
 }
@@ -1008,7 +1009,8 @@ async function selectRows(s: Screen, from: number, size: number, fresh: boolean)
     if (from > 1) xdo("key", "--delay", "4", "--repeat", String(from - 1), "Down");
   }
   if (!fresh || from > 0) {
-    const before = (await settledGrid(s)).hash;
+    // 4,500 rows took ETS over two minutes; a minute and 50 ms per row leaves room.
+    const before = (await settledGrid(s, fresh ? 60_000 + from * 50 : 60_000)).hash;
     key("Down");
     if ((await settledGrid(s)).hash === before) return false;
   }
