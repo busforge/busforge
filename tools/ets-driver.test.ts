@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { editDistance, LINE_11, nextBatchSize, oneRowSelected, pickCatalogueRow, selectedSamples } from "./ets-driver.ts";
+import { editDistance, expanderOpen, LINE_11, nextBatchSize, oneRowSelected, pickCatalogueRow, selectedSamples } from "./ets-driver.ts";
 
 test("a catalogue batch halves after a refusal and grows from the last size that loaded", () => {
   const walk = (outcomes: ("loaded" | "refused" | "skipped")[], max = 150) => {
@@ -75,4 +75,20 @@ test("line 1.1's row of the topology tree, as OCR reads the tree's rows", () => 
     "J 1.1.1 6108/06-BS-500 Tasterankopplung 2-fa", "{J 1.1.1TB/U1 Tacteo Bedienelement 1-fach"]) expect(LINE_11.test(other)).toBe(false);
   // A device whose name ends as a line's does: its address says it is a device.
   expect(LINE_11.test("{J 1.1.20 KNX Line")).toBe(false);
+});
+
+test("a catalogue group's expander read open or closed from its arrow's pixels", () => {
+  // The dark pixels of the two arrows as magick printed them from the bench host's screen (grey, 20 px square at the
+  // group row's start), on the expander's light background.
+  const txt = (dark: [number, number, number][]) => ["# ImageMagick pixel enumeration: 20,20,0,255,gray", ...Array.from({ length: 400 }, (_, i) => {
+    const [x, y] = [i % 20, Math.floor(i / 20)], v = dark.find((d) => d[0] === x && d[1] === y)?.[2] ?? 0xe5;
+    const h = v.toString(16).toUpperCase().padStart(2, "0");
+    return `${x},${y}: (${v})  #${h}${h}${h}  gray(${v})`;
+  })].join("\n");
+  const closed: [number, number, number][] = [[7, 8, 0x48], [13, 8, 0x48], [7, 9, 0x16], [8, 9, 0x24], [12, 9, 0x24], [13, 9, 0x0b], [8, 10, 0x16], [9, 10, 0x24], [11, 10, 0x24], [12, 10, 0x0b], [9, 11, 0x16], [10, 11, 0x00], [11, 11, 0x0b], [10, 12, 0x20]];
+  const open: [number, number, number][] = [[10, 8, 0x39], [9, 9, 0x24], [10, 9, 0x00], [11, 9, 0x16], [8, 10, 0x24], [9, 10, 0x16], [11, 10, 0x16], [12, 10, 0x16], [7, 11, 0x24], [8, 11, 0x16], [12, 11, 0x16], [13, 11, 0x16], [7, 12, 0x2b], [13, 12, 0x2b]];
+  expect(expanderOpen(txt(closed))).toBe(false);
+  expect(expanderOpen(txt(open))).toBe(true);
+  // The closed expander's box border (#989898) is no arrow; nothing dark is no expander.
+  expect(expanderOpen(txt([[19, 1, 0x98], [19, 2, 0x98]]))).toBeNull();
 });

@@ -54,8 +54,8 @@
 // pauses the batch: it ends early (exit 3) and the row runs again on resume. A catalogue unit's row that ETS fails on
 // a `Required data mismatch` runs again with what ETS required (the identity loop, learnIdentity), at most
 // IDENTITY_ROUNDS times. A hardware whose second program is no PEI program is refused (no row of the list has one).
-// --inject-kill and --inject-dialog kill ETS, or open its project details dialog, right after the insert of that
-// application's row: they exist to show the runner's recovery on a real run.
+// --inject-kill and --inject-dialog kill ETS, or open its project details dialog, in that application's row once the
+// project is compressed, before the insert: they exist to show the runner's recovery on a real run.
 //
 // --stop-sim-after <n> stops the simulator once ETS sent it n frames (a download ETS aborts); --wrong-interface
 // selects another configured connection than the simulator's: both exist to check the verdicts on real logs.
@@ -624,6 +624,20 @@ function catalogueIdentity(applicationId: string): { deviceType: string; version
   return { deviceType: `$${m[1]}`, version: catalogueVersion(parseInt(m[2], 16)), fingerprint: m[3] };
 }
 
+// Whether a catalogue group's expander shows it open ("^") or closed ("v"), from magick's txt: output of the glyph's
+// 20 px square in grey: of its dark pixels, the top row spans narrow and the bottom row wide where it points up (the
+// arrow of ETS 6.4.1: 6 px apart at the wide end, one pixel at the tip); null where it shows no arrow.
+export function expanderOpen(txt: string): boolean | null {
+  const dark = txt.split("\n").slice(1).flatMap((l) => {
+    const m = l.match(/^(\d+),(\d+):.*#([0-9A-Fa-f]{2})/);
+    return m && parseInt(m[3], 16) < 0x80 ? [{ x: Number(m[1]), y: Number(m[2]) }] : [];
+  });
+  if (dark.length < 3) return null;
+  const span = (y: number) => { const xs = dark.filter((p) => p.y === y).map((p) => p.x); return Math.max(...xs) - Math.min(...xs); };
+  const top = span(Math.min(...dark.map((p) => p.y))), bottom = span(Math.max(...dark.map((p) => p.y)));
+  return top === bottom ? null : top < bottom;
+}
+
 // Of the catalogue rows read for an order number (in the grid's order), the one to insert for `applicationId`: at the
 // order number (compared as OCR reads it, orderNumberKey), the application's version and device type, and of those
 // the one whose fingerprint reads as the application's; the first of several such rows (one application in several
@@ -695,14 +709,16 @@ async function insertProduct(s: Screen, orderNumber: string, applicationId: stri
   // application's name.)
   const products = () => rows(s.look(grid, "binary").ws.filter(inside(grid))).filter((r) => r.words.some((w) => w.x >= 610 && /[A-Za-z]{3}/.test(w.text)));
   let items = products();
-  // A manufacturer's header can stand open with its rows still loading, so a click may close it: it is clicked
-  // until its rows show, each time given a while (the online catalogue lists them late). An order number names
-  // one manufacturer; only the topmost row is its header (OCR may split it into several rows).
-  for (let toggle = 0; items.length === 0 && toggle < 3; toggle++) {
-    const header = rows(s.look(grid).ws.filter(inside(grid)))[0] ?? fail(`the catalogue lists nothing for order number ${orderNumber}`);
-    click(326, Math.round(header.y));
-    await sleep(1000);
-    for (let i = 0; i < 3 && (items = products()).length === 0; i++) await sleep(2000);
+  // Every manufacturer's group the search lists is opened where it stands closed (ETS keeps a group closed from one
+  // search to the next): its expander's arrow is read, never toggled blind. The online catalogue lists the rows late.
+  for (let round = 0; round < 3; round++) {
+    const png = s.snap();
+    const headers = rows(words(png, grid).filter(inside(grid))).filter((r) => !r.words.some((w) => w.x >= 610) && r.words[0].x < 360);
+    if (round === 0 && headers.length === 0 && items.length === 0) fail(`the catalogue lists nothing for order number ${orderNumber}`);
+    const closed = headers.filter((h) => expanderOpen(execFileSync("magick", [png, ...crop({ x: 316, y: Math.round(h.y) - 10, w: 20, h: 20 }), "-colorspace", "Gray", "-depth", "8", "txt:-"], { encoding: "utf8" })) === false);
+    for (const h of closed) { click(326, Math.round(h.y)); await sleep(1500); }
+    for (let i = 0; i < 4 && (items = products()).length === 0; i++) await sleep(2000);
+    if (closed.length === 0 && items.length) break;
   }
   if (items.length === 0) fail(`the catalogue holds no product for order number ${orderNumber}`);
   // A list that reaches the grid's last row may go on below it, where the driver does not scroll.
@@ -738,9 +754,15 @@ async function insertProduct(s: Screen, orderNumber: string, applicationId: stri
       // without. The driver runs ETS in its normal mode only; cancelled, the row is refused.
       const compatibility = findText(ws, "Kompatibilit").length > 0;
       if (!compatibility && !findText(ws, "Projektpasswort setzen").length) fail(`ETS shows a dialog after the insert: ${ws.map((w) => w.text).join(" ").slice(0, 160)}`);
-      const cancel = findText(dialogButtons(png, box), "Abbrechen")[0] ?? fail(`no Abbrechen under ETS's ${compatibility ? "compatibility warning" : "project password dialog"}`);
+      if (compatibility) {
+        // Its buttons ("Im Kompatibilitätsmodus neu starten", "Abbrechen") read unreliably; Escape cancels it.
+        key("Escape");
+        await sleep(1500);
+        if (dialogBox(s.snap())) fail("ETS's compatibility warning stays open after Escape");
+        fail("refused: the product's plug-ins need ETS's compatibility mode (ETS asks to restart in it after the insert); the driver runs ETS in its normal mode");
+      }
+      const cancel = findText(dialogButtons(png, box), "Abbrechen")[0] ?? fail("no Abbrechen under ETS's project password dialog");
       click(cancel.cx, cancel.cy);
-      if (compatibility) { await sleep(1500); fail("refused: the product's plug-ins need ETS's compatibility mode (ETS asks to restart in it after the insert); the driver runs ETS in its normal mode"); }
       continue;
     }
     importing = false;
@@ -1361,14 +1383,18 @@ function startSim(unit: string[], log: string, port: number, advertise: string, 
     runningSims.delete(stop);
   };
   runningSims.add(stop);
+  // A catalogue unit takes its time to build (5 to 6 s each on the driver's machine), and one with what the identity
+  // loop learned is built once per ETS6.log and once more to serve.
+  const startMs = 90_000;
   return new Promise((resolve, reject) => {
+    let timedOut = false;
     const check = setInterval(() => {
       if (!text.includes(`connects to :${port}`)) return;
       clearTimeout(t); clearInterval(check);
       resolve({ stop });
     }, 200);
-    const t = setTimeout(() => { clearInterval(check); void stop().then(() => reject(new Error(`the simulator did not start within 20 s: ${text}`))); }, 20_000);
-    child.on("exit", () => { clearTimeout(t); clearInterval(check); reject(new Error(`the simulator ended: ${text}`)); });
+    const t = setTimeout(() => { timedOut = true; clearInterval(check); void stop().then(() => reject(new Error(`the simulator did not start within ${startMs / 1000} s: ${text}`))); }, startMs);
+    child.on("exit", (code, sig) => { if (timedOut) return; clearTimeout(t); clearInterval(check); reject(new Error(`the simulator ended (${sig ?? `exit ${code}`}): ${text}`)); });
   });
 }
 
@@ -1385,7 +1411,7 @@ interface RowOptions {
   // A catalogue unit's donor where not its rule's, and the ETS6.log files of the earlier runs the identity loop
   // learns from, in order.
   donor?: string; learnedFrom: string[];
-  // A failure made on purpose right after the insert (batch --inject-kill, --inject-dialog).
+  // A failure made on purpose once the project is compressed (batch --inject-kill, --inject-dialog).
   inject?: "kill" | "dialog";
 }
 
@@ -1466,11 +1492,11 @@ async function runRow(o: RowOptions): Promise<RowRun> {
       step("compress");
       await compressProject(s, o.project, o.passwordEnv);
       await showTopology(s);
+      if (o.inject === "kill") { step("injected: ETS killed"); killEts(); await sleep(3000); }
+      if (o.inject === "dialog") { step("injected: ETS's project details dialog"); click(AT.projectInfo[0], AT.projectInfo[1]); await sleep(3000); }
       settled(s, dir, "insert");
       step("insert");
       await insertProduct(s, o.orderNumber ?? fail("--order is needed to insert the product from the catalogue"), applicationId);
-      if (o.inject === "kill") { step("injected: ETS killed"); killEts(); await sleep(3000); }
-      if (o.inject === "dialog") { step("injected: ETS's project details dialog"); click(AT.projectInfo[0], AT.projectInfo[1]); await sleep(3000); }
       if (!ownSpec) {
         settled(s, dir, "the product's export");
         step("the product's export");

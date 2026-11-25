@@ -1039,7 +1039,7 @@ HA_TOKEN=... BUSFORGE_CORPUS=... bun run tools/ets-driver.ts batch <catalogue-li
   (where the unit has no place for the PEI program's segment, it refuses it). A second program that is
   no PEI program is refused before the row runs.
 - `--inject-kill <application>` and `--inject-dialog <application>` kill ETS, or open its project details
-  dialog, right after that row's insert: they exist to show the recovery on a real run.
+  dialog, in that row once the project is compressed: they exist to show the recovery on a real run.
 
 ### The catalogue's rows
 
