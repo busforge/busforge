@@ -8,7 +8,7 @@ import { captureLData, memWriteOf } from "./etsdiff.ts";
 import { cemiOfLine, replayCapture, replayDifferences } from "./sim-unit-replay.ts";
 import { busforgeIntoSim, busforgeSessionIntoSim, type RowConfiguration } from "./ets-sweep.ts";
 import { SimUnit, type SimProperty, type SimUnitModel } from "./sim-unit.ts";
-import { BENCH_BRIDGE, GVS_AMMA, JUNG_400021SE, MEANWELL_KNX40E, OPENKNX_RAUMCONTROLLER, THEBEN_DALI_GATEWAY, THEBEN_MIX2_HMG6T, newSimUnit, type SimUnitSpec } from "./sim-units.ts";
+import { BENCH_BRIDGE, GVS_AMMA, JUNG_400021SE, MEANWELL_KNX40E, OPENKNX_RAUMCONTROLLER, THEBEN_DALI_GATEWAY, THEBEN_MIX2_HMG6T, THEBEN_MIX2_JMG4T, THEBEN_MIX2_RMG8T, newSimUnit, type SimUnitSpec } from "./sim-units.ts";
 
 // The Busforge download below runs on the wall clock (the unit's line timing, the restart proof's 4 s window):
 // about 15 s alone; twenty times that under a loaded full check (docs/testing.md, "Timeouts of heavy tests").
@@ -289,10 +289,13 @@ function framesAsReported(text: string, device: number): (frame: string) => stri
 }
 
 // Each unit's ETS captures in the order they ran on it, from the state its collection shows (with what its
-// captures show different, sim-units.ts), and the requests at their ends the interface confirmed after the
-// capture ended: ETS's last T_Disconnect after the confirmed restart of the MIX 2's full and links downloads and of
-// the GVS AMMA's download.
-const CALIBRATIONS: { spec: SimUnitSpec; captures: string[]; unconfirmed?: Record<string, number> }[] = [
+// captures show different, sim-units.ts) or the other collection of the unit named, and the requests at their ends
+// the interface confirmed after the capture ended: ETS's last T_Disconnect after the confirmed restart of the MIX 2
+// units' downloads and of the GVS AMMA's download, and ETS's T_Ack of the RMG 8 T's restart response at the end of
+// its parameter download. Such requests are not sent, but for the captures in `sentUnconfirmed`, whose last
+// request the unit took (the T_Ack: the next capture finds it restarted), where the simulator's confirmation of them
+// is not compared and its frames are.
+const CALIBRATIONS: { spec: SimUnitSpec; captures: string[]; collection?: string; unconfirmed?: Record<string, number>; sentUnconfirmed?: string[] }[] = [
   { spec: MEANWELL_KNX40E, captures: ["links", "params", "revert", "fulldownload", "partial-maxtemp-on", "partial-maxtemp-off"].map((k) => `meanwell-ets-${k}.log`) },
   { spec: THEBEN_DALI_GATEWAY, captures: ["fulldownload", "partial-params", "partial-links", "partial-revert", "unload", "fulldownload-real"].map((k) => `dali-ets-${k}.log`) },
   { spec: OPENKNX_RAUMCONTROLLER, captures: ["fulldownload", "partial-params", "partial-links", "partial-revert"].map((k) => `openknx-ets-${k}.log`) },
@@ -302,20 +305,33 @@ const CALIBRATIONS: { spec: SimUnitSpec; captures: string[]; unconfirmed?: Recor
   },
   { spec: JUNG_400021SE, captures: ["jung-400021se-ets-fulldownload.log"] },
   { spec: GVS_AMMA, captures: ["gvs-amma-ets-fulldownload-defaults.log"], unconfirmed: { "gvs-amma-ets-fulldownload-defaults.log": 1 } },
+  {
+    spec: THEBEN_MIX2_JMG4T, captures: ["fulldownload", "partial-params", "partial-links", "partial-revert"].map((k) => `mix2-jmg4t-ets-${k}.log`),
+    unconfirmed: { "mix2-jmg4t-ets-fulldownload.log": 1, "mix2-jmg4t-ets-partial-params.log": 1, "mix2-jmg4t-ets-partial-links.log": 1 },
+  },
+  {
+    spec: THEBEN_MIX2_RMG8T, captures: ["fulldownload", "partial-params", "partial-links", "partial-revert"].map((k) => `mix2-rmg8t-ets-${k}.log`),
+    unconfirmed: { "mix2-rmg8t-ets-partial-params.log": 1, "mix2-rmg8t-ets-partial-links.log": 1 }, sentUnconfirmed: ["mix2-rmg8t-ets-partial-params.log"],
+  },
+  {
+    spec: THEBEN_MIX2_RMG8T, collection: "internal/release-readiness/22-house/1.1.53/1.1.53-collect-vor-77.json", captures: ["partial-diag-on", "partial-diag-off"].map((k) => `mix2-rmg8t-ets-${k}.log`),
+    unconfirmed: { "mix2-rmg8t-ets-partial-diag-off.log": 1 },
+  },
 ];
 
-for (const { spec, captures, unconfirmed = {} } of CALIBRATIONS) {
-  corpusDescribe(`the simulated ${spec.name} against ETS's captures`, () => {
+for (const { spec, captures, collection, unconfirmed = {}, sentUnconfirmed = [] } of CALIBRATIONS) {
+  corpusDescribe(`the simulated ${spec.name} against ETS's captures${collection ? ` from ${collection}` : ""}`, () => {
     // Each request as ETS sent it into one simulated unit, from the state its collection shows; the restart and
     // the connection timeout run on the capture's clock.
     test("answers every request as the unit did, and confirms each on the line as its interface did", async () => {
       let clock = 0;
-      const sim = newSimUnit(spec, { now: () => clock }, { link: { ackMs: 0, nakMs: 0 } });
+      const sim = newSimUnit(spec, { now: () => clock }, { link: { ackMs: 0, nakMs: 0 } }, collection);
       for (const capture of captures) {
         const text = captureText(capture);
-        const steps = await replayCapture(sim, text, { tool: "ETS", device: sim.deviceIa, interfaceIa: spec.interfaceIa, clock: (ms) => { clock = ms; }, skipUnconfirmedEnd: true });
+        const sent = sentUnconfirmed.includes(capture);
+        const steps = await replayCapture(sim, text, { tool: "ETS", device: sim.deviceIa, interfaceIa: spec.interfaceIa, clock: (ms) => { clock = ms; }, skipUnconfirmedEnd: !sent });
         const shown = framesAsReported(text, sim.deviceIa);
-        const reported = steps.map((s) => ({ ...s, unit: s.unit.map(shown), sim: s.sim.map(shown) }));
+        const reported = steps.map((s) => ({ ...s, unit: s.unit.map(shown), sim: s.sim.map(shown), simCon: sent && s.unitCon === undefined ? undefined : s.simCon }));
         expect([capture, steps.filter((s) => s.unitCon === undefined).length, steps.some((s) => s.unit.length > 0)]).toEqual([capture, unconfirmed[capture] ?? 0, true]);
         expect([capture, replayDifferences(reported, { context: 3 })]).toEqual([capture, []]);
       }
@@ -480,6 +496,14 @@ const NOT_SHOWN_AFTER_RESTART = "after the restart: whether the unit acknowledge
 const NOT_SHOWN_DEAD_CONNECTION = "on the connection the restart ended: what the unit answers it is not shown";
 const refusalKind = (r: string) => [NOT_SHOWN_AFTER_RESTART, NOT_SHOWN_DEAD_CONNECTION].find((k) => r.endsWith(k)) ?? r;
 
+// The project's configuration of a Theben MIX 2 unit as its full-download capture shows it (`mix2-<unit>-config.json`).
+function mix2Config(spec: SimUnitSpec, unit: string): RowConfiguration {
+  const fx = JSON.parse(captureText(`mix2-${unit}-config.json`)) as { ia: string; params: [string, string][]; instances: ModuleInstance[]; links: { comObjNum: number; gaRaws: number[] }[]; overrides: { comObjRefId: string; attrs: Record<string, string> }[] };
+  const cfg = parseAppConfig(catalogueXml(spec.catalogue));
+  const overrides = placeComObjOverrides(cfg, buildDeviceConfig(cfg, new Map(fx.params), undefined, fx.instances), fx.overrides);
+  return { ia: fx.ia, params: fx.params, links: fx.links, moduleInstances: fx.instances, comObjectOverrides: [...overrides] };
+}
+
 // The configuration ETS downloaded in each unit's full-download capture (tools/etsdiff.test.ts, "System B full
 // download: the bytes ETS writes, and no other", holds Busforge's image to it): the projects' configurations of the
 // Theben and OpenKNX units, the application's defaults on the Jung and the GVS. `stamps` are the memory-control
@@ -500,13 +524,18 @@ const DOWNLOADS: { spec: SimUnitSpec; config: () => RowConfiguration; stamps: st
     refusals: [NOT_SHOWN_AFTER_RESTART, NOT_SHOWN_DEAD_CONNECTION],
   },
   {
-    spec: THEBEN_MIX2_HMG6T, config: () => {
-      const fx = JSON.parse(captureText("mix2-hmg6t-config.json")) as { ia: string; params: [string, string][]; instances: ModuleInstance[]; links: { comObjNum: number; gaRaws: number[] }[]; overrides: { comObjRefId: string; attrs: Record<string, string> }[] };
-      const cfg = parseAppConfig(catalogueXml(THEBEN_MIX2_HMG6T.catalogue));
-      const overrides = placeComObjOverrides(cfg, buildDeviceConfig(cfg, new Map(fx.params), undefined, fx.instances), fx.overrides);
-      return { ia: fx.ia, params: fx.params, links: fx.links, moduleInstances: fx.instances, comObjectOverrides: [...overrides] };
-    },
+    spec: THEBEN_MIX2_HMG6T, config: () => mix2Config(THEBEN_MIX2_HMG6T, "hmg6t"),
     stamps: ["1:0000007200331460", "2:000001260033610f", "3:000001fe0033e64b", "4:0000066a0032284d", "4:000001690032304e"],
+    refusals: [],
+  },
+  {
+    spec: THEBEN_MIX2_JMG4T, config: () => mix2Config(THEBEN_MIX2_JMG4T, "jmg4t"),
+    stamps: ["1:0000002c0033766c", "2:0000005a00339bcd", "3:000001fe00337928", "4:0000066a003269b7", "4:000001690032304e"],
+    refusals: [],
+  },
+  {
+    spec: THEBEN_MIX2_RMG8T, config: () => mix2Config(THEBEN_MIX2_RMG8T, "rmg8t"),
+    stamps: ["1:0000003c0033a2ac", "2:000000760033306f", "3:000001fe0033841d", "4:0000066a003276be", "4:000001690032304e"],
     refusals: [],
   },
   {

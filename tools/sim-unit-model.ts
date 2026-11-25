@@ -75,12 +75,21 @@ export function collectedUnit(collection: CollectPackage, appXml: string, refuse
     }
     if (r.space !== "property" || o === undefined || pid === undefined || unheld.has(`${o}/${pid}`)) continue;
     if (r.outcome === "refused") {
-      prop(o, pid).elements = null;
+      const p = prop(o, pid);
+      // An element answered contradicts the refusal of the first, in either order; a count does not (below).
+      if (p.elements !== null && p.elements.some((e) => e !== undefined)) refuse(`the unit answered property ${o}/${pid} and refused it`);
+      p.elements = null;
+      p.countKnown = false;
+      counts.delete(`${o}/${pid}`);
       continue;
     }
     if (r.outcome !== "bytes" || !r.bytes) continue;
     const bytes = Buffer.from(r.bytes, "hex");
     const p = prop(o, pid);
+    // A count beside the refusal of the first element, in either order, is not held: the unit answers the property
+    // without elements, and a read of its count is refused (the Auro's and the Theben theLuxa P300's object 4 PID 27
+    // answered count 0, the GVS AMMA's 0/224 count 1).
+    if (p.elements === null && start === 0) continue;
     if (p.elements === null) refuse(`the unit refused property ${o}/${pid} and answered it`);
     if (start === 0) { counts.set(`${o}/${pid}`, bytes.readUInt16BE(0)); p.countKnown = true; continue; }
     const size = bytes.length / count;

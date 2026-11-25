@@ -2,11 +2,11 @@
 // unit and its product's application program in the private corpus, with what only the unit's captures show of it.
 import { readFileSync } from "node:fs";
 import { catalogueXml, corpusPath } from "./corpus.ts";
-import { SimUnit } from "./sim-unit.ts";
+import { SimUnit, type SimUnitModel } from "./sim-unit.ts";
 import type { CollectPackage } from "../packages/product/src/index.ts";
 import { simUnitModel, type SystemBBehaviour, type UnitBehaviour } from "./sim-unit-model.ts";
-import { SimUnit0701, simUnit0701Model, type MemoryMappedBehaviour } from "./sim-unit-0701.ts";
-import { SimUnit0705, simUnit0705Model, type PropertyMappedBehaviour } from "./sim-unit-0705.ts";
+import { SimUnit0701, simUnit0701Model, type MemoryMappedBehaviour, type SimUnit0701Model } from "./sim-unit-0701.ts";
+import { SimUnit0705, simUnit0705Model, type PropertyMappedBehaviour, type SimUnit0705Model } from "./sim-unit-0705.ts";
 
 interface SimUnitSpecBase {
   id: string;
@@ -354,7 +354,10 @@ export const THEBEN_METEODATA_140S: SimUnitSpec = {
 //   numbered frames on the connection the restart ended acknowledged and left without an answer (the probes of
 //   Busforge's full downloads);
 // - its task segments carry 01 between the address and the program id (every capture);
-// - its device control reads 1 after ETS unloaded objects 1 to 3 (application stopped), 5 with verify mode;
+// - its device control reads 1 after ETS unloaded objects 1 to 3 (application stopped), 5 with verify mode; what it
+//   reads after its application is loaded again while loaded no capture shows (its partial downloads read it before
+//   the load), and its memory writes then are answered as before (the parameter downloads after the full download in
+//   each of Busforge's smoke runs, 87 writes each, which tools/sim-unit-0705.test.ts replays);
 // - in programming mode at the first full download (it answers ETS's A_IndividualAddress_Read), and out of it
 //   after a restart (no answer in the second, nor after the assignment's restart); its
 //   A_IndividualAddressSerialNumber_Response carries four zero octets after the serial (the second);
@@ -382,7 +385,7 @@ export const MDT_BE02001: SimUnitSpec = {
     descriptionIndex: null,
     shownWrites: new Map(),
   },
-  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x01, unloadStopsApplication: true },
+  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x01, unloadStopsApplication: true, loadStopsApplication: null, writesAfterLoadShown: true, taskSegmentsElsewhere: [], taskControls1: [], mcbSegments: null },
 };
 
 // The Gira Tastsensor 3 Komfort 3fach (M-0008_A-10D7-11-2783-O000A, MV-0705), from the collection before ETS's
@@ -394,7 +397,8 @@ export const MDT_BE02001: SimUnitSpec = {
 // - it answers a memory read into a segment that is loading with the bytes written there since its load
 //   (Busforge's read-backs);
 // - its task segments carry 00 between the address and the program id; no capture unloads its application, so
-//   what its device control reports after that is not shown;
+//   what its device control reports after that is not shown; after a load of its application while loaded it reads
+//   0 (its partial downloads, captures/gira-m0008-ets-partial-*.log);
 // - A_Restart: acknowledged on layer 2, without T_Ack; frames 41 or 42 ms after the restart request not
 //   acknowledged, frames from 312 ms on acknowledged, between them none shown, before 41 ms the line taken as
 //   down as for the MDT above; numbered frames on the connection the restart ended acknowledged and left without
@@ -422,10 +426,216 @@ export const GIRA_TS3: SimUnitSpec = {
     descriptionIndex: null,
     shownWrites: new Map(),
   },
-  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x00, unloadStopsApplication: null },
+  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x00, unloadStopsApplication: null, loadStopsApplication: false, writesAfterLoadShown: false, taskSegmentsElsewhere: [], taskControls1: [], mcbSegments: "flagged" },
 };
 
-export const SIM_UNITS: readonly SimUnitSpec[] = [MEANWELL_KNX40E, THEBEN_DALI_GATEWAY, OPENKNX_RAUMCONTROLLER, THEBEN_MIX2_HMG6T, JUNG_400021SE, GVS_AMMA, ABB_USU42, THEBEN_METEODATA_140S, MDT_BE02001, GIRA_TS3];
+// The Theben MIX 2 JMG 4 T (M-0048_A-493B-21-B471, MV-07B0; the HMG 6 T's application), from the collection after
+// ETS's downloads below (collections/in-service/theben-jmg4t-in-service.json): the collection before them read only
+// the first of the application segment's two memory-control blocks. ETS's full download writes every octet of the
+// segment, and the downloads after it read none it did not write. Its behaviour from ETS's four captures in the order
+// they ran on it (captures/mix2-jmg4t-ets-fulldownload.log, -partial-params, -partial-links, -partial-revert) and
+// Busforge's downloads (collections/mix2-hc05-2026-10-07/jmg4t-busforge-*.log), through the house's interface:
+// - a master reset with erase code 1 (confirmed restart) is answered with A_Restart_Response, process time 1 s;
+//   ETS's T_Disconnect 48 ms after the response's T_Ack confirmed positively (-partial-revert; the three others,
+//   32 to 37 ms after it, end the captures unconfirmed), Busforge's probes 1 s and later after it too; numbered
+//   frames on the connection the restart ended acknowledged and left without an answer (Busforge's probes);
+// - the free key (FFFFFFFF) grants access level 0;
+// - a description read by PID is answered with the property's own index (object 2's PID 23 at index 3);
+// - memory is written with A_MemoryExtended_Write;
+// - after its restart it clears P-199 "A_Download erfolgt" (bit 7 of octet 39 of the application segment), which
+//   every full and parameter download sets: the CRC of the first block of object 4's memory-control block it reports
+//   at the start of the next download is over the cleared bit;
+// - the interface confirmed a frame 16 ms after the request at the earliest; its own captures show none confirmed
+//   negatively, the Theben DALI-Gateway's through the same interface after 63 ms;
+// - what its device control reads after the application is unloaded none of them shows.
+export const THEBEN_MIX2_JMG4T: SimUnitSpec = {
+  id: "theben-mix2-jmg4t",
+  name: "Theben MIX 2 JMG 4 T",
+  collection: "collections/in-service/theben-jmg4t-in-service.json",
+  catalogue: "M-0048_A-493B-21-B471.xml.gz",
+  interfaceIa: 0x11fe,
+  interfaceMaxApdu: HOUSE_INTERFACE.maxApdu,
+  behaviour: {
+    restart: { basic: null, line: [{ atMs: 48, up: true }], deadConnection: "nothing", confirmedRestartSeconds: 1 },
+    authorize: new Map([["ffffffff", 0]]),
+    link: HOUSE_INTERFACE.link,
+    programmingMode: null,
+    serialNumberResponseTail: null,
+    unloadStopsApplication: null,
+    memoryExtendedWrite: true,
+    descriptionIndex: "property",
+    clearsAfterRestart: [{ lsm: 4, offset: 39, mask: 0x80, from: 0x80, to: 0x00 }],
+    shownWrites: new Map(),
+  },
+};
+
+// The Theben MIX 2 RMG 8 T (M-0048_A-493B-21-B471, MV-07B0; the HMG 6 T's application), from the collection after
+// ETS's first four downloads below (collections/in-service/theben-rmg8t-in-service.json), for the same reason as the
+// JMG 4 T's. Its behaviour from ETS's captures in the order they ran on it (captures/mix2-rmg8t-ets-fulldownload.log,
+// -partial-params, -partial-links, -partial-revert, and from the collection right before them -partial-diag-on,
+// -partial-diag-off) and Busforge's downloads (collections/mix2-hc05-2026-10-07/rmg8t-busforge-*.log), through the
+// house's interface:
+// - a master reset with erase code 1 (confirmed restart) is answered with A_Restart_Response, process time 1 s;
+//   ETS's T_Disconnect 29 and 33 ms after the response's T_Ack confirmed positively (-partial-revert,
+//   -fulldownload), Busforge's probes 1 s and later after it too; numbered frames on the connection the restart
+//   ended acknowledged and left without an answer (Busforge's probes);
+// - the free key (FFFFFFFF) grants access level 0;
+// - a description read by PID is answered with the property's own index (object 2's PID 23 at index 3);
+// - memory is written with A_MemoryExtended_Write;
+// - after its restart it clears P-199 as the JMG 4 T does (-partial-params, -partial-diag-off);
+// - the interface confirmed a frame 16 ms after the request at the earliest; its own captures show none confirmed
+//   negatively, the Theben DALI-Gateway's through the same interface after 63 ms;
+// - what its device control reads after the application is unloaded none of them shows.
+export const THEBEN_MIX2_RMG8T: SimUnitSpec = {
+  id: "theben-mix2-rmg8t",
+  name: "Theben MIX 2 RMG 8 T",
+  collection: "collections/in-service/theben-rmg8t-in-service.json",
+  catalogue: "M-0048_A-493B-21-B471.xml.gz",
+  interfaceIa: 0x11fe,
+  interfaceMaxApdu: HOUSE_INTERFACE.maxApdu,
+  behaviour: {
+    restart: { basic: null, line: [{ atMs: 29, up: true }], deadConnection: "nothing", confirmedRestartSeconds: 1 },
+    authorize: new Map([["ffffffff", 0]]),
+    link: HOUSE_INTERFACE.link,
+    programmingMode: null,
+    serialNumberResponseTail: null,
+    unloadStopsApplication: null,
+    memoryExtendedWrite: true,
+    descriptionIndex: "property",
+    clearsAfterRestart: [{ lsm: 4, offset: 39, mask: 0x80, from: 0x80, to: 0x00 }],
+    shownWrites: new Map(),
+  },
+};
+
+// The Auro KNX presence detector (M-0081_A-FE01-11-75D9, MV-0705), from the collection right before ETS's full
+// download (collections/auro-m0081-busforge-2026-10-06/1.1.18-auro-m0081-collect-nach-ets.json). Its behaviour from
+// ETS's captures in the order they ran on it (captures/auro-m0081-ets-fulldownload.log, -partial-params,
+// -partial-links, -partial-revert, and from the collection before them -partial-unlink9, -partial-relink9) and
+// Busforge's downloads (collections/auro-m0081-busforge-2026-10-06*/auro-m0081-busforge-*.log), through the house's
+// KNXnet/IP interface (its two further ETS captures, -partial-heatalarm-on and -off, are not replayed: the collection
+// before them did not read the application segments, so no segment CRC to start from, internal/ets-sweep/donors.md):
+// - it refuses PID 56, and takes the 15-octet APDUs ETS sends it ("assuming 15");
+// - its device control reads 0 after ETS unloaded its application and after ETS loaded it again while loaded
+//   (application not stopped), 4 with verify mode;
+// - its task segments carry 00 between the address and the program id; the application's names the address its
+//   application declares, at the end of a segment, and its task control 1 has count 0 (the address 0 it declares);
+// - it answers a memory read into a segment that is loading with the bytes written there since its load
+//   (Busforge's read-backs);
+// - its memory-control block reports each segment flagged 0x80 as `<size:4> 00 <access> <CRC:2>`; object 4 has none;
+// - A_Restart: acknowledged on layer 2 and with T_Ack (every capture); frames 41 ms after the restart request (the
+//   earliest any capture shows, Busforge's probes 1 ms after the interface confirmed the restart) and later
+//   acknowledged, the line taken as up from the restart on as the Meteodata's above; numbered frames on the
+//   connection the restart ended acknowledged and left without an answer (Busforge's probes);
+// - the free key grants access level 0;
+// - the interface confirmed a frame 16 ms after the request at the earliest; its own captures show none confirmed
+//   negatively, the Theben DALI-Gateway's through the same interface after 63 ms;
+// - no capture shows its programming mode or a serial-number read, reads a property description by PID, writes a
+//   property but PID 5 and 14, or uses an extended memory service.
+export const AURO_M0081: SimUnitSpec = {
+  id: "auro-m0081",
+  name: "Auro KNX presence detector",
+  collection: "collections/auro-m0081-busforge-2026-10-06/1.1.18-auro-m0081-collect-nach-ets.json",
+  catalogue: "M-0081_A-FE01-11-75D9.xml.gz",
+  interfaceIa: 0x11fe,
+  interfaceMaxApdu: HOUSE_INTERFACE.maxApdu,
+  behaviour: {
+    restart: { basic: { acknowledged: true, tAck: "always" }, line: [{ atMs: 0, up: true }], deadConnection: "nothing", confirmedRestartSeconds: null },
+    authorize: new Map([["ffffffff", 0]]),
+    link: HOUSE_INTERFACE.link,
+    programmingMode: null,
+    serialNumberResponseTail: null,
+    memoryExtendedWrite: false,
+    descriptionIndex: null,
+    shownWrites: new Map(),
+  },
+  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x00, unloadStopsApplication: false, loadStopsApplication: false, writesAfterLoadShown: false, taskSegmentsElsewhere: [{ lsm: 3, place: "end" }], taskControls1: [{ lsm: 3, count: 0, at: "zero" }], mcbSegments: "flagged" },
+};
+
+// The Theben theLuxa P300 presence detector (M-0048_A-107E-12-5B58, MV-0705), from the collection right before
+// ETS's downloads (collections/in-service/theben-theluxa-p300-in-service.json). Its behaviour from ETS's four
+// captures in the order they ran on it (captures/theluxa-p300-ets-fulldownload.log, -partial-params, -partial-links,
+// -partial-revert) and Busforge's downloads (collections/theluxa-p300-hc03-2026-10-07/theluxa-busforge-*.log and
+// its structural downloads of the next day), through the house's KNXnet/IP interface:
+// - it refuses PID 56, and takes the 15-octet APDUs ETS sends it ("assuming 15");
+// - its device control reads 0 after ETS unloaded its application and after ETS loaded it again while loaded
+//   (application not stopped), 4 with verify mode;
+// - its task segments carry 00 between the address and the program id; ETS allocates its tables at their own size
+//   and names the segment's start in their task segments; the application's names the address its application
+//   declares, inside a segment, and its task control 1 has count 1 at an address inside a segment;
+// - it answers a memory read into a segment that is loading with the bytes written there since its load
+//   (Busforge's read-backs in collections/theluxa-p300-hc03-2026-10-07/theluxa-busforge-full-r1.log);
+// - its memory-control block reports every EEPROM segment: one flagged 0x80 as `<size:4> 01 <access> <CRC:2>`,
+//   another as `<size:4> 00 <access> 00 00`; object 4 has none;
+// - A_Restart: acknowledged on layer 2 and with T_Ack (every capture); Busforge's probe 41 or 42 ms after the restart
+//   request acknowledged in nine captures and not in three, frames from 333 ms on acknowledged (Busforge's
+//   probes, ETS's T_Disconnect about 1.1 s after it): before 333 ms the line is not shown and a frame refused;
+//   numbered frames on the connection the restart ended acknowledged and left without an answer (Busforge's probes);
+// - the free key grants access level 0;
+// - the interface confirmed a frame 16 ms after the request at the earliest, negatively 82 ms after it at the
+//   earliest;
+// - no capture shows its programming mode or a serial-number read, reads a property description by PID, writes a
+//   property but PID 5 and 14, or uses an extended memory service.
+export const THEBEN_THELUXA_P300: SimUnitSpec = {
+  id: "theben-theluxa-p300",
+  name: "Theben theLuxa P300",
+  collection: "collections/in-service/theben-theluxa-p300-in-service.json",
+  catalogue: "M-0048_A-107E-12-5B58.xml.gz",
+  interfaceIa: 0x11fd,
+  interfaceMaxApdu: HOUSE_INTERFACE.maxApdu,
+  behaviour: {
+    restart: { basic: { acknowledged: true, tAck: "always" }, line: [{ atMs: 333, up: true }], deadConnection: "nothing", confirmedRestartSeconds: null },
+    authorize: new Map([["ffffffff", 0]]),
+    link: { ackMs: 16, nakMs: 82 },
+    programmingMode: null,
+    serialNumberResponseTail: null,
+    memoryExtendedWrite: false,
+    descriptionIndex: null,
+    shownWrites: new Map(),
+  },
+  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x00, unloadStopsApplication: false, loadStopsApplication: false, writesAfterLoadShown: false, taskSegmentsElsewhere: [{ lsm: 3, place: "inside" }], taskControls1: [{ lsm: 3, count: 1, at: "inside" }], mcbSegments: "eeprom" },
+};
+
+// The MDT BE-06001 universal interface 6-fold (M-0083_A-00B4-32-3919, MV-0705), from the collection right before
+// ETS's downloads (collections/in-service/mdt-be06001-in-service.json). Its behaviour from ETS's four captures in the
+// order they ran on it (captures/mdtui-ets-fulldownload.log, -partial-params, -partial-links, -partial-revert) and
+// Busforge's downloads (internal/house-compat/hc08-busforge-2026-10-09/), through the house's KNXnet/IP interface:
+// - it refuses PID 56, and takes the 15-octet APDUs ETS sends it ("assuming 15");
+// - its device control reads 1 after ETS unloaded its application and after ETS loaded it again while loaded
+//   (application stopped), 5 with verify mode;
+// - its task segments carry 01 between the address and the program id;
+// - it answers a memory read into a segment that is loading with the bytes written there since its load
+//   (Busforge's read-backs);
+// - it refuses its memory-control blocks (PID 27);
+// - A_Restart: acknowledged on layer 2, without T_Ack (every capture); frames 39 to 49 ms after the restart request
+//   not acknowledged, frames from 310 ms on acknowledged (Busforge's probes, ETS's T_Disconnect about 3 s after
+//   it), between them none shown, and before 39 ms the line taken as down as for the MDT BE-02001.02; numbered
+//   frames on the connection the restart ended acknowledged and left without an answer (Busforge's probes);
+// - the free key grants access level 0;
+// - the interface confirmed a frame 16 ms after the request at the earliest, negatively 71 ms after it at the
+//   earliest;
+// - no capture shows its programming mode or a serial-number read, reads a property description by PID, writes a
+//   property but PID 5 and 14, or uses an extended memory service.
+export const MDT_BE06001: SimUnitSpec = {
+  id: "mdt-be06001",
+  name: "MDT BE-06001",
+  collection: "collections/in-service/mdt-be06001-in-service.json",
+  catalogue: "M-0083_A-00B4-32-3919.xml.gz",
+  interfaceIa: 0x11fd,
+  interfaceMaxApdu: HOUSE_INTERFACE.maxApdu,
+  behaviour: {
+    restart: { basic: { acknowledged: true, tAck: "never" }, line: [{ atMs: 0, up: false }, { atMs: 49, up: false }, { atMs: 310, up: true }], deadConnection: "nothing", confirmedRestartSeconds: null },
+    authorize: new Map([["ffffffff", 0]]),
+    link: { ackMs: 16, nakMs: 71 },
+    programmingMode: null,
+    serialNumberResponseTail: null,
+    memoryExtendedWrite: false,
+    descriptionIndex: null,
+    shownWrites: new Map(),
+  },
+  propertyMapped: { maxApdu: 15, readsWhileLoading: true, peiType: 0x01, unloadStopsApplication: true, loadStopsApplication: true, writesAfterLoadShown: false, taskSegmentsElsewhere: [], taskControls1: [], mcbSegments: null },
+};
+
+export const SIM_UNITS: readonly SimUnitSpec[] = [MEANWELL_KNX40E, THEBEN_DALI_GATEWAY, OPENKNX_RAUMCONTROLLER, THEBEN_MIX2_HMG6T, JUNG_400021SE, GVS_AMMA, ABB_USU42, THEBEN_METEODATA_140S, MDT_BE02001, GIRA_TS3, THEBEN_MIX2_JMG4T, THEBEN_MIX2_RMG8T, AURO_M0081, THEBEN_THELUXA_P300, MDT_BE06001];
 
 export function simUnitSpec(id: string): SimUnitSpec {
   const spec = SIM_UNITS.find((u) => u.id === id);
@@ -437,7 +647,7 @@ type SimOpts = ConstructorParameters<typeof SimUnit>[2];
 
 // The spec's unit as `collectionPath` shows it: its own collection, or another collection of the same unit (the
 // same address and serial), taken at another time.
-function collectionOf(spec: SimUnitSpec, collectionPath: string): CollectPackage {
+export function collectionOf(spec: SimUnitSpec, collectionPath = spec.collection): CollectPackage {
   const read = (path: string) => JSON.parse(readFileSync(corpusPath(path), "utf8")) as CollectPackage;
   const c = read(collectionPath);
   if (collectionPath === spec.collection) return c;
@@ -450,19 +660,35 @@ function collectionOf(spec: SimUnitSpec, collectionPath: string): CollectPackage
   return c;
 }
 
-// A fresh unit as its collection shows it (another collection of the same unit where one is named).
-export function newSimUnit(spec: SimUnitSpec, opts: SimOpts = {}, behaviour: Partial<SystemBBehaviour> = {}, collectionPath = spec.collection): SimUnit {
+// The model of a unit as its collection shows it (another collection of the same unit where one is named), by its
+// load control: System B's, the memory-mapped System 7 one (MV-0701) or the property-mapped one (MV-0705).
+export type UnitModel = { kind: "system-b"; model: SimUnitModel } | { kind: "memory-mapped"; model: SimUnit0701Model } | { kind: "property-mapped"; model: SimUnit0705Model };
+export function unitModel(spec: SimUnitSpec, behaviour: Partial<SystemBBehaviour> = {}, collectionPath = spec.collection): UnitModel {
+  const collection = collectionOf(spec, collectionPath), xml = catalogueXml(spec.catalogue);
   if (spec.memoryMapped || spec.propertyMapped) {
     const systemB = (["unloadStopsApplication", "clearsAfterRestart", "mcb", "stateInCaptures"] as const).filter((k) => k in behaviour);
     if (systemB.length) throw new Error(`no simulated unit: ${systemB.join(", ")} of a System B unit given for the System 7 ${spec.id}`);
-    if (spec.propertyMapped) return new SimUnit0705(simUnit0705Model(collectionOf(spec, collectionPath), catalogueXml(spec.catalogue), { ...spec.behaviour, ...behaviour }, spec.propertyMapped), spec.interfaceIa, { interfaceMaxApdu: spec.interfaceMaxApdu, ...opts });
-    return newSimUnit0701(spec, opts, behaviour, collectionPath);
+    if (spec.propertyMapped) return { kind: "property-mapped", model: simUnit0705Model(collection, xml, { ...spec.behaviour, ...behaviour }, spec.propertyMapped) };
+    return { kind: "memory-mapped", model: simUnit0701Model(collection, xml, { ...spec.behaviour, ...behaviour }, spec.memoryMapped!) };
   }
-  return new SimUnit(simUnitModel(collectionOf(spec, collectionPath), catalogueXml(spec.catalogue), { ...spec.behaviour, ...behaviour }), spec.interfaceIa, { interfaceMaxApdu: spec.interfaceMaxApdu, ...opts });
+  return { kind: "system-b", model: simUnitModel(collection, xml, { ...spec.behaviour, ...behaviour }) };
+}
+
+// The simulated unit of a model of `spec`'s, through `spec`'s interface.
+export function simUnitOf(spec: SimUnitSpec, u: UnitModel, opts: SimOpts = {}): SimUnit {
+  const o = { interfaceMaxApdu: spec.interfaceMaxApdu, ...opts };
+  if (u.kind === "property-mapped") return new SimUnit0705(u.model, spec.interfaceIa, o);
+  if (u.kind === "memory-mapped") return new SimUnit0701(u.model, spec.interfaceIa, o);
+  return new SimUnit(u.model, spec.interfaceIa, o);
+}
+
+// A fresh unit as its collection shows it (another collection of the same unit where one is named).
+export function newSimUnit(spec: SimUnitSpec, opts: SimOpts = {}, behaviour: Partial<SystemBBehaviour> = {}, collectionPath = spec.collection): SimUnit {
+  return simUnitOf(spec, unitModel(spec, behaviour, collectionPath), opts);
 }
 
 // The same for a memory-mapped System 7 unit, refused for a spec of another.
 export function newSimUnit0701(spec: SimUnitSpec, opts: SimOpts = {}, behaviour: Partial<UnitBehaviour> = {}, collectionPath = spec.collection): SimUnit0701 {
   if (!spec.memoryMapped) throw new Error(`${spec.id} is not a memory-mapped System 7 unit`);
-  return new SimUnit0701(simUnit0701Model(collectionOf(spec, collectionPath), catalogueXml(spec.catalogue), { ...spec.behaviour, ...behaviour }, spec.memoryMapped), spec.interfaceIa, { interfaceMaxApdu: spec.interfaceMaxApdu, ...opts });
+  return simUnitOf(spec, unitModel(spec, behaviour, collectionPath), opts) as SimUnit0701;
 }

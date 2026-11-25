@@ -1,5 +1,5 @@
 export * from "./model.ts";
-export { loadKnxproj, readXml0, deriveWinzipPassword, appProgramId, appProgramName, readAppProgram, extractAppPrograms, hardwareApplications, extractCatalogProducts, extractPictureBaggage, readBaggage } from "./knxproj.ts";
+export { loadKnxproj, readXml0, deriveWinzipPassword, appProgramId, appProgramName, readAppProgram, extractAppPrograms, hardwareApplications, hardwarePrograms, programEntryName, extractCatalogProducts, extractPictureBaggage, readBaggage } from "./knxproj.ts";
 export { readZip } from "./zip.ts";
 export { KnxprojError } from "./errors.ts";
 export { decodeLoadedImage, decodeCheckSums, type LoadedImageRecord, type CheckSumRegion, type ObjectCheckSums } from "./loadedimage.ts";

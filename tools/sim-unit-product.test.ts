@@ -12,10 +12,9 @@ import { mismatchLines, productAgainstUnit, productUnit, rerunIdentity, type Pro
 // (docs/testing.md, "Timeouts of heavy tests").
 setDefaultTimeout(140_000);
 
-// No ETS6.log in the corpus holds a `Required data mismatch` line: every ETS download there went into a real unit
-// of the product, whose identity fits. The lines below are of the form decision 0004 §1 quotes from ETS
-// ("Required data mismatch at SystemProperty(0/78)[$0000]: <device> instead of <required>"), the values as
-// contiguous hex; the parser is to be checked against the first real line a sweep row records.
+// The lines below are of the form decision 0004 §1 quotes from ETS ("Required data mismatch at
+// SystemProperty(0/78)[$0000]: <device> instead of <required>"), the values as contiguous hex; the one line a sweep
+// row records (a MEAN WELL unit answering a wrong hardware type) is read in tools/sim-unit-catalogue.test.ts.
 const at = (rest: string) => `2026-11-20 10:00:00,000 [12] WARN  Knx.Ets.Hawk.LoadDeviceTask - Required data mismatch at ${rest}`;
 
 describe("ETS's Required data mismatch lines", () => {
@@ -96,22 +95,26 @@ corpusDescribe("the identity loop's rerun step", () => {
     const refused = (u: ProductUnit, ...lines: string[]) => (rerunIdentity(u, lines.join("\n")) as { refused?: string }).refused;
     // The DALI-Gateway's application gives 0/78 in full.
     expect(refused(productUnit(app(DALI)), at("SystemProperty(0/78)[$0000]: 00907092910000000000 instead of 009070929101"))).toContain("octet 5 is 00");
-    expect(refused(meanwell(), at("SystemProperty(0/78)[$0000]:  instead of 620100000004"), at("SystemProperty(0/78)[$0000]:  instead of 620100000005"))).toContain("octet 5 is 04");
+    expect(refused(meanwell(), at("SystemProperty(0/78)[$0000]:  instead of 620100000004"), at("SystemProperty(0/78)[$0000]:  instead of 620100000005"))).toContain("ETS requires both 620100000004 and 620100000005 in 0/78 in one run: which the unit is to answer is not shown");
+    // Two lengths of one property in one run (a 6- and a 10-octet 0/78), the shorter the longer's beginning.
+    expect(refused(meanwell(), at("SystemProperty(0/78)[$0000]:  instead of 620100000004"), at("SystemProperty(0/78)[$0000]:  instead of 62010000000400000000"))).toContain("in one run: which the unit is to answer is not shown");
     expect(refused(meanwell(), at("SystemProperty(0/12)[$0000]: 0048 instead of 0162"))).toContain("which this identity does not answer");
     expect(refused(meanwell(), at("SystemProperty(0/12)[$0000]: 0162 instead of 0162"))).toContain("which this identity already answers");
+    // A required value the unit's answer begins with, shorter than it: ETS failed on the longer answer.
+    expect(refused(meanwell(), at("SystemProperty(0/12)[$0000]: 0162 instead of 01"))).toContain("ETS requires the 1 octets 01 in 0/12, where this identity answers 2 beginning with them: an answer shorter than the unit's is not modelled");
     // Each line is checked against the run's identity, also one whose required value an earlier line already gave.
     expect(refused(meanwell(), at("SystemProperty(0/15)[$0000]:  instead of 0102"), at("SystemProperty(0/15)[$0000]: ff instead of 0102"))).toContain("which this identity does not answer");
   });
 });
 
-// The ten units of stage 1, each with the collection it is simulated from.
+// The simulated units, each with the collection it is simulated from.
 const UNITS: { id: string; collection: string; catalogue: string; stateInCaptures?: StateInCaptures }[] =
   SIM_UNITS.map((s) => ({ id: s.id, collection: s.collection, catalogue: s.catalogue, stateInCaptures: s.memoryMapped || s.propertyMapped ? undefined : s.behaviour.stateInCaptures }));
 
 // What a unit from the product alone gets wrong against the unit from its collection, every difference: the
-// manufacturer is right on all ten (on the Jung, the Gira and the DALI-Gateway too, whose applications were made
+// manufacturer is right on all of them (on the Jung, the Gira and the DALI-Gateway too, whose applications were made
 // for another manufacturer); what the compares give is right but for its length where the unit answers fewer
-// octets than the compare declares (the DALI-Gateway, the MDT) and the bits a mask leaves out (the ABB); everything
+// octets than the compare declares (the DALI-Gateway, the two MDTs) and the bits a mask leaves out (the ABB); everything
 // else a unit answers ETS before a download (serial 0/11, order info 0/15, version 0/25, hardware type 0/78 where no
 // compare names it, device control 0/14, maximum APDU 0/56, the load states and tables, the descriptions) the
 // product does not give.
@@ -173,9 +176,55 @@ const EXPECTED: Record<string, string[]> = {
     "properties not given: 0/1 0/8 0/9 0/11 0/14 0/15 0/16 0/19 0/25 0/56 0/78 0/201 0/203 1/1 1/5 1/7 1/27 2/1 2/5 2/7 2/27 3/1 3/5 3/6 3/13 3/16 3/27 4/1 4/5 4/6 4/13 4/27",
     "descriptions not given: 94 for 64 object indices",
   ],
+  "theben-mix2-jmg4t": [
+    "given as the unit holds them: 0/12",
+    "properties not given: 0/1 0/8 0/9 0/11 0/14 0/15 0/16 0/19 0/25 0/30 0/51 0/52 0/54 0/56 0/57 0/58 0/71 0/78 0/83 0/85 0/86 1/1 1/5 1/7 1/23 1/27 1/28 2/1 2/5 2/7 2/23 2/27 2/28 3/1 3/5 3/7 3/23 3/27 3/28 4/1 4/5 4/6 4/7 4/13 4/16 4/27 4/28 5/1 5/5 5/6 5/7 5/13 5/16 5/27 5/28 6/1 7/1 7/5 7/7 7/27 7/52 7/53 7/54 8/1",
+    "descriptions not given: 153 for 64 object indices",
+    "function-property states not given: 17/1/51 0000"
+  ],
+  "theben-mix2-rmg8t": [
+    "given as the unit holds them: 0/12",
+    "properties not given: 0/1 0/8 0/9 0/11 0/14 0/15 0/16 0/19 0/25 0/30 0/51 0/52 0/54 0/56 0/57 0/58 0/71 0/78 0/83 0/85 0/86 1/1 1/5 1/7 1/23 1/27 1/28 2/1 2/5 2/7 2/23 2/27 2/28 3/1 3/5 3/7 3/23 3/27 3/28 4/1 4/5 4/6 4/7 4/13 4/16 4/27 4/28 5/1 5/5 5/6 5/7 5/13 5/16 5/27 5/28 6/1 7/1 7/5 7/7 7/27 7/52 7/53 7/54 8/1",
+    "descriptions not given: 153 for 64 object indices",
+    "function-property states not given: 17/1/51 0000"
+  ],
+  "auro-m0081": [
+    "given as the unit holds them: 0/12",
+    "properties not given: 0/1 0/8 0/9 0/11 0/14 0/15 0/16 0/19 0/25 0/56 0/78 1/1 1/5 1/7 1/27 2/1 2/5 2/7 2/27 3/1 3/5 3/6 3/13 3/16 3/27 4/1 4/5 4/6 4/13 4/27",
+    "descriptions not given: 93 for 64 object indices"
+  ],
+  "theben-theluxa-p300": [
+    "given as the unit holds them: 0/12",
+    "properties not given: 0/1 0/8 0/9 0/11 0/14 0/15 0/16 0/19 0/25 0/56 0/78 1/1 1/5 1/7 1/27 2/1 2/5 2/7 2/27 3/1 3/5 3/6 3/13 3/16 3/27 4/1 4/5 4/6 4/13 4/27 5/1 5/129",
+    "descriptions not given: 95 for 64 object indices"
+  ],
+  "mdt-be06001": [
+    "given as the unit holds them: 0/12",
+    "0/78 length: product 10 octets 0000000002aa00000000, unit 6 octets 0000000002aa",
+    "properties not given: 0/1 0/8 0/9 0/11 0/14 0/15 0/19 0/25 0/54 0/56 0/83 0/240 1/1 1/5 1/7 1/27 2/1 2/5 2/7 2/27 3/1 3/5 3/6 3/13 3/27 4/1 4/5 4/6 4/13 4/27 5/1 5/51 5/52 5/53 5/60",
+    "descriptions not given: 95 for 64 object indices"
+  ],
 };
 
-corpusDescribe("the ten units from their product against their collection: every difference", () => {
+corpusDescribe("a collected unit's property answered with a count and refused", () => {
+  test("is held as refused in either order of the records; an element answered and refused is a contradiction", () => {
+    // The GVS AMMA answered 0/224 with count 1 and refused its element 1.
+    const gvs = SIM_UNITS.find((u) => u.id === "gvs-amma")!;
+    const collection = JSON.parse(readFileSync(corpusPath(gvs.collection), "utf8")) as CollectPackage;
+    const xml = app(gvs.catalogue);
+    const is224 = (r: CollectPackage["records"][number]) => { const t = r.target as { object?: number; pid?: number }; return r.space === "property" && t.object === 0 && t.pid === 224; };
+    const of224 = collection.records.filter(is224);
+    expect(of224.map((r) => [(r.target as { start: number }).start, r.outcome])).toEqual([[0, "bytes"], [1, "refused"]]);
+    const unit = (records: CollectPackage["records"]) => collectedUnit({ ...collection, records }, xml, (why) => { throw new Error(why); }).objects.get(0)!.get(224);
+    const rest = collection.records.filter((r) => !is224(r));
+    expect([unit(collection.records), unit([...rest, ...[...of224].reverse()])]).toEqual([{ elements: null, countKnown: false }, { elements: null, countKnown: false }]);
+    const answered = { ...of224[1], target: { ...(of224[1].target as object), start: 1 }, outcome: "bytes", bytes: "00" } as CollectPackage["records"][number];
+    expect(() => unit([...rest, answered, of224[1]])).toThrow("the unit answered property 0/224 and refused it");
+    expect(() => unit([...rest, of224[1], answered])).toThrow("the unit refused property 0/224 and answered it");
+  });
+});
+
+corpusDescribe("the units from their product against their collection: every difference", () => {
   for (const u of UNITS) test(u.id, () => {
     const collection = JSON.parse(readFileSync(corpusPath(u.collection), "utf8")) as CollectPackage;
     const xml = app(u.catalogue);
