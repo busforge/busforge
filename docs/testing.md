@@ -1013,10 +1013,11 @@ bun run tools/ets-catalogue.ts list <fetched dir> --json <file> --md <file> [--m
 - **`list`** builds one row per application the market offers at the given masks: its mask from the
   product data (an application not loaded has no row and is listed as such, never guessed from its
   name), its version as ETS shows it, every order number it is offered under, and one to search for,
-  where it stands alone at its version (an order number is searched across the whole catalogue). Two
-  applications under one order number and version are both rows, each naming the other; a row without
-  an order number of its own is flagged, as the driver refuses an order number with two applications at
-  the unit's version. A hardware's second program beside the application (a PEI program, or a second
+  where it is the only catalogue row at its version (an order number is searched across the whole
+  catalogue, compared as the driver compares it). Two applications under one order number and version
+  are both rows, each naming the other; a row without an order number of its own is flagged, as the
+  driver refuses an order number that lists more than one catalogue row at the unit's version, whether
+  of two applications or of one application twice. A hardware's second program beside the application (a PEI program, or a second
   application) is named on the row with its type from the product data. An entry whose id,
   application identifier, fingerprint or manufacturer disagree, and an application whose product data
   does not fit it, is refused with the reason. With

@@ -30,7 +30,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { catalogueVersion, host, q, ssh, xmlUnescape } from "./ets-driver.ts";
+import { catalogueVersion, host, orderNumberKey, q, ssh, xmlUnescape } from "./ets-driver.ts";
 
 export const LIST_FORMAT = "busforge-ets-catalogue-list/1";
 export const SWEEP_MASKS = ["07B0", "0701", "0705"];
@@ -114,8 +114,9 @@ export interface Row {
   application: string; manufacturer: string; manufacturerName: string; mask: string; version: string; name: string;
   // The order number the sweep searches the catalogue for, and every order number the market offers it under.
   orderNumber: string; orderNumbers: string[]; catalogueEntries: number;
-  // Other applications under one of its order numbers at its version (any mask); noOwnOrderNumber where that
-  // holds for every one of its order numbers.
+  // Other applications under one of its order numbers at its version (any mask). noOwnOrderNumber: no order
+  // number the driver can search for it by, as each one (compared as the driver compares them) lists more than
+  // one catalogue row at its version, another application's or its own again.
   sameOrderAndVersion?: { orderNumber: string; applications: string[] }[]; noOwnOrderNumber?: true;
   // The hardware's second program beside the application, its type from the product data (null: not loaded).
   secondProgram?: { application: string; programType: string | null }[];
@@ -225,11 +226,12 @@ export function catalogueList(f: Fetched, marketName: string, masks: string[], b
     if (mismatch) refused.push({ kind: "second program", entry: id, why: mismatch });
     secondType.set(id, h && !mismatch ? h.ProgramType ?? null : null);
   }
-  // Applications under one order number at one version, over every application of the market: the driver searches
-  // the whole catalogue by order number.
+  // Applications and catalogue rows under one order number at one version, over every application of the market:
+  // the driver searches the whole catalogue by order number, compared by orderNumberKey.
   const atOrder = new Map<string, Set<string>>(), rowsAt = new Map<string, number>();
+  const orderAt = (orderNumber: string, version: number) => `${orderNumberKey(orderNumber)}\t${version}`;
   for (const app of apps.values()) for (const e of app.entries) {
-    const k = `${e.OrderNumber}\t${app.version}`;
+    const k = orderAt(e.OrderNumber, app.version);
     atOrder.set(k, (atOrder.get(k) ?? new Set()).add(app.id));
     rowsAt.set(k, (rowsAt.get(k) ?? 0) + 1);
   }
@@ -246,11 +248,11 @@ export function catalogueList(f: Fetched, marketName: string, masks: string[], b
     byMask[mask] = (byMask[mask] ?? 0) + 1;
     if (!masks.includes(mask)) continue;
     const orderNumbers = orderNumbersOf(app);
-    const others = orderNumbers.map((o) => ({ orderNumber: o, applications: [...atOrder.get(`${o}\t${app.version}`)!].filter((x) => x !== app.id).sort(byText) }));
+    const others = orderNumbers.map((o) => ({ orderNumber: o, applications: [...atOrder.get(orderAt(o, app.version))!].filter((x) => x !== app.id).sort(byText) }));
     const shared = others.filter((o) => o.applications.length);
     // An order number of its own: one catalogue row at the version (the driver refuses two, even of one
     // application); an empty order number is none to search for.
-    const own = others.find((o) => o.orderNumber && rowsAt.get(`${o.orderNumber}\t${app.version}`) === 1);
+    const own = others.find((o) => o.orderNumber && rowsAt.get(orderAt(o.orderNumber, app.version)) === 1);
     const row: Row = {
       application: app.id, manufacturer: app.manufacturer, manufacturerName: app.manufacturerName, mask, version: catalogueVersion(app.version), name: app.name,
       orderNumber: (own ?? others.find((o) => o.orderNumber) ?? others[0]).orderNumber, orderNumbers, catalogueEntries: app.entries.length,

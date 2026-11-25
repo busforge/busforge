@@ -54,6 +54,18 @@ describe("the catalogue list", () => {
     });
   });
 
+  test("order numbers compared as the driver compares them: spaces, case, O and 0, I, L and 1", () => {
+    const f = fetched();
+    const index = f.indexes.find((x) => x.ManufacturerId === 0xfff1)!;
+    const again = structuredClone(index.Entries.find((e) => e.OrderNumber === "ORDER-4")!);
+    again.Id = again.Id.replace("_H-hw8-1_", "_H-hw8-2_");
+    again.OrderNumber = "0rder -4";
+    index.Entries.push(again);
+    index.Markets!.find((m) => m.DefaultName === "Germany")!.CatalogIds.push(again.Id);
+    const r = catalogueList(f, "Germany", SWEEP_MASKS).rows.find((x) => x.application === "M-FFF1_A-0004-10-D004");
+    expect(r).toMatchObject({ orderNumbers: ["0rder -4", "ORDER-3", "ORDER-4"], noOwnOrderNumber: true });
+  });
+
   test("two catalogue rows of one application under one order number: not its own order number", () => {
     expect(row("M-FFF1_A-0001-11-A001")).toMatchObject({ orderNumber: "ORDER-1B", orderNumbers: ["ORDER-1", "ORDER-1B"], catalogueEntries: 3 });
     expect(row("M-FFF1_A-0001-11-A001")?.sameOrderAndVersion).toBeUndefined();

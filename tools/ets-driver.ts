@@ -565,6 +565,11 @@ async function readCatalogueEntry(s: Screen): Promise<CatalogueEntry> {
   return { orderNumber, deviceType: value(app, "Gerätetyp"), version: value(app, "Programmversion"), fingerprint: value(app, "Fingerprint") };
 }
 
+// An order number as the catalogue search compares it: OCR breaks a long order number into words
+// ("OpenKnxRau mController") and confuses O and 0, I, l and 1 ("RO111"), so it is compared without spaces and with
+// those taken as one.
+export const orderNumberKey = (n: string) => n.replace(/\s+/g, "").toUpperCase().replace(/O/g, "0").replace(/[IL]/g, "1");
+
 // An application's version as ETS's catalogue shows it: 0x11 is "1.1".
 export const catalogueVersion = (v: number) => `${v >> 4}.${v & 15}`;
 
@@ -619,10 +624,7 @@ async function insertProduct(s: Screen, orderNumber: string, applicationId: stri
     await sleep(1500);
     entries.push({ ...(await readCatalogueEntry(s)), y: Math.round(r.y) });
   }
-  // OCR breaks a long order number into words ("OpenKnxRau mController") and confuses O and 0, I, l and 1
-  // ("RO111"): compared without spaces, those taken as one.
-  const orderKey = (n: string) => n.replace(/\s+/g, "").toUpperCase().replace(/O/g, "0").replace(/[IL]/g, "1");
-  const atVersion = entries.filter((e) => orderKey(e.orderNumber) === orderKey(orderNumber) && e.version === want.version);
+  const atVersion = entries.filter((e) => orderNumberKey(e.orderNumber) === orderNumberKey(orderNumber) && e.version === want.version);
   if (atVersion.length > 1) fail(`refused: the catalogue holds ${atVersion.length} applications under order number ${orderNumber} and version ${want.version} (${atVersion.map((e) => `${e.deviceType} ${e.fingerprint}`).join(", ")})`);
   // The one row at the unit's device type and version under another fingerprint is another build of its
   // application (an OpenKNX release ETS took from an imported project); writeRow takes it only where it parses
