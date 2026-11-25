@@ -3,9 +3,8 @@
 // each device, in one file of the private corpus: captures/ets-download-records.json.gz. Most corpus
 // projects are password-protected and the check holds no password, so this tool reads them once and
 // records, per project, its file's SHA-256 and per device the address, its Hardware2Program and the application
-// it runs (as the project's product data name it: on hardware with a PEI program the Hardware2Program's id carries
-// both programs' numbers and names neither), the five load
-// flags, whether the application's load procedure names LdCtrlLoadImageProp, and for a device ETS kept a
+// it runs (DeviceRecord.application), the five load flags, whether the application's load procedure names
+// LdCtrlLoadImageProp, and for a device ETS kept a
 // record of: both attributes and the configuration the project stores for it (parameter values, module
 // instances, links, com-object flags). No key of the project is read into it. An application the corpus
 // catalogue does not hold under its id is taken from the project, gzipped, so the comparison can parse it.
@@ -25,7 +24,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, posix } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
-import { loadKnxproj, readAppProgram, extractAppPrograms, decodeLoadedImage, type Device, type EtsLoaded } from "../packages/project/src/index.ts";
+import { loadKnxproj, extractAppPrograms, decodeLoadedImage, type Device, type EtsLoaded } from "../packages/project/src/index.ts";
 import {
   classify, parseLoadProcedures, ProductError,
   type AppConfig, type ComObjectLink, type ComObjInstanceOverride, type LoadProcedures, type ModuleInstance,
@@ -36,16 +35,21 @@ import { deviceRows, type DeviceRows } from "./etsdiff.ts";
 import { sha256 } from "./evidence.ts";
 
 const FORMAT = "busforge-ets-records/2";
+// The formats before it, which a run that records the whole corpus replaces: /1 keyed a device's application by its
+// Hardware2Program id.
+const EARLIER_FORMATS = ["busforge-ets-records/1"];
 
 export interface DeviceRecord {
   ia: string;
   appRef: string;                      // the Hardware2Program; "" for a device without an application program
-  // The application the device runs, as the project's product data name it (Device.appProgramId); "" where they name
-  // none Busforge can tell apart from a PEI program, or the device has no application program. The records key
-  // applications by it (EtsRecords.apps, recordedAppXml).
+  // The application the device runs (Device.appProgramId): the one its Hardware2Program names in the project's product
+  // data (on hardware with a PEI program the Hardware2Program's id carries both programs' numbers and names neither),
+  // the program the id names where no Hardware.xml describes it; "" where the product data name none Busforge can
+  // tell apart from a PEI program, or the device has no application program. The records key applications by it
+  // (EtsRecords.apps, recordedAppXml).
   application: string;
   etsLoaded: EtsLoaded;
-  declaresLoadImageProp: boolean | null; // null: the project does not carry the application
+  declaresLoadImageProp: boolean | null; // null: the project does not carry the application, or names none
   loadedImage?: string;                // DeviceInstance/@LoadedImage as written
   checkSums?: string;                  // DeviceInstance/@CheckSums as written
   config?: DeviceRows;                 // present exactly where loadedImage is
@@ -54,11 +58,22 @@ export interface ProjectRecords { path: string; sha256: string; devices: DeviceR
 export interface EtsRecords { format: typeof FORMAT; projects: ProjectRecords[]; apps: Record<string, string> } // apps: application id -> base64(gzip(xml))
 
 export function readEtsRecords(): EtsRecords {
-  const path = corpusPath(ETS_RECORDS_FILE);
-  const r = JSON.parse(gunzipSync(readFileSync(path)).toString("utf8")) as EtsRecords;
+  const r = readStoredRecords();
   const format: unknown = r.format;
   if (format !== FORMAT) throw new Error(`${ETS_RECORDS_FILE} is of format ${String(format)}, not ${FORMAT}`);
   return r;
+}
+const readStoredRecords = (): EtsRecords => JSON.parse(gunzipSync(readFileSync(corpusPath(ETS_RECORDS_FILE))).toString("utf8")) as EtsRecords;
+
+// The records a run starts from: the file as it is in this format; empty where the file is of an earlier format and
+// the run records the whole corpus (`--missing` without a directory, or the root "."), which replaces every entry;
+// refused otherwise, and for a format this tool does not know (a later one is never written back over).
+export function recordsToStartFrom(stored: { format?: unknown }, missing: boolean, targets: readonly string[]): EtsRecords {
+  if (stored.format === FORMAT) return stored as EtsRecords;
+  const wholeCorpus = missing && targets.every((t) => posix.normalize(t).replace(/\/+$/, "") === ".");
+  if (!EARLIER_FORMATS.includes(String(stored.format))) throw new Error(`${ETS_RECORDS_FILE} is of format ${String(stored.format)}, which this tool does not know; it writes ${FORMAT}`);
+  if (!wholeCorpus) throw new Error(`${ETS_RECORDS_FILE} is of the earlier format ${String(stored.format)}: record the whole corpus again with --missing`);
+  return { format: FORMAT, projects: [], apps: {} };
 }
 
 // Every project of the corpus, relative to its root, sorted: the set the records must hold.
@@ -207,26 +222,29 @@ function openProject(bytes: Buffer, path: string, candidates: readonly string[])
   throw new Error(`none of the ${candidates.length} password(s) opens ${path} (${describeFailure(last)})`);
 }
 
-// One device's record. A device with ETS's download record must run an application its project's product data name
-// (Device.appProgramId), which the record keys its application by; one whose product data name none is refused: what
-// the record compares against would be guessed. An application the corpus catalogue does not hold is taken from the
-// project into `apps`.
+// One device's record. A device with ETS's download record must run an application (DeviceRecord.application), which
+// the record keys its application by; one whose product data name none is refused: what the record compares against
+// would be guessed. An application the corpus catalogue does not hold is taken from the project into `apps`.
 export function recordDevice(
   d: Pick<Device, "id" | "ia" | "appRef" | "appProgramId" | "etsLoaded" | "etsLoadedImage" | "etsCheckSums">,
   ctx: { path: string; bytes: Buffer; catalogue: ReadonlySet<string>; declares: Map<string, boolean | null>; apps: Record<string, string>; rows: (id: string) => DeviceRows },
 ): DeviceRecord {
   const { path, bytes, catalogue, declares, apps } = ctx;
-  if (d.appRef && !declares.has(d.appRef)) {
-    const xml = readAppProgram(bytes, d.appRef);
-    declares.set(d.appRef, xml === null ? null : parseLoadProcedures(xml).blocks.some((b) => b.steps.some((s) => s.verb === "LdCtrlLoadImageProp")));
+  const id = d.appProgramId;
+  // The application's program, read at most once for the device (undefined: the project does not carry it).
+  const programs = new Map<string, string | undefined>();
+  const program = () => { if (!programs.has(id)) programs.set(id, extractAppPrograms(bytes, [id]).get(id)); return programs.get(id); };
+  if (id && !declares.has(id)) {
+    const xml = program();
+    declares.set(id, xml === undefined ? null : parseLoadProcedures(xml).blocks.some((b) => b.steps.some((s) => s.verb === "LdCtrlLoadImageProp")));
   }
-  const rec: DeviceRecord = { ia: d.ia, appRef: d.appRef, application: d.appProgramId, etsLoaded: d.etsLoaded, declaresLoadImageProp: d.appRef ? declares.get(d.appRef)! : false };
+  const declaresLoadImageProp = !d.appRef ? false : id ? declares.get(id)! : null;
+  const rec: DeviceRecord = { ia: d.ia, appRef: d.appRef, application: id, etsLoaded: d.etsLoaded, declaresLoadImageProp };
   if (d.etsLoadedImage === undefined && d.etsCheckSums === undefined) return rec;
   if (d.etsLoadedImage === undefined || d.etsCheckSums === undefined) throw new Error(`${path}: ${d.ia} carries one of LoadedImage and CheckSums without the other`);
-  const id = d.appProgramId;
-  if (!id) throw new Error(`${path}: ${d.ia} has a download record, but its product data name no application of ${d.appRef} Busforge can tell apart from a PEI program`);
+  if (!id) throw new Error(`${path}: ${d.ia} has a download record, but ${d.appRef ? `the product data name no one application of its Hardware2Program ${d.appRef}` : "no application program"}`);
   if (!catalogue.has(`${id}.xml.gz`) && !apps[id]) {
-    const xml = extractAppPrograms(bytes, [id]).get(id);
+    const xml = program();
     if (xml === undefined) throw new Error(`${path}: ${d.ia} has a download record, but the project does not carry ${id}`);
     apps[id] = gzipSync(Buffer.from(xml, "utf8")).toString("base64");
   }
@@ -254,12 +272,7 @@ if (import.meta.main) {
   if (unknown.length) throw new Error(`unknown option ${unknown.join(", ")}; ${usage}`);
   if (!missing && !targets.length) throw new Error(usage);
   if (!missing && targets.some((p) => !p.endsWith(".knxproj"))) throw new Error(usage);
-  // A file of an earlier format holds no entry this format takes: the run starts empty, and only a run that records
-  // every project (--missing over the whole corpus) writes it.
-  const stored = JSON.parse(gunzipSync(readFileSync(corpusPath(ETS_RECORDS_FILE))).toString("utf8")) as { format?: unknown };
-  const fresh = stored.format !== FORMAT;
-  if (fresh && !(missing && targets.length === 0)) throw new Error(`${ETS_RECORDS_FILE} is of format ${String(stored.format)}, not ${FORMAT}: record the whole corpus again with --missing`);
-  const records: EtsRecords = fresh ? { format: FORMAT, projects: [], apps: {} } : readEtsRecords();
+  const records = recordsToStartFrom(readStoredRecords(), missing, targets);
   const onDisk = corpusProjects();
   const dropped = records.projects.filter((p) => !existsSync(corpusPath(p.path))).map((p) => p.path);
   records.projects = records.projects.filter((p) => !dropped.includes(p.path));

@@ -119,7 +119,8 @@ other one that cannot, and nothing is written. `--dry-run` lists what a run woul
 opens nothing and writes nothing. A device's record names its application as the project's product
 data do (on hardware with a PEI program the Hardware2Program's id carries both programs' numbers and
 names neither); a device with a download record whose product data name no application is refused. A
-file of an earlier format is written again only by `--missing` over the whole corpus.
+file of an earlier format is written again only by `--missing` over the whole corpus; one of a format the
+tool does not know is refused.
 
 ```bash
 # the passwords, one per line, never on disk; every protected project is tried with each

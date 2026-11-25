@@ -491,7 +491,7 @@ corpusDescribe("the ETS sweep rows", () => {
   test("Busforge's images against ETS's LoadedImage of a device in an export", () => {
     const bytes = readFileSync(corpusPath("captures/bench-ets-project-params-edited-after-download.knxproj"));
     const project = loadKnxproj(bytes, undefined, "bench");
-    const amma = project.devices.find((d) => appProgramId(d.appRef) === "M-0085_A-0072-30-69AA")!;
+    const amma = project.devices.find((d) => d.appProgramId === "M-0085_A-0072-30-69AA")!;
     const appXml = readAppProgram(bytes, amma.appRef)!;
     const c = deviceConfiguration(parseAppConfig(appXml), deviceRows(project, amma.id));
     const conf: RowConfiguration = { ia: amma.ia, params: [...c.params], links: c.links, moduleInstances: c.instances, comObjectOverrides: [...c.comObjectOverrides] };

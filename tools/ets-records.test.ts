@@ -10,7 +10,7 @@ import { parseCapture, memoryImage, etsAllocations, reportedTableReferences, dev
 import { sha256 } from "./evidence.ts";
 import { gunzipSync } from "node:zlib";
 import { storeZip } from "../packages/project/test/ziputil.ts";
-import { corpusProjects, counted, countedMismatches, countMismatches, loadedImageComparison, readEtsRecords, recordDevice, recordedAppXml, tally, type DeviceRecord, type EtsRecords, type PinnedCount } from "./ets-records.ts";
+import { corpusProjects, counted, countedMismatches, countMismatches, loadedImageComparison, readEtsRecords, recordDevice, recordedAppXml, recordsToStartFrom, tally, type DeviceRecord, type EtsRecords, type PinnedCount } from "./ets-records.ts";
 
 // ETS's own record of its last download of a device, kept in every project it saves
 // (docs/verification.md, "ETS's download record"), held against Busforge's images offline: for every
@@ -52,22 +52,39 @@ function expectNoMismatch(messages: string[]): void {
 test("a device's record names the application its product data name, on hardware with a PEI program too", () => {
   const H2P = "M-0083_H-PEI.2F1-0-O0007_HP-4201-13-6B9E-O0007-4201-23-00B3-O0007";
   const APP = "M-0083_A-4201-13-6B9E-O0007", PEI = "M-0083_A-4201-23-00B3-O0007";
-  const program = (id: string, type: string) => `<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0083"><ApplicationPrograms><ApplicationProgram Id="${id}" ProgramType="${type}" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-07B0" Name="${id}"><Static/></ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+  // The application declares LdCtrlLoadImageProp, the PEI program nothing: the record's flag shows which was read.
+  const program = (id: string, type: string, procedures: string) => `<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0083"><ApplicationPrograms><ApplicationProgram Id="${id}" ProgramType="${type}" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-07B0" Name="${id}" LoadProcedureStyle="MergedProcedure"><Static>${procedures}</Static></ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+  const appXml = program(APP, "ApplicationProgram", `<LoadProcedures><LoadProcedure MergeId="7"><LdCtrlLoadImageProp ObjIdx="4" PropId="27" /></LoadProcedure></LoadProcedures>`);
   const bytes = storeZip({
     "M-0083/Hardware.xml": `<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0083"><Hardware><Hardware Id="M-0083_H-PEI.2F1-0-O0007"><Hardware2Programs><Hardware2Program Id="${H2P}" MediumTypes="MT-0"><ApplicationProgramRef RefId="${APP}"/><ApplicationProgramRef RefId="${PEI}"/></Hardware2Program></Hardware2Programs></Hardware></Hardware></Manufacturer></ManufacturerData></KNX>`,
-    [`M-0083/${APP}.xml`]: program(APP, "ApplicationProgram"), [`M-0083/${PEI}.xml`]: program(PEI, "PeiProgram"),
+    [`M-0083/${APP}.xml`]: appXml, [`M-0083/${PEI}.xml`]: program(PEI, "PeiProgram", ""),
   });
   const loaded = { individualAddress: true, mediumConfig: true, application: true, parameters: true, communication: true };
+  // As the project's Device has it: the application its Hardware2Program names (Device.appProgramId).
   const device = { id: "P-0001-0_DI-1", ia: "1.1.1", appRef: H2P, appProgramId: APP, etsLoaded: loaded, etsLoadedImage: "AAECAw==", etsCheckSums: "0102:abcd" };
-  const ctx = { path: "p.knxproj", bytes, catalogue: new Set<string>(), declares: new Map<string, boolean | null>(), apps: {} as Record<string, string>, rows: () => ({ params: [], instances: [], links: [], comObjectOverrides: [] }) as unknown as ReturnType<typeof deviceRows> };
+  const rows = { values: [], instances: [], links: [], overrides: [] };
+  const context = () => ({ path: "p.knxproj", bytes, catalogue: new Set<string>(), declares: new Map<string, boolean | null>(), apps: {} as Record<string, string>, rows: () => rows });
+  const ctx = context();
   const rec = recordDevice(device, ctx);
-  expect([rec.appRef, rec.application]).toEqual([H2P, APP]);
+  expect([rec.appRef, rec.application, rec.declaresLoadImageProp]).toEqual([H2P, APP, true]);
+  expect(rec.config).toBe(rows);
   expect(Object.keys(ctx.apps)).toEqual([APP]);
-  expect(gunzipSync(Buffer.from(ctx.apps[APP], "base64")).toString("utf8")).toBe(program(APP, "ApplicationProgram"));
-  // Where the product data name no one application, a device with a download record is refused.
-  expect(() => recordDevice({ ...device, appProgramId: "" }, { ...ctx, apps: {} })).toThrow("its product data name no application");
-  // A device without a download record is recorded with what its product data name, none included.
-  expect(recordDevice({ ...device, appProgramId: "", etsLoadedImage: undefined, etsCheckSums: undefined }, ctx).application).toBe("");
+  expect(gunzipSync(Buffer.from(ctx.apps[APP], "base64")).toString("utf8")).toBe(appXml);
+  // Where the product data name no one application, a device with a download record is refused, and one without is
+  // recorded with none, its load procedure not read.
+  expect(() => recordDevice({ ...device, appProgramId: "" }, context())).toThrow(`has a download record, but the product data name no one application of its Hardware2Program ${H2P}`);
+  expect(recordDevice({ ...device, appProgramId: "", etsLoadedImage: undefined, etsCheckSums: undefined }, context())).toMatchObject({ application: "", declaresLoadImageProp: null });
+});
+
+test("a records file of an earlier format is replaced only by a run over the whole corpus, one of a format the tool does not know never", () => {
+  const empty = { format: "busforge-ets-records/2" as const, projects: [], apps: {} };
+  expect(recordsToStartFrom({ format: "busforge-ets-records/1" }, true, [])).toEqual(empty);
+  expect(recordsToStartFrom({ format: "busforge-ets-records/1" }, true, ["."])).toEqual(empty);
+  expect(() => recordsToStartFrom({ format: "busforge-ets-records/1" }, true, ["captures"])).toThrow("record the whole corpus again with --missing");
+  expect(() => recordsToStartFrom({ format: "busforge-ets-records/1" }, false, ["a.knxproj"])).toThrow("record the whole corpus again with --missing");
+  for (const format of ["busforge-ets-records/3", undefined]) expect(() => recordsToStartFrom({ format }, true, [])).toThrow("which this tool does not know");
+  const current = { format: "busforge-ets-records/2" as const, projects: [{ path: "p.knxproj", sha256: "x", devices: [] }], apps: {} };
+  expect(recordsToStartFrom(current, false, ["p.knxproj"])).toBe(current);
 });
 
 const UNPROTECTED = "captures/bench-ets-project-params-edited-after-download.knxproj";
@@ -153,7 +170,7 @@ corpusDescribe("ETS's download record in the corpus projects", () => {
     for (const { project, d } of withRecord) {
       const id = d.application;
       if (!etsLoadedCompletely(d)) { notCompared.push({ what: `${id} not loaded: ${etsNotDownloaded(d)!.join(", ")}`, project }); continue; }
-      const key = JSON.stringify([d.ia, d.appRef, d.loadedImage, d.config]);
+      const key = JSON.stringify([d.ia, d.appRef, d.application, d.loadedImage, d.config]);
       let o = outcomes.get(key);
       if (!o) {
         o = compare(d);
