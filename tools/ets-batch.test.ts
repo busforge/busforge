@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { batchRows, classifyFailure, clearRowDir, heartbeatLine, loggedRows, logLine, planBatch, RESULT_FILE, RESULT_FORMAT, rowDirOf, rowLine, summary, UNKNOWN_DIALOG, type FailureClass, type RowKind, type RowResult } from "./ets-batch.ts";
+import { batchRows, classifyFailure, clearRowDir, heartbeatLine, loggedRows, logLine, moveAttempt, planBatch, readResult, RESULT_FILE, RESULT_FORMAT, rowDirOf, rowLine, summary, UNKNOWN_DIALOG, writeResult, type FailureClass, type RowKind, type RowResult } from "./ets-batch.ts";
 import type { Row } from "./ets-catalogue.ts";
 import { tempDir } from "./test-temp.ts";
 
@@ -57,8 +57,25 @@ test("a batch resumes at the first row without a result and passes the finished 
   expect(() => planBatch(out, rows)).toThrow("is of format busforge-ets-batch-result/0");
 });
 
-// The driver's messages, as recorded: in the batch logs and row directories of the runner's acceptance batch, and
-// in the logs of the catalogue download (tools/ets-driver.ts catalogue-download), whose bench host went to sleep.
+test("a row's attempts kept under the next free number, an earlier batch's too; its result written whole", () => {
+  const out = tempDir("ets-batch-attempts");
+  const app = "M-0002_A-0002-11-BBBB";
+  const run = (text: string) => { mkdirSync(rowDirOf(out, app), { recursive: true }); writeFileSync(join(rowDirOf(out, app), "ets6.log.txt"), text); };
+  run("first");
+  expect(moveAttempt(out, app)).toBe(join(out, ".attempts", app, "1"));
+  // A batch paused after that attempt, resumed: its next attempt does not land on the first one's.
+  run("second");
+  expect(moveAttempt(out, app)).toBe(join(out, ".attempts", app, "2"));
+  expect(readdirSync(join(out, ".attempts", app)).sort()).toEqual(["1", "2"]);
+  run("third");
+  writeResult(out, result(app, "completed"));
+  expect(readResult(rowDirOf(out, app))?.kind).toBe("completed");
+  expect(readdirSync(rowDirOf(out, app)).sort()).toEqual([RESULT_FILE, "ets6.log.txt"]);
+});
+
+// The driver's messages: as recorded in the batch logs and row directories of the runner's acceptance batches and in
+// the logs of the catalogue download (tools/ets-driver.ts catalogue-download), whose bench host went to sleep; and as
+// the driver composes them from such (ETS gone wrapped around what a step met, a failed recovery).
 test("a failure's class from the driver's recorded messages", () => {
   const c = (why: string) => named(classifyFailure(why));
   // The bench host asleep: spawnSync's timeout of the ssh call, ssh's own message.
@@ -72,6 +89,11 @@ test("a failure's class from the driver's recorded messages", () => {
   expect(c("ETS's window is gone (before \"the product's export\")")).toBe("restart ets-gone");
   // A dialog the driver does not know: ETS's project details, opened under a row.
   expect(c(`${UNKNOWN_DIALOG} (before "the product's export"): Busforge Sweep Details > Beschreibung Zuletzt geandert Geschatzte Projektgrae Jetzt komprimieren...`)).toBe("dialog");
+  // ETS gone while a step read a dialog: ETS gone, not the dialog.
+  expect(c("ETS's window is gone: ETS shows a dialog after the insert: Kompatibilitatswarnung Das Gerat enthalt Plug-Ins")).toBe("restart ets-gone");
+  // ETS that cannot be brought back, or is not this driver's: no row could run.
+  expect(c("ETS not recovered: ETS did not start: no ETS6 process in its prefix after the launcher (after: ETS's window is gone)")).toBe("pause ets");
+  expect(c("an ETS this driver did not start runs on the bench host")).toBe("pause ets");
   // A row's own failure.
   expect(c("no catalogue row with order number TB/U1 runs M-0002_A-4201-13-6B9E-O0007 (read: TB/U1 $4201 1.3 D98E)")).toBe("row");
   expect(c("the catalogue lists more rows for order number 1 than its grid shows at once")).toBe("row");
@@ -86,6 +108,10 @@ test("a dialog's class from the words that name it", () => {
   expect(c("Fehler Die Sammlung wurde geändert. Der Enumerationsvorgang kann möglicherweise nicht ausgeführt werden.")).toBe("restart ets-internal");
   expect(c("System.ArgumentOutOfRangeException: Index and length must refer to a location within the string.")).toBe("restart ets-internal");
   expect(c("Projektpasswort setzen")).toBe("dialog");
+  // ssh's words for a connection dropped in the middle of a command (the host suspending): the host, not the row.
+  for (const drop of ["Connection to 192.168.1.231 closed by remote host.", "client_loop: send disconnect: Broken pipe", "Read from remote host 192.168.1.231: Connection reset by peer"]) {
+    expect(named(classifyFailure(`the driver broke off: on tf@192.168.1.231 (255): ${drop}`))).toBe("pause host");
+  }
 });
 
 test("the batch log: a line per row with its minutes and kind, the last of a row counted", () => {

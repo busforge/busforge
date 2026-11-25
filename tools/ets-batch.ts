@@ -8,19 +8,22 @@
 // in the middle (the batch paused, the bench host slept, the runner was killed): it is moved aside under
 // <out>/.interrupted/ and the row runs again from its start. <out>/batch.log holds one line per row with its
 // minutes and how it ended, every restart of ETS and every pause, and a heartbeat line every few minutes.
-import { existsSync, mkdirSync, readFileSync, renameSync, appendFileSync, readdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CatalogueList, Row as ListRow } from "./ets-catalogue.ts";
 
+// The catalogue list's format (tools/ets-catalogue.ts writes it; kept here, as that tool imports the driver).
+export const CATALOGUE_LIST_FORMAT = "busforge-ets-catalogue-list/1";
 export const RESULT_FILE = "batch-result.json";
 export const RESULT_FORMAT = "busforge-ets-batch-result/1";
 export const BATCH_LOG = "batch.log";
 export const VARIANT = "defaults";
 
 // How a row of a batch ended. completed: ETS's download into the simulator ended and the row is written, to be
-// judged (tools/ets-sweep.ts); ets-failed: ETS's load task failed, the row written with it; sim-refused: no unit
-// for the row (no donor of its mask, the product's identity does not fit its donor) or a unit that refused what
-// ETS sent; driver-failed: the driver could not finish the row, or refuses to drive it, with the reason.
+// judged (tools/ets-sweep.ts); ets-failed: ETS's load task failed, the row written with it (what the unit refused, if
+// anything, named in `why`); sim-refused: no unit for the row (no donor of its mask, the product's identity does not
+// fit its donor), nothing downloaded; driver-failed: the driver could not finish the row, or refuses to drive it, with
+// the reason.
 export type RowKind = "completed" | "ets-failed" | "sim-refused" | "driver-failed";
 
 // One run of the row: a row runs again after ETS was restarted under it, and for each round of the identity loop.
@@ -88,6 +91,24 @@ export function planBatch(out: string, rows: ListRow[], rerun: { kinds?: RowKind
   return plan;
 }
 
+// A row's result written whole or not at all (a stop while writing leaves no half file to read as finished).
+export function writeResult(out: string, r: RowResult): void {
+  const dir = rowDirOf(out, r.application), tmp = join(dir, `.${RESULT_FILE}.tmp`);
+  writeFileSync(tmp, `${JSON.stringify(r, null, 1)}\n`);
+  renameSync(tmp, join(dir, RESULT_FILE));
+}
+
+// A run of a row that does not stand (ETS restarted under it, a round of the identity loop) moved from the row's
+// directory to <out>/.attempts/<application>/<n>, n the next number free there (an earlier batch's attempts stay).
+export function moveAttempt(out: string, application: string): string {
+  const base = join(out, ".attempts", application);
+  mkdirSync(base, { recursive: true });
+  const n = Math.max(0, ...readdirSync(base).filter((f) => /^\d+$/.test(f)).map(Number)) + 1;
+  const to = join(base, String(n));
+  renameSync(rowDirOf(out, application), to);
+  return to;
+}
+
 // A row's directory cleared for a run: what an earlier run left there (a run that stopped in the middle, or a
 // finished row asked to run again) moved aside under <out>/.interrupted/, never deleted. Returns where it went.
 export function clearRowDir(out: string, application: string, stamp: string): string | null {
@@ -102,12 +123,13 @@ export function clearRowDir(out: string, application: string, stamp: string): st
 // ---- what a failure means for the batch ----
 
 // pause: the batch stops and returns early, the row without a result (it runs again on resume): the bench host
-// does not answer (asleep), the KNX-ID login lapsed, the online catalogue does not answer. restart: ETS is gone or
+// does not answer (asleep), the KNX-ID login lapsed, the online catalogue does not answer, ETS cannot be started or
+// brought back (the driver then pauses it: runRow). restart: ETS is gone or
 // shows one of its internal errors; it is restarted and the row runs once more. dialog: a dialog the driver does
 // not know; the row is driver-failed with its screenshot, the dialog closed or ETS restarted. row: the row's own
 // failure, driver-failed.
 export type FailureClass =
-  | { kind: "pause"; reason: "host" | "login" | "catalogue"; why: string }
+  | { kind: "pause"; reason: "host" | "login" | "catalogue" | "ets"; why: string }
   | { kind: "restart"; reason: "ets-gone" | "ets-internal"; why: string }
   | { kind: "dialog"; why: string }
   | { kind: "row"; why: string };
@@ -116,7 +138,8 @@ export type FailureClass =
 export const UNKNOWN_DIALOG = "ETS shows a dialog the driver does not know";
 
 // ssh's own failures (spawnSync's and ssh's messages): the bench host is down, asleep or off the network.
-const HOST_DOWN = /spawnSync ssh (?:ETIMEDOUT|ENOENT)|ssh: connect to host .* (?:Operation timed out|Host is down|No route to host|Connection refused|Network is unreachable)|ssh: Could not resolve hostname|Connection (?:timed out|closed by remote host) during banner exchange|kex_exchange_identification/;
+// A connection dropped in the middle of a command (the host suspending or rebooting) says so in ssh's own words too.
+const HOST_DOWN = /spawnSync ssh (?:ETIMEDOUT|ENOENT)|ssh: connect to host .* (?:Operation timed out|Host is down|No route to host|Connection refused|Network is unreachable)|ssh: Could not resolve hostname|Connection (?:timed out|closed by remote host) during banner exchange|kex_exchange_identification|Connection to \S+ closed by remote host|client_loop: send disconnect|Broken pipe|Connection reset by peer/;
 // A login ETS asks for: its KNX ID (the online catalogue's account, logged in by a QR code on Thorben's phone).
 const LOGIN = /KNX[ -]?ID|Anmeld|QR[ -]?Code|\bLogin\b|einloggen/i;
 // The online catalogue that does not answer or refuses (OCR reads "fehlgeschlagen" as "fehigeschlagen").
@@ -124,11 +147,16 @@ const CATALOGUE = /Online-Katalog|Produktdownload|WebException|Katalog.{0,40}(?:
 // ETS's internal errors: an exception's text in a dialog ("Die Sammlung wurde geändert", .NET's "Collection was
 // modified"), or ETS's own error report.
 const ETS_INTERNAL = /Sammlung wurde ge|Collection was modified|Exception|unerwartete[nr]? Fehler|Ein Fehler ist aufgetreten|Fehlerbericht|Unhandled/i;
-const ETS_GONE = /ETS's window is gone|no ETS window|ETS did not start|ETS needs a restart/;
+const ETS_GONE = /^ETS's window is gone/;
+// ETS that cannot be started or is not this driver's: nothing a row can change.
+const ETS_UNAVAILABLE = /ETS did not start|ETS needs a restart|an ETS this driver did not start|another Xvfb serves|ETS not recovered/;
 
 // What a failure of a row means for the batch, from the driver's message.
 export function classifyFailure(why: string): FailureClass {
   if (HOST_DOWN.test(why)) return { kind: "pause", reason: "host", why };
+  if (ETS_UNAVAILABLE.test(why)) return { kind: "pause", reason: "ets", why };
+  // ETS gone under a step, whatever the step met then (a dialog's text among it).
+  if (ETS_GONE.test(why)) return { kind: "restart", reason: "ets-gone", why };
   const dialog = why.startsWith(UNKNOWN_DIALOG) || /ETS shows a dialog/.test(why) ? why.replace(/^[^:]*:\s*/, "") : null;
   if (dialog !== null) {
     if (LOGIN.test(dialog)) return { kind: "pause", reason: "login", why };
@@ -136,7 +164,6 @@ export function classifyFailure(why: string): FailureClass {
     if (ETS_INTERNAL.test(dialog)) return { kind: "restart", reason: "ets-internal", why };
     return { kind: "dialog", why };
   }
-  if (ETS_GONE.test(why)) return { kind: "restart", reason: "ets-gone", why };
   return { kind: "row", why };
 }
 

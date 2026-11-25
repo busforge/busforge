@@ -20,6 +20,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { declaredPropMatches, MM_STATUS_BASE, PID } from "../packages/knx/src/index.ts";
+import { extractAppPrograms } from "../packages/project/src/index.ts";
 import { closingSteps, declaredPropChecks, maskInfo, parseAppConfig, programIdStamp } from "../packages/product/src/index.ts";
 import { catalogueXml, corpusPath } from "./corpus.ts";
 import { type AnswerSources, type SimProperty, type SimUnit, type SimUnitCoreModel } from "./sim-unit.ts";
@@ -391,6 +392,22 @@ export function learnIdentity(spec: CatalogueUnitSpec, log: Buffer | string): { 
   const [was, now] = [answered(unit.objects), answered(after.objects)];
   if (r.learned.every((m) => was(`${m.object}/${m.pid}`).equals(now(`${m.object}/${m.pid}`)))) return { refused: `the unit answers ${r.learned.map((m) => `${m.object}/${m.pid}`).join(", ")} as before with what ETS required: a rerun fails the same` };
   return { spec: next, learned: r.learned };
+}
+
+// The catalogue unit of `application` with its program from a product (a .knxproj or .knxprod holding it, or its
+// manufacturer XML), the donor named or its mask's rule's, and what the identity loop learned from each ETS6.log of
+// `learnedFrom` in order; or why there is none. tools/sim-unit-serve.ts serves it, tools/ets-driver.ts records it in
+// row.json. Throws where the product holds no such program: that is no unit's refusal.
+export function catalogueUnitFrom(application: string, product: Buffer, opts: { donor?: string; learnedFrom?: { name: string; log: Buffer }[] } = {}): CatalogueUnitSpec | { refused: string } {
+  const appXml = extractAppPrograms(product, [application]).get(application);
+  if (appXml === undefined) throw new Error(`the product holds no application program ${application}`);
+  let spec: CatalogueUnitSpec | { refused: string } = catalogueUnitSpec(application, appXml, { donor: opts.donor });
+  for (const { name, log } of opts.learnedFrom ?? []) {
+    if ("refused" in spec) break;
+    const r = learnIdentity(spec, log);
+    spec = "refused" in r ? { refused: `${name}: ${r.refused}` } : r.spec;
+  }
+  return spec;
 }
 
 // How row.json names the catalogue unit.

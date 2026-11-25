@@ -4,7 +4,8 @@
 //
 //   BUSFORGE_CORPUS=... bun run tools/ets-driver.ts row <unit> <variant> --order <order number> \
 //     [--simulator <this host's ip>:3701] [--project "Busforge Sweep"] [--password-env <VAR>] [--configured] \
-//     [--out <dir>] [--stop-sim-after <frames>] [--wrong-interface <host:port>] [--sim-override <object>/<PID>=<hex>]...
+//     [--out <dir>] [--stop-sim-after <frames>] [--wrong-interface <host:port>] [--sim-override <object>/<PID>=<hex>]... \
+//     [--donor <unit>] [--learned-from <ETS6.log>]...       (the last two for an application without an own unit)
 //   BUSFORGE_CORPUS=... bun run tools/ets-driver.ts same <ets.log> <ets.log> <unit> [<from>]   two runs, frame by frame
 //   BUSFORGE_CORPUS=... bun run tools/ets-driver.ts rerun-identity <row dir> <unit>       the identity loop
 //   bun run tools/ets-driver.ts import <project.knxproj> [--password-env <VAR>]   into ETS (as a copy where it
@@ -50,8 +51,8 @@
 // host sleeps in the evening without it). Before each row ETS is up and in its layout (its project open, no dialog).
 // A failure of a row is classified (classifyFailure): ETS gone or one of its internal errors restarts ETS and runs the
 // row once more; an unknown dialog ends the row driver-failed with its screenshot and closes the dialog (or restarts
-// ETS); a bench host that does not answer, a KNX-ID login ETS asks for or an online catalogue that does not answer
-// pauses the batch: it ends early (exit 3) and the row runs again on resume. A catalogue unit's row that ETS fails on
+// ETS); a bench host that does not answer, a KNX-ID login ETS asks for, an online catalogue that does not answer or an
+// ETS that cannot be started or brought back pauses the batch: it ends early (exit 3) and the row runs again on resume. A catalogue unit's row that ETS fails on
 // a `Required data mismatch` runs again with what ETS required (the identity loop, learnIdentity), at most
 // IDENTITY_ROUNDS times. A hardware whose second program is no PEI program is refused (no row of the list has one).
 // --inject-kill and --inject-dialog kill ETS, or open its project details dialog, in that application's row once the
@@ -66,15 +67,15 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameS
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { numToIa } from "../packages/knx/src/index.ts";
-import { appProgramId, extractAppPrograms, hardwareApplications, loadKnxproj, readAppProgram } from "../packages/project/src/index.ts";
+import { extractAppPrograms, loadKnxproj, readAppProgram } from "../packages/project/src/index.ts";
 import { parseAppConfig } from "../packages/product/src/index.ts";
 import { catalogueXml } from "./corpus.ts";
 import { deviceConfiguration, deviceRows, dialogue, dialogueDifferences } from "./etsdiff.ts";
-import { appendLog, classifyFailure, clearRowDir, heartbeatLine, loggedRows, planBatch, RESULT_FILE, RESULT_FORMAT, rowDirOf, rowLine, batchRows, summary, UNKNOWN_DIALOG, VARIANT, type Attempt, type FailureClass, type RowKind, type RowResult } from "./ets-batch.ts";
+import { appendLog, BATCH_LOG, batchRows, CATALOGUE_LIST_FORMAT, classifyFailure, clearRowDir, heartbeatLine, loggedRows, moveAttempt, planBatch, RESULT_FORMAT, rowDirOf, rowLine, summary, UNKNOWN_DIALOG, VARIANT, writeResult, type Attempt, type FailureClass, type RowKind, type RowResult } from "./ets-batch.ts";
 import type { CatalogueList, Row as ListRow } from "./ets-catalogue.ts";
 import { reduceProjectExport } from "./ets-export-reduce.ts";
 import { ETS_TASK_FAILED, etsOutcome, ROW_FILES, ROW_FORMAT, simRefusals, type EtsOutcome, type RowConfiguration, type RowSpec } from "./ets-sweep.ts";
-import { catalogueUnit, catalogueUnitRecord, catalogueUnitSpec, learnIdentity, type CatalogueUnitSpec } from "./sim-unit-catalogue.ts";
+import { catalogueUnit, catalogueUnitFrom, catalogueUnitRecord, learnIdentity, type CatalogueUnitSpec } from "./sim-unit-catalogue.ts";
 import { productUnit, rerunIdentity } from "./sim-unit-product.ts";
 import { newSimUnit, SIM_UNITS, simUnitSpec } from "./sim-units.ts";
 
@@ -643,9 +644,10 @@ export function expanderOpen(txt: string): boolean | null {
 // the one whose fingerprint reads as the application's; the first of several such rows (one application in several
 // catalogue items), and how many there were. OCR reads a fingerprint unreliably ("DC390" for DC90, "1634" for 163A):
 // where none reads exactly, the rows at the version and type are taken whose fingerprint reads closest, where no other
-// reading is as close (rows that read alike count as one application). What was inserted is checked exactly afterwards (runRow, writeRow). Rows
-// whose order numbers differ only where OCR confuses letters (O and 0, I, L and 1) pass the order number alike and
-// are told apart by the application they run.
+// reading is as close (rows that read alike count as one application). What a catalogue unit's row inserted is
+// checked exactly on the project's export right after the insert (runRow); an own unit's in writeRow, which takes
+// another build only where it parses as the unit's. Rows whose order numbers differ only where OCR confuses letters
+// (O and 0, I, L and 1) pass the order number alike and are told apart by the application they run.
 export function pickCatalogueRow<E extends CatalogueEntry>(entries: E[], orderNumber: string, applicationId: string): { hit: E; rows: number; exact: boolean } | { refused: string } {
   const want = catalogueIdentity(applicationId);
   // A device type reads with its "$" as "S" or "3" and an O for a 0 ("SOOB6" for $00B6); a fingerprint the same.
@@ -701,6 +703,9 @@ async function insertProduct(s: Screen, orderNumber: string, applicationId: stri
   typeText(orderNumber);
   key("Return");
   await sleep(6000);
+  // A dialog now (a KNX-ID login, the online catalogue failing) is read before Escape, which closes the search's
+  // suggestions, could close it unread.
+  { const png = s.snap(), box = dialogBox(png); if (box) fail(`${UNKNOWN_DIALOG} (after the catalogue search): ${words(png, box).map((w) => w.text).join(" ").slice(0, 300)}`); }
   key("Escape");
   await sleep(1000);
   const grid = { x: AT.catalogueGrid.x, y: header.cy + 37, w: AT.catalogueGrid.w, h: 1160 - header.cy - 37 };
@@ -710,16 +715,23 @@ async function insertProduct(s: Screen, orderNumber: string, applicationId: stri
   const products = () => rows(s.look(grid, "binary").ws.filter(inside(grid))).filter((r) => r.words.some((w) => w.x >= 610 && /[A-Za-z]{3}/.test(w.text)));
   let items = products();
   // Every manufacturer's group the search lists is opened where it stands closed (ETS keeps a group closed from one
-  // search to the next): its expander's arrow is read, never toggled blind. The online catalogue lists the rows late.
-  for (let round = 0; round < 3; round++) {
+  // search to the next): its expander's arrow is read, never toggled blind, one group at a time (opening one moves
+  // the groups below it). The online catalogue lists the rows late. A group still closed after that is refused.
+  const closedGroups = () => {
     const png = s.snap();
     const headers = rows(words(png, grid).filter(inside(grid))).filter((r) => !r.words.some((w) => w.x >= 610) && r.words[0].x < 360);
-    if (round === 0 && headers.length === 0 && items.length === 0) fail(`the catalogue lists nothing for order number ${orderNumber}`);
-    const closed = headers.filter((h) => expanderOpen(execFileSync("magick", [png, ...crop({ x: 316, y: Math.round(h.y) - 10, w: 20, h: 20 }), "-colorspace", "Gray", "-depth", "8", "txt:-"], { encoding: "utf8" })) === false);
-    for (const h of closed) { click(326, Math.round(h.y)); await sleep(1500); }
-    for (let i = 0; i < 4 && (items = products()).length === 0; i++) await sleep(2000);
-    if (closed.length === 0 && items.length) break;
+    return { headers, closed: headers.filter((h) => expanderOpen(execFileSync("magick", [png, ...crop({ x: 316, y: Math.round(h.y) - 10, w: 20, h: 20 }), "-colorspace", "Gray", "-depth", "8", "txt:-"], { encoding: "utf8" })) === false) };
+  };
+  let groups = closedGroups();
+  if (groups.headers.length === 0 && items.length === 0) fail(`the catalogue lists nothing for order number ${orderNumber}`);
+  for (let opened = 0; groups.closed.length; opened++) {
+    if (opened === 10) fail(`the catalogue's groups for order number ${orderNumber} stay closed: ${groups.closed.map((h) => h.text).join(", ")}`);
+    click(326, Math.round(groups.closed[0].y));
+    await sleep(3000);
+    groups = closedGroups();
   }
+  // The rows of a group just opened may still come in: read until two readings agree (at most 5).
+  for (let i = 0, before = -1; i < 5 && (items = products()).length !== before; i++) { before = items.length; await sleep(2000); }
   if (items.length === 0) fail(`the catalogue holds no product for order number ${orderNumber}`);
   // A list that reaches the grid's last row may go on below it, where the driver does not scroll.
   if (Math.max(...items.map((r) => r.y)) > grid.y + grid.h - 30) fail(`the catalogue lists more rows for order number ${orderNumber} than its grid shows at once`);
@@ -842,7 +854,7 @@ async function compressProject(s: Screen, project: string, passwordEnv?: string)
   await sleep(2500);
   const png = s.snap(), box = dialogBox(png) ?? fail("ETS asked nothing before compressing the project");
   const asked = words(png, box).map((w) => w.text).join(" ");
-  if (!/geschlossen/.test(asked)) fail(`ETS asks something else before compressing: ${asked.slice(0, 200)}`);
+  if (!/geschlossen/.test(asked)) fail(`${UNKNOWN_DIALOG} (asked to compress the project): ${asked.slice(0, 300)}`);
   // OCR reads neither of its buttons reliably (the bar under its yellow rule reads empty); Ja is the default button,
   // taken by Return. What follows shows it was Ja: the project closes and its store holds no product data after it.
   key("Return");
@@ -969,9 +981,7 @@ function writeRow(dir: string, unit: RowSpec["unit"], simulator: string, applica
   const bytes = reduced.bytes;
   const proj = loadKnxproj(bytes, password, "export");
   const d = proj.devices.find((x) => x.ia === ia) ?? fail(`ETS's export holds no device ${ia}`);
-  // The hardware's application, as its product data name it: on hardware with a PEI program the Hardware2Program's id
-  // carries both programs' numbers, which appProgramId would read as one.
-  const exported = hardwareApplications(bytes).get(d.appRef) || appProgramId(d.appRef);
+  const exported = deviceApplication(d);
   const own = typeof unit === "string";
   if (!own && exported !== applicationId) fail(`ETS's export runs ${exported} at ${ia}, not ${applicationId}`);
   const unitXml = own ? catalogueXml(`${applicationId}.xml.gz`) : extractAppPrograms(bytes, [exported]).get(exported) ?? fail(`ETS's export holds no application ${exported}`);
@@ -1359,7 +1369,7 @@ interface Sim { stop(): Promise<void> }
 
 // The simulators running, each by its stop: a batch stopped by a signal stops them, so none keeps the port.
 const runningSims = new Set<() => Promise<void>>();
-const stopAllSims = () => Promise.all([...runningSims].map((stop) => stop()));
+const stopAllSims = () => Promise.allSettled([...runningSims].map((stop) => stop()));
 
 // The simulator serving a unit on `port` (its proxy; the server one below), its output kept in <log>.serve.txt.
 // `unit`: tools/sim-unit-serve.ts's arguments that name it (an own unit, or an application with --product, --donor
@@ -1379,8 +1389,9 @@ function startSim(unit: string[], log: string, port: number, advertise: string, 
     const t = setTimeout(() => child.kill("SIGKILL"), 10_000);
     await exited;
     clearTimeout(t);
-    writeFileSync(out, text);
     runningSims.delete(stop);
+    // The row's directory may be gone (moved aside) by the time a signal stops a simulator that ended long before.
+    if (existsSync(dirname(out))) writeFileSync(out, text);
   };
   runningSims.add(stop);
   // A catalogue unit takes its time to build (5 to 6 s each on the driver's machine), and one with what the identity
@@ -1393,8 +1404,8 @@ function startSim(unit: string[], log: string, port: number, advertise: string, 
       clearTimeout(t); clearInterval(check);
       resolve({ stop });
     }, 200);
-    const t = setTimeout(() => { timedOut = true; clearInterval(check); void stop().then(() => reject(new Error(`the simulator did not start within ${startMs / 1000} s: ${text}`))); }, startMs);
-    child.on("exit", (code, sig) => { if (timedOut) return; clearTimeout(t); clearInterval(check); reject(new Error(`the simulator ended (${sig ?? `exit ${code}`}): ${text}`)); });
+    const t = setTimeout(() => { timedOut = true; clearInterval(check); void stop().finally(() => reject(new Error(`the simulator did not start within ${startMs / 1000} s: ${text}`))); }, startMs);
+    child.on("exit", (code, sig) => { runningSims.delete(stop); if (timedOut) return; clearTimeout(t); clearInterval(check); reject(new Error(`the simulator ended (${sig ?? `exit ${code}`}): ${text}`)); });
   });
 }
 
@@ -1418,35 +1429,29 @@ interface RowOptions {
 // How a row ended: ETS's outcome, or no unit for it (sim-refused); a driver failure with its class.
 interface RowRun {
   dir: string; outcome: EtsOutcome | { kind: "sim-refused"; why: string }; minutes: number;
-  failure?: FailureClass; unit?: RowSpec["unit"]; catalogueSpec?: CatalogueUnitSpec; simRefusals: string[];
+  // recovered: ETS was brought back after a driver failure (its dialogs closed, or restarted).
+  failure?: FailureClass; recovered: boolean; unit?: RowSpec["unit"]; catalogueSpec?: CatalogueUnitSpec; simRefusals: string[];
 }
 
 // No catalogue unit for the row (no donor of its mask, a product identity the donor cannot carry).
 class NoUnit extends Error {}
 
 const isOwnUnit = (id: string) => SIM_UNITS.some((u) => u.id === id);
+// Where a catalogue row's project export right after the insert lies while the row runs.
+const productFile = (application: string) => join(tmpdir(), "ets-driver-product", `${application}-${process.pid}.knxproj`);
 
-// The catalogue unit of `application` with its program from the project export `product`, the donor named or its
-// rule's, and what the identity loop learned from each ETS6.log of `learnedFrom` in order (as tools/sim-unit-serve.ts
-// builds it from the same arguments); or why there is none.
-function catalogueRowUnit(application: string, product: string, donor: string | undefined, learnedFrom: string[]): CatalogueUnitSpec | { refused: string } {
-  const appXml = extractAppPrograms(readFileSync(product), [application]).get(application);
-  if (appXml === undefined) return { refused: `the project's export holds no application program ${application}` };
-  let spec = catalogueUnitSpec(application, appXml, { donor });
-  for (const file of learnedFrom) {
-    if ("refused" in spec) break;
-    const r = learnIdentity(spec, readFileSync(file));
-    spec = "refused" in r ? { refused: `${file}: ${r.refused}` } : r.spec;
-  }
-  return spec;
-}
-
-// The application of the one device of an exported project, as its product data name it (hardwareApplications: on
-// hardware with a PEI program its Hardware2Program's id carries both programs' numbers).
+// The application of the one device of an exported project (deviceApplication).
 function insertedApplication(bytes: Buffer, password: string | undefined): string {
   const devices = loadKnxproj(bytes, password, "export").devices;
   if (devices.length !== 1) fail(`the project holds ${devices.length} devices after the insert, not one`);
-  return hardwareApplications(bytes).get(devices[0].appRef) || appProgramId(devices[0].appRef);
+  return deviceApplication(devices[0]);
+}
+
+// A device's application as the project's product data name it (Device.appProgramId: on hardware with a PEI program
+// its Hardware2Program's id carries both programs' numbers, which appProgramId alone would read as one). Refused
+// where they name none Busforge can tell apart from a PEI program.
+function deviceApplication(d: { ia: string; appRef: string; appProgramId: string }): string {
+  return d.appProgramId || fail(`the product data name no one application of the device ${d.ia} (${d.appRef})`);
 }
 
 // Whether ETS's window is gone; a bench host that does not answer says nothing about it.
@@ -1469,12 +1474,12 @@ async function runRow(o: RowOptions): Promise<RowRun> {
   let unit: RowSpec["unit"] | undefined = ownSpec?.id, catalogueSpec: CatalogueUnitSpec | undefined;
   let simArgs = [o.unit];
   // A catalogue unit's application program, from the project exported right after the insert.
-  const product = join(tmpdir(), "ets-driver-product", `${applicationId}-${process.pid}.knxproj`);
+  const product = productFile(applicationId);
   const s = new Screen(dir);
   const log = join(dir, ROW_FILES.ets);
   let since: string | null = null;
   let sim: Sim | null = null, wrong: Sim | null = null, ours = false;
-  let outcome: RowRun["outcome"], failure: FailureClass | undefined;
+  let outcome: RowRun["outcome"], failure: FailureClass | undefined, recovered = false;
   try {
     since = etsClock();
     if (remote(`lsusb | grep -c 147b || true`).trim() !== "0") console.log("note: the KNX-USB stick is plugged into the bench host; ETS6.log decides which interface ETS used");
@@ -1505,10 +1510,11 @@ async function runRow(o: RowOptions): Promise<RowRun> {
         // OCR picked the catalogue row; the export says exactly what it runs.
         const inserted = insertedApplication(readFileSync(product), password);
         if (inserted !== applicationId) fail(`the catalogue row inserted runs ${inserted}, not ${applicationId}`);
-        const u = catalogueRowUnit(applicationId, product, o.donor, o.learnedFrom);
+        const u = catalogueUnitFrom(applicationId, readFileSync(product), { donor: o.donor, learnedFrom: o.learnedFrom.map((name) => ({ name, log: readFileSync(name) })) });
         if ("refused" in u) throw new NoUnit(u.refused);
         let cu;
-        try { cu = catalogueUnit(u); } catch (e) { throw new NoUnit((e as Error).message); }
+        // Only the unit's own refusals end the row sim-refused; anything else (a corpus that does not read) is the driver's.
+        try { cu = catalogueUnit(u); } catch (e) { if (e instanceof Error && e.message.startsWith("no catalogue unit:")) throw new NoUnit(e.message); throw e; }
         catalogueSpec = u;
         unit = catalogueUnitRecord(cu);
         ia = numToIa(cu.make().deviceIa);
@@ -1582,9 +1588,21 @@ async function runRow(o: RowOptions): Promise<RowRun> {
           writeFileSync(join(dir, "ets6.log.tail.txt"), readFileSync(join(dir, ROW_FILES.ets6log)).toString("latin1").split("\n").slice(-200).join("\n"), "latin1");
         });
       }
-      // Recovery only for an ETS this driver runs, and not where the bench host does not answer.
+      // Recovery only for an ETS this driver runs, and not where the batch pauses (the host does not answer, a login
+      // or the catalogue waits with its dialog). ETS not brought back pauses the batch: no later row could run.
       const recover = failure.kind === "restart" ? () => restartEts() : () => closeDialogs(s).catch(() => restartEts());
-      if (ours && failure.kind !== "pause") await recover().catch((x: unknown) => console.error(`ETS not recovered: ${x instanceof Error ? x.message : String(x)}`));
+      if (failure.kind !== "pause") {
+        try {
+          if (!ours) throw new Error("this driver did not start ETS for the row");
+          await recover();
+          recovered = true;
+        } catch (x) {
+          const not = `ETS not recovered: ${x instanceof Error ? x.message : String(x)}`;
+          console.error(not);
+          failure = classifyFailure(`${not} (after: ${why})`);
+          if (failure.kind !== "pause") failure = { kind: "pause", reason: "ets", why: `${not} (after: ${why})` };
+        }
+      }
     }
   } finally {
     if (sim) await sim.stop();
@@ -1595,15 +1613,13 @@ async function runRow(o: RowOptions): Promise<RowRun> {
   if (!existsSync(`${log}.sim.txt`)) writeFileSync(`${log}.sim.txt`, "");
   const refusals = simRefusals(readFileSync(`${log}.sim.txt`, "utf8"));
   if (refusals.length) console.log(`the simulator refused ${refusals.length}: ${refusals[0]}`);
-  return { dir, outcome, minutes: (Date.now() - t0) / 60_000, failure, unit, catalogueSpec, simRefusals: refusals };
+  return { dir, outcome, minutes: (Date.now() - t0) / 60_000, failure, recovered, unit, catalogueSpec, simRefusals: refusals };
 }
 
 // ---- the batch ----
 
 const IDENTITY_ROUNDS = 3;
 const HEARTBEAT_MS = 3 * 60_000;
-// tools/ets-catalogue.ts LIST_FORMAT (not imported: that tool imports this one).
-const CATALOGUE_LIST_FORMAT = "busforge-ets-catalogue-list/1";
 const HA_URL = process.env.HA_URL ?? "http://192.168.1.18:8123";
 
 // The bench host kept awake: Home Assistant's switch.x390_wach on (without it the host sleeps in the evening).
@@ -1618,14 +1634,6 @@ async function hostKeptAwake(): Promise<void> {
 interface BatchOptions {
   list: string; out: string; only?: string[]; from?: string; count?: number; rerunFailed: boolean; rerun: string[];
   simulator: string; project: string; injectKill?: string; injectDialog?: string;
-}
-
-// A row's directory of an attempt that does not stand moved to <out>/.attempts/<application>/<n>.
-function moveAttempt(out: string, application: string, n: number): string {
-  const to = join(out, ".attempts", application, String(n));
-  mkdirSync(dirname(to), { recursive: true });
-  renameSync(rowDirOf(out, application), to);
-  return to;
 }
 
 // One row of the batch, run until it has a result: once more after ETS was restarted under it, again for each round
@@ -1648,38 +1656,36 @@ async function batchRow(row: ListRow, b: BatchOptions, inject: RowOptions["injec
   }
   const learned: string[] = [];
   let restarted = false;
-  for (let n = 1; ; n++) {
+  for (;;) {
     const r = await runRow({ unit: own ?? row.application, variant: VARIANT, orderNumber: row.orderNumber, simulator: b.simulator, project: b.project, configured: false, out: dir, simOverrides: [], learnedFrom: [...learned], inject });
     inject = undefined;
     const why = "why" in r.outcome ? r.outcome.why : undefined;
     if (r.failure?.kind === "pause") return { pause: r.failure };
-    if (r.failure?.kind === "restart" && !restarted) {
+    // Once more after ETS was brought back (a failed recovery pauses the batch: runRow).
+    if (r.failure?.kind === "restart" && r.recovered && !restarted) {
       restarted = true;
-      attempts.push({ kind: "restarted", why, minutes: r.minutes, dir: moveAttempt(b.out, row.application, n) });
+      attempts.push({ kind: "restarted", why, minutes: r.minutes, dir: moveAttempt(b.out, row.application) });
       appendLog(b.out, `${row.application}: ETS restarted (${r.failure.reason}), the row runs again: ${why}`);
       continue;
     }
-    let kind: RowKind = r.outcome.kind, more = "";
-    // A unit that refused what ETS sent ends the row sim-refused (as tools/ets-sweep.ts judges it), whatever ETS made
-    // of the missing answer; the row stays written.
-    if (r.simRefusals.length && (kind === "completed" || kind === "ets-failed")) {
-      kind = "sim-refused";
-      more = `; the simulator refused ${r.simRefusals.length}: ${r.simRefusals[0]}`;
-    }
+    const kind: RowKind = r.outcome.kind;
+    // What the unit refused is named; whether it counts against the row tools/ets-sweep.ts judges (a refusal after the
+    // unit's last restart may not).
+    let more = r.simRefusals.length ? `; the simulator refused ${r.simRefusals.length}: ${r.simRefusals[0]}` : "";
     // The identity loop: what ETS required of the catalogue unit, learned from this run's ETS6.log, for the next run.
-    if (kind === "ets-failed" && r.catalogueSpec) {
+    if (kind === "ets-failed" && r.catalogueSpec && !r.simRefusals.length) {
       const ets6log = join(dir, ROW_FILES.ets6log);
       const l = learned.length >= IDENTITY_ROUNDS ? { refused: `${IDENTITY_ROUNDS} rounds of the identity loop ran` } : learnIdentity(r.catalogueSpec, readFileSync(ets6log));
       if (!("refused" in l)) {
-        const moved = moveAttempt(b.out, row.application, n);
+        const moved = moveAttempt(b.out, row.application);
         attempts.push({ kind: "identity", why: l.learned.map((m) => m.line).join("; "), minutes: r.minutes, dir: moved });
         learned.push(join(moved, ROW_FILES.ets6log));
         appendLog(b.out, `${row.application}: the identity loop learned ${l.learned.map((m) => `${m.object}/${m.pid}`).join(", ")}, the row runs again`);
         continue;
       }
-      more = `; identity loop: ${l.refused}`;
+      more += `; identity loop: ${l.refused}`;
     }
-    if (r.failure?.kind === "restart") more += "; ETS was restarted under the row twice";
+    if (r.failure?.kind === "restart" && restarted) more += "; ETS was gone or failed under the row again after its restart";
     attempts.push({ kind, why, minutes: r.minutes });
     const screenshot = ["dialog.png", "failure.png"].find((f) => existsSync(join(dir, f)));
     const unitName = r.unit === undefined ? undefined : typeof r.unit === "string" ? r.unit : `donor ${r.unit.donor}`;
@@ -1692,34 +1698,51 @@ async function runBatch(b: BatchOptions): Promise<number> {
   const format: unknown = list.format;
   if (format !== CATALOGUE_LIST_FORMAT) throw new Error(`${b.list} is of format ${String(format)}, not ${CATALOGUE_LIST_FORMAT}`);
   const rows = batchRows(list, { only: b.only, from: b.from, count: b.count });
-  for (const a of [b.injectKill, b.injectDialog]) if (a !== undefined && !rows.some((r) => r.application === a)) throw new Error(`${a} is no row of the batch`);
+  for (const a of b.rerun) if (!rows.some((r) => r.application === a)) throw new Error(`--rerun ${a} is no row of the batch`);
   mkdirSync(b.out, { recursive: true });
   await hostKeptAwake();
   const plan = planBatch(b.out, rows, { kinds: b.rerunFailed ? ["driver-failed"] : [], applications: b.rerun });
+  // A failure on purpose needs a row that runs.
+  for (const a of [b.injectKill, b.injectDialog]) if (a !== undefined && !plan.run.some((r) => r.application === a)) throw new Error(`${a} is no row this batch runs (not in it, or it has a result)`);
   const say = (text: string) => { appendLog(b.out, text); console.error(text); };
   say(`batch of ${rows.length} rows of ${b.list}: ${plan.finished.length} with a result, ${plan.run.length} to run`);
   let at = { n: 0, application: "", t0: Date.now() };
   const heartbeat = setInterval(() => say(heartbeatLine(at.n, rows.length, at.application, currentStep, (Date.now() - at.t0) / 60_000)), HEARTBEAT_MS);
-  // A batch stopped by a signal stops its simulator with it; the row it ran has no result and runs again on resume.
-  const stopped = (sig: string) => { void stopAllSims().finally(() => { say(`stopped by ${sig} at row ${at.n}/${rows.length} ${at.application}`); process.exit(130); }); };
+  // A batch stopped by a signal stops its simulator and writes no result after it; the row it ran runs again on resume.
+  let stopping: string | null = null;
+  const stopped = (sig: "SIGINT" | "SIGTERM") => {
+    if (stopping) return;
+    stopping = sig;
+    void stopAllSims().finally(() => {
+      rmSync(productFile(at.application), { force: true });
+      say(`stopped by ${sig} at row ${at.n}/${rows.length} ${at.application}`);
+      process.exit(sig === "SIGINT" ? 130 : 143);
+    });
+  };
   process.on("SIGINT", () => stopped("SIGINT"));
   process.on("SIGTERM", () => stopped("SIGTERM"));
   try {
     for (const row of plan.run) {
+      if (stopping) return 1;
       at = { n: rows.indexOf(row) + 1, application: row.application, t0: Date.now() };
       const aside = clearRowDir(b.out, row.application, new Date().toISOString().replace(/[:.]/g, "-"));
       if (aside) say(`${row.application}: what an earlier run left is moved to ${aside}`);
       const inject = row.application === b.injectKill ? "kill" : row.application === b.injectDialog ? "dialog" : undefined;
       const r = await batchRow(row, b, inject);
+      if (stopping) return 1;
       if ("pause" in r) {
         say(`paused at row ${at.n}/${rows.length} ${row.application} (${"reason" in r.pause ? r.pause.reason : r.pause.kind}): ${r.pause.why}`);
         return 3;
       }
-      writeFileSync(join(rowDirOf(b.out, row.application), RESULT_FILE), `${JSON.stringify(r, null, 1)}\n`);
+      writeResult(b.out, r);
       say(rowLine(at.n, rows.length, r));
     }
+  } catch (e) {
+    // Whatever breaks the batch itself is in its log, the row without a result.
+    say(`stopped at row ${at.n}/${rows.length} ${at.application} by an error of the batch: ${e instanceof Error ? e.message : String(e)}`);
+    throw e;
   } finally { clearInterval(heartbeat); }
-  say(`batch done: ${summary(loggedRows(readFileSync(join(b.out, "batch.log"), "utf8")).filter((l) => rows.some((r) => r.application === l.application)))}`);
+  say(`batch done: ${summary(loggedRows(readFileSync(join(b.out, BATCH_LOG), "utf8")).filter((l) => rows.some((r) => r.application === l.application)))}`);
   return 0;
 }
 

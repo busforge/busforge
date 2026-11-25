@@ -19,8 +19,7 @@
 import { appendFileSync, readFileSync } from "node:fs";
 import { KnxIpServer, numToIa } from "../packages/knx/src/index.ts";
 import { startProxy, parseEndpoint, toolLabel } from "./knxproxy.ts";
-import { extractAppPrograms } from "../packages/project/src/index.ts";
-import { catalogueUnit, catalogueUnitSpec, isCatalogueUnit, learnIdentity, readMaybeGzipped, type CatalogueUnitSpec, type RowUnit } from "./sim-unit-catalogue.ts";
+import { catalogueUnit, catalogueUnitFrom, isCatalogueUnit, readMaybeGzipped, type CatalogueUnitSpec, type RowUnit } from "./sim-unit-catalogue.ts";
 import { newSimUnit, SIM_UNITS } from "./sim-units.ts";
 
 const args = process.argv.slice(2);
@@ -49,15 +48,9 @@ const simLog = `${log}.sim.txt`;
 const catalogue = (): CatalogueUnitSpec => {
   const product = flag("product");
   if (!product) throw new Error(`${id} is no own unit; its catalogue unit takes the application program from --product <file>`);
-  const appXml = extractAppPrograms(readMaybeGzipped(product), [id]).get(id);
-  if (appXml === undefined) throw new Error(`${product} holds no application program ${id}`);
-  const u = catalogueUnitSpec(id, appXml, { donor: flag("donor") });
+  const u = catalogueUnitFrom(id, readMaybeGzipped(product), { donor: flag("donor"), learnedFrom: flags("learned-from").map((name) => ({ name, log: readFileSync(name) })) });
   if ("refused" in u) throw new Error(`sim-refused ${u.refused}`);
-  return flags("learned-from").reduce((at, file) => {
-    const r = learnIdentity(at, readFileSync(file));
-    if ("refused" in r) throw new Error(`sim-refused ${file}: ${r.refused}`);
-    return r.spec;
-  }, u);
+  return u;
 };
 const ownSpec = SIM_UNITS.find((u) => u.id === id);
 if (ownSpec && (flag("donor") !== undefined || flag("product") !== undefined || flags("learned-from").length)) throw new Error("--product, --donor and --learned-from are for an application without an own unit");

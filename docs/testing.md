@@ -925,14 +925,19 @@ One row, step by step:
 2. **Line 1.1 emptied, the project compressed**, and the product **inserted from the online catalogue**
    by its order number. ETS keeps the product data of every device ever inserted into a project; its
    "Jetzt komprimieren" (the project's details dialog) deletes what no device uses, so the row's project
-   holds no earlier row's product. ETS closes the project for it; the driver opens it again and checks
-   ETS's project store, which then holds no manufacturer's product data. ETS's search lists every
-   catalogue row whose text holds the order number (other manufacturers' and other versions' too); each
-   is selected and its application read back from ETS's properties panel (device type, program
+   holds no earlier row's product. ETS closes the project for it; the driver checks ETS's project store,
+   which then holds no manufacturer's product data, and opens the project again. ETS's search lists every
+   catalogue row whose text holds the order number (other manufacturers' and other versions' too), each
+   manufacturer's group opened where its arrow shows it closed (a group that stays closed is refused);
+   each row is selected and its application read back from ETS's properties panel (device type, program
    version, fingerprint, which together are the application id: the fingerprint of the id ETS's product
-   store holds). The row whose application is the unit's is inserted, whatever else the search lists;
-   several rows of that one application (it is offered in several catalogue items) are one application,
-   and the first is taken. A search that lists more rows than the grid shows at once is refused. ETS's
+   store holds). The row whose application reads as the unit's is inserted, whatever else the search
+   lists; several rows of that one application (it is offered in several catalogue items) are one
+   application, and the first is taken. OCR reads a fingerprint unreliably, so where none reads exactly,
+   the rows at the application's device type and version are taken whose fingerprint reads closest, if
+   no other reading is as close; what was inserted is then checked exactly: a catalogue unit's on the
+   project exported right after the insert, an own unit's when the row is written. A search that lists
+   more rows than the grid shows at once is refused. ETS's
    question for a project password, which it asks for a product that can run Data Secure,
    is cancelled (the device stays plain). A product whose plug-ins need ETS's compatibility mode (ETS asks
    to restart in it right after the insert) is refused: the driver runs ETS in its normal mode only. A catalogue row's unit (above) takes its application program
@@ -1022,8 +1027,8 @@ HA_TOKEN=... BUSFORGE_CORPUS=... bun run tools/ets-driver.ts batch <catalogue-li
 - **The unit.** An application with an own unit runs on it; every other on its catalogue unit. A catalogue
   row that ETS fails on a `Required data mismatch` runs again with what ETS required, up to three rounds;
   each earlier run is kept under `<out>/.attempts/`. No donor for the row's mask, or a product identity the
-  donor cannot carry, ends the row `sim-refused` before any download; a unit that refused what ETS sent
-  ends it `sim-refused` too, the row written to be judged.
+  donor cannot carry, ends the row `sim-refused` before any download. What a unit refused of what ETS
+  sent is named in the row's result; whether it counts against the row, `tools/ets-sweep.ts` judges.
 - **Before it starts**, the bench host must be kept awake (it sleeps in the evening otherwise): the batch
   reads its keep-awake switch in Home Assistant (`HA_TOKEN`) and refuses to start where it is not on.
 - **A failure of a row** is classified by its message (`classifyFailure`, `tools/ets-batch.ts`):
@@ -1031,15 +1036,18 @@ HA_TOKEN=... BUSFORGE_CORPUS=... bun run tools/ets-driver.ts batch <catalogue-li
     text): ETS is restarted and the row runs once more; a second time it ends `driver-failed`.
   - A dialog the driver does not know: the row ends `driver-failed` with the dialog's text and
     screenshot; the dialog is closed (cancelled where it offers it, else Escape) or ETS restarted.
-  - A bench host that does not answer over ssh, a KNX-ID login ETS asks for, an online catalogue that
-    does not answer: the batch pauses, writes why, and ends with exit code 3; the row has no result and
-    runs again on resume. The login is never worked around.
+  - A bench host that does not answer over ssh (or drops a connection in the middle of a command), a
+    KNX-ID login ETS asks for, an online catalogue that does not answer, an ETS that cannot be started
+    or brought back after a failure: the batch pauses, writes why, and ends with exit code 3; the row
+    has no result and runs again on resume. The login is never worked around.
   - Anything else is the row's own failure: `driver-failed`.
 - **Second programs.** ETS downloads a hardware's PEI program with its application; such a row is driven
   (where the unit has no place for the PEI program's segment, it refuses it). A second program that is
   no PEI program is refused before the row runs.
 - `--inject-kill <application>` and `--inject-dialog <application>` kill ETS, or open its project details
-  dialog, in that row once the project is compressed: they exist to show the recovery on a real run.
+  dialog, in that row once the project is compressed (the row must be one the batch runs): they exist
+  to show the recovery on a real run. A batch stopped by SIGINT or SIGTERM stops its simulator and
+  writes no result for the row it was in.
 
 ### The catalogue's rows
 
