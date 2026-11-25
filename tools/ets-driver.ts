@@ -379,8 +379,9 @@ async function openProject(s: Screen, name: string, passwordEnv?: string): Promi
   if (projectTabOpen(s)) {
     click(AT.projectTab[0], AT.projectTab[1]);
     await sleep(1500);
-    if (etsTitle() === want) return;
-    fail(`ETS has another project open (${etsTitle() || "no ETS window"}); close it first`);
+    if (etsTitle() !== want) fail(`ETS has another project open (${etsTitle() || "no ETS window"}); close it first`);
+    await closeExtraProjectTabs(s, name);
+    return;
   }
   await searchProject(s, name);
   click(AT.searchedRow[0], AT.searchedRow[1]);
@@ -396,6 +397,32 @@ async function openProject(s: Screen, name: string, passwordEnv?: string): Promi
     await sleep(2000);
   }
   await sleep(3000);
+  await closeExtraProjectTabs(s, name);
+}
+
+// The project's tabs beyond the first closed. On the first open of a project after ETS crashed, ETS restores the views it
+// had open as a second tab of the project (seen after an ETS kill); two views of one project are no layout the driver
+// works in. A tab in front is white with its close mark 18 px left of its end, where the title bar's green begins.
+async function closeExtraProjectTabs(s: Screen, name: string): Promise<void> {
+  const first = name.split(/\s+/)[0];
+  const tabs = () => findText(s.look({ x: 200, y: 0, w: 1100, h: 36 }).ws, first).filter((b) => b.y < 30).sort((a, b) => a.x - b.x);
+  for (let i = 0; ; i++) {
+    const t = tabs();
+    if (t.length <= 1) break;
+    if (i === 3) fail(`ETS shows ${t.length} tabs of the project ${name}, and the extra ones do not close`);
+    const extra = t[t.length - 1];
+    click(extra.cx, extra.cy);
+    xdo("mousemove", "1000", "600");
+    await sleep(1500);
+    const row = execFileSync("magick", [s.snap(), ...crop({ x: extra.x, y: 19, w: 400, h: 1 }), "-depth", "8", "txt:-"], { encoding: "utf8" });
+    const end = row.split("\n").slice(1).map((l) => l.match(/^(\d+),0: \((\d+),(\d+),(\d+)/)).find((m) => m && Number(m[3]) - Number(m[2]) > 40)
+      ?? fail(`the tab of the project ${name} at ${extra.x} shows no end`);
+    console.log(`closing an extra tab of the project ${name}`);
+    click(extra.x + Number(end[1]) - 18, 19);
+    await sleep(2000);
+  }
+  click(AT.projectTab[0], AT.projectTab[1]);
+  await sleep(1000);
 }
 
 // Whether a project's tab stands beside the overview's tab (its name in it).
@@ -1512,11 +1539,15 @@ async function runRow(o: RowOptions): Promise<RowRun> {
         // OCR picked the catalogue row; the export says exactly what it runs.
         const inserted = insertedApplication(readFileSync(product), password);
         if (inserted !== applicationId) fail(`the catalogue row inserted runs ${inserted}, not ${applicationId}`);
-        const u = catalogueUnitFrom(applicationId, readFileSync(product), { donor: o.donor, learnedFrom: o.learnedFrom.map((name) => ({ name, log: readFileSync(name) })) });
-        if ("refused" in u) throw new NoUnit(u.refused);
-        let cu;
-        // Only the unit's own refusals end the row sim-refused; anything else (a corpus that does not read) is the driver's.
-        try { cu = catalogueUnit(u); } catch (e) { if (e instanceof Error && e.message.startsWith("no catalogue unit:")) throw new NoUnit(e.message); throw e; }
+        // Only the unit's own refusals (the product's identity, the donor's) end the row sim-refused; anything else (a
+        // corpus that does not read) is the driver's.
+        const unitRefusal = (e: unknown) => e instanceof Error && /^no (?:catalogue|product) unit:/.test(e.message) ? new NoUnit(e.message) : e;
+        let u, cu;
+        try {
+          u = catalogueUnitFrom(applicationId, readFileSync(product), { donor: o.donor, learnedFrom: o.learnedFrom.map((name) => ({ name, log: readFileSync(name) })) });
+          if ("refused" in u) throw new NoUnit(u.refused);
+          cu = catalogueUnit(u);
+        } catch (e) { throw unitRefusal(e); }
         catalogueSpec = u;
         unit = catalogueUnitRecord(cu);
         ia = numToIa(cu.make().deviceIa);

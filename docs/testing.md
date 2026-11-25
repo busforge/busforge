@@ -918,7 +918,8 @@ One row, step by step:
 1. **The project.** ETS's own sweep project (no password), or with `--project` another one (its
    password, where it has one, from the variable `--password-env` names), is opened by ETS's project
    search, which must list exactly that one under that name, and checked by its window title and its tab; another open
-   project is refused, not closed. `import` brings a corpus project in for that: ETS imports it as a
+   project is refused, not closed. On the first open of a project after ETS crashed, ETS restores its
+   views as a second tab of the project; the driver closes every tab of it but the first. `import` brings a corpus project in for that: ETS imports it as a
    copy where it holds one with its id ("Kopie importieren", never over the one it holds), and the copy's
    name is read from ETS's project store, the one directory the import added; `delete` removes only a
    project `import` brought in, once ETS's delete question names it.
