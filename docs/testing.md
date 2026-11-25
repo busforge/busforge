@@ -1013,10 +1013,14 @@ bun run tools/ets-catalogue.ts list <fetched dir> --json <file> --md <file> [--m
   row and the batch size; `--from` that row resumes at that size. Rows already loaded leave "Herunterladen" disabled and pass
   at once, so a run started again resumes.
 - **`fetch`** copies the index files, the market file, the `<AP …>` element of every application ETS
-  loaded, and where they came from (ETS's version and licence from ETS6.log, the index's date).
-- **`list`** builds one row per application the market offers at the given masks: its mask from the
-  product data (an application not loaded has no row and is listed as such, never guessed from its
-  name), its version as ETS shows it, every order number it is offered under, and one to search for,
+  loaded, the product store's catalogue items and hardware-to-programs, and where they came from (ETS's
+  version and licence from ETS6.log, the index's date).
+- **`list`** builds one row per application the market offers at the given masks. The application is
+  the one the store's catalogue item for the entry names: ETS's store can hold an application under
+  another hash in its id than the index names, and the row carries the store's id (the one a project
+  ETS exports names) with the index's beside it. Its mask comes from the product data (an application
+  not loaded has no row and is listed as such, never guessed from its name), its version as ETS shows
+  it, every order number it is offered under, and one to search for,
   where it is the only catalogue row at its version (an order number is searched across the whole
   catalogue, compared as the driver compares it). Two applications under one order number and version
   are both rows, each naming the other; a row without an order number of its own is flagged, as the

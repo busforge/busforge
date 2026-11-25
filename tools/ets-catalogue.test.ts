@@ -20,7 +20,7 @@ describe("the catalogue list", () => {
       ["M-FFF1_A-0003-10-C003", "0701", "1.0"],
       ["M-FFF1_A-0004-10-D004", "0705", "1.0"],
       ["M-FFF2_A-0010-12-1234-O0001", "0705", "1.2"],
-      ["M-FFF2_A-0013-10-4567", "07B0", "1.0"],
+      ["M-FFF2_A-0013-10-9AB0", "07B0", "1.0"],
       ["M-FFF2_A-0015-20-7890-O0001", "07B0", "2.0"],
     ]);
     expect(list.counts.byMask).toEqual({ "07B0": 4, "0701": 1, "0705": 2, "091A": 1 });
@@ -90,10 +90,20 @@ describe("the catalogue list", () => {
     expect(row("M-FFF2_A-0015-20-7890-O0001")).toMatchObject({ noOwnOrderNumber: true, sameOrderAndVersion: [{ orderNumber: "ORDER-2", applications: ["M-FFF1_A-0002-20-B002"] }] });
   });
 
+  test("the application ETS's store holds, through its catalogue item, under another hash than the index names", () => {
+    expect(row("M-FFF2_A-0013-10-9AB0")).toMatchObject({ application: "M-FFF2_A-0013-10-9AB0", catalogueApplication: "M-FFF2_A-0013-10-4567", mask: "07B0" });
+    // Where the store has no catalogue item for it, the application stands by the index's id.
+    expect(row("M-FFF1_A-0001-11-A001")?.catalogueApplication).toBeUndefined();
+    const f = fetched();
+    f.programs.set("M-FFF2_H-hw4-1_HP-0013-10-9AB0-0013-20-5678", ["M-FFF2_A-0014-10-9AB0"]);
+    expect(catalogueList(f, "Germany", SWEEP_MASKS).refused).toContainEqual({ kind: "application", entry: "M-FFF2_A-0013-10-4567", why: "ETS's product store names M-FFF2_A-0014-10-9AB0 for it" });
+  });
+
   test("a hardware's second program beside the application: named with its type, no row of its own", () => {
-    expect(row("M-FFF2_A-0013-10-4567")?.secondProgram).toEqual([{ application: "M-FFF2_A-0013-20-5678", programType: "PeiProgram" }]);
+    expect(row("M-FFF2_A-0013-10-9AB0")?.secondProgram).toEqual([{ application: "M-FFF2_A-0013-20-5678", programType: "PeiProgram" }]);
     expect(row("M-FFF2_A-0015-20-7890-O0001")?.secondProgram).toEqual([{ application: "M-FFF2_A-0016-10-8901-O0001", programType: "ApplicationProgram" }]);
     expect(row("M-FFF2_A-0013-20-5678")).toBeUndefined();
+    expect(row("M-FFF2_A-0013-10-4567")).toBeUndefined();
     expect(row("M-FFF2_A-0016-10-8901-O0001")).toBeUndefined();
   });
 
