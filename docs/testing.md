@@ -1006,14 +1006,15 @@ bun run tools/ets-catalogue.ts list <fetched dir> --json <file> --md <file> [--m
   batches from its first row (a project open, the catalogue's search empty).
   - The catalogue server refuses a selection by the product data it holds, not by its rows
     ("Online-Katalog-Download fehlgeschlagen", `(400) Bad Request` in ETS6.log). Such a batch is tried
-    again at half its size from where it stood: a refusal keeps the selection and the keyboard focus
-    on the batch's last row, so the driver steps back to its first row and checks that the selection
-    followed. Where the grid shows another selection after the refusal, the keys did not move it, or
-    the batch ran into the grid's end, the walk starts again at the grid's first row.
+    again at half its size from where it stood: a refusal keeps the selection, anchored on the batch's
+    first row, so the driver shrinks it from its end (a key that does not arrive leaves the batch
+    larger, never elsewhere). Where the grid shows another selection after the refusal, the keys move
+    nothing, or the batch ran into the grid's end, the walk starts again at the grid's first row.
   - A batch that loaded is followed by one a quarter larger (up to `--batch`); a row refused alone is
     written down with its full-resolution screenshot and passed.
-  - The walk ends where Down moves nothing, counted from the grid's first row: a Down that moves
-    nothing after a batch is tried once more from there, as the keyboard focus may have left the grid.
+  - The walk ends after a batch that reached the grid's end, or where Down moves nothing counted from
+    the grid's first row: a Down that moves nothing after a batch is tried once more from there, as
+    the keyboard focus may have left the grid.
   - `<out>/progress.json` holds the next row, the batch size and every refused row after each step;
     `--from` that row resumes at that size. Rows already loaded leave "Herunterladen" disabled and
     pass at once, so a run started again resumes.
@@ -1028,7 +1029,8 @@ bun run tools/ets-catalogue.ts list <fetched dir> --json <file> --md <file> [--m
     ETS's store can hold an application under another hash in its id than the index names: the row
     carries the store's id (the one a project ETS exports names) with the index's ids beside it, and
     one the index names under two hashes that the store holds once is one row. A catalogue item or
-    hardware-to-program the store holds twice, or one that names no such program, is refused.
+    hardware-to-program the store holds twice with different contents, or one that names no such
+    program, is refused.
   - Its mask comes from the product data (an application not loaded has no row and is listed as
     such, never guessed from its name); its version as ETS shows it; every order number it is offered
     under, and one to search for, where it is the only catalogue row at its version (an order number

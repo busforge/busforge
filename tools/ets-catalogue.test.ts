@@ -127,6 +127,24 @@ describe("the catalogue list", () => {
     const rows = catalogueList(f, "Germany", SWEEP_MASKS).rows.filter((r) => r.application === "M-FFF2_A-0013-10-9AB0");
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ catalogueApplications: ["M-FFF2_A-0013-10-4567"], orderNumbers: ["TWO-4", "TWO-4B"], catalogueEntries: 2 });
+    // bussard naming it by either of its index ids finds the one row.
+    const b = catalogueList(f, "Germany", SWEEP_MASKS, { generated: "2000-01-01", apps: { "M-FFF2_A-0013-10-9AB0": { mask: "07B0", manufacturer: "M-FFF2", outcome: "captured" } } }).bussard!;
+    expect([b.theirs, b.both]).toEqual([1, 1]);
+    expect(b.oursNotTheirs.map((d) => d.application)).not.toContain("M-FFF2_A-0013-10-9AB0");
+  });
+
+  test("a catalogue row whose application is refused still shares its order number", () => {
+    const f = fetched();
+    const index = f.indexes.find((x) => x.ManufacturerId === 0xfff2)!;
+    const again = structuredClone(index.Entries.find((e) => e.OrderNumber === "TWO-4")!);
+    again.Id = "M-FFF2_H-hw4-3_HP-0013-10-4567-0013-20-5678_CI-ORDER.2D4-1";
+    again.OrderNumber = "ORDER-4";
+    index.Entries.push(again);
+    index.Markets!.find((m) => m.DefaultName === "Germany")!.CatalogIds.push(again.Id);
+    f.programs.delete("M-FFF2_H-hw4-1_HP-0013-10-9AB0-0013-20-5678");
+    const list = catalogueList(f, "Germany", SWEEP_MASKS);
+    expect(list.refused.map((r) => r.entry)).toContain("M-FFF2_A-0013-10-4567");
+    expect(list.rows.find((r) => r.application === "M-FFF1_A-0004-10-D004")).toMatchObject({ orderNumber: "ORDER-3", noOwnOrderNumber: true });
   });
 
   test("a mask with an extension is a mask, no row of the sweep's", () => {

@@ -293,10 +293,13 @@ export function catalogueList(f: Fetched, marketName: string, masks: string[], b
   interface App extends Named { catalogueIds: string[]; catalogueSecond: Set<string> }
   const apps = new Map<string, App>();
   const refuse = (id: string, why: string) => refused.push({ kind: "application", entry: id, why });
+  // The id each application the index names stands under in the rows (its own where the store's data is refused).
+  const rowIdOf = new Map<string, string>();
   for (const n of named.values()) {
     const held = storeApplication(f, n);
-    if (held && "refused" in held) { refuse(n.id, held.refused); continue; }
+    if (held && "refused" in held) { refuse(n.id, held.refused); rowIdOf.set(n.id, n.id); continue; }
     const [id, ...second] = held ? held.programs : [n.id, ...n.second];
+    rowIdOf.set(n.id, id);
     const app = apps.get(id) ?? { ...n, id, entries: [], second: new Set(), catalogueIds: [], catalogueSecond: new Set() };
     app.entries.push(...n.entries);
     app.catalogueIds.push(n.id);
@@ -325,13 +328,14 @@ export function catalogueList(f: Fetched, marketName: string, masks: string[], b
     if (mismatch) refused.push({ kind: "second program", entry: id, why: mismatch });
     secondType.set(id, h && !mismatch ? h.ProgramType ?? null : null);
   }
-  // Applications and catalogue rows under one order number at one version, over every application of the market:
-  // the driver searches the whole catalogue by order number, compared by orderNumberKey.
+  // Applications and catalogue rows under one order number at one version, over every catalogue row of the market
+  // with an application, refused ones too (the driver sees them): it searches the whole catalogue by order number,
+  // compared by orderNumberKey.
   const atOrder = new Map<string, Set<string>>(), rowsAt = new Map<string, number>();
   const orderAt = (orderNumber: string, version: number) => `${orderNumberKey(orderNumber)}\t${version}`;
-  for (const app of apps.values()) for (const e of app.entries) {
-    const k = orderAt(e.OrderNumber, app.version);
-    atOrder.set(k, (atOrder.get(k) ?? new Set()).add(app.id));
+  for (const n of named.values()) for (const e of n.entries) {
+    const k = orderAt(e.OrderNumber, n.version);
+    atOrder.set(k, (atOrder.get(k) ?? new Set()).add(rowIdOf.get(n.id)!));
     rowsAt.set(k, (rowsAt.get(k) ?? 0) + 1);
   }
   const byMask: Record<string, number> = {};
@@ -450,16 +454,16 @@ function compareBussard(rows: { row: Row; ids: string[] }[], offered: Map<string
   }
   for (const { row: r, ids } of rows) {
     if (ids.some((id) => theirs.has(id))) continue;
-    const id = ids[0];
-    const d: BussardDifference = { application: id, mask: r.mask, reason: "" };
-    const other = ids.map((x) => manifest.apps[x]).find(Boolean);
+    const listed = ids.find((x) => manifest.apps[x]);
+    const d: BussardDifference = { application: listed ?? ids[0], mask: r.mask, reason: "" };
+    const other = listed ? manifest.apps[listed] : undefined;
     const versions = [...new Set(ids.flatMap((x) => otherVersions(theirsByKey, x)))].filter((v) => !ids.includes(v)).sort(byText);
     if (other) { d.reason = "in bussard's manifest at another mask"; d.detail = other.mask; }
     else if (versions.length) { d.reason = "bussard holds another version of its application"; d.detail = versions.map((v) => `${v} (${manifest.apps[v].outcome})`).join(", "); }
     else d.reason = theirManufacturers.has(r.manufacturer) ? "not in bussard's manifest; its manufacturer is" : "not in bussard's manifest, nor its manufacturer";
     oursNotTheirs.push(d);
   }
-  const both = [...theirs.keys()].filter((id) => ours.has(id)).length;
+  const both = rows.filter(({ ids }) => ids.some((id) => theirs.has(id))).length;
   return { generated: manifest.generated, theirs: theirs.size, ours: rows.length, both, theirsNotOurs, oursNotTheirs, maskDiffers };
 }
 

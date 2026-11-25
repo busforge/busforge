@@ -1031,9 +1031,10 @@ async function settledGrid(s: Screen, timeoutMs = 60_000): Promise<{ png: string
 // grid's pixels as they were, as at its last row, or with the keyboard focus outside it; `atEnd`: the selection
 // reached the grid's last row before `size` rows. Where the keyboard focus is: "top", nowhere known (the walk starts
 // at the grid's first row); "before", on the row before `from` (it stays in the grid while the toolbar is clicked,
-// and through a refusal); "on", on row `from`.
-type Focus = "top" | "before" | "on";
+// and through a refusal); "selected", the selection already holds the batch.
+type Focus = "top" | "before" | "selected";
 async function selectRows(s: Screen, from: number, size: number, focus: Focus): Promise<{ moved: boolean; atEnd: boolean }> {
+  if (focus === "selected") return { moved: true, atEnd: false };
   const fresh = focus === "top";
   if (fresh) {
     // Scrolled to the top, the first catalogue row stands under the first manufacturer's header.
@@ -1043,7 +1044,7 @@ async function selectRows(s: Screen, from: number, size: number, focus: Focus): 
     key("ctrl+Home");
     if (from > 1) xdo("key", "--delay", "4", "--repeat", String(from - 1), "Down");
   }
-  if (focus !== "on" && (!fresh || from > 0)) {
+  if (!fresh || from > 0) {
     // 4,500 rows took ETS over two minutes; a minute and 50 ms per row leaves room.
     const before = (await settledGrid(s, fresh ? 60_000 + from * 50 : 60_000)).hash;
     key("Down");
@@ -1125,31 +1126,40 @@ async function downloadCatalogue(batch: number, out: string, from: number): Prom
       focus = "before";
       mouseAside();
       const selected = await settledGrid(s);
-      if (!downloadEnabled(selected.png)) { row += size; size = nextBatchSize(size, "skipped", batch); save(false); continue; }
+      if (!downloadEnabled(selected.png)) {
+        if (sel.atEnd) break;
+        row += size; size = nextBatchSize(size, "skipped", batch); save(false);
+        continue;
+      }
       const pattern = selectionPattern(selected.png);
       const since = etsClock();
       click(CATALOGUE.download[0], CATALOGUE.download[1]);
       const r = await downloadOutcome(s, since);
-      // A refused download keeps the selection and the keyboard focus on its last row. Where the grid shows another
-      // selection after it, or the batch ran into the grid's end (its last row is not `size` rows down), the next
-      // batch is selected from the grid's first row.
+      // A refused download keeps the selection, its anchor on the batch's first row and the keyboard focus on its
+      // last. Where the grid shows another selection after it, or the batch ran into the grid's end (its last row
+      // is not `size` rows down), the next batch is selected from the grid's first row.
       let kept = false;
       if (!r.ok) {
         mouseAside();
         kept = !sel.atEnd && pattern.includes("1") && selectionPattern((await settledGrid(s)).png) === pattern;
       }
-      if (r.ok) step(`rows ${row}-${row + size - 1} loaded`);
-      else if (size > 1) {
+      if (r.ok) {
+        step(`rows ${row}-${sel.atEnd ? "the grid's end" : row + size - 1} loaded`);
+        if (sel.atEnd) break;
+      } else if (size > 1) {
         renameSync(r.png, join(out, `refused-rows-${row}-${row + size - 1}.png`));
         const half = nextBatchSize(size, "refused", batch);
         if (kept) {
-          // Up to the batch's first row: the selection shrinks to it, unless the keys went elsewhere.
-          xdo("key", "--delay", "30", "--repeat", String(size - 1), "Up");
+          // The selection shrunk from its end to the half batch: it stays anchored on the batch's first row, so a
+          // key that does not arrive leaves the batch larger, never elsewhere. One that moves nothing at all went
+          // elsewhere.
+          const full = (await settledGrid(s)).hash;
+          xdo("key", "--delay", "30", "--repeat", String(size - half), "shift+Up");
           mouseAside();
-          kept = selectionPattern((await settledGrid(s)).png) !== pattern;
+          kept = (await settledGrid(s)).hash !== full;
         }
         step(`rows ${row}-${row + size - 1} refused, again by ${half}${kept ? "" : " from the grid's first row"}`);
-        focus = kept ? "on" : "top";
+        focus = kept ? "selected" : "top";
         size = half;
         save(false);
         continue;
