@@ -994,8 +994,9 @@ export function selectedSamples(txt: string): string {
   }).join("");
 }
 
-// Whether a selection pattern holds one row: one run of selected samples, a row (20 px) at most (5 px samples).
-export const oneRowSelected = (pattern: string) => /^0*1{1,5}0*$/.test(pattern);
+// Whether a selection pattern holds one row: one run of selected samples, a row (20 px) at most (5 px samples),
+// clear of the grid's top and bottom edges, where a longer selection could stand cut off.
+export const oneRowSelected = (pattern: string) => /^0+1{1,5}0+$/.test(pattern);
 
 const mouseAside = () => xdo("mousemove", String(CATALOGUE.mouseAside[0]), String(CATALOGUE.mouseAside[1]));
 

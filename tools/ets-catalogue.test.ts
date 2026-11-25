@@ -132,6 +132,8 @@ describe("the catalogue list", () => {
     const b = catalogueList(f, "Germany", SWEEP_MASKS, { generated: "2000-01-01", apps: { "M-FFF2_A-0013-10-9AB0": captured, "M-FFF2_A-0013-10-4567": captured } }).bussard!;
     expect([b.theirs, b.both]).toEqual([2, 1]);
     expect(b.oursNotTheirs.map((d) => d.application)).not.toContain("M-FFF2_A-0013-10-9AB0");
+    expect(b.theirsNotOurs.map((d) => d.application)).not.toContain("M-FFF2_A-0013-10-4567");
+    expect(b.theirsNotOurs.map((d) => d.application)).not.toContain("M-FFF2_A-0013-10-9AB0");
   });
 
   test("a catalogue row whose application is refused still shares its order number", () => {

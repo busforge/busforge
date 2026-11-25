@@ -32,4 +32,7 @@ test("one row selected: one run of selected samples, a row high at most", () => 
   expect(oneRowSelected("00001111111100")).toBe(false);
   expect(oneRowSelected("0011000011000")).toBe(false);
   expect(oneRowSelected("0000000000000")).toBe(false);
+  // A run at the grid's edge may be the visible end of a longer selection.
+  expect(oneRowSelected("1111000000000")).toBe(false);
+  expect(oneRowSelected("0000000001111")).toBe(false);
 });
