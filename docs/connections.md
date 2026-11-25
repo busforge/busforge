@@ -273,8 +273,8 @@ interface, each of them a real interoperability constraint worth knowing:
 - **Answer the extended search Core v2 implies.** ETS sends a `SEARCH_REQUEST_EXTENDED` on a TCP
   connection of its own to an interface that advertises Core v2, twice before it connects (once
   asking DIBs 01 02 08 06, once 01 08 02 06 07), and waits 3 s for each answer. Unanswered, its
-  connection setup takes 6 to 7 s, and an ETS slower by another second gives the connection up ("Die
-  Verbindung … ist nicht verfügbar") before its connect request. The bridge answers with its control
+  connection setup takes 6 to 7 s, and a delay of another second (frames lost on the way back) makes
+  ETS give the connection up ("Die Verbindung … ist nicht verfügbar") before its connect request. The bridge answers with its control
   endpoint as a UDP endpoint (an MDT IP Interface/Router answers so over TCP too) and the
   description's two DIBs (device information, supported service families); it leaves out every other
   requested DIB, which it does not model. It stays silent where the search asks only for servers in

@@ -430,8 +430,8 @@ export class KnxIpServer {
   // SEARCH_REQUEST_EXTENDED, which Core v2 obliges a server to answer. ETS 6 sends it on its own TCP
   // connection to an interface whose description names Core v2, twice before it connects a tunnel (its
   // ReadDeviceDescription, then its tunnelling connector's), and waits 3 s for each answer. Left
-  // unanswered, those 6 s are most of what ETS's connection setup allows: where ETS is slow besides, it
-  // gives the connection up as "nicht verfügbar" before its CONNECT_REQUEST. The answer is
+  // unanswered, those 6 s are most of what ETS's connection setup allows (about 7 s): a delay of another
+  // second makes it give the connection up as "nicht verfügbar" before its CONNECT_REQUEST. The answer is
   // SEARCH_RESPONSE_EXTENDED: the control endpoint as an IPv4 UDP HPAI on TCP too (an MDT IP
   // Interface/Router answers ETS so over TCP, and Calimero refuses a TCP HPAI there), then the
   // description's two DIBs (device information, supported service families) and nothing else: a requested
