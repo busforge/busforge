@@ -961,7 +961,9 @@ One row, step by step:
    `ets6.log.txt` from the row's start, `export.knxproj`. The export is stored reduced to the product data of
    the devices its project holds (`tools/ets-export-reduce.ts`): ETS keeps every product ever inserted into a
    project and exports them all. Every entry outside the manufacturers' product data stays (the project with its
-   signature and certificate, `knx_master.xml`, `.validation`), and of each manufacturer of a device its
+   signature and certificate, `knx_master.xml`, `.validation`), but for an ETS app attached to the project
+   (`UserFiles/M<manufacturer>-A<app>.etsapp`, a DCA a product brought, which ETS keeps after the product
+   is gone) of no device's manufacturer; and of each manufacturer of a device its
    `Hardware.xml`, `Catalog.xml` and the application programs the devices' Hardware2Program entries name, each
    entry byte for byte as ETS wrote it; baggages, the other products and the manufacturers' signatures go. A
    Hardware2Program described twice, or naming a program without its id, refuses the reduction: which programs to
