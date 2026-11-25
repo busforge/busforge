@@ -24,7 +24,7 @@
 // masks: its manufacturer, version (as ETS's catalogue shows it), name and every order number it is offered
 // under. Two applications under one order number and version are both rows, each flagged with the other; the
 // row's order number is one under which it stands alone at its version, and a row without one is flagged
-// (tools/ets-driver.ts refuses an order number with more than one catalogue row at the unit's version). A hardware's second
+// (tools/ets-driver.ts then tells the catalogue rows of its order number apart by their application ids). A hardware's second
 // program beside the application (a PEI program, or a second application) is named on the row with its type.
 // bussard's manifest (its swept applications by mask, ids as the index names them) is compared both ways, each
 // difference with the reason the two lists show.
@@ -169,9 +169,9 @@ export interface Row {
   application: string; catalogueApplications?: string[]; manufacturer: string; manufacturerName: string; mask: string; version: string; name: string;
   // The order number the sweep searches the catalogue for, and every order number the market offers it under.
   orderNumber: string; orderNumbers: string[]; catalogueEntries: number;
-  // Other applications under one of its order numbers at its version (any mask). noOwnOrderNumber: no order
-  // number the driver can search for it by, as each one (compared as the driver compares them) lists more than
-  // one catalogue row at its version, another application's or its own again.
+  // Other applications under one of its order numbers at its version (any mask). noOwnOrderNumber: each of its
+  // order numbers (compared as the driver compares them) lists more than one catalogue row at its version, another
+  // application's or its own again; the driver picks the row by the application id it reads for each.
   sameOrderAndVersion?: { orderNumber: string; applications: string[] }[]; noOwnOrderNumber?: true;
   // The hardware's second program beside the application, its type from the product data (null: not loaded).
   secondProgram?: { application: string; programType: string | null }[];

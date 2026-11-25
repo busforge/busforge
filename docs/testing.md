@@ -922,12 +922,20 @@ One row, step by step:
    copy where it holds one with its id ("Kopie importieren", never over the one it holds), and the copy's
    name is read from ETS's project store, the one directory the import added; `delete` removes only a
    project `import` brought in, once ETS's delete question names it.
-2. **Line 1.1 emptied** and the product **inserted from the online catalogue** by its order number.
-   Each catalogue row found is selected and its application read back from ETS's properties panel
-   (device type, program version, fingerprint, which together are the application id). The row whose
-   application is the unit's is inserted; two rows under the order number and the unit's version are
-   refused. ETS's question for a project password, which it asks for a product that can run Data Secure,
-   is cancelled (the device stays plain). The device then gets the unit's address. `--configured` skips
+2. **Line 1.1 emptied, the project compressed**, and the product **inserted from the online catalogue**
+   by its order number. ETS keeps the product data of every device ever inserted into a project; its
+   "Jetzt komprimieren" (the project's details dialog) deletes what no device uses, so the row's project
+   holds no earlier row's product. ETS closes the project for it; the driver opens it again and checks
+   ETS's project store, which then holds no manufacturer's product data. ETS's search lists every
+   catalogue row whose text holds the order number (other manufacturers' and other versions' too); each
+   is selected and its application read back from ETS's properties panel (device type, program
+   version, fingerprint, which together are the application id: the fingerprint of the id ETS's product
+   store holds). The row whose application is the unit's is inserted, whatever else the search lists;
+   several rows of that one application (it is offered in several catalogue items) are one application,
+   and the first is taken. A search that lists more rows than the grid shows at once is refused. ETS's
+   question for a project password, which it asks for a product that can run Data Secure,
+   is cancelled (the device stays plain). A catalogue row's unit (above) takes its application program
+   from an export of the project taken right after the insert. The device then gets the unit's address. `--configured` skips
    this step and downloads the device the project holds at that address as it is configured there: its
    row in line 1.1's opened tree, or else line 1.1's device list filtered by ETS's search to the address
    (a project with many devices shows more than the tree's panel; a device number up to 25, which begins
@@ -951,7 +959,10 @@ One row, step by step:
    Hardware2Program described twice, or naming a program without its id, refuses the reduction: which programs to
    keep is then not said. The row
    is written from the reduced export, which then replaces ETS's; it is a record for Busforge to read, not a
-   project to import into ETS again. Where the project holds the unit's application
+   project to import into ETS again. A row from scratch is refused where ETS's export holds an application
+   program or a manufacturer the reduction drops: the project was not cleared of an earlier row's product.
+   The device's application is the one its Hardware2Program names in the product data (on hardware with a PEI
+   program that id carries both programs' numbers). Where the project holds an own unit's application
    under another build's id (same manufacturer, number and version, another content hash: the OpenKNX
    release ETS took in), the row is written only if that build parses as the unit's; its parameter and
    module ids are then written as the unit's (the `appRef` keeps the export's build) and the project's
@@ -967,7 +978,9 @@ simulator is `driver-failed`, whatever ETS made of it. A row the driver cannot f
 `driver-failed.txt` first, then `failure.png` (full resolution), the ETS6.log tail and the simulator's
 log. Dialogs in ETS's window (ETS dims the rest of it) are closed, cancelling where they offer it, else
 ETS is restarted: only the processes `up` started, each checked by PID and start time, and only where the
-driver runs that ETS. Two options exist to check the verdicts on real
+driver runs that ETS. Between its steps the driver checks that ETS's window is there and shows no dialog: a
+dialog it does not expect fails the row with its text and `dialog.png`, a window that is gone fails it as
+ETS gone. Two options exist to check the verdicts on real
 logs: `--stop-sim-after <n>` stops the simulator once ETS sent it n frames (a download ETS aborts),
 `--wrong-interface <host:port>` sets ETS to another configured connection than the row's simulator.
 
@@ -982,7 +995,50 @@ WARN  Knx.Ets.Hawk.Impl.VerifyAdditionalResourcesTask - Required data mismatch a
 
 `bun run tools/ets-driver.ts rerun-identity <row dir> <unit>` reads those lines with the identity loop of
 `tools/sim-unit-product.ts` and prints the overrides to run the row again with, or why not (a value the
-product gives that ETS contradicts is not overwritten).
+product gives that ETS contradicts is not overwritten). A catalogue row's unit learns them instead:
+`row <application id> … --learned-from <ETS6.log>` (repeatable, in order) builds its unit with what each
+earlier run's ETS6.log required.
+
+### Unattended batches
+
+`batch` runs the rows of the catalogue list (below) one after the other, each as `row` runs it, for hours
+without anyone watching.
+
+```bash
+HA_TOKEN=... BUSFORGE_CORPUS=... bun run tools/ets-driver.ts batch <catalogue-list.json> --out <dir> \
+  [--only <file of application ids>] [--from <application>] [--count <rows>] [--rerun-failed] [--rerun <application>]...
+```
+
+- **Where it writes.** Each row under `<out>/<application>/defaults/` (the corpus's layout, outside the
+  corpus until the row is judged), with `batch-result.json` beside the row's files: how it ended
+  (`completed`, `ets-failed`, `sim-refused`, `driver-failed` with the reason), its minutes, every attempt,
+  the unit, the screenshot of a failure. `<out>/batch.log` holds a line per row with its minutes and how it
+  ended, every restart of ETS, every pause, and a heartbeat line every three minutes naming the row and step.
+- **Resume.** A row with a result is never run again unless asked (`--rerun-failed` for the `driver-failed`
+  ones, `--rerun` for one row). A row directory without a result is a run that stopped in the middle: it is
+  moved aside under `<out>/.interrupted/` and the row runs again from its start. A batch stopped by a signal
+  stops its simulator with it.
+- **The unit.** An application with an own unit runs on it; every other on its catalogue unit. A catalogue
+  row that ETS fails on a `Required data mismatch` runs again with what ETS required, up to three rounds;
+  each earlier run is kept under `<out>/.attempts/`. No donor for the row's mask, or a product identity the
+  donor cannot carry, ends the row `sim-refused` before any download; a unit that refused what ETS sent
+  ends it `sim-refused` too, the row written to be judged.
+- **Before it starts**, the bench host must be kept awake (it sleeps in the evening otherwise): the batch
+  reads its keep-awake switch in Home Assistant (`HA_TOKEN`) and refuses to start where it is not on.
+- **A failure of a row** is classified by its message (`classifyFailure`, `tools/ets-batch.ts`):
+  - ETS gone (its window, under any step) or one of its internal errors in a dialog (an exception's
+    text): ETS is restarted and the row runs once more; a second time it ends `driver-failed`.
+  - A dialog the driver does not know: the row ends `driver-failed` with the dialog's text and
+    screenshot; the dialog is closed (cancelled where it offers it, else Escape) or ETS restarted.
+  - A bench host that does not answer over ssh, a KNX-ID login ETS asks for, an online catalogue that
+    does not answer: the batch pauses, writes why, and ends with exit code 3; the row has no result and
+    runs again on resume. The login is never worked around.
+  - Anything else is the row's own failure: `driver-failed`.
+- **Second programs.** ETS downloads a hardware's PEI program with its application; such a row is driven
+  (where the unit has no place for the PEI program's segment, it refuses it). A second program that is
+  no PEI program is refused before the row runs.
+- `--inject-kill <application>` and `--inject-dialog <application>` kill ETS, or open its project details
+  dialog, right after that row's insert: they exist to show the recovery on a real run.
 
 ### The catalogue's rows
 
@@ -1037,9 +1093,10 @@ bun run tools/ets-catalogue.ts list <fetched dir> --json <file> --md <file> [--m
     is searched across the whole catalogue, compared as the driver compares it).
   - Two applications under one order number and version are both rows (one whose product data is
     refused is listed as refused instead), each naming the other; a row
-    without an order number of its own is flagged, as the driver refuses an order number that lists
-    more than one catalogue row at the unit's version, whether of two applications or of one
-    application twice.
+    without an order number of its own (each one lists more than one catalogue row at its version,
+    another application's or its own again) is flagged: the driver tells them apart by the application
+    id it reads for each catalogue row, as it does for every row. Order numbers are compared with O and
+    0, I, L and 1 taken as one (OCR confuses them), so two that differ only so are flagged the same way.
   - An entry whose id, application identifier, fingerprint or manufacturer disagree, and an
     application whose product data does not fit it, is refused with the reason.
   - With bussard's manifest (ids as the index names them) it lists the applications in either list

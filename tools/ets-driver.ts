@@ -12,14 +12,22 @@
 //   bun run tools/ets-driver.ts delete <project name>                             a project `import` brought in
 //   bun run tools/ets-driver.ts catalogue-download [--batch <rows>] [--from <row>] [--out <dir>]
 //                                     the online catalogue's product data into ETS's product store (downloadCatalogue)
+//   HA_TOKEN=... BUSFORGE_CORPUS=... bun run tools/ets-driver.ts batch <catalogue-list.json> --out <dir> \
+//     [--only <file of application ids>] [--from <application>] [--count <rows>] [--rerun-failed] [--rerun <application>]... \
+//     [--simulator <ip>:<port>] [--project <name>] [--inject-kill <application>] [--inject-dialog <application>]
+//                                     the list's rows one after the other, unattended (runBatch, tools/ets-batch.ts)
 //   bun run tools/ets-driver.ts up | down | shot <png> | words [<png>] | xdo <args>... | type <text>
 //
 // THE ROW (runRow). On the bench host ETS runs maximised on the display, German UI, in its own project (no
-// password; --project). From scratch (the default): line 1.1 of the project is emptied, the product is
-// inserted from the online catalogue by order number (the catalogue row's application read from ETS's
-// properties panel and matched to the unit's application id; two catalogue rows with the order number and
-// version are refused), its address set to the unit's. --configured instead takes the device the project
-// holds at the unit's address as it is configured there. Then the interface is set explicitly to the
+// password; --project). <unit> is an own unit (tools/sim-units.ts) or the id of an application without one, whose
+// catalogue unit (tools/sim-unit-catalogue.ts) borrows the donor its mask's rule picks. From scratch (the default):
+// line 1.1 of the project is emptied and the project compressed (ETS's "Jetzt komprimieren", which deletes the product
+// data no device uses, so the row's export holds its own product only: checked on the export's entries), the product
+// is inserted from the online catalogue by order number (every catalogue row the search lists read in ETS's
+// properties panel: the one whose device type, version and fingerprint are the application's; several rows of one
+// application under the order number are one application), its address set to the unit's. A catalogue unit's
+// application program is read from an export of the project taken right after the insert. --configured instead takes
+// the device the project holds at the unit's address as it is configured there. Then the interface is set explicitly to the
 // simulator's configured connection in the toolbar (its check mark read back), the application download is
 // started by its shortcut, the driver waits for ETS6.log's end of the load task or the exception that ended
 // it, exports the project and writes the row (--out, by default under the system's temporary directory; a
@@ -32,6 +40,23 @@
 // screenshot, the ETS6.log tail and the simulator's log; dialogs in ETS's window are closed (cancelling where
 // they offer it), otherwise ETS is restarted: only the processes `up` started, each known by PID and start time.
 //
+// Between the steps of a row the driver checks that ETS's window is there and shows no dialog: a dialog it does not
+// expect fails the row (UNKNOWN_DIALOG, with its text and a full-resolution screenshot), a window that is gone fails it
+// as ETS gone.
+//
+// THE BATCH (runBatch). The rows of the catalogue list (tools/ets-catalogue.ts) in its order, each written as a row is
+// under <out>/<application>/defaults/ with batch-result.json beside it (tools/ets-batch.ts: resume, failure classes,
+// batch.log). Before it starts, the bench host must be kept awake: Home Assistant's switch.x390_wach on (HA_TOKEN; the
+// host sleeps in the evening without it). Before each row ETS is up and in its layout (its project open, no dialog).
+// A failure of a row is classified (classifyFailure): ETS gone or one of its internal errors restarts ETS and runs the
+// row once more; an unknown dialog ends the row driver-failed with its screenshot and closes the dialog (or restarts
+// ETS); a bench host that does not answer, a KNX-ID login ETS asks for or an online catalogue that does not answer
+// pauses the batch: it ends early (exit 3) and the row runs again on resume. A catalogue unit's row that ETS fails on
+// a `Required data mismatch` runs again with what ETS required (the identity loop, learnIdentity), at most
+// IDENTITY_ROUNDS times. A hardware whose second program is no PEI program is refused (no row of the list has one).
+// --inject-kill and --inject-dialog kill ETS, or open its project details dialog, right after the insert of that
+// application's row: they exist to show the runner's recovery on a real run.
+//
 // --stop-sim-after <n> stops the simulator once ETS sent it n frames (a download ETS aborts); --wrong-interface
 // selects another configured connection than the simulator's: both exist to check the verdicts on real logs.
 // --sim-override gives the simulator a wrong identity (tools/sim-unit-serve.ts --override), which ETS refuses with
@@ -41,14 +66,17 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameS
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { numToIa } from "../packages/knx/src/index.ts";
-import { appProgramId, loadKnxproj, readAppProgram } from "../packages/project/src/index.ts";
+import { appProgramId, extractAppPrograms, hardwareApplications, loadKnxproj, readAppProgram } from "../packages/project/src/index.ts";
 import { parseAppConfig } from "../packages/product/src/index.ts";
 import { catalogueXml } from "./corpus.ts";
 import { deviceConfiguration, deviceRows, dialogue, dialogueDifferences } from "./etsdiff.ts";
+import { appendLog, classifyFailure, clearRowDir, heartbeatLine, loggedRows, planBatch, RESULT_FILE, RESULT_FORMAT, rowDirOf, rowLine, batchRows, summary, UNKNOWN_DIALOG, VARIANT, type Attempt, type FailureClass, type RowKind, type RowResult } from "./ets-batch.ts";
+import type { CatalogueList, Row as ListRow } from "./ets-catalogue.ts";
 import { reduceProjectExport } from "./ets-export-reduce.ts";
 import { ETS_TASK_FAILED, etsOutcome, ROW_FILES, ROW_FORMAT, simRefusals, type EtsOutcome, type RowConfiguration, type RowSpec } from "./ets-sweep.ts";
+import { catalogueUnit, catalogueUnitRecord, catalogueUnitSpec, learnIdentity, type CatalogueUnitSpec } from "./sim-unit-catalogue.ts";
 import { productUnit, rerunIdentity } from "./sim-unit-product.ts";
-import { newSimUnit, simUnitSpec } from "./sim-units.ts";
+import { newSimUnit, SIM_UNITS, simUnitSpec } from "./sim-units.ts";
 
 const HOST = process.env.ETS_HOST ?? "tf@192.168.1.231";
 const DISPLAY = ":5";
@@ -56,8 +84,9 @@ const ETS_BUILD = "ETS 6.4.1 Home (6.4.8718)";
 
 export const q = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-// Each step of a row on stderr, with the time: what a run that stalls was doing.
-const step = (what: string) => console.error(`${new Date().toISOString().slice(11, 19)} ${what}`);
+// Each step of a row on stderr, with the time: what a run that stalls was doing (and what a batch's heartbeat names).
+let currentStep = "";
+const step = (what: string) => { currentStep = what; console.error(`${new Date().toISOString().slice(11, 19)} ${what}`); };
 
 // ---- the bench host ----
 
@@ -232,6 +261,8 @@ const AT = {
   mainGrid: { x: 315, y: 108, w: 1255, h: 515 }, catalogueGrid: { x: 315, y: 695, w: 1255, h: 465 },
   properties: { x: 1575, y: 80, w: 345, h: 600 }, menuRight: { x: 1500, y: 70, w: 420, h: 300 },
   bottomBar: { x: 0, y: 1165, w: 1570, h: 35 },
+  // The project toolbar's info button: the project's details dialog (its size, "Jetzt komprimieren").
+  projectInfo: [1747, 57],
 } as const;
 
 // ---- ETS's log ----
@@ -324,8 +355,10 @@ async function down(): Promise<void> {
   await stopOwned("display.pids");
 }
 
+// ETS stopped (what of it `up` started and still runs) and started again; an ETS this driver did not start is
+// refused by `up`, so is one that crashed without ever being this driver's.
 async function restartEts(): Promise<void> {
-  if (!owned("ets.pids").length) fail("ETS needs a restart, but this driver did not start it");
+  if (!owned("ets.pids").length && !remote(`f=${q(`${host().state}/ets.pids`)}; [ -s "$f" ] && echo yes || true`).trim()) fail("ETS needs a restart, but this driver did not start it");
   await stopOwned("ets.pids");
   await up();
 }
@@ -539,7 +572,7 @@ async function emptyLine(s: Screen): Promise<void> {
   }
 }
 
-interface CatalogueEntry { orderNumber: string; version: string; deviceType: string; fingerprint: string }
+export interface CatalogueEntry { orderNumber: string; version: string; deviceType: string; fingerprint: string }
 
 // The properties panel's reading of the selected catalogue row: the Katalog tab's order number, the
 // Applikation tab's device type, program version and fingerprint.
@@ -579,10 +612,33 @@ function catalogueIdentity(applicationId: string): { deviceType: string; version
   return { deviceType: `$${m[1]}`, version: catalogueVersion(parseInt(m[2], 16)), fingerprint: m[3] };
 }
 
-// The product inserted into line 1.1 from the catalogue: the one catalogue row with the order number whose
-// application is the unit's. Two rows with the order number and the unit's version are refused.
-async function insertProduct(s: Screen, orderNumber: string, applicationId: string): Promise<void> {
+// Of the catalogue rows read for an order number (in the grid's order), the one to insert for `applicationId`: at the
+// order number (compared as OCR reads it, orderNumberKey) and the application's version, its device type and
+// fingerprint the application's; the first of several such rows (one application in several catalogue items), and
+// how many there were. Rows whose order numbers differ only where OCR confuses letters (O and 0, I, L and 1) pass the
+// order number alike and are told apart by the application they run. `anotherBuild`: where no row has the
+// fingerprint, the one row at the order number, device type and version.
+export function pickCatalogueRow<E extends CatalogueEntry>(entries: E[], orderNumber: string, applicationId: string, anotherBuild: boolean): { hit: E; rows: number } | { refused: string } {
   const want = catalogueIdentity(applicationId);
+  const atVersion = entries.filter((e) => orderNumberKey(e.orderNumber) === orderNumberKey(orderNumber) && e.version === want.version);
+  // A device type reads with its "$" as "S" or "3" and an O for a 0 ("SOOB6" for $00B6); a fingerprint the same.
+  const hexKey = (v: string) => v.toUpperCase().replace(/^[$S3](?=[0-9A-FO]{4}$)/, "").replace(/O/g, "0");
+  const sameType = (e: CatalogueEntry) => hexKey(e.deviceType) === hexKey(want.deviceType);
+  const hits = atVersion.filter((e) => sameType(e) && hexKey(e.fingerprint) === hexKey(want.fingerprint));
+  if (hits.length) return { hit: hits[0], rows: hits.length };
+  if (anotherBuild && atVersion.length === 1 && sameType(atVersion[0])) return { hit: atVersion[0], rows: 1 };
+  return { refused: `no catalogue row with order number ${orderNumber} runs ${applicationId} (read: ${entries.map((e) => `${e.orderNumber} ${e.deviceType} ${e.version} ${e.fingerprint}`).join("; ")})` };
+}
+
+// The product inserted into line 1.1 from the catalogue: a catalogue row listed for the order number whose
+// application is `applicationId`, by its device type, version and fingerprint as ETS's properties panel shows them
+// (the fingerprint of the id ETS's product store holds, which tools/ets-catalogue.ts gives a row as its
+// application). The search lists every row whose text holds the order number, other manufacturers' and other
+// versions' too, each read; several rows of the application (one application in several catalogue items) are one
+// application, the first taken. `anotherBuild`: where no row has the fingerprint, the one row at the order number,
+// device type and version is taken as another build of the application (an OpenKNX release ETS took from an
+// imported project; writeRow takes it only where it parses as the unit's).
+async function insertProduct(s: Screen, orderNumber: string, applicationId: string, anotherBuild: boolean): Promise<void> {
   const line = (await treeRow(s, LINE_11)) ?? fail("no line 1.1 in the topology");
   click(line.cx, line.cy);
   await sleep(1500);
@@ -618,23 +674,18 @@ async function insertProduct(s: Screen, orderNumber: string, applicationId: stri
     for (let i = 0; i < 3 && (items = products()).length === 0; i++) await sleep(2000);
   }
   if (items.length === 0) fail(`the catalogue holds no product for order number ${orderNumber}`);
+  // A list that reaches the grid's last row may go on below it, where the driver does not scroll.
+  if (Math.max(...items.map((r) => r.y)) > grid.y + grid.h - 30) fail(`the catalogue lists more rows for order number ${orderNumber} than its grid shows at once`);
   const entries: (CatalogueEntry & { y: number })[] = [];
   for (const r of items) {
     click(500, Math.round(r.y));
     await sleep(1500);
     entries.push({ ...(await readCatalogueEntry(s)), y: Math.round(r.y) });
   }
-  const atVersion = entries.filter((e) => orderNumberKey(e.orderNumber) === orderNumberKey(orderNumber) && e.version === want.version);
-  if (atVersion.length > 1) fail(`refused: the catalogue holds ${atVersion.length} applications under order number ${orderNumber} and version ${want.version} (${atVersion.map((e) => `${e.deviceType} ${e.fingerprint}`).join(", ")})`);
-  // The one row at the unit's device type and version under another fingerprint is another build of its
-  // application (an OpenKNX release ETS took from an imported project); writeRow takes it only where it parses
-  // as the unit's.
-  // A device type reads with its "$" as "S" or "3" and an O for a 0 ("SOOB6" for $00B6); a fingerprint the same.
-  const hexKey = (v: string) => v.toUpperCase().replace(/^[$S3](?=[0-9A-FO]{4}$)/, "").replace(/O/g, "0");
-  const sameType = (e: CatalogueEntry) => hexKey(e.deviceType) === hexKey(want.deviceType);
-  const hit = atVersion.find((e) => sameType(e) && hexKey(e.fingerprint) === hexKey(want.fingerprint))
-    ?? (atVersion.length === 1 && sameType(atVersion[0]) ? atVersion[0] : undefined)
-    ?? fail(`no catalogue row with order number ${orderNumber} runs ${applicationId} (read: ${entries.map((e) => `${e.orderNumber} ${e.deviceType} ${e.version} ${e.fingerprint}`).join("; ")})`);
+  const picked = pickCatalogueRow(entries, orderNumber, applicationId, anotherBuild);
+  if ("refused" in picked) return fail(picked.refused);
+  if (picked.rows > 1) console.log(`${picked.rows} catalogue rows under order number ${orderNumber} run ${applicationId}: the first inserted`);
+  const hit = picked.hit;
   click(500, hit.y);
   await sleep(1500);
   ({ ws } = s.look(AT.bottomBar));
@@ -712,6 +763,53 @@ async function closeDialogs(s: Screen): Promise<void> {
   if (!etsTitle()) fail("ETS's window is gone");
 }
 
+// Between two steps of a row: ETS's window is there and shows no dialog. A dialog here is none the driver expects:
+// its text read and the screen kept as dialog.png in `dir` before the row fails.
+function settled(s: Screen, dir: string, before: string): void {
+  if (!etsTitle()) fail(`ETS's window is gone (before "${before}")`);
+  const png = s.snap(), box = dialogBox(png);
+  if (!box) return;
+  copyFileSync(png, join(dir, "dialog.png"));
+  fail(`${UNKNOWN_DIALOG} (before "${before}"): ${words(png, box).map((w) => w.text).join(" ").slice(0, 300)}`);
+}
+
+// The project compressed: ETS's "Jetzt komprimieren" in its details dialog deletes the product data no device of the
+// project uses (ETS6.log: "Deleting folder of unreferenced manufacturer …"). ETS closes the project for it; it is
+// opened again. Checked on ETS's store: the project's directory holds no manufacturer's data a device does not use,
+// which for a project without devices is none.
+async function compressProject(s: Screen, project: string, passwordEnv?: string): Promise<void> {
+  click(AT.projectInfo[0], AT.projectInfo[1]);
+  const compress = await s.waitText("komprimieren", undefined, 20_000, "the project's details dialog");
+  click(compress.cx, compress.cy);
+  await sleep(2500);
+  const png = s.snap(), box = dialogBox(png) ?? fail("ETS asked nothing before compressing the project");
+  const asked = words(png, box).map((w) => w.text).join(" ");
+  if (!/geschlossen/.test(asked)) fail(`ETS asks something else before compressing: ${asked.slice(0, 200)}`);
+  // OCR reads neither of its buttons reliably (the bar under its yellow rule reads empty); Ja is the default button,
+  // taken by Return. What follows shows it was Ja: the project closes and its store holds no product data after it.
+  key("Return");
+  for (let i = 0; projectTabOpen(s); i++) {
+    if (i === 30) fail("ETS did not close the project to compress it within 60 s");
+    await sleep(2000);
+  }
+  // The details dialog stays open over the overview once the compression ended.
+  await s.waitText("komprimieren", undefined, 60_000, "the details dialog after the compression");
+  const dir = [...storedProjects()].find(([, n]) => n === project)?.[0] ?? fail(`ETS's store holds no project ${project}`);
+  const left = remote(`cd ${q(`${host().data}/ProjectStore/${dir}`)} && ls -d M-* 2>/dev/null || true`).split("\n").filter(Boolean);
+  if (left.length) fail(`the compressed project ${project} still holds the product data of ${left.join(", ")}`);
+  key("Escape");
+  await sleep(1500);
+  await closeDialogs(s);
+  await openProject(s, project, passwordEnv);
+}
+
+// ETS's own processes (those `up` started) killed: an ETS crash, made on purpose (--inject-kill).
+function killEts(): void {
+  const ets = owned("ets.pids").filter((p) => p.name.startsWith("ETS6"));
+  if (!ets.length) fail("no ETS this driver started runs");
+  signal(ets, "KILL");
+}
+
 // The toolbar's interface set to the configured connection at `endpoint` ("host:port"), its check mark read
 // back. Where the toolbar does not offer it, it is made the project's connection first.
 async function selectInterface(s: Screen, endpoint: string): Promise<void> {
@@ -766,9 +864,9 @@ async function selectInterface(s: Screen, endpoint: string): Promise<void> {
   if (auto && mark(auto.cy) >= 0.2) fail("the interface's check mark is still on 'Automatisch'");
 }
 
-// The project exported from ETS's overview into the row as export.knxproj (a project with a password keeps it in
-// its export: `password` opens it); the export is checked to be of that project.
-async function exportProject(s: Screen, project: string, dir: string, password: string | undefined): Promise<void> {
+// The project exported from ETS's overview to `to` (a project with a password keeps it in its export: `password`
+// opens it); the export is checked to be of that project.
+async function exportProject(s: Screen, project: string, to: string, password: string | undefined): Promise<void> {
   const h = host();
   await searchProject(s, project);
   xdo("mousemove", "800", String(AT.searchedRow[1] + 14), "sleep", "1");
@@ -786,9 +884,9 @@ async function exportProject(s: Screen, project: string, dir: string, password: 
   const close = findText(dialogButtons(png, box), "Schlie")[0] ?? fail("no Schließen under the export's result");
   click(close.cx, close.cy);
   const remoteFile = `${h.exportDir}/${file}`;
-  writeFileSync(join(dir, "export.knxproj"), ssh(`cat ${q(remoteFile)}`, ""));
+  writeFileSync(to, ssh(`cat ${q(remoteFile)}`, ""));
   remote(`rm -f ${q(remoteFile)}`);
-  const exported = loadKnxproj(readFileSync(join(dir, "export.knxproj")), password, "export").name;
+  const exported = loadKnxproj(readFileSync(to), password, "export").name;
   if (exported !== project) fail(`the export is of the project ${exported}, not ${project}`);
   click(AT.projectTab[0], AT.projectTab[1]);
   await sleep(2000);
@@ -802,13 +900,23 @@ const parsedAs = (xml: string, id: string, as: string) => JSON.stringify(parseAp
 // an OpenKNX application ETS imported from its release): taken only where the project's application parses as
 // the unit's does, its ids then written as the unit's and the project's named in row.json (exportApplication).
 // The row is read from the export reduced to its devices' product data (tools/ets-export-reduce.ts), which
-// replaces ETS's export once the row is written.
-function writeRow(dir: string, o: RowOptions, applicationId: string, ia: string, password: string | undefined): void {
-  const bytes = reduceProjectExport(readFileSync(join(dir, "export.knxproj")), password).bytes;
+// replaces ETS's export once the row is written. A row from scratch (`ownProductOnly`) is refused where ETS's export
+// holds product data its device does not use (an application program or a manufacturer the reduction drops): the
+// project was not cleared of an earlier row's product. A catalogue unit's row takes no other build: its application
+// program is the export's.
+function writeRow(dir: string, unit: RowSpec["unit"], simulator: string, applicationId: string, ia: string, password: string | undefined, ownProductOnly: boolean): void {
+  const reduced = reduceProjectExport(readFileSync(join(dir, "export.knxproj")), password);
+  const foreign = reduced.dropped.filter((n) => /^M-[0-9A-F]{4}\/$/i.test(n) || /^M-[0-9A-F]{4}\/M-[0-9A-F]{4}_A-[^/]*\.xml$/i.test(n));
+  if (ownProductOnly && foreign.length) fail(`ETS's export holds product data the row's device does not use: ${foreign.join(", ")}`);
+  const bytes = reduced.bytes;
   const proj = loadKnxproj(bytes, password, "export");
   const d = proj.devices.find((x) => x.ia === ia) ?? fail(`ETS's export holds no device ${ia}`);
-  const exported = appProgramId(d.appRef);
-  const unitXml = catalogueXml(`${applicationId}.xml.gz`);
+  // The hardware's application, as its product data name it: on hardware with a PEI program the Hardware2Program's id
+  // carries both programs' numbers, which appProgramId would read as one.
+  const exported = hardwareApplications(bytes).get(d.appRef) || appProgramId(d.appRef);
+  const own = typeof unit === "string";
+  if (!own && exported !== applicationId) fail(`ETS's export runs ${exported} at ${ia}, not ${applicationId}`);
+  const unitXml = own ? catalogueXml(`${applicationId}.xml.gz`) : extractAppPrograms(bytes, [exported]).get(exported) ?? fail(`ETS's export holds no application ${exported}`);
   let xml = unitXml;
   if (exported !== applicationId) {
     const versionOf = (id: string) => id.replace(/^(M-[0-9A-F]{4}_A-[0-9A-F]{4}-[0-9A-F]{2})-[0-9A-F]{4}((?:-O[0-9A-F]+)?)$/, "$1$2");
@@ -816,7 +924,7 @@ function writeRow(dir: string, o: RowOptions, applicationId: string, ia: string,
     xml = readAppProgram(bytes, d.appRef) ?? fail(`ETS's export holds no application ${exported}`);
     if (parsedAs(xml, exported, applicationId) !== parsedAs(unitXml, applicationId, applicationId)) fail(`ETS's export runs ${exported} at ${ia}, another build of ${applicationId} that parses otherwise`);
   }
-  const spec: RowSpec = { format: ROW_FORMAT, unit: o.unit, etsBuild: ETS_BUILD, simulator: o.simulator, export: "export.knxproj", ...(exported === applicationId ? {} : { exportApplication: exported }) };
+  const spec: RowSpec = { format: ROW_FORMAT, unit, etsBuild: ETS_BUILD, simulator, export: "export.knxproj", ...(exported === applicationId ? {} : { exportApplication: exported }) };
   writeFileSync(join(dir, ROW_FILES.row), JSON.stringify(spec, null, 2) + "\n");
   const c = deviceConfiguration(parseAppConfig(xml), deviceRows(proj, d.id));
   // The unit's ids for the project's build: the parameters' and module instances' ids begin with the
@@ -1191,10 +1299,16 @@ async function downloadCatalogue(batch: number, out: string, from: number): Prom
 
 interface Sim { stop(): Promise<void> }
 
-// The simulator serving `unit` on `port` (its proxy; the server one below), its output kept in <log>.serve.txt.
-function startSim(unit: string, log: string, port: number, advertise: string, overrides: string[] = []): Promise<Sim> {
+// The simulators running, each by its stop: a batch stopped by a signal stops them, so none keeps the port.
+const runningSims = new Set<() => Promise<void>>();
+const stopAllSims = () => Promise.all([...runningSims].map((stop) => stop()));
+
+// The simulator serving a unit on `port` (its proxy; the server one below), its output kept in <log>.serve.txt.
+// `unit`: tools/sim-unit-serve.ts's arguments that name it (an own unit, or an application with --product, --donor
+// and --learned-from).
+function startSim(unit: string[], log: string, port: number, advertise: string, overrides: string[] = []): Promise<Sim> {
   const out = `${log}.serve.txt`;
-  const child = spawn("bun", ["run", join(import.meta.dir, "sim-unit-serve.ts"), unit, "--tool", "ETS", "--log", log, "--port", String(port - 1), "--proxy-port", String(port), "--advertise", advertise, ...overrides.flatMap((o) => ["--override", o])], {
+  const child = spawn("bun", ["run", join(import.meta.dir, "sim-unit-serve.ts"), ...unit, "--tool", "ETS", "--log", log, "--port", String(port - 1), "--proxy-port", String(port), "--advertise", advertise, ...overrides.flatMap((o) => ["--override", o])], {
     stdio: ["ignore", "pipe", "pipe"], env: process.env,
   });
   let text = "";
@@ -1208,7 +1322,9 @@ function startSim(unit: string, log: string, port: number, advertise: string, ov
     await exited;
     clearTimeout(t);
     writeFileSync(out, text);
+    runningSims.delete(stop);
   };
+  runningSims.add(stop);
   return new Promise((resolve, reject) => {
     const check = setInterval(() => {
       if (!text.includes(`connects to :${port}`)) return;
@@ -1225,35 +1341,75 @@ const frameCount = (log: string) => existsSync(log) ? readFileSync(log, "utf8").
 // ---- the row ----
 
 interface RowOptions {
+  // An own unit's id (tools/sim-units.ts), or the id of an application without one (its catalogue unit).
   unit: string; variant: string; orderNumber?: string; simulator: string; project: string; configured: boolean;
   passwordEnv?: string; out?: string; stopSimAfter?: number; wrongInterface?: string;
   // Properties the simulator answers otherwise than its unit (tools/sim-unit-serve.ts --override): a wrong identity.
   simOverrides: string[];
+  // A catalogue unit's donor where not its rule's, and the ETS6.log files of the earlier runs the identity loop
+  // learns from, in order.
+  donor?: string; learnedFrom: string[];
+  // A failure made on purpose right after the insert (batch --inject-kill, --inject-dialog).
+  inject?: "kill" | "dialog";
 }
 
-interface RowRun { dir: string; outcome: EtsOutcome; minutes: number }
+// How a row ended: ETS's outcome, or no unit for it (sim-refused); a driver failure with its class.
+interface RowRun {
+  dir: string; outcome: EtsOutcome | { kind: "sim-refused"; why: string }; minutes: number;
+  failure?: FailureClass; unit?: RowSpec["unit"]; catalogueSpec?: CatalogueUnitSpec; simRefusals: string[];
+}
+
+// No catalogue unit for the row (no donor of its mask, a product identity the donor cannot carry).
+class NoUnit extends Error {}
+
+const isOwnUnit = (id: string) => SIM_UNITS.some((u) => u.id === id);
+
+// The catalogue unit of `application` with its program from the project export `product`, the donor named or its
+// rule's, and what the identity loop learned from each ETS6.log of `learnedFrom` in order (as tools/sim-unit-serve.ts
+// builds it from the same arguments); or why there is none.
+function catalogueRowUnit(application: string, product: string, donor: string | undefined, learnedFrom: string[]): CatalogueUnitSpec | { refused: string } {
+  const appXml = extractAppPrograms(readFileSync(product), [application]).get(application);
+  if (appXml === undefined) return { refused: `the project's export holds no application program ${application}` };
+  let spec = catalogueUnitSpec(application, appXml, { donor });
+  for (const file of learnedFrom) {
+    if ("refused" in spec) break;
+    const r = learnIdentity(spec, readFileSync(file));
+    spec = "refused" in r ? { refused: `${file}: ${r.refused}` } : r.spec;
+  }
+  return spec;
+}
+
+// Whether ETS's window is gone; a bench host that does not answer says nothing about it.
+const etsGone = () => { try { return !etsTitle(); } catch { return false; } };
 
 async function runRow(o: RowOptions): Promise<RowRun> {
   const t0 = Date.now();
-  const spec = simUnitSpec(o.unit);
-  const applicationId = spec.catalogue.replace(/\.xml\.gz$/, "");
+  const ownSpec = isOwnUnit(o.unit) ? simUnitSpec(o.unit) : null;
+  if (!ownSpec && !/^M-[0-9A-F]{4}_A-[0-9A-F]{4}-[0-9A-F]{2}-[0-9A-F]{4}(?:-O[0-9A-F]+)?$/.test(o.unit)) throw new Error(`${o.unit} is neither an own unit nor an application id`);
+  if (!ownSpec && o.configured) throw new Error("--configured takes an own unit: the project's device runs its application");
+  if (!ownSpec && o.simOverrides.length) throw new Error("--sim-override is for an own unit; a catalogue unit takes what ETS required from --learned-from");
+  if (ownSpec && (o.donor !== undefined || o.learnedFrom.length)) throw new Error("--donor and --learned-from are for an application without an own unit");
+  const applicationId = ownSpec ? ownSpec.catalogue.replace(/\.xml\.gz$/, "") : o.unit;
   const dir = o.out ?? join(tmpdir(), "ets-sweep-rows", applicationId, o.variant);
   if (existsSync(dir) && readdirSync(dir).length) throw new Error(`${dir} exists and is not empty: a row is written once`);
   mkdirSync(dir, { recursive: true });
   const [simHost, portText] = o.simulator.split(":");
-  const ia = numToIa(newSimUnit(spec).deviceIa);
+  const password = o.passwordEnv === undefined ? undefined : process.env[o.passwordEnv];
+  let ia = ownSpec ? numToIa(newSimUnit(ownSpec).deviceIa) : "";
+  let unit: RowSpec["unit"] | undefined = ownSpec?.id, catalogueSpec: CatalogueUnitSpec | undefined;
+  let simArgs = [o.unit];
+  // A catalogue unit's application program, from the project exported right after the insert.
+  const product = join(tmpdir(), "ets-driver-product", `${applicationId}-${process.pid}.knxproj`);
   const s = new Screen(dir);
-  const since = etsClock();
   const log = join(dir, ROW_FILES.ets);
+  let since: string | null = null;
   let sim: Sim | null = null, wrong: Sim | null = null, ours = false;
-  let outcome: EtsOutcome;
+  let outcome: RowRun["outcome"], failure: FailureClass | undefined;
   try {
+    since = etsClock();
     if (remote(`lsusb | grep -c 147b || true`).trim() !== "0") console.log("note: the KNX-USB stick is plugged into the bench host; ETS6.log decides which interface ETS used");
     await up();
     ours = true;
-    step("simulator");
-    sim = await startSim(o.unit, log, Number(portText), simHost, o.simOverrides);
-    if (o.wrongInterface) wrong = await startSim(o.unit, join(dir, "wrong-interface.log"), Number(o.wrongInterface.split(":")[1]), simHost);
     step("dialogs");
     await closeDialogs(s);
     step("project");
@@ -1263,11 +1419,37 @@ async function runRow(o: RowOptions): Promise<RowRun> {
     if (!o.configured) {
       step("empty line 1.1");
       await emptyLine(s);
+      step("compress");
+      await compressProject(s, o.project, o.passwordEnv);
+      await showTopology(s);
+      settled(s, dir, "insert");
       step("insert");
-      await insertProduct(s, o.orderNumber ?? fail("--order is needed to insert the product from the catalogue"), applicationId);
+      await insertProduct(s, o.orderNumber ?? fail("--order is needed to insert the product from the catalogue"), applicationId, ownSpec !== null);
+      if (o.inject === "kill") { step("injected: ETS killed"); killEts(); await sleep(3000); }
+      if (o.inject === "dialog") { step("injected: ETS's project details dialog"); click(AT.projectInfo[0], AT.projectInfo[1]); await sleep(3000); }
+      if (!ownSpec) {
+        settled(s, dir, "the product's export");
+        step("the product's export");
+        mkdirSync(dirname(product), { recursive: true });
+        await exportProject(s, o.project, product, password);
+        const u = catalogueRowUnit(applicationId, product, o.donor, o.learnedFrom);
+        if ("refused" in u) throw new NoUnit(u.refused);
+        let cu;
+        try { cu = catalogueUnit(u); } catch (e) { throw new NoUnit((e as Error).message); }
+        catalogueSpec = u;
+        unit = catalogueUnitRecord(cu);
+        ia = numToIa(cu.make().deviceIa);
+        simArgs = [applicationId, "--product", product, "--donor", u.donor.id, ...o.learnedFrom.flatMap((f) => ["--learned-from", f])];
+        console.log(`catalogue unit of ${applicationId} on donor ${u.donor.id}${o.learnedFrom.length ? `, learned from ${o.learnedFrom.length} runs` : ""}`);
+      }
+      settled(s, dir, "address");
       step("address");
       await setAddress(s, ia);
     }
+    settled(s, dir, "simulator");
+    step("simulator");
+    sim = await startSim(simArgs, log, Number(portText), simHost, o.simOverrides);
+    if (o.wrongInterface) wrong = await startSim(simArgs, join(dir, "wrong-interface.log"), Number(o.wrongInterface.split(":")[1]), simHost);
     step("interface");
     await selectInterface(s, o.wrongInterface ?? o.simulator);
     if (o.configured) await selectByAddress(s, ia);
@@ -1277,6 +1459,7 @@ async function runRow(o: RowOptions): Promise<RowRun> {
       await sleep(1500);
       await checkAddress(s, ia);
     }
+    settled(s, dir, "download");
     step("download");
     const started = etsClock();
     key("ctrl+alt+shift+d");
@@ -1298,61 +1481,222 @@ async function runRow(o: RowOptions): Promise<RowRun> {
     outcome = etsOutcome(readFileSync(join(dir, ROW_FILES.ets6log), "latin1"), ia, o.simulator);
     if (outcome.kind !== "completed") { shot(join(dir, "failure.png")); await closeDialogs(s); }
     if (o.configured) await clearSearch();
+    settled(s, dir, "export");
     step("export");
-    const password = o.passwordEnv === undefined ? undefined : process.env[o.passwordEnv];
-    await exportProject(s, o.project, dir, password);
-    writeRow(dir, o, applicationId, ia, password);
+    await exportProject(s, o.project, join(dir, "export.knxproj"), password);
+    writeRow(dir, unit!, o.simulator, applicationId, ia, password, !o.configured);
   } catch (e) {
-    // Every failure of the row is the driver's: its reason first, then what evidence can still be taken.
-    const why = e instanceof DriverFailure ? e.message : `the driver broke off: ${e instanceof Error ? e.message : String(e)}`;
-    outcome = { kind: "driver-failed", why };
-    writeFileSync(join(dir, "driver-failed.txt"), `${why}\n`);
-    console.error(`driver-failed: ${why}`);
-    const evidence = (what: string, take: () => void) => { try { take(); } catch (x) { writeFileSync(join(dir, "driver-failed.txt"), `no ${what}: ${x instanceof Error ? x.message : String(x)}\n`, { flag: "a" }); } };
-    evidence("screenshot", () => shot(join(dir, "failure.png")));
-    evidence("ETS6.log", () => {
-      etsLogSince(since, join(dir, ROW_FILES.ets6log));
-      writeFileSync(join(dir, "ets6.log.tail.txt"), readFileSync(join(dir, ROW_FILES.ets6log)).toString("latin1").split("\n").slice(-200).join("\n"), "latin1");
-    });
-    // Recovery only for an ETS this driver runs.
-    if (ours) await closeDialogs(s).catch(() => restartEts()).catch((x: unknown) => console.error(`ETS not recovered: ${x instanceof Error ? x.message : String(x)}`));
+    if (e instanceof NoUnit) {
+      // No unit, no download: ETS keeps the inserted device until the next row empties the line.
+      outcome = { kind: "sim-refused", why: e.message };
+      writeFileSync(join(dir, "sim-refused.txt"), `${e.message}\n`);
+      console.error(`sim-refused: ${e.message}`);
+    } else {
+      // Every other failure of the row is the driver's: its reason first, then what evidence can still be taken.
+      let why = e instanceof DriverFailure ? e.message : `the driver broke off: ${e instanceof Error ? e.message : String(e)}`;
+      // ETS gone under a step fails it with whatever that step met.
+      if (ours && etsGone() && !why.startsWith("ETS's window is gone")) why = `ETS's window is gone: ${why}`;
+      failure = classifyFailure(why);
+      outcome = { kind: "driver-failed", why };
+      writeFileSync(join(dir, "driver-failed.txt"), `${why}\n`);
+      console.error(`driver-failed (${failure.kind}${"reason" in failure ? ` ${failure.reason}` : ""}): ${why}`);
+      const evidence = (what: string, take: () => void) => { try { take(); } catch (x) { writeFileSync(join(dir, "driver-failed.txt"), `no ${what}: ${x instanceof Error ? x.message : String(x)}\n`, { flag: "a" }); } };
+      evidence("screenshot", () => shot(join(dir, "failure.png")));
+      if (since !== null) {
+        const from = since;
+        evidence("ETS6.log", () => {
+          etsLogSince(from, join(dir, ROW_FILES.ets6log));
+          writeFileSync(join(dir, "ets6.log.tail.txt"), readFileSync(join(dir, ROW_FILES.ets6log)).toString("latin1").split("\n").slice(-200).join("\n"), "latin1");
+        });
+      }
+      // Recovery only for an ETS this driver runs, and not where the bench host does not answer.
+      const recover = failure.kind === "restart" ? () => restartEts() : () => closeDialogs(s).catch(() => restartEts());
+      if (ours && failure.kind !== "pause") await recover().catch((x: unknown) => console.error(`ETS not recovered: ${x instanceof Error ? x.message : String(x)}`));
+    }
   } finally {
     if (sim) await sim.stop();
     if (wrong) await wrong.stop();
     s.clean();
+    rmSync(product, { force: true });
   }
   if (!existsSync(`${log}.sim.txt`)) writeFileSync(`${log}.sim.txt`, "");
   const refusals = simRefusals(readFileSync(`${log}.sim.txt`, "utf8"));
   if (refusals.length) console.log(`the simulator refused ${refusals.length}: ${refusals[0]}`);
-  return { dir, outcome, minutes: (Date.now() - t0) / 60_000 };
+  return { dir, outcome, minutes: (Date.now() - t0) / 60_000, failure, unit, catalogueSpec, simRefusals: refusals };
+}
+
+// ---- the batch ----
+
+const IDENTITY_ROUNDS = 3;
+const HEARTBEAT_MS = 3 * 60_000;
+// tools/ets-catalogue.ts LIST_FORMAT (not imported: that tool imports this one).
+const CATALOGUE_LIST_FORMAT = "busforge-ets-catalogue-list/1";
+const HA_URL = process.env.HA_URL ?? "http://192.168.1.18:8123";
+
+// The bench host kept awake: Home Assistant's switch.x390_wach on (without it the host sleeps in the evening).
+async function hostKeptAwake(): Promise<void> {
+  const token = process.env.HA_TOKEN ?? fail("HA_TOKEN is not set: the batch reads Home Assistant's switch.x390_wach before it starts");
+  const r = await fetch(`${HA_URL}/api/states/switch.x390_wach`, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15_000) });
+  if (!r.ok) fail(`Home Assistant answers ${r.status} for switch.x390_wach`);
+  const state = ((await r.json()) as { state?: unknown }).state;
+  if (state !== "on") fail(`switch.x390_wach is ${String(state)}: the bench host would sleep in the evening; switch it on first`);
+}
+
+interface BatchOptions {
+  list: string; out: string; only?: string[]; from?: string; count?: number; rerunFailed: boolean; rerun: string[];
+  simulator: string; project: string; injectKill?: string; injectDialog?: string;
+}
+
+// A row's directory of an attempt that does not stand moved to <out>/.attempts/<application>/<n>.
+function moveAttempt(out: string, application: string, n: number): string {
+  const to = join(out, ".attempts", application, String(n));
+  mkdirSync(dirname(to), { recursive: true });
+  renameSync(rowDirOf(out, application), to);
+  return to;
+}
+
+// One row of the batch, run until it has a result: once more after ETS was restarted under it, again for each round
+// of the identity loop. A pause returns without a result.
+async function batchRow(row: ListRow, b: BatchOptions, inject: RowOptions["inject"]): Promise<RowResult | { pause: FailureClass }> {
+  const t0 = Date.now(), startedAt = new Date().toISOString();
+  const dir = rowDirOf(b.out, row.application);
+  const attempts: Attempt[] = [];
+  const own = SIM_UNITS.find((u) => u.catalogue === `${row.application}.xml.gz`)?.id;
+  const result = (kind: RowKind, why: string | undefined, extra: Partial<RowResult> = {}): RowResult => ({
+    format: RESULT_FORMAT, application: row.application, manufacturer: row.manufacturer, mask: row.mask, orderNumber: row.orderNumber,
+    kind, ...(why === undefined ? {} : { why }), minutes: (Date.now() - t0) / 60_000, startedAt, endedAt: new Date().toISOString(), attempts, ...extra,
+  });
+  // The driver downloads one application into one unit; a second program that is an application of its own it does
+  // not drive (ETS's PEI programs it does: ETS downloads them with the application).
+  const second = (row.secondProgram ?? []).filter((p) => p.programType !== "PeiProgram");
+  if (second.length) {
+    mkdirSync(dir, { recursive: true });
+    return result("driver-failed", `refused: the hardware's second program ${second.map((p) => `${p.application} (${p.programType ?? "not loaded"})`).join(", ")} is no PEI program; a row downloads one application`);
+  }
+  const learned: string[] = [];
+  let restarted = false;
+  for (let n = 1; ; n++) {
+    const r = await runRow({ unit: own ?? row.application, variant: VARIANT, orderNumber: row.orderNumber, simulator: b.simulator, project: b.project, configured: false, out: dir, simOverrides: [], learnedFrom: [...learned], inject });
+    inject = undefined;
+    const why = "why" in r.outcome ? r.outcome.why : undefined;
+    if (r.failure?.kind === "pause") return { pause: r.failure };
+    if (r.failure?.kind === "restart" && !restarted) {
+      restarted = true;
+      attempts.push({ kind: "restarted", why, minutes: r.minutes, dir: moveAttempt(b.out, row.application, n) });
+      appendLog(b.out, `${row.application}: ETS restarted (${r.failure.reason}), the row runs again: ${why}`);
+      continue;
+    }
+    let kind: RowKind = r.outcome.kind, more = "";
+    // A unit that refused what ETS sent ends the row sim-refused (as tools/ets-sweep.ts judges it), whatever ETS made
+    // of the missing answer; the row stays written.
+    if (r.simRefusals.length && (kind === "completed" || kind === "ets-failed")) {
+      kind = "sim-refused";
+      more = `; the simulator refused ${r.simRefusals.length}: ${r.simRefusals[0]}`;
+    }
+    // The identity loop: what ETS required of the catalogue unit, learned from this run's ETS6.log, for the next run.
+    if (kind === "ets-failed" && r.catalogueSpec) {
+      const ets6log = join(dir, ROW_FILES.ets6log);
+      const l = learned.length >= IDENTITY_ROUNDS ? { refused: `${IDENTITY_ROUNDS} rounds of the identity loop ran` } : learnIdentity(r.catalogueSpec, readFileSync(ets6log));
+      if (!("refused" in l)) {
+        const moved = moveAttempt(b.out, row.application, n);
+        attempts.push({ kind: "identity", why: l.learned.map((m) => m.line).join("; "), minutes: r.minutes, dir: moved });
+        learned.push(join(moved, ROW_FILES.ets6log));
+        appendLog(b.out, `${row.application}: the identity loop learned ${l.learned.map((m) => `${m.object}/${m.pid}`).join(", ")}, the row runs again`);
+        continue;
+      }
+      more = `; identity loop: ${l.refused}`;
+    }
+    if (r.failure?.kind === "restart") more += "; ETS was restarted under the row twice";
+    attempts.push({ kind, why, minutes: r.minutes });
+    const screenshot = ["dialog.png", "failure.png"].find((f) => existsSync(join(dir, f)));
+    const unitName = r.unit === undefined ? undefined : typeof r.unit === "string" ? r.unit : `donor ${r.unit.donor}`;
+    return result(kind, why === undefined && !more ? undefined : `${why ?? ""}${more}`.replace(/^; /, ""), { ...(unitName ? { unit: unitName } : {}), ...(screenshot && kind !== "completed" ? { screenshot } : {}) });
+  }
+}
+
+async function runBatch(b: BatchOptions): Promise<number> {
+  const list = JSON.parse(readFileSync(b.list, "utf8")) as CatalogueList;
+  const format: unknown = list.format;
+  if (format !== CATALOGUE_LIST_FORMAT) throw new Error(`${b.list} is of format ${String(format)}, not ${CATALOGUE_LIST_FORMAT}`);
+  const rows = batchRows(list, { only: b.only, from: b.from, count: b.count });
+  for (const a of [b.injectKill, b.injectDialog]) if (a !== undefined && !rows.some((r) => r.application === a)) throw new Error(`${a} is no row of the batch`);
+  mkdirSync(b.out, { recursive: true });
+  await hostKeptAwake();
+  const plan = planBatch(b.out, rows, { kinds: b.rerunFailed ? ["driver-failed"] : [], applications: b.rerun });
+  const say = (text: string) => { appendLog(b.out, text); console.error(text); };
+  say(`batch of ${rows.length} rows of ${b.list}: ${plan.finished.length} with a result, ${plan.run.length} to run`);
+  let at = { n: 0, application: "", t0: Date.now() };
+  const heartbeat = setInterval(() => say(heartbeatLine(at.n, rows.length, at.application, currentStep, (Date.now() - at.t0) / 60_000)), HEARTBEAT_MS);
+  // A batch stopped by a signal stops its simulator with it; the row it ran has no result and runs again on resume.
+  const stopped = (sig: string) => { void stopAllSims().finally(() => { say(`stopped by ${sig} at row ${at.n}/${rows.length} ${at.application}`); process.exit(130); }); };
+  process.on("SIGINT", () => stopped("SIGINT"));
+  process.on("SIGTERM", () => stopped("SIGTERM"));
+  try {
+    for (const row of plan.run) {
+      at = { n: rows.indexOf(row) + 1, application: row.application, t0: Date.now() };
+      const aside = clearRowDir(b.out, row.application, new Date().toISOString().replace(/[:.]/g, "-"));
+      if (aside) say(`${row.application}: what an earlier run left is moved to ${aside}`);
+      const inject = row.application === b.injectKill ? "kill" : row.application === b.injectDialog ? "dialog" : undefined;
+      const r = await batchRow(row, b, inject);
+      if ("pause" in r) {
+        say(`paused at row ${at.n}/${rows.length} ${row.application} (${"reason" in r.pause ? r.pause.reason : r.pause.kind}): ${r.pause.why}`);
+        return 3;
+      }
+      writeFileSync(join(rowDirOf(b.out, row.application), RESULT_FILE), `${JSON.stringify(r, null, 1)}\n`);
+      say(rowLine(at.n, rows.length, r));
+    }
+  } finally { clearInterval(heartbeat); }
+  say(`batch done: ${summary(loggedRows(readFileSync(join(b.out, "batch.log"), "utf8")).filter((l) => rows.some((r) => r.application === l.application)))}`);
+  return 0;
 }
 
 // ---- the command line ----
 
-// `row`'s options: those with a value (sim-override repeatable), and the one without; anything else is refused.
-const VALUED = ["order", "simulator", "project", "password-env", "out", "stop-sim-after", "wrong-interface", "sim-override"];
+// Options from `args` on: those with a value (each once, `repeatable` ones as often as given) and the `flags`
+// without one; anything else is refused.
+function parseOptions(args: string[], valued: string[], repeatable: string[], flags: string[]): { one: (n: string) => string | undefined; all: (n: string) => string[]; flag: (n: string) => boolean } {
+  const values = new Map<string, string[]>(), set = new Set<string>();
+  for (let i = 0; i < args.length; i++) {
+    const name = args[i].replace(/^--/, "");
+    if (args[i].startsWith("--") && flags.includes(name)) { set.add(name); continue; }
+    if (!args[i].startsWith("--") || !(valued.includes(name) || repeatable.includes(name))) throw new Error(`unknown argument ${args[i]}`);
+    const v = args[++i];
+    if (v === undefined || v.startsWith("--")) throw new Error(`--${name} needs a value`);
+    if (values.has(name) && !repeatable.includes(name)) throw new Error(`--${name} given twice`);
+    values.set(name, [...(values.get(name) ?? []), v]);
+  }
+  return { one: (n) => values.get(n)?.[0], all: (n) => values.get(n) ?? [], flag: (n) => set.has(n) };
+}
+const endpoint = (n: string, v: string | undefined) => { if (v !== undefined && !/^\d+\.\d+\.\d+\.\d+:\d+$/.test(v)) throw new Error(`--${n} ${v} is not <ipv4>:<port>`); return v; };
+const DEFAULT_SIMULATOR = "192.168.1.105:3701", DEFAULT_PROJECT = "Busforge Sweep";
+
 function rowOptions(args: string[]): RowOptions {
   const [unit, variant] = args;
   if (!unit || !variant || unit.startsWith("--") || variant.startsWith("--")) throw new Error("usage: bun run tools/ets-driver.ts row <unit> <variant> --order <order number> [...] (see the file's head)");
-  const values = new Map<string, string[]>();
-  let configured = false;
-  for (let i = 2; i < args.length; i++) {
-    const name = args[i].replace(/^--/, "");
-    if (args[i] === "--configured") { configured = true; continue; }
-    if (!args[i].startsWith("--") || !VALUED.includes(name)) throw new Error(`unknown argument ${args[i]}`);
-    const v = args[++i];
-    if (v === undefined || v.startsWith("--")) throw new Error(`--${name} needs a value`);
-    if (values.has(name) && name !== "sim-override") throw new Error(`--${name} given twice`);
-    values.set(name, [...(values.get(name) ?? []), v]);
-  }
-  const one = (n: string) => values.get(n)?.[0];
-  const endpoint = (n: string, v: string | undefined) => { if (v !== undefined && !/^\d+\.\d+\.\d+\.\d+:\d+$/.test(v)) throw new Error(`--${n} ${v} is not <ipv4>:<port>`); return v; };
-  const stop = one("stop-sim-after");
+  const o = parseOptions(args.slice(2), ["order", "simulator", "project", "password-env", "out", "stop-sim-after", "wrong-interface", "donor"], ["sim-override", "learned-from"], ["configured"]);
+  const stop = o.one("stop-sim-after");
   if (stop !== undefined && !/^[1-9]\d*$/.test(stop)) throw new Error(`--stop-sim-after ${stop} is no frame count`);
   return {
-    unit, variant, configured, orderNumber: one("order"), simulator: endpoint("simulator", one("simulator")) ?? "192.168.1.105:3701",
-    project: one("project") ?? "Busforge Sweep", passwordEnv: one("password-env"), out: one("out"),
-    stopSimAfter: stop === undefined ? undefined : Number(stop), wrongInterface: endpoint("wrong-interface", one("wrong-interface")), simOverrides: values.get("sim-override") ?? [],
+    unit, variant, configured: o.flag("configured"), orderNumber: o.one("order"), simulator: endpoint("simulator", o.one("simulator")) ?? DEFAULT_SIMULATOR,
+    project: o.one("project") ?? DEFAULT_PROJECT, passwordEnv: o.one("password-env"), out: o.one("out"),
+    stopSimAfter: stop === undefined ? undefined : Number(stop), wrongInterface: endpoint("wrong-interface", o.one("wrong-interface")), simOverrides: o.all("sim-override"),
+    donor: o.one("donor"), learnedFrom: o.all("learned-from"),
+  };
+}
+
+function batchOptions(args: string[]): BatchOptions {
+  const [list] = args;
+  if (!list || list.startsWith("--")) throw new Error("usage: bun run tools/ets-driver.ts batch <catalogue-list.json> --out <dir> [...] (see the file's head)");
+  const o = parseOptions(args.slice(1), ["out", "only", "from", "count", "simulator", "project", "inject-kill", "inject-dialog"], ["rerun"], ["rerun-failed"]);
+  const out = o.one("out") ?? fail("--out <dir> is needed: the batch's rows and its log go there");
+  const count = o.one("count");
+  if (count !== undefined && !/^[1-9]\d*$/.test(count)) throw new Error(`--count ${count} is no number of rows`);
+  const only = o.one("only");
+  return {
+    list, out, only: only === undefined ? undefined : readFileSync(only, "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#")),
+    from: o.one("from"), count: count === undefined ? undefined : Number(count), rerunFailed: o.flag("rerun-failed"), rerun: o.all("rerun"),
+    simulator: endpoint("simulator", o.one("simulator")) ?? DEFAULT_SIMULATOR, project: o.one("project") ?? DEFAULT_PROJECT,
+    injectKill: o.one("inject-kill"), injectDialog: o.one("inject-dialog"),
   };
 }
 
@@ -1422,7 +1766,8 @@ async function main(): Promise<number> {
     console.log(`${r.dir}: ${r.outcome.kind}${"why" in r.outcome ? `: ${r.outcome.why}` : ""} (${r.minutes.toFixed(1)} min)`);
     return r.outcome.kind === "completed" ? 0 : 1;
   }
-  throw new Error("usage: bun run tools/ets-driver.ts row|same|rerun-identity|import|delete|catalogue-download|up|down|shot|words|xdo|type ... (see the file's head)");
+  if (cmd === "batch") return await runBatch(batchOptions(rest));
+  throw new Error("usage: bun run tools/ets-driver.ts row|batch|same|rerun-identity|import|delete|catalogue-download|up|down|shot|words|xdo|type ... (see the file's head)");
 }
 
 if (import.meta.main) {
