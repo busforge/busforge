@@ -38,8 +38,9 @@
 //
 // Every row is judged by ETS6.log (etsOutcome): a download that connected to anything but the simulator is
 // driver-failed. A row the driver cannot finish gets driver-failed.txt first, then a full-resolution
-// screenshot, the ETS6.log tail and the simulator's log; dialogs in ETS's window are closed (cancelling where
-// they offer it), otherwise ETS is restarted: only the processes `up` started, each known by PID and start time.
+// screenshot (with its sidecar, keepScreen), the ETS6.log tail and the simulator's log; dialogs in ETS's window are
+// closed (cancelling where they offer it), otherwise ETS is restarted: only the processes `up` started, each known by
+// PID and start time.
 //
 // Between the steps of a row the driver checks that ETS's window is there and shows no dialog: a dialog it does not
 // expect fails the row (UNKNOWN_DIALOG, with its text and a full-resolution screenshot), a window that is gone fails it
@@ -86,8 +87,45 @@ const ETS_BUILD = "ETS 6.4.1 Home (6.4.8718)";
 export const q = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // Each step of a row on stderr, with the time: what a run that stalls was doing (and what a batch's heartbeat names).
+// A step starts without the readings of the one before (keepScreen).
 let currentStep = "";
-const step = (what: string) => { currentStep = what; console.error(`${new Date().toISOString().slice(11, 19)} ${what}`); };
+export const step = (what: string) => { currentStep = what; readings.length = 0; console.error(`${new Date().toISOString().slice(11, 19)} ${what}`); };
+
+// ---- what the screen readers read, kept beside a screenshot ----
+
+// The readings of the current step, newest last (at most READINGS_KEPT): each screen reader's name, its arguments
+// besides the screenshot, and what it read.
+interface Reading { reader: string; args?: unknown[]; read: unknown }
+const readings: Reading[] = [];
+const READINGS_KEPT = 40;
+// A screen reader whose readings are recorded for the current step.
+function reader<A extends unknown[], R>(name: string, read: (png: string, ...args: A) => R): (png: string, ...args: A) => R {
+  return (png, ...args) => {
+    const r = read(png, ...args);
+    readings.push({ reader: name, ...(args.length ? { args: args.map((a) => (a instanceof RegExp ? String(a) : a)) } : {}), read: r });
+    if (readings.length > READINGS_KEPT) readings.shift();
+    return r;
+  };
+}
+
+// Each screenshot the driver keeps gets a sidecar beside it (`<name>.json`, SCREEN_FORMAT): the step of the row it was
+// kept in, why (a failure's reason, where it is one) and the step's readings. A misreading is then found by a grep over
+// a run's sidecars, and the screenshot beside it is a fixture candidate (tools/ets-driver-screens.test.ts).
+export const SCREEN_FORMAT = "busforge-ets-driver-screen/1";
+export const sidecarOf = (png: string) => png.replace(/\.png$/, ".json");
+// The screenshot kept as `to`: `from` copied, or one taken of the display; its sidecar written after it.
+export function keepScreen(to: string, from?: string, why?: string): string {
+  if (from) copyFileSync(from, to); else shot(to);
+  // OCR's words of a row stand in its text already.
+  const json = JSON.stringify({ format: SCREEN_FORMAT, etsBuild: ETS_BUILD, step: currentStep, ...(why ? { why } : {}), readings }, (k, v: unknown) => (k === "words" ? undefined : v), 1);
+  writeFileSync(sidecarOf(to), `${json}\n`);
+  return to;
+}
+// A kept screenshot moved to `to`, its sidecar with it.
+function moveScreen(from: string, to: string): void {
+  renameSync(from, to);
+  if (existsSync(sidecarOf(from))) renameSync(sidecarOf(from), sidecarOf(to));
+}
 
 // ---- the bench host ----
 
@@ -433,23 +471,23 @@ async function closeExtraProjectTabs(s: Screen, name: string): Promise<void> {
 // loses a title on the green of a tab not in front. In grey it still loses one at one size and reads it at the other
 // (at twice its size "Bustorge Sines" beside the overview's tab in front; at three times nothing beside the project's
 // first tab in front): a tab either reading finds counts, the first reading's box where both find it.
-export function projectTabs(png: string, name: string): Box[] {
+export const projectTabs = reader("projectTabs", (png: string, name: string): Box[] => {
   const read = (scale: number) => findText(words(png, { x: 200, y: 0, w: 1100, h: 36 }, { scale, prep: "gray" }), name).filter((b) => b.y < 30);
   const tabs = read(2);
   for (const b of read(3)) if (!tabs.some((t) => b.x < t.x + t.w && t.x < b.x + b.w)) tabs.push(b);
   return tabs.sort((a, b) => a.x - b.x);
-}
+});
 
 // The width of `tab` where it stands in front, from its left end to where the title bar's green begins; null where
 // green stands right at its title (the tab is not in front: the tab in front reaches past its title).
-export function frontTabWidth(png: string, tab: Box): number | null {
+export const frontTabWidth = reader("frontTabWidth", (png: string, tab: Box): number | null => {
   const row = execFileSync("magick", [png, ...crop({ x: tab.x, y: 19, w: 400, h: 1 }), "-depth", "8", "txt:-"], { encoding: "utf8" });
   const end = row.split("\n").slice(1).map((l) => l.match(/^(\d+),0: \((\d+),(\d+),(\d+)/)).find((m) => m && Number(m[3]) - Number(m[2]) > 40);
   return end && Number(end[1]) > tab.w + 18 ? Number(end[1]) : null;
-}
+});
 
 // Whether a project's tab stands beside the overview's tab (its name in it).
-export const projectTabShown = (png: string) => words(png, AT.projectTabText).some((w) => /\w{2}/.test(w.text));
+export const projectTabShown = reader("projectTabShown", (png: string) => words(png, AT.projectTabText).some((w) => /\w{2}/.test(w.text)));
 const projectTabOpen = (s: Screen) => projectTabShown(s.snap());
 
 // A project's name as OCR compares it: OCR reads an l as i now and then ("Fohimeister"), so those letters are one.
@@ -482,7 +520,7 @@ async function searchProject(s: Screen, name: string): Promise<void> {
 async function treeRow(s: Screen, pattern: RegExp, prep?: Prep): Promise<Box | null> {
   return treeRowIn(s.snap(), pattern, prep);
 }
-export function treeRowIn(png: string, pattern: RegExp, prep?: Prep): Box | null {
+export const treeRowIn = reader("treeRowIn", (png: string, pattern: RegExp, prep?: Prep): Box | null => {
   for (const r of rows(words(png, AT.leftTree, { prep }).filter(inside(AT.leftTree)))) {
     if (pattern.test(r.text)) {
       const x = r.words[0].x, last = r.words[r.words.length - 1];
@@ -490,7 +528,7 @@ export function treeRowIn(png: string, pattern: RegExp, prep?: Prep): Box | null
     }
   }
   return null;
-}
+});
 
 // The topology view in the left panel, with line 1.1 visible.
 async function showTopology(s: Screen): Promise<void> {
@@ -610,10 +648,10 @@ async function lineDeviceRow(s: Screen): Promise<Box> {
 }
 
 // The topology tree's first row below the row whose centre stands at `y`, or null where the tree shows none there.
-export function treeRowBelow(png: string, y: number): Box | null {
+export const treeRowBelow = reader("treeRowBelow", (png: string, y: number): Box | null => {
   const below = rows(words(png, AT.leftTree).filter(inside(AT.leftTree))).find((r) => r.y > y + 8);
   return below ? { x: below.words[0].x, y: below.y - 6, w: 200, h: 12, cx: below.words[0].x + 30, cy: Math.round(below.y), text: below.text } : null;
-}
+});
 
 // ETS's search of the device list emptied again, so that a later row of the project lists every device.
 async function clearSearch(): Promise<void> {
@@ -664,15 +702,15 @@ async function readCatalogueEntry(s: Screen): Promise<CatalogueEntry> {
 
 // The properties panel's tab `name` (Katalog, Applikation). A product picture beside the tabs cuts OCR's reading of
 // their names short ("Katal"): found by their start.
-export function propertiesTab(png: string, name: string): Box | null {
+export const propertiesTab = reader("propertiesTab", (png: string, name: string): Box | null => {
   return findText(words(png, AT.properties), name.slice(0, 5)).find((b) => b.y < 165) ?? null;
-}
+});
 
 // The label/value table under the properties panel's tab `tab`, line by line: read as one block (word by word, OCR
 // drops the dot in "1.1"), at three times its size: at two OCR reads "$493B" as "3493B" and "B471" as "B4a71".
-export function propertiesTable(png: string, tab: Box): string[] {
+export const propertiesTable = reader("propertiesTable", (png: string, tab: Box): string[] => {
   return textLines(png, { x: AT.properties.x, y: tab.y + 20, w: AT.properties.w, h: 200 }, 3);
-}
+});
 
 // The value of a properties table's line that begins with `label`, or null.
 export function propertyValue(lines: string[], label: string): string | null {
@@ -689,48 +727,75 @@ function catalogueIdentity(applicationId: string): { deviceType: string; version
   return { deviceType: `$${m[1]}`, version: catalogueVersion(parseInt(m[2], 16)), fingerprint: m[3] };
 }
 
+// The dark pixels of magick's txt: output of a glyph's square in grey.
+const darkPixels = (txt: string) => txt.split("\n").slice(1).flatMap((l) => {
+  const m = l.match(/^(\d+),(\d+):.*#([0-9A-Fa-f]{2})/);
+  return m && parseInt(m[3], 16) < 0x80 ? [{ x: Number(m[1]), y: Number(m[2]) }] : [];
+});
+
 // Whether a catalogue group's expander shows it open ("^") or closed ("v"), from magick's txt: output of the glyph's
 // 20 px square in grey: of its dark pixels, the top row spans narrow and the bottom row wide where it points up (the
-// arrow of ETS 6.4.1: 6 px apart at the wide end, one pixel at the tip); null where it shows no arrow.
+// arrow of ETS 6.4.1: 7 px wide and 5 high, 6 px apart at the wide end, one pixel at the tip); null where it shows no
+// arrow. A glyph wider or higher than an arrow is none: the cloud in front of a row whose product data ETS has not
+// loaded (notLoadedMark) also spans narrow at its top and wide at its bottom.
 export function expanderOpen(txt: string): boolean | null {
-  const dark = txt.split("\n").slice(1).flatMap((l) => {
-    const m = l.match(/^(\d+),(\d+):.*#([0-9A-Fa-f]{2})/);
-    return m && parseInt(m[3], 16) < 0x80 ? [{ x: Number(m[1]), y: Number(m[2]) }] : [];
-  });
+  const dark = darkPixels(txt);
   if (dark.length < 3) return null;
-  const span = (y: number) => { const xs = dark.filter((p) => p.y === y).map((p) => p.x); return Math.max(...xs) - Math.min(...xs); };
-  const top = span(Math.min(...dark.map((p) => p.y))), bottom = span(Math.max(...dark.map((p) => p.y)));
+  const xs = dark.map((p) => p.x), ys = dark.map((p) => p.y);
+  if (Math.max(...xs) - Math.min(...xs) > 8 || Math.max(...ys) - Math.min(...ys) > 6) return null;
+  const span = (y: number) => { const row = dark.filter((p) => p.y === y).map((p) => p.x); return Math.max(...row) - Math.min(...row); };
+  const top = span(Math.min(...ys)), bottom = span(Math.max(...ys));
   return top === bottom ? null : top < bottom;
+}
+
+// Whether the glyph (magick's txt: output, as expanderOpen reads it) is the cloud ETS shows in front of a catalogue row
+// whose product data it has not loaded: its outline stands on one straight dark run at its bottom, 13 px in ETS 6.4.1,
+// where no arrow has more than 3 dark pixels side by side.
+export function notLoadedMark(txt: string): boolean {
+  const dark = darkPixels(txt);
+  if (dark.length === 0) return false;
+  const bottom = Math.max(...dark.map((p) => p.y));
+  const xs = dark.filter((p) => p.y === bottom).map((p) => p.x).sort((a, b) => a - b);
+  let run = 1, longest = 1;
+  for (let i = 1; i < xs.length; i++) { run = xs[i] === xs[i - 1] + 1 ? run + 1 : 1; longest = Math.max(longest, run); }
+  return longest >= 10;
 }
 
 // The catalogue panel's header in the lower left; its toolbar (search field at the right) on the same row.
 const CATALOGUE_PANEL = { x: 0, y: 600, w: 315, h: 120 };
 // The catalogue panel's header among a full screen's words, where the panel shows.
 const catalogueHeaderIn = (ws: Word[]) => findText(ws, "Katalog").find(inside(CATALOGUE_PANEL)) ?? null;
-export const catalogueHeader = (png: string) => catalogueHeaderIn(words(png));
+export const catalogueHeader = reader("catalogueHeader", (png: string) => catalogueHeaderIn(words(png)));
 
 // The catalogue grid's rows under a search, below the panel's header `header` and the grid's column header.
 export const searchGrid = (header: Box): Region => ({ x: AT.catalogueGrid.x, y: header.cy + 37, w: AT.catalogueGrid.w, h: 1160 - header.cy - 37 });
 
+// The glyph at the grid's left of the row at `y` in `png` (magick's txt: output in grey): a group's expander arrow, the
+// cloud of a row not loaded, or nothing.
+const glyphAt = (png: string, y: number) => execFileSync("magick", [png, ...crop({ x: 316, y: Math.round(y) - 10, w: 20, h: 20 }), "-colorspace", "Gray", "-depth", "8", "txt:-"], { encoding: "utf8" });
 // A row of the grid in `png`: open (true) or closed (false) where its expander's arrow stands at the grid's left, null
 // where it shows none.
-const arrowAt = (png: string, y: number) => expanderOpen(execFileSync("magick", [png, ...crop({ x: 316, y: Math.round(y) - 10, w: 20, h: 20 }), "-colorspace", "Gray", "-depth", "8", "txt:-"], { encoding: "utf8" }));
+const arrowAt = (png: string, y: number) => expanderOpen(glyphAt(png, y));
 
 // The product rows of the catalogue grid `grid`. A manufacturer's group header is the row with an expander's arrow at
 // the grid's left (its name, however it begins and however far it reaches into the columns, says nothing OCR could
 // rely on: "B.E.G. …"); a product row has none and fills the name and application columns (an application's name can
 // be digits but for one letter, "S85166100"). (OCR misreads the narrow medium and version cells: "4930...TP", "TRIP"
-// for "TP,IP", "T", a version glued to the application's name.)
-export function catalogueProducts(png: string, grid: Region): { y: number; words: Word[]; text: string }[] {
-  return rows(words(png, grid, { prep: "binary" }).filter(inside(grid))).filter((r) => arrowAt(png, r.y) === null && r.words.some((w) => w.x >= 450 && /[A-Za-z0-9]{3}/.test(w.text)));
-}
+// for "TP,IP", "T", a version glued to the application's name.) `loaded` is false for a row with the cloud of a
+// product whose data ETS has not loaded in front of it.
+export const catalogueProducts = reader("catalogueProducts", (png: string, grid: Region): { y: number; words: Word[]; text: string; loaded: boolean }[] => {
+  return rows(words(png, grid, { prep: "binary" }).filter(inside(grid))).flatMap((r) => {
+    const glyph = glyphAt(png, r.y);
+    return expanderOpen(glyph) === null && r.words.some((w) => w.x >= 450 && /[A-Za-z0-9]{3}/.test(w.text)) ? [{ ...r, loaded: !notLoadedMark(glyph) }] : [];
+  });
+});
 
 // The manufacturers' group headers of the catalogue grid `grid` (the rows with an expander's arrow), and those of them
 // that stand closed.
-export function catalogueGroups(png: string, grid: Region): { headers: { y: number; text: string }[]; closed: { y: number; text: string }[] } {
+export const catalogueGroups = reader("catalogueGroups", (png: string, grid: Region): { headers: { y: number; text: string }[]; closed: { y: number; text: string }[] } => {
   const states = rows(words(png, grid).filter(inside(grid))).map((r) => ({ r, open: arrowAt(png, r.y) })).filter((x) => x.open !== null);
   return { headers: states.map((x) => x.r), closed: states.filter((x) => x.open === false).map((x) => x.r) };
-}
+});
 
 // Of the catalogue rows ETS's search lists for an order number (in the grid's order), the one to insert for
 // `applicationId`: at the application's version and device type, and of those the one whose fingerprint reads as the
@@ -789,10 +854,10 @@ async function refuseCompatibilityMode(s: Screen, when: string): Promise<never> 
 // Whether a dialog's words are ETS's warning that the product's plug-ins need its compatibility mode.
 const isCompatibilityWarning = (ws: Word[]) => findText(ws, "Kompatibilit").length > 0;
 // Whether ETS's window shows its compatibility warning.
-export function compatibilityWarning(png: string): boolean {
+export const compatibilityWarning = reader("compatibilityWarning", (png: string): boolean => {
   const box = dialogBox(png);
   return box !== null && isCompatibilityWarning(words(png, box));
-}
+});
 
 // ETS shows no dialog while it downloads: one ends the row at once, a product's download plug-in that needs the
 // compatibility mode refused by name (ETS warns instead of downloading), any other with its text ("Verbindung
@@ -851,8 +916,15 @@ async function insertProduct(s: Screen, orderNumber: string, applicationId: stri
   if (items.length === 0) fail(`the catalogue holds no product for order number ${orderNumber}`);
   // A list that reaches the grid's last row may go on below it, where the driver does not scroll.
   if (Math.max(...items.map((r) => r.y)) > grid.y + grid.h - 30) fail(`the catalogue lists more rows for order number ${orderNumber} than its grid shows at once`);
+  // A row whose product data ETS has not loaded is named, not read: what ETS's properties panel shows for it is not
+  // known. The sweep's rows run applications whose product data ETS loaded (tools/ets-catalogue.ts), so a row it inserts
+  // is a loaded one; rows not loaded stand in the search as other products holding the order number.
+  const notLoaded = items.filter((r) => !r.loaded);
+  const unread = notLoaded.length ? `; not read, their product data not loaded in ETS: ${notLoaded.map((r) => r.text).join(" | ")}` : "";
+  if (notLoaded.length) console.log(`${notLoaded.length} catalogue rows under order number ${orderNumber} are not loaded in ETS, not read: ${notLoaded.map((r) => r.text).join(" | ")}`);
+  if (notLoaded.length === items.length) fail(`the catalogue lists for order number ${orderNumber} only rows whose product data ETS has not loaded${unread}`);
   const entries: (CatalogueEntry & { y: number })[] = [];
-  for (const r of items) {
+  for (const r of items.filter((x) => x.loaded)) {
     // A click that did not select the row leaves the properties panel on line 1.1 (no Katalog tab): clicked once more.
     for (let attempt = 0; ; attempt++) {
       click(500, Math.round(r.y));
@@ -866,7 +938,7 @@ async function insertProduct(s: Screen, orderNumber: string, applicationId: stri
     }
   }
   const picked = pickCatalogueRow(entries, orderNumber, applicationId, manufacturer);
-  if ("refused" in picked) return fail(picked.refused);
+  if ("refused" in picked) return fail(`${picked.refused}${unread}`);
   console.log(`inserting the catalogue row read as ${picked.hit.manufacturer ?? "?"} ${picked.hit.orderNumber} ${picked.hit.deviceType} ${picked.hit.version} ${picked.hit.fingerprint}`);
   if (picked.rows > 1) console.log(`${picked.rows} catalogue rows under order number ${orderNumber} run ${applicationId}: the first inserted`);
   if (!picked.exact) console.log(`the catalogue row inserted reads its fingerprint as ${picked.hit.fingerprint}, not ${catalogueIdentity(applicationId).fingerprint}: what it runs is checked after the insert`);
@@ -959,18 +1031,19 @@ function settled(s: Screen, dir: string, before: string): void {
   const png = s.snap(), box = dialogBox(png);
   if (!box) return;
   // Kept before OCR reads it, which can fail too.
-  copyFileSync(png, join(dir, "dialog.png"));
-  fail(`${UNKNOWN_DIALOG} (before "${before}"): ${dialogText(png, box)!.slice(0, 300)}`);
+  const why = `${UNKNOWN_DIALOG} (before "${before}")`;
+  keepScreen(join(dir, "dialog.png"), png, why);
+  fail(`${why}: ${dialogText(png, box)!.slice(0, 300)}`);
 }
 
 // The text of the dialog ETS shows in its window (`box`, where already found), its words in OCR's order; null where
 // it shows none.
-export function dialogText(png: string, box = dialogBox(png)): string | null {
+export const dialogText = reader("dialogText", (png: string, box: Region | null = dialogBox(png)): string | null => {
   return box ? words(png, box).map((w) => w.text).join(" ") : null;
-}
+});
 
 // The button labelled `label` in the bottom bar of the dialog in `box`.
-export const dialogButton = (png: string, box: Region, label: string): Box | null => findText(dialogButtons(png, box), label)[0] ?? null;
+export const dialogButton = reader("dialogButton", (png: string, box: Region, label: string): Box | null => findText(dialogButtons(png, box), label)[0] ?? null);
 
 // The project compressed: ETS's "Jetzt komprimieren" in its details dialog deletes the product data no device of the
 // project uses (ETS6.log: "Deleting folder of unreferenced manufacturer …"). ETS closes the project for it; it is
@@ -1285,15 +1358,15 @@ const CATALOGUE = {
 
 // Whether the catalogue panel stands in the lower left (its header), and whether its search is empty (its
 // placeholder "Suchen" shows): the grid then lists the whole catalogue.
-export const cataloguePanelShown = (png: string) => catalogueHeaderIn(words(png, CATALOGUE.header)) !== null;
-export const catalogueSearchEmpty = (png: string) => findText(words(png, CATALOGUE.search), "Suchen").length > 0;
+export const cataloguePanelShown = reader("cataloguePanelShown", (png: string) => catalogueHeaderIn(words(png, CATALOGUE.header)) !== null);
+export const catalogueSearchEmpty = reader("catalogueSearchEmpty", (png: string) => findText(words(png, CATALOGUE.search), "Suchen").length > 0);
 
 // Which parts of the grid are selected, every 5 px down its rows: a selected row's background is blue (blue over
 // red 0.14 measured), an unselected one white or grey (0).
-export function selectionPattern(png: string, r: Region = CATALOGUE.rowBackground): string {
+export const selectionPattern = reader("selectionPattern", (png: string, r: Region = CATALOGUE.rowBackground): string => {
   const samples = Math.floor(r.h / 5);
   return selectedSamples(execFileSync("magick", [png, ...crop(r), "-scale", `1x${samples}!`, "-colorspace", "sRGB", "-type", "TrueColor", "-depth", "8", "txt:-"], { encoding: "utf8" }));
-}
+});
 
 // The samples of magick's txt: output, one per pixel line: "1" where blue stands 18 of 255 over red.
 export function selectedSamples(txt: string): string {
@@ -1323,7 +1396,7 @@ export function nextBatchSize(size: number, outcome: "loaded" | "refused" | "ski
 
 // Whether the toolbar's Herunterladen is enabled: its dark label (darkest pixel 0.19 measured) against the grey
 // of a disabled one (0.58).
-export const downloadEnabled = (png: string) => measure(png, CATALOGUE.downloadText, ["-colorspace", "Gray", "-format", "%[fx:minima]"]) < 0.4;
+export const downloadEnabled = reader("downloadEnabled", (png: string) => measure(png, CATALOGUE.downloadText, ["-colorspace", "Gray", "-format", "%[fx:minima]"]) < 0.4);
 
 // The catalogue grid once it holds still (the keys sent to it worked off): a screenshot and the grid's pixels as
 // one hash. ETS works off the keys of a walk down thousands of rows for minutes: `timeoutMs` grows with them.
@@ -1384,8 +1457,7 @@ async function downloadOutcome(s: Screen, since: string): Promise<{ ok: true } |
     if (d?.kind === "other") fail(`ETS shows a dialog during the catalogue download: ${d.text.slice(0, 200)}`);
     if (d?.kind === "refused") {
       const { text } = d;
-      const kept = png.replace(/\.png$/, "-refused.png");
-      copyFileSync(png, kept);
+      const kept = keepScreen(png.replace(/\.png$/, "-refused.png"), png, "ETS refused the catalogue download");
       const ok = dialogButton(png, d.box, "OK") ?? fail(`no OK under ETS's refusal: ${text.slice(0, 160)}`);
       click(ok.cx, ok.cy);
       await waitNoDialog(s);
@@ -1403,15 +1475,20 @@ async function downloadOutcome(s: Screen, since: string): Promise<{ ok: true } |
 // The text of ETS's progress dialogs of a catalogue download: its import ("Importiere Daten"), the manufacturers' data
 // merged, the download itself.
 const CATALOGUE_PROGRESS = /Importiere|Zusammenf|Download aus/i;
+const CATALOGUE_REFUSED = /fehlgeschlagen/i;
 
 // The dialog ETS shows during a catalogue download, by its text: its refusal ("… fehlgeschlagen"), its progress
-// (CATALOGUE_PROGRESS) or any other; null where it shows none.
-export function catalogueDownloadDialog(png: string): { kind: "refused" | "progress" | "other"; text: string; box: Region } | null {
+// (isCatalogueProgress) or any other; null where it shows none.
+export const catalogueDownloadDialog = reader("catalogueDownloadDialog", (png: string): { kind: "refused" | "progress" | "other"; text: string; box: Region } | null => {
   const box = dialogBox(png);
   if (!box) return null;
   const text = dialogText(png, box)!;
-  return { kind: /fehlgeschlagen/i.test(text) ? "refused" : CATALOGUE_PROGRESS.test(text) ? "progress" : "other", text, box };
-}
+  return { kind: CATALOGUE_REFUSED.test(text) ? "refused" : isCatalogueProgress(text) ? "progress" : "other", text, box };
+});
+
+// Whether a dialog's text is one of ETS's progress dialogs of a catalogue download. Its refusal is none, though its
+// text holds a progress dialog's words ("Der Produktdownload aus dem Online-Katalog ist fehlgeschlagen").
+export const isCatalogueProgress = (text: string) => !CATALOGUE_REFUSED.test(text) && CATALOGUE_PROGRESS.test(text);
 
 // ETS's progress dialogs ("Importiere Daten") waited out; any other dialog fails.
 async function waitNoDialog(s: Screen): Promise<void> {
@@ -1421,7 +1498,7 @@ async function waitNoDialog(s: Screen): Promise<void> {
     const text = dialogText(s.snap());
     if (text === null) { clear++; continue; }
     clear = 0;
-    if (!CATALOGUE_PROGRESS.test(text)) fail(`ETS shows a dialog during the catalogue download: ${text.slice(0, 200)}`);
+    if (!isCatalogueProgress(text)) fail(`ETS shows a dialog during the catalogue download: ${text.slice(0, 200)}`);
     if (Date.now() > until) fail("ETS's import dialog did not end within 15 min");
   }
 }
@@ -1467,7 +1544,7 @@ async function downloadCatalogue(batch: number, out: string, from: number): Prom
       }
       if (r.ok) step(`rows ${row}-${sel.atEnd ? "the grid's end" : row + size - 1} loaded`);
       else if (size > 1) {
-        renameSync(r.png, join(out, `refused-rows-${row}-${row + size - 1}.png`));
+        moveScreen(r.png, join(out, `refused-rows-${row}-${row + size - 1}.png`));
         const half = nextBatchSize(size, "refused", batch);
         if (kept) {
           // The selection shrunk from its end to the half batch: it stays anchored on the batch's first row, so a
@@ -1491,7 +1568,7 @@ async function downloadCatalogue(batch: number, out: string, from: number): Prom
         continue;
       } else {
         const screenshot = join(out, `failed-row-${row}.png`);
-        renameSync(r.png, screenshot);
+        moveScreen(r.png, screenshot);
         failures = [...failures.filter((f) => f.row !== row), { row, dialog: r.dialog, screenshot }];
         step(`row ${row} refused alone: ${r.dialog.slice(0, 120)}`);
         focus = kept ? "before" : "top";
@@ -1501,7 +1578,7 @@ async function downloadCatalogue(batch: number, out: string, from: number): Prom
       save(false);
     }
   } catch (e) {
-    try { shot(join(out, `driver-failed-row-${row}.png`)); } catch { /* the failure stays the one thrown */ }
+    try { keepScreen(join(out, `driver-failed-row-${row}.png`), undefined, e instanceof Error ? e.message : String(e)); } catch { /* the failure stays the one thrown */ }
     throw e;
   } finally { s.clean(); }
   save(true);
@@ -1713,7 +1790,7 @@ async function runRow(o: RowOptions): Promise<RowRun> {
     for (let i = 0; i < 20 && sim && !readFileSync(`${log}.sim.txt`, "utf8").includes("closed by the client"); i++) await sleep(500);
     etsLogSince(since, join(dir, ROW_FILES.ets6log));
     outcome = etsOutcome(readFileSync(join(dir, ROW_FILES.ets6log), "latin1"), ia, o.simulator);
-    if (outcome.kind !== "completed") { shot(join(dir, "failure.png")); await closeDialogs(s); }
+    if (outcome.kind !== "completed") { keepScreen(join(dir, "failure.png"), undefined, `${outcome.kind}${"why" in outcome ? `: ${outcome.why}` : ""}`); await closeDialogs(s); }
     if (o.configured) await clearSearch();
     settled(s, dir, "export");
     step("export");
@@ -1735,7 +1812,7 @@ async function runRow(o: RowOptions): Promise<RowRun> {
       writeFileSync(join(dir, "driver-failed.txt"), `${why}\n`);
       console.error(`driver-failed (${failure.kind}${"reason" in failure ? ` ${failure.reason}` : ""}): ${why}`);
       const evidence = (what: string, take: () => void) => { try { take(); } catch (x) { writeFileSync(join(dir, "driver-failed.txt"), `no ${what}: ${x instanceof Error ? x.message : String(x)}\n`, { flag: "a" }); } };
-      evidence("screenshot", () => shot(join(dir, "failure.png")));
+      evidence("screenshot", () => keepScreen(join(dir, "failure.png"), undefined, why));
       if (since !== null) {
         const from = since;
         evidence("ETS6.log", () => {
