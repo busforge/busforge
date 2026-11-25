@@ -107,8 +107,8 @@ is not held to the list; one that opens what it finds through the helpers (`list
 the issue or pull request, and a maintainer adds it.
 
 Most corpus projects are password-protected, and the check holds no password. What
-`tools/ets-records.test.ts` needs of them (ETS's download record of each device, its load flags and
-the configuration the project stores, never a key) is kept in
+`tools/ets-records.test.ts` needs of them (ETS's download record of each device, its load flags, the
+configuration the project stores and the application the device runs, never a key) is kept in
 `captures/ets-download-records.json.gz`, written by `tools/ets-records.ts` with the password from the
 environment. The test fails when a corpus project is added, removed or changed without that file
 following it. `--missing` records every project the file lacks, in the whole corpus or under the
@@ -116,7 +116,11 @@ directories named (relative to the corpus root), and leaves the entries the file
 (a changed project). Every run also drops the entries of projects no longer in the corpus. A project
 that cannot be recorded (no password opens it, or the import leaves devices out) is named, with every
 other one that cannot, and nothing is written. `--dry-run` lists what a run would record and drop,
-opens nothing and writes nothing.
+opens nothing and writes nothing. A device's record names its application as the project's product
+data do (on hardware with a PEI program the Hardware2Program's id carries both programs' numbers and
+names neither); a device with a download record whose product data name no application is refused. A
+file of an earlier format is written again only by `--missing` over the whole corpus; one of a format the
+tool does not know is refused.
 
 ```bash
 # the passwords, one per line, never on disk; every protected project is tried with each
@@ -972,7 +976,11 @@ One row, step by step:
    `ets6.log.txt` from the row's start, `export.knxproj`. The export is stored reduced to the product data of
    the devices its project holds (`tools/ets-export-reduce.ts`): ETS keeps every product ever inserted into a
    project and exports them all. Every entry outside the manufacturers' product data stays (the project with its
-   signature and certificate, `knx_master.xml`, `.validation`), and of each manufacturer of a device its
+   signature and certificate, `knx_master.xml`, `.validation`), but for an ETS app attached to the project
+   (`UserFiles/M<manufacturer>-A<app>.etsapp`, a DCA a product brought, which ETS keeps after the product
+   is gone) of a manufacturer whose data no device needs, and the project's signature with it (a
+   password-protected project's attachments lie in its encrypted archive, which stays whole); and of each
+   manufacturer of a device its
    `Hardware.xml`, `Catalog.xml` and the application programs the devices' Hardware2Program entries name, each
    entry byte for byte as ETS wrote it; baggages, the other products and the manufacturers' signatures go. A
    Hardware2Program described twice, or naming a program without its id, refuses the reduction: which programs to
@@ -1040,8 +1048,11 @@ HA_TOKEN=... BUSFORGE_CORPUS=... bun run tools/ets-driver.ts batch <catalogue-li
 - **The unit.** An application with an own unit runs on it; every other on its catalogue unit. A catalogue
   row that ETS fails on a `Required data mismatch` runs again with what ETS required, up to three rounds;
   each earlier run is kept under `<out>/.attempts/`. No donor for the row's mask, or a product identity the
-  donor cannot carry, ends the row `sim-refused` before any download. What a unit refused of what ETS
-  sent is named in the row's result; whether it counts against the row, `tools/ets-sweep.ts` judges.
+  donor cannot carry, ends the row `sim-refused` before any download. A unit that refused a request of
+  ETS's run ends the written row `sim-refused`, whatever ETS made of the missing answer (ETS's message
+  beside the refusal), as `tools/ets-sweep.ts` reads ETS's side of a row (Busforge's run, which the batch
+  does not make, can still make the row `busforge-only` when it is judged); a refusal after the unit's
+  restart that leaves the comparison whole is only named.
 - **Before it starts**, the bench host must be kept awake (it sleeps in the evening otherwise): the batch
   reads its keep-awake switch in Home Assistant (`HA_TOKEN`) and refuses to start where it is not on.
 - **A failure of a row** is classified by its message (`classifyFailure`, `tools/ets-batch.ts`):

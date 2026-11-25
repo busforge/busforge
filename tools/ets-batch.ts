@@ -20,10 +20,11 @@ export const BATCH_LOG = "batch.log";
 export const VARIANT = "defaults";
 
 // How a row of a batch ended. completed: ETS's download into the simulator ended and the row is written, to be
-// judged (tools/ets-sweep.ts); ets-failed: ETS's load task failed, the row written with it (what the unit refused, if
-// anything, named in `why`); sim-refused: no unit for the row (no donor of its mask, the product's identity does not
-// fit its donor), nothing downloaded; driver-failed: the driver could not finish the row, or refuses to drive it, with
-// the reason.
+// judged (tools/ets-sweep.ts); ets-failed: ETS's load task failed, the row written with it; both with any refusal of
+// the unit after its restart that leaves the comparison whole named; sim-refused: no unit for the row (no donor of its
+// mask, the product's identity does not fit its donor), nothing downloaded, or the unit refused a request of ETS's run
+// that leaves the comparison not whole (the row written, ETS's message beside the refusal); driver-failed: the driver
+// could not finish the row, or refuses to drive it, with the reason.
 export type RowKind = "completed" | "ets-failed" | "sim-refused" | "driver-failed";
 
 // One run of the row: a row runs again after ETS was restarted under it, and for each round of the identity loop.

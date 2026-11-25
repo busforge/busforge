@@ -66,7 +66,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { numToIa } from "../packages/knx/src/index.ts";
+import { iaToNum, numToIa } from "../packages/knx/src/index.ts";
 import { extractAppPrograms, loadKnxproj, readAppProgram } from "../packages/project/src/index.ts";
 import { parseAppConfig } from "../packages/product/src/index.ts";
 import { catalogueXml } from "./corpus.ts";
@@ -74,7 +74,7 @@ import { deviceConfiguration, deviceRows, dialogue, dialogueDifferences } from "
 import { appendLog, BATCH_LOG, batchRows, CATALOGUE_LIST_FORMAT, classifyFailure, clearRowDir, heartbeatLine, loggedRows, moveAttempt, planBatch, RESULT_FORMAT, rowDirOf, rowLine, summary, UNKNOWN_DIALOG, VARIANT, writeResult, type Attempt, type FailureClass, type RowKind, type RowResult } from "./ets-batch.ts";
 import type { CatalogueList, Row as ListRow } from "./ets-catalogue.ts";
 import { reduceProjectExport } from "./ets-export-reduce.ts";
-import { ETS_TASK_FAILED, etsOutcome, ROW_FILES, ROW_FORMAT, simRefusals, type EtsOutcome, type RowConfiguration, type RowSpec } from "./ets-sweep.ts";
+import { ETS_TASK_FAILED, etsOutcome, refusalsAfterRestart, ROW_FILES, ROW_FORMAT, runState, simRefusals, type EtsOutcome, type RowConfiguration, type RowSpec } from "./ets-sweep.ts";
 import { catalogueUnit, catalogueUnitFrom, catalogueUnitRecord, learnIdentity, type CatalogueUnitSpec } from "./sim-unit-catalogue.ts";
 import { productUnit, rerunIdentity } from "./sim-unit-product.ts";
 import { newSimUnit, SIM_UNITS, simUnitSpec } from "./sim-units.ts";
@@ -402,11 +402,14 @@ async function openProject(s: Screen, name: string, passwordEnv?: string): Promi
 
 // The project's tabs beyond the first closed. On the first open of a project after ETS crashed, ETS restores the views it
 // had open as a second tab of the project (seen after an ETS kill); two views of one project are no layout the driver
-// works in. A tab in front is white with its close mark 18 px left of its end, where the title bar's green begins.
+// works in. A tab is taken as the project's where its title reads as the whole name; one brought to the front must say
+// so in ETS's window title (another project's tab whose name begins so, "<name> (2)", is refused, not closed). A tab in
+// front is white with its close mark 18 px left of its end, where the title bar's green begins. Where OCR does not
+// read an extra tab's title, the tab is not seen: the driver has no other reading of the tab bar.
 async function closeExtraProjectTabs(s: Screen, name: string): Promise<void> {
-  const first = name.split(/\s+/)[0];
+  const want = `ETS6 - ${name}`;
   // Read in grey: in colour OCR loses a title on the green of a tab not in front.
-  const tabs = () => findText(s.look({ x: 200, y: 0, w: 1100, h: 36 }, "gray").ws, first).filter((b) => b.y < 30).sort((a, b) => a.x - b.x);
+  const tabs = () => findText(s.look({ x: 200, y: 0, w: 1100, h: 36 }, "gray").ws, name).filter((b) => b.y < 30).sort((a, b) => a.x - b.x);
   for (let i = 0; ; i++) {
     const t = tabs();
     if (t.length <= 1) break;
@@ -415,9 +418,11 @@ async function closeExtraProjectTabs(s: Screen, name: string): Promise<void> {
     click(extra.cx, extra.cy);
     xdo("mousemove", "1000", "600");
     await sleep(1500);
+    if (etsTitle() !== want) fail(`a tab beside the project ${name} is another's (ETS's title with it in front: ${etsTitle()}); close it first`);
     const row = execFileSync("magick", [s.snap(), ...crop({ x: extra.x, y: 19, w: 400, h: 1 }), "-depth", "8", "txt:-"], { encoding: "utf8" });
-    const end = row.split("\n").slice(1).map((l) => l.match(/^(\d+),0: \((\d+),(\d+),(\d+)/)).find((m) => m && Number(m[3]) - Number(m[2]) > 40)
-      ?? fail(`the tab of the project ${name} at ${extra.x} shows no end`);
+    const end = row.split("\n").slice(1).map((l) => l.match(/^(\d+),0: \((\d+),(\d+),(\d+)/)).find((m) => m && Number(m[3]) - Number(m[2]) > 40);
+    // The tab in front reaches past its title; green right at it means the click left it behind.
+    if (!end || Number(end[1]) <= extra.w + 18) return fail(`the tab of the project ${name} at ${extra.x} did not come to the front`);
     console.log(`closing an extra tab of the project ${name}`);
     click(extra.x + Number(end[1]) - 18, 19);
     await sleep(2000);
@@ -613,10 +618,10 @@ async function emptyLine(s: Screen): Promise<void> {
   }
 }
 
-export interface CatalogueEntry { orderNumber: string; version: string; deviceType: string; fingerprint: string }
+export interface CatalogueEntry { orderNumber: string; version: string; deviceType: string; fingerprint: string; manufacturer?: string }
 
 // The properties panel's reading of the selected catalogue row: the Katalog tab's order number, the
-// Applikation tab's device type, program version and fingerprint.
+// Applikation tab's manufacturer, device type, program version and fingerprint.
 async function readCatalogueEntry(s: Screen): Promise<CatalogueEntry> {
   await showProperties(s);
   const tab = async (name: string) => {
@@ -636,13 +641,8 @@ async function readCatalogueEntry(s: Screen): Promise<CatalogueEntry> {
   const cat = await tab("Katalog");
   const orderNumber = value(cat, "Bestellnummer");
   const app = await tab("Applikation");
-  return { orderNumber, deviceType: value(app, "Gerätetyp"), version: value(app, "Programmversion"), fingerprint: value(app, "Fingerprint") };
+  return { orderNumber, manufacturer: value(app, "Hersteller"), deviceType: value(app, "Gerätetyp"), version: value(app, "Programmversion"), fingerprint: value(app, "Fingerprint") };
 }
-
-// An order number as the sweep's list compares the catalogue's rows by it (tools/ets-catalogue.ts): without spaces and
-// with O and 0, I, L and 1 taken as one, as OCR of ETS's catalogue breaks a long one into words ("OpenKnxRau
-// mController") and confuses those letters ("RO111"), so rows whose numbers differ only so are flagged as sharing one.
-export const orderNumberKey = (n: string) => n.replace(/\s+/g, "").toUpperCase().replace(/O/g, "0").replace(/[IL]/g, "1");
 
 // An application's version as ETS's catalogue shows it: 0x11 is "1.1".
 export const catalogueVersion = (v: number) => `${v >> 4}.${v & 15}`;
@@ -674,14 +674,18 @@ export function expanderOpen(txt: string): boolean | null {
 // unreliably as a fingerprint ("Gws308s3" for GW90883, O for 0); rows under other order numbers that hold it
 // (TB/U12.7 for TB/U1) are told apart by the application they run. Where no fingerprint reads exactly ("DC390" for
 // DC90, "1634" for 163A), the rows whose fingerprint reads closest are taken, where no other reading is as close
-// (rows that read alike count as one application). What a catalogue unit's row inserted is checked exactly on the
+// (rows that read alike count as one application). `manufacturer` (the row's manufacturer's name, where known): of rows
+// at the type and version, those whose manufacturer reads as it, where any does (an application of one number and
+// version is offered by several brands of one maker). What a catalogue unit's row inserted is checked exactly on the
 // project's export right after the insert (runRow); an own unit's in writeRow, which takes another build only where
 // it parses as the unit's.
-export function pickCatalogueRow<E extends CatalogueEntry>(entries: E[], orderNumber: string, applicationId: string): { hit: E; rows: number; exact: boolean } | { refused: string } {
+export function pickCatalogueRow<E extends CatalogueEntry>(entries: E[], orderNumber: string, applicationId: string, manufacturer?: string): { hit: E; rows: number; exact: boolean } | { refused: string } {
   const want = catalogueIdentity(applicationId);
   // A device type reads with its "$" as "S" or "3" and an O for a 0 ("SOOB6" for $00B6); a fingerprint the same.
   const hexKey = (v: string) => v.toUpperCase().replace(/^[$S3](?=[0-9A-FO]{4}$)/, "").replace(/O/g, "0");
-  const candidates = entries.filter((e) => e.version === want.version && hexKey(e.deviceType) === hexKey(want.deviceType));
+  const atTypeAndVersion = entries.filter((e) => e.version === want.version && hexKey(e.deviceType) === hexKey(want.deviceType));
+  const madeBy = (e: CatalogueEntry) => manufacturer !== undefined && e.manufacturer !== undefined && editDistance(nameKey(e.manufacturer), nameKey(manufacturer)) <= Math.max(2, Math.floor(nameKey(manufacturer).length / 5));
+  const candidates = atTypeAndVersion.some(madeBy) ? atTypeAndVersion.filter(madeBy) : atTypeAndVersion;
   const read = () => entries.map((e) => `${e.orderNumber} ${e.deviceType} ${e.version} ${e.fingerprint}`).join("; ");
   const hits = candidates.filter((e) => hexKey(e.fingerprint) === hexKey(want.fingerprint));
   if (hits.length) return { hit: hits[0], rows: hits.length, exact: true };
@@ -717,6 +721,15 @@ async function refuseCompatibilityMode(s: Screen, when: string): Promise<never> 
   return fail(`refused: the product's plug-ins need ETS's compatibility mode (ETS asks to restart in it ${when}); the driver runs ETS in its normal mode`);
 }
 
+// ETS shows no dialog while it downloads: one ends the row at once, a product's download plug-in that needs the
+// compatibility mode refused by name (ETS warns instead of downloading), any other with its text ("Verbindung
+// auswählen": the simulator's connection not available; a login; an internal error) and its screenshot.
+async function downloadDialogs(s: Screen, dir: string, before: string): Promise<void> {
+  const png = s.snap(), box = dialogBox(png);
+  if (box && findText(words(png, box), "Kompatibilit").length) await refuseCompatibilityMode(s, "at the download");
+  settled(s, dir, before);
+}
+
 // The product inserted into line 1.1 from the catalogue: a catalogue row listed for the order number whose
 // application is `applicationId`, by its device type, version and fingerprint as ETS's properties panel shows them
 // (the fingerprint of the id ETS's product store holds, which tools/ets-catalogue.ts gives a row as its
@@ -725,7 +738,7 @@ async function refuseCompatibilityMode(s: Screen, when: string): Promise<never> 
 // version may run another build of an own unit's application (an OpenKNX release ETS took from an imported project;
 // writeRow takes it only where it parses as the unit's); a catalogue unit's row is checked to run its application
 // exactly once the project is exported after the insert (runRow).
-async function insertProduct(s: Screen, orderNumber: string, applicationId: string): Promise<void> {
+async function insertProduct(s: Screen, orderNumber: string, applicationId: string, manufacturer?: string): Promise<void> {
   const line = await line11(s);
   click(line.cx, line.cy);
   await sleep(1500);
@@ -749,23 +762,24 @@ async function insertProduct(s: Screen, orderNumber: string, applicationId: stri
   key("Escape");
   await sleep(1000);
   const grid = { x: AT.catalogueGrid.x, y: header.cy + 37, w: AT.catalogueGrid.w, h: 1160 - header.cy - 37 };
-  // A manufacturer's group header begins its text at the grid's left (x 341; a long name reaches into the columns); a
-  // product row begins with its icon, which OCR reads as a stray mark or two, and its text from the manufacturer column
-  // on (x 380), filling the name and application columns (an application's name can be digits but for one letter,
-  // "S85166100"). (OCR misreads the narrow medium and version cells: "4930...TP", "TRIP" for "TP,IP", "T", a version
-  // glued to the application's name.)
-  type GridRow = ReturnType<typeof rows>[number];
-  const isHeader = (r: GridRow) => r.words.some((w) => w.x < 360 && /[A-Za-z0-9]{3}/.test(w.text));
-  const isProduct = (r: GridRow) => !isHeader(r) && r.words.some((w) => w.x >= 450 && /[A-Za-z0-9]{3}/.test(w.text));
-  const products = () => rows(s.look(grid, "binary").ws.filter(inside(grid))).filter(isProduct);
+  // A manufacturer's group header is the row with an expander's arrow at the grid's left (its name, however it begins
+  // and however far it reaches into the columns, says nothing OCR could rely on: "B.E.G. …"); a product row has none and
+  // fills the name and application columns (an application's name can be digits but for one letter, "S85166100"). (OCR
+  // misreads the narrow medium and version cells: "4930...TP", "TRIP" for "TP,IP", "T", a version glued to the
+  // application's name.)
+  const arrow = (png: string, y: number) => expanderOpen(execFileSync("magick", [png, ...crop({ x: 316, y: Math.round(y) - 10, w: 20, h: 20 }), "-colorspace", "Gray", "-depth", "8", "txt:-"], { encoding: "utf8" }));
+  const products = () => {
+    const { png, ws } = s.look(grid, "binary");
+    return rows(ws.filter(inside(grid))).filter((r) => arrow(png, r.y) === null && r.words.some((w) => w.x >= 450 && /[A-Za-z0-9]{3}/.test(w.text)));
+  };
   let items = products();
   // Every manufacturer's group the search lists is opened where it stands closed (ETS keeps a group closed from one
   // search to the next): its expander's arrow is read, never toggled blind, one group at a time (opening one moves
   // the groups below it). The online catalogue lists the rows late. A group still closed after that is refused.
   const closedGroups = () => {
     const png = s.snap();
-    const headers = rows(words(png, grid).filter(inside(grid))).filter(isHeader);
-    return { headers, closed: headers.filter((h) => expanderOpen(execFileSync("magick", [png, ...crop({ x: 316, y: Math.round(h.y) - 10, w: 20, h: 20 }), "-colorspace", "Gray", "-depth", "8", "txt:-"], { encoding: "utf8" })) === false) };
+    const states = rows(words(png, grid).filter(inside(grid))).map((r) => ({ r, open: arrow(png, r.y) })).filter((x) => x.open !== null);
+    return { headers: states.map((x) => x.r), closed: states.filter((x) => x.open === false).map((x) => x.r) };
   };
   let groups = closedGroups();
   if (groups.headers.length === 0 && items.length === 0) fail(`the catalogue lists nothing for order number ${orderNumber}`);
@@ -794,8 +808,9 @@ async function insertProduct(s: Screen, orderNumber: string, applicationId: stri
       }
     }
   }
-  const picked = pickCatalogueRow(entries, orderNumber, applicationId);
+  const picked = pickCatalogueRow(entries, orderNumber, applicationId, manufacturer);
   if ("refused" in picked) return fail(picked.refused);
+  console.log(`inserting the catalogue row read as ${picked.hit.manufacturer ?? "?"} ${picked.hit.orderNumber} ${picked.hit.deviceType} ${picked.hit.version} ${picked.hit.fingerprint}`);
   if (picked.rows > 1) console.log(`${picked.rows} catalogue rows under order number ${orderNumber} run ${applicationId}: the first inserted`);
   if (!picked.exact) console.log(`the catalogue row inserted reads its fingerprint as ${picked.hit.fingerprint}, not ${catalogueIdentity(applicationId).fingerprint}: what it runs is checked after the insert`);
   const hit = picked.hit;
@@ -1471,13 +1486,17 @@ interface RowOptions {
   donor?: string; learnedFrom: string[];
   // A failure made on purpose once the project is compressed (batch --inject-kill, --inject-dialog).
   inject?: "kill" | "dialog";
+  // The row's manufacturer's name, which tells catalogue rows of one application number and version apart where
+  // several brands of a maker offer it (pickCatalogueRow).
+  manufacturerName?: string;
 }
 
 // How a row ended: ETS's outcome, or no unit for it (sim-refused); a driver failure with its class.
 interface RowRun {
   dir: string; outcome: EtsOutcome | { kind: "sim-refused"; why: string }; minutes: number;
   // recovered: ETS was brought back after a driver failure (its dialogs closed, or restarted).
-  failure?: FailureClass; recovered: boolean; unit?: RowSpec["unit"]; catalogueSpec?: CatalogueUnitSpec; simRefusals: string[];
+  // ia: the unit's address, where the row came that far.
+  failure?: FailureClass; recovered: boolean; unit?: RowSpec["unit"]; catalogueSpec?: CatalogueUnitSpec; simRefusals: string[]; ia?: string;
 }
 
 // No catalogue unit for the row (no donor of its mask, a product identity the donor cannot carry).
@@ -1548,7 +1567,7 @@ async function runRow(o: RowOptions): Promise<RowRun> {
       if (o.inject === "dialog") { step("injected: ETS's project details dialog"); click(AT.projectInfo[0], AT.projectInfo[1]); await sleep(3000); }
       settled(s, dir, "insert");
       step("insert");
-      await insertProduct(s, o.orderNumber ?? fail("--order is needed to insert the product from the catalogue"), applicationId);
+      await insertProduct(s, o.orderNumber ?? fail("--order is needed to insert the product from the catalogue"), applicationId, o.manufacturerName);
       if (!ownSpec) {
         settled(s, dir, "the product's export");
         step("the product's export");
@@ -1594,9 +1613,7 @@ async function runRow(o: RowOptions): Promise<RowRun> {
     const started = etsClock();
     key("ctrl+alt+shift+d");
     for (let i = 0; !etsLogHas(started, `StartLoadDevice(Application) ${ia} `); i++) {
-      // A product with a download plug-in: ETS warns instead of downloading.
-      const png = s.snap(), box = dialogBox(png);
-      if (box && findText(words(png, box), "Kompatibilit").length) await refuseCompatibilityMode(s, "at the download");
+      await downloadDialogs(s, dir, "the download's start");
       if (i === 15) fail(`ETS did not start the application download of ${ia} within 30 s of its shortcut`);
       await sleep(2000);
     }
@@ -1605,9 +1622,7 @@ async function runRow(o: RowOptions): Promise<RowRun> {
       if (o.stopSimAfter !== undefined && sim && frameCount(log) >= o.stopSimAfter) { await sim.stop(); sim = null; console.log(`stopped the simulator after ${o.stopSimAfter} frames of ETS`); }
       // The task's end, or the exception that ended it (tools/ets-sweep.ts etsOutcome).
       if (etsLogHas(started, `End LoadApplicationProgram ${ia} `) || etsLogHas(started, "Knx.Ets.Hawk.LoadDeviceTask - ", ETS_TASK_FAILED)) break;
-      // ETS shows no dialog while it downloads; one before the task's end ("Verbindung auswählen": the simulator's
-      // connection not available) ends the row with its text at once.
-      settled(s, dir, "the download's end");
+      await downloadDialogs(s, dir, "the download's end");
       if (Date.now() > until) fail(`ETS did not end the download of ${ia} within 300 s`);
       await sleep(2000);
     }
@@ -1670,7 +1685,7 @@ async function runRow(o: RowOptions): Promise<RowRun> {
   if (!existsSync(`${log}.sim.txt`)) writeFileSync(`${log}.sim.txt`, "");
   const refusals = simRefusals(readFileSync(`${log}.sim.txt`, "utf8"));
   if (refusals.length) console.log(`the simulator refused ${refusals.length}: ${refusals[0]}`);
-  return { dir, outcome, minutes: (Date.now() - t0) / 60_000, failure, recovered, unit, catalogueSpec, simRefusals: refusals };
+  return { dir, outcome, minutes: (Date.now() - t0) / 60_000, failure, recovered, unit, catalogueSpec, simRefusals: refusals, ...(ia ? { ia } : {}) };
 }
 
 // ---- the batch ----
@@ -1714,7 +1729,7 @@ async function batchRow(row: ListRow, b: BatchOptions, inject: RowOptions["injec
   const learned: string[] = [];
   let restarted = false;
   for (;;) {
-    const r = await runRow({ unit: own ?? row.application, variant: VARIANT, orderNumber: row.orderNumber, simulator: b.simulator, project: b.project, configured: false, out: dir, simOverrides: [], learnedFrom: [...learned], inject });
+    const r = await runRow({ unit: own ?? row.application, variant: VARIANT, orderNumber: row.orderNumber, simulator: b.simulator, project: b.project, configured: false, out: dir, simOverrides: [], learnedFrom: [...learned], inject, manufacturerName: row.manufacturerName });
     inject = undefined;
     const why = "why" in r.outcome ? r.outcome.why : undefined;
     if (r.failure?.kind === "pause") return { pause: r.failure };
@@ -1725,12 +1740,17 @@ async function batchRow(row: ListRow, b: BatchOptions, inject: RowOptions["injec
       appendLog(b.out, `${row.application}: ETS restarted (${r.failure.reason}), the row runs again: ${why}`);
       continue;
     }
-    const kind: RowKind = r.outcome.kind;
-    // What the unit refused is named; whether it counts against the row tools/ets-sweep.ts judges (a refusal after the
-    // unit's last restart may not).
-    let more = r.simRefusals.length ? `; the simulator refused ${r.simRefusals.length}: ${r.simRefusals[0]}` : "";
+    let kind: RowKind = r.outcome.kind, rowWhy = why, more = "";
+    if (r.outcome.kind === "completed" || r.outcome.kind === "ets-failed") {
+      // A row with ETS's outcome is written: its unit's address and ETS's capture are there.
+      const ia = r.ia ?? fail(`row ${row.application}: written without the unit's address`);
+      ({ kind, why: rowWhy } = writtenRowKind(r.outcome, readFileSync(join(dir, ROW_FILES.etsSim), "utf8"), readFileSync(join(dir, ROW_FILES.ets), "utf8"), ia, `MV-${row.mask}`));
+    } else if (r.simRefusals.length) {
+      // A row the driver did not finish: what the unit refused before is named beside the failure.
+      more = `; the simulator refused ${r.simRefusals.length}: ${r.simRefusals[0]}`;
+    }
     // The identity loop: what ETS required of the catalogue unit, learned from this run's ETS6.log, for the next run.
-    if (kind === "ets-failed" && r.catalogueSpec && !r.simRefusals.length) {
+    if (kind === "ets-failed" && r.catalogueSpec) {
       const ets6log = join(dir, ROW_FILES.ets6log);
       const l = learned.length >= IDENTITY_ROUNDS ? { refused: `${IDENTITY_ROUNDS} rounds of the identity loop ran` } : learnIdentity(r.catalogueSpec, readFileSync(ets6log));
       if (!("refused" in l)) {
@@ -1743,11 +1763,25 @@ async function batchRow(row: ListRow, b: BatchOptions, inject: RowOptions["injec
       more += `; identity loop: ${l.refused}`;
     }
     if (r.failure?.kind === "restart" && restarted) more += "; ETS was gone or failed under the row again after its restart";
-    attempts.push({ kind, why, minutes: r.minutes });
+    attempts.push({ kind, why: rowWhy, minutes: r.minutes });
     const screenshot = ["dialog.png", "failure.png"].find((f) => existsSync(join(dir, f)));
     const unitName = r.unit === undefined ? undefined : typeof r.unit === "string" ? r.unit : `donor ${r.unit.donor}`;
-    return result(kind, why === undefined && !more ? undefined : `${why ?? ""}${more}`.replace(/^; /, ""), { ...(unitName ? { unit: unitName } : {}), ...(screenshot && kind !== "completed" ? { screenshot } : {}) });
+    return result(kind, rowWhy === undefined && !more ? undefined : `${rowWhy ?? ""}${more}`.replace(/^; /, ""), { ...(unitName ? { unit: unitName } : {}), ...(screenshot && kind !== "completed" ? { screenshot } : {}) });
   }
+}
+
+// How a written row ended on ETS's side, as tools/ets-sweep.ts's judge reads that side (Busforge's run, which the batch
+// does not make, can still turn such a row busforge-only there): sim-refused where the unit refused a request of ETS's
+// run that leaves the comparison not whole (refusalsAfterRestart: what a donor cannot answer ends the row so, never an
+// invented answer), whatever ETS made of the missing answer ("Das Gerät antwortet nicht"), ETS's message beside the
+// refusal; else ETS's outcome, any refusal after the unit's restart named.
+export function writtenRowKind(outcome: { kind: "completed" } | { kind: "ets-failed"; why: string }, simLines: string, capture: string, ia: string, mask: string): { kind: RowKind; why?: string } {
+  const split = refusalsAfterRestart(simLines, runState(capture, "ETS", iaToNum(ia), mask));
+  const ets = outcome.kind === "ets-failed" ? outcome.why : undefined;
+  if (split.others.length) return { kind: "sim-refused", why: `the simulator refused ${split.others.length}: ${split.others[0]}${ets ? `; ETS: ${ets}` : ""}` };
+  const after = split.after.length ? `the simulator refused ${split.after.length} after the restart, the comparison whole: ${split.after[0]}` : undefined;
+  const why = [ets, after].filter(Boolean).join("; ");
+  return why ? { kind: outcome.kind, why } : { kind: outcome.kind };
 }
 
 async function runBatch(b: BatchOptions): Promise<number> {

@@ -4,10 +4,11 @@ import { join } from "node:path";
 import { appProgramId, loadKnxproj, readAppProgram } from "../packages/project/src/index.ts";
 import { parseAppConfig } from "../packages/product/src/index.ts";
 import { iaToNum } from "../packages/knx/src/index.ts";
+import { storeZip } from "../packages/project/test/ziputil.ts";
 import { captureText, corpusPath, corpusRoot } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { capturedOnLoadedUnit, deviceConfiguration, deviceRows, dialogueDifferences, parseCapture } from "./etsdiff.ts";
-import { causes, compareRuns, etsBranches, etsOutcome, expected, inCorpus, judge, judged, listRows, loadedImageCheck, MANIFEST, MANIFEST_FORMAT, movedSince, readRow, refusalsAfterRestart, rejudge, ROW_FILES, runState, simRefusals, SWEEP_DIR, updateManifest, verdictDetail, writeRejudged, type EtsOutcome, type Explained, type Manifest, type ManifestRow, type RowConfiguration, type RowSpec, type Verdict, withCause } from "./ets-sweep.ts";
+import { causes, compareRuns, configuredApplication, etsBranches, etsOutcome, expected, inCorpus, judge, judged, listRows, loadedImageCheck, MANIFEST, MANIFEST_FORMAT, movedSince, readRow, refusalsAfterRestart, rejudge, ROW_FILES, runState, simRefusals, SWEEP_DIR, updateManifest, verdictDetail, writeRejudged, type EtsOutcome, type Explained, type Manifest, type ManifestRow, type RowConfiguration, type RowSpec, type Verdict, withCause } from "./ets-sweep.ts";
 import { ROW_WORKERS, RowPool } from "./ets-sweep-workers.ts";
 import { mismatchLines } from "./sim-unit-product.ts";
 import { tempDir } from "./test-temp.ts";
@@ -34,6 +35,29 @@ function con(tpdu: string, neg = false): string {
   return `2026-01-01T00:00:00.000Z BRIDGE->ETS TUNNELLING_REQ${neg ? " CON-NEG" : ""}  | ${frame.toString("hex")}`;
 }
 const capture = (...lines: string[]) => lines.join("\n");
+
+// Hardware with a PEI program, in the form ETS writes its Hardware2Program id (both programs' numbers, each with its
+// OEM part): synthetic ids, in the shape such catalogue rows take.
+describe("the application a row's configuration runs", () => {
+  const H2P = "M-0083_H-PEI.2F1-0-O0007_HP-4201-13-6B9E-O0007-4201-23-00B3-O0007";
+  const APP = "M-0083_A-4201-13-6B9E-O0007", PEI = "M-0083_A-4201-23-00B3-O0007";
+  const program = (id: string, type: string) => `<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0083"><ApplicationPrograms><ApplicationProgram Id="${id}" ProgramType="${type}" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-07B0" Name="${id}"><Static/></ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+  const exportOf = (types: Record<string, string>) => storeZip({
+    "M-0083/Hardware.xml": `<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0083"><Hardware><Hardware Id="M-0083_H-PEI.2F1-0-O0007"><Hardware2Programs><Hardware2Program Id="${H2P}" MediumTypes="MT-0"><ApplicationProgramRef RefId="${APP}"/><ApplicationProgramRef RefId="${PEI}"/></Hardware2Program></Hardware2Programs></Hardware></Hardware></Manufacturer></ManufacturerData></KNX>`,
+    ...Object.fromEntries(Object.entries(types).map(([id, type]) => [`M-0083/${id}.xml`, program(id, type)])),
+  });
+  test("on PEI hardware: the export's application program, not the id read as one", () => {
+    expect(appProgramId(H2P)).toBe("M-0083_A-4201-13-6B9E-O0007-4201-23-00B3-O0007");
+    expect(configuredApplication(H2P, exportOf({ [APP]: "ApplicationProgram", [PEI]: "PeiProgram" }))).toBe(APP);
+  });
+  test("none where the product data do not say which program is the application", () => {
+    expect(configuredApplication(H2P, exportOf({ [APP]: "ApplicationProgram", [PEI]: "ApplicationProgram" }))).toBe("");
+  });
+  test("the id's own reading on one-program hardware, and for a row without an export", () => {
+    expect(configuredApplication("M-0083_H-1_HP-00B6-32-9642", exportOf({ [APP]: "ApplicationProgram", [PEI]: "PeiProgram" }))).toBe("M-0083_A-00B6-32-9642");
+    expect(configuredApplication("M-0083_H-1_HP-00B6-32-9642", undefined)).toBe("M-0083_A-00B6-32-9642");
+  });
+});
 
 describe("a sweep row's run", () => {
   test("replays the requests to the unit, a repetition once, and keeps what the unit last reported", () => {
@@ -467,7 +491,7 @@ corpusDescribe("the ETS sweep rows", () => {
   test("Busforge's images against ETS's LoadedImage of a device in an export", () => {
     const bytes = readFileSync(corpusPath("captures/bench-ets-project-params-edited-after-download.knxproj"));
     const project = loadKnxproj(bytes, undefined, "bench");
-    const amma = project.devices.find((d) => appProgramId(d.appRef) === "M-0085_A-0072-30-69AA")!;
+    const amma = project.devices.find((d) => d.appProgramId === "M-0085_A-0072-30-69AA")!;
     const appXml = readAppProgram(bytes, amma.appRef)!;
     const c = deviceConfiguration(parseAppConfig(appXml), deviceRows(project, amma.id));
     const conf: RowConfiguration = { ia: amma.ia, params: [...c.params], links: c.links, moduleInstances: c.instances, comObjectOverrides: [...c.comObjectOverrides] };

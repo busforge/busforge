@@ -60,7 +60,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpath
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { APCI, KnxIpServer, MM_CTRL_ADDR, MM_STATUS_BASE, PID, iaToNum, numToIa, realTcpListener } from "../packages/knx/src/index.ts";
-import { appProgramId, etsLoadedCompletely, etsNotDownloaded, extractAppPrograms, loadKnxproj, type Project } from "../packages/project/src/index.ts";
+import { appProgramId, etsLoadedCompletely, etsNotDownloaded, extractAppPrograms, hardwareApplications, loadKnxproj, type Project } from "../packages/project/src/index.ts";
 import { isMemoryMappedLsm, parseAppConfig, parseLoadProcedures, ProductError, type ComObjectLink, type ComObjInstanceOverride, type FlashResult, type ModuleInstance } from "../packages/product/src/index.ts";
 import { downloadDeviceFull } from "../apps/server/src/deviceprofile.ts";
 import type { Connection } from "../apps/server/src/db/connections.ts";
@@ -635,7 +635,7 @@ export function loadedImageCheck(proj: Project, appXml: string, conf: RowConfigu
   const d = proj.devices.find((x) => x.ia === conf.ia);
   if (!d) return { state: "not compared", why: `the export holds no device ${conf.ia}` };
   const cfg = parseAppConfig(appXml);
-  if (appProgramId(d.appRef) !== cfg.id && appProgramId(d.appRef) !== exportApplication) return { state: "not compared", why: `the export's ${conf.ia} runs ${appProgramId(d.appRef)}, not ${cfg.id}` };
+  if (d.appProgramId !== cfg.id && d.appProgramId !== exportApplication) return { state: "not compared", why: `the export's ${conf.ia} runs ${d.appProgramId || `no one application its product data name (${d.appRef})`}, not ${cfg.id}` };
   if (!etsLoadedCompletely(d)) return { state: "not compared", why: `ETS marks ${(etsNotDownloaded(d) ?? ["the application"]).join(", ")} as not loaded` };
   if (d.etsLoadedImage === undefined) return { state: "not compared", why: "the export carries no LoadedImage for the device (its load procedure names no LdCtrlLoadImageProp)" };
   const o = loadedImageComparison(cfg, parseLoadProcedures(appXml), conf.ia, {
@@ -677,11 +677,23 @@ export function readRow(id: string): Row {
   if (spec.export !== undefined && !existsSync(join(dir, spec.export))) throw new Error(`row ${id}: the export ${spec.export} is missing`);
   const unit = rowUnit(id, dir, application, spec);
   const conf = readJson<RowConfiguration>(join(dir, ROW_FILES.configuration));
-  if (conf.appRef !== undefined && appProgramId(conf.appRef) !== application && appProgramId(conf.appRef) !== spec.exportApplication) throw new Error(`row ${id}: the configuration is of ${conf.appRef}, not of ${application}`);
+  if (conf.appRef !== undefined) {
+    const runs = configuredApplication(conf.appRef, spec.export === undefined ? undefined : readMaybeGzipped(join(dir, spec.export)));
+    if (runs === "") throw new Error(`row ${id}: the export's product data name no one application of ${conf.appRef}`);
+    if (runs !== application && runs !== spec.exportApplication) throw new Error(`row ${id}: the configuration is of ${conf.appRef}, which runs ${runs}, not ${application}`);
+  }
   if (spec.calibration !== undefined && !existsSync(corpusPath(spec.calibration))) throw new Error(`row ${id}: the calibration capture ${spec.calibration} is missing`);
   const from: unknown = spec.calibrationFrom;
   if (from !== undefined && (spec.calibration === undefined || typeof from !== "number" || !Number.isInteger(from) || from < 0)) throw new Error(`row ${id}: calibrationFrom ${JSON.stringify(from)} is no position of a calibration capture`);
   return { id, application, variant, dir, spec, unit, conf, explained: readJson<Explained>(join(dir, ROW_FILES.explained)) };
+}
+
+// The application a configuration's Hardware2Program runs, as the row's export names it (hardwareApplications, as a
+// project's Device.appProgramId: on hardware with a PEI program the id carries both programs' numbers, which
+// appProgramId alone reads as one); "" where the product data name no one application. appProgramId's reading where
+// the row has no export or the export describes no such Hardware2Program.
+export function configuredApplication(appRef: string, exportBytes: Buffer | undefined): string {
+  return (exportBytes === undefined ? undefined : hardwareApplications(exportBytes).get(appRef)) ?? appProgramId(appRef);
 }
 
 // A row's unit as row.json names it (RowSpec.unit). A catalogue unit's application program is the one in the row's
