@@ -906,22 +906,35 @@ both given the same simulator's answers.
 `tools/ets-driver.ts` takes ETS's side of a row in one command. ETS 6 runs under Wine on a bench host's
 X display, maximised, German UI; the driver runs on the machine with the private corpus, drives ETS
 over ssh with `xdotool`, reads the screen by OCR (`tesseract`, screenshots taken at full resolution
-and enlarged only for reading) and serves the simulated unit itself (`tools/sim-unit-serve.ts`).
+and enlarged only for reading) and starts the simulated unit (`tools/sim-unit-serve.ts`) on the bench host beside
+ETS.
 
 ```mermaid
 flowchart LR
   D[driver] -- ssh, xdotool --> E[ETS on the bench host]
-  E -- KNXnet/IP TCP --> S["simulated unit<br/>(sim-unit-serve)"]
-  D --> S
+  E -- "KNXnet/IP TCP, loopback" --> S["simulated unit<br/>(sim-unit-serve, on the bench host)"]
+  D -- "code, corpus, ssh" --> S
   E -. ETS6.log, export .-> D
-  S -. capture .-> D
+  S -. "capture, packet capture" .-> D
   D --> R[row directory]
 ```
+
+ETS reaches the simulator over loopback (`127.0.0.1:3701`, the proxy; the server behind it on 3700), so no frame of a
+row crosses the network: over a Wi-Fi link between the two machines a loss of a few seconds failed rows for the
+harness ("Verbindungsqualität mit … ist zu schlecht für eine stabile Verbindung"). ETS needs a configured connection
+to that endpoint (KNXnet/IP, TCP). Before the first simulator of a run, the driver copies this repository's code
+(the files git lists, tracked or not ignored, as the working tree holds them; then `bun install --frozen-lockfile`
+there) and the corpus files the simulator reads (every file of the corpus check, `catalogue/`, `collections/`) into
+its state directory on the bench host; it adds and updates there, and deletes nothing. A row's inputs (the product's
+export, the ETS6.logs the identity loop learned from) go beside the simulator's logs. The simulator and a
+`dumpcap` of the proxy's port on loopback are recorded by PID and start time like ETS; the driver stops them by
+SIGTERM (the simulator then prints its refusals), and the row gets the logs, the simulator's output and the
+packet capture. `down` also stops a simulator a row left running.
 
 ```bash
 bun run tools/ets-driver.ts up        # display, VNC and ETS, each process recorded by PID and start time
 BUSFORGE_CORPUS=... bun run tools/ets-driver.ts row <unit> <variant> --order <order number> \
-  [--simulator <this host's ip>:3701] [--project "Busforge Sweep"] [--password-env <VAR>] [--configured] [--out <dir>]
+  [--simulator 127.0.0.1:3701] [--project "Busforge Sweep"] [--password-env <VAR>] [--configured] [--out <dir>]
 BUSFORGE_CORPUS=... bun run tools/ets-driver.ts same <ets.log> <ets.log> <unit> [<from>]   # two runs, frame by frame
 bun run tools/ets-driver.ts down      # closes what `up` started, and nothing else
 bun run tools/ets-driver.ts import <project.knxproj> [--password-env <VAR>]   # prints the copy's name
@@ -972,8 +985,8 @@ One row, step by step:
    falling back to a partial download, do not end the wait).
 5. **The export** of the project, from the project's row in ETS's project search (a project's password stays on its export; the export's project name is checked), and
    the row written: `row.json`, `configuration.json` (the device's configuration as the export holds it), the
-   simulator's capture `ets.log` with `ets.log.sim.txt` and its output `ets.log.serve.txt`,
-   `ets6.log.txt` from the row's start, `export.knxproj`. The export is stored reduced to the product data of
+   simulator's capture `ets.log` with `ets.log.sim.txt` and its output `ets.log.serve.txt`, the packet capture
+   `ets.pcapng` of every frame between ETS and the proxy, `ets6.log.txt` from the row's start, `export.knxproj`. The export is stored reduced to the product data of
    the devices its project holds (`tools/ets-export-reduce.ts`): ETS keeps every product ever inserted into a
    project and exports them all. Every entry outside the manufacturers' product data stays (the project with its
    signature and certificate, `knx_master.xml`, `.validation`), but for an ETS app attached to the project

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { editDistance, expanderOpen, LINE_11, nextBatchSize, oneRowSelected, pickCatalogueRow, selectedSamples, writtenRowKind } from "./ets-driver.ts";
+import { benchSimArgs, editDistance, expanderOpen, LINE_11, nextBatchSize, oneRowSelected, pcapOf, pickCatalogueRow, selectedSamples, simStartScript, writtenRowKind } from "./ets-driver.ts";
 
 test("a catalogue batch halves after a refusal and grows from the last size that loaded", () => {
   const walk = (outcomes: ("loaded" | "refused" | "skipped")[], max = 150) => {
@@ -130,3 +130,22 @@ test("of rows at one application number and version, the row's manufacturer's wh
   // A manufacturer no row reads as narrows nothing: the insert is checked afterwards.
   expect(pickCatalogueRow(alike, "TB/U1", "M-0002_A-4201-13-6B9E-O0007", "Siemens")).toMatchObject({ hit: alike[0] });
 });
+
+test("the simulator's files on the bench host: the product and each learned ETS6.log copied beside its logs, in order", () => {
+  const unit = ["M-0007_A-A0B3-12-7C29-O0002", "--product", "/tmp/p/M-0007.knxproj", "--donor", "openknx-raumcontroller", "--learned-from", "/rows/a/1/ets6.log.txt", "--learned-from", "/rows/a/2/ets6.log.txt"];
+  const { args, uploads } = benchSimArgs(unit, "/h/sim-3701");
+  expect(args).toEqual(["M-0007_A-A0B3-12-7C29-O0002", "--product", "/h/sim-3701/in-0-M-0007.knxproj", "--donor", "openknx-raumcontroller", "--learned-from", "/h/sim-3701/in-1-ets6.log.txt", "--learned-from", "/h/sim-3701/in-2-ets6.log.txt"]);
+  expect(uploads).toEqual([["/tmp/p/M-0007.knxproj", "/h/sim-3701/in-0-M-0007.knxproj"], ["/rows/a/1/ets6.log.txt", "/h/sim-3701/in-1-ets6.log.txt"], ["/rows/a/2/ets6.log.txt", "/h/sim-3701/in-2-ets6.log.txt"]]);
+  expect(benchSimArgs(["meanwell-knx40e"], "/h/sim-3701")).toEqual({ args: ["meanwell-knx40e"], uploads: [] });
+});
+
+test("the simulator starts on the bench host with its proxy on the row's port, and its capture on loopback, both recorded by PID", () => {
+  const script = simStartScript({ code: "/h/code", corpus: "/h/corpus", dir: "/h/sim-3701", state: "/h", pids: "sim-3701.pids", args: ["meanwell-knx40e"], log: "ets.log", port: 3701, advertise: "127.0.0.1", overrides: ["0/78=", "it's"] });
+  expect(script).toContain("BUSFORGE_CORPUS='/h/corpus' setsid nohup 'bun' 'run' 'tools/sim-unit-serve.ts' 'meanwell-knx40e' '--tool' 'ETS' '--log' '/h/sim-3701/ets.log' '--port' '3700' '--proxy-port' '3701' '--advertise' '127.0.0.1' '--override' '0/78=' '--override' 'it'\\''s'");
+  expect(script).toContain(`echo "sim $! $(st $!)" > '/h/sim-3701.pids'`);
+  expect(script).toContain("dumpcap -q -i lo -f 'tcp port 3701' -w '/h/sim-3701/ets.pcapng'");
+  expect(script).toContain(`echo "dumpcap $! $(st $!)" >> '/h/sim-3701.pids'`);
+  expect(pcapOf("/rows/x/defaults/ets.log")).toBe("/rows/x/defaults/ets.pcapng");
+  expect(pcapOf("/rows/x/defaults/wrong-interface.log")).toBe("/rows/x/defaults/wrong-interface.pcapng");
+});
+

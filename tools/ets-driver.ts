@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 // ETS 6 on the bench host's display, driven from this machine over ssh, for one sweep row (tools/ets-sweep.ts):
-// ETS downloads one application into a simulated unit (tools/sim-unit-serve.ts) served from this machine.
+// ETS downloads one application into a simulated unit (tools/sim-unit-serve.ts) served beside it on the bench host.
 //
 //   BUSFORGE_CORPUS=... bun run tools/ets-driver.ts row <unit> <variant> --order <order number> \
-//     [--simulator <this host's ip>:3701] [--project "Busforge Sweep"] [--password-env <VAR>] [--configured] \
+//     [--simulator 127.0.0.1:3701] [--project "Busforge Sweep"] [--password-env <VAR>] [--configured] \
 //     [--out <dir>] [--stop-sim-after <frames>] [--wrong-interface <host:port>] [--sim-override <object>/<PID>=<hex>]... \
 //     [--donor <unit>] [--learned-from <ETS6.log>]...       (the last two for an application without an own unit)
 //   BUSFORGE_CORPUS=... bun run tools/ets-driver.ts same <ets.log> <ets.log> <unit> [<from>]   two runs, frame by frame
@@ -15,7 +15,7 @@
 //                                     the online catalogue's product data into ETS's product store (downloadCatalogue)
 //   HA_TOKEN=... BUSFORGE_CORPUS=... bun run tools/ets-driver.ts batch <catalogue-list.json> --out <dir> \
 //     [--only <file of application ids>] [--from <application>] [--count <rows>] [--rerun-failed] [--rerun <application>]... \
-//     [--simulator <ip>:<port>] [--project <name>] [--inject-kill <application>] [--inject-dialog <application>]
+//     [--simulator 127.0.0.1:<port>] [--project <name>] [--inject-kill <application>] [--inject-dialog <application>]
 //                                     the list's rows one after the other, unattended (runBatch, tools/ets-batch.ts)
 //   bun run tools/ets-driver.ts up | down | shot <png> | words [<png>] | xdo <args>... | type <text>
 //
@@ -34,7 +34,8 @@
 // it, exports the project and writes the row (--out, by default under the system's temporary directory; a
 // row goes into the corpus once its explained.json is written): row.json, configuration.json (the device's
 // configuration in ETS's export), ets.log and ets.log.sim.txt (the simulator; ets.log.serve.txt its output),
-// ets6.log.txt (ETS6.log from the row's start), export.knxproj.
+// ets.pcapng (every frame between ETS and the simulator's proxy), ets6.log.txt (ETS6.log from the row's start),
+// export.knxproj.
 //
 // Every row is judged by ETS6.log (etsOutcome): a download that connected to anything but the simulator is
 // driver-failed. A row the driver cannot finish gets driver-failed.txt first, then a full-resolution
@@ -62,14 +63,14 @@
 // selects another configured connection than the simulator's: both exist to check the verdicts on real logs.
 // --sim-override gives the simulator a wrong identity (tools/sim-unit-serve.ts --override), which ETS refuses with
 // the properties it required in ETS6.log; rerun-identity reads them (tools/sim-unit-product.ts).
-import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { iaToNum, numToIa } from "../packages/knx/src/index.ts";
 import { extractAppPrograms, loadKnxproj, readAppProgram } from "../packages/project/src/index.ts";
 import { parseAppConfig } from "../packages/product/src/index.ts";
-import { catalogueXml } from "./corpus.ts";
+import { catalogueXml, CORPUS_ENV, CORPUS_FILES } from "./corpus.ts";
 import { deviceConfiguration, deviceRows, dialogue, dialogueDifferences } from "./etsdiff.ts";
 import { appendLog, BATCH_LOG, batchRows, CATALOGUE_LIST_FORMAT, classifyFailure, clearRowDir, heartbeatLine, loggedRows, moveAttempt, planBatch, RESULT_FORMAT, rowDirOf, rowLine, summary, UNKNOWN_DIALOG, VARIANT, writeResult, type Attempt, type FailureClass, type RowKind, type RowResult } from "./ets-batch.ts";
 import type { CatalogueList, Row as ListRow } from "./ets-catalogue.ts";
@@ -349,8 +350,10 @@ done > ets.pids`);
   if (!owned("ets.pids").some((p) => p.name.startsWith("ETS6"))) fail("ETS did not start: no ETS6 process in its prefix after the launcher");
 }
 
-// Closes ETS (its window, then its processes) and stops the display, both only as far as `up` started them.
+// Closes ETS (its window, then its processes) and stops the display, both only as far as `up` started them, and
+// every simulator a row left running (sim-<port>.pids).
 async function down(): Promise<void> {
+  for (const f of remote(`cd ${q(host().state)} && ls -1 sim-*.pids 2>/dev/null || true`).split("\n").filter(Boolean)) await stopOwned(f);
   if (owned("ets.pids").some((p) => p.name.startsWith("ETS6"))) {
     remote(`DISPLAY=${DISPLAY} xdotool search --name '^ETS6 - ' windowclose 2>/dev/null || true`, { allowFail: true });
     for (let i = 0; i < 30 && owned("ets.pids").some((p) => p.name.startsWith("ETS6")); i++) await sleep(1000);
@@ -1508,53 +1511,125 @@ async function downloadCatalogue(batch: number, out: string, from: number): Prom
   return failures;
 }
 
-// ---- the simulator on this machine ----
+// ---- the simulator on the bench host ----
 
-interface Sim { stop(): Promise<void> }
+// The simulator (tools/sim-unit-serve.ts, with its logging proxy) runs on the bench host beside ETS, which reaches it
+// over loopback: no frame of a row crosses the network, where a loss of a few seconds on the driver's machine's Wi-Fi
+// failed rows for the harness ("Verbindungsqualität ... zu schlecht"). This repository's code and the corpus files the
+// simulator reads go to the bench host first (added and updated, never deleted there), each row's inputs (the
+// product's export, the ETS6.logs the identity loop learned from) beside its logs; the logs, the simulator's output and
+// a packet capture of every frame between ETS and the proxy come back into the row when it stops.
+
+interface Sim { stop(): Promise<void>; frames(): number; closedByClient(): boolean }
 
 // The simulators running, each by its stop: a batch stopped by a signal stops them, so none keeps the port.
 const runningSims = new Set<() => Promise<void>>();
 const stopAllSims = () => Promise.allSettled([...runningSims].map((stop) => stop()));
 
-// The simulator serving a unit on `port` (its proxy; the server one below), its output kept in <log>.serve.txt.
-// `unit`: tools/sim-unit-serve.ts's arguments that name it (an own unit, or an application with --product, --donor
-// and --learned-from).
-function startSim(unit: string[], log: string, port: number, advertise: string, overrides: string[] = []): Promise<Sim> {
-  const out = `${log}.serve.txt`;
-  const child = spawn("bun", ["run", join(import.meta.dir, "sim-unit-serve.ts"), ...unit, "--tool", "ETS", "--log", log, "--port", String(port - 1), "--proxy-port", String(port), "--advertise", advertise, ...overrides.flatMap((o) => ["--override", o])], {
-    stdio: ["ignore", "pipe", "pipe"], env: process.env,
-  });
-  let text = "";
-  child.stdout.on("data", (d: Buffer) => { text += d.toString(); });
-  child.stderr.on("data", (d: Buffer) => { text += d.toString(); });
-  const exited = new Promise<void>((r) => child.on("exit", () => r()));
-  // SIGINT makes it print its refusals; one that does not end within 10 s is killed.
-  const stop = async () => {
-    child.kill("SIGINT");
-    const t = setTimeout(() => child.kill("SIGKILL"), 10_000);
-    await exited;
-    clearTimeout(t);
-    runningSims.delete(stop);
-    // The row's directory may be gone (moved aside) by the time a signal stops a simulator that ended long before.
-    if (existsSync(dirname(out))) writeFileSync(out, text);
-  };
-  runningSims.add(stop);
-  // A catalogue unit takes its time to build (5 to 6 s each on the driver's machine), and one with what the identity
-  // loop learned is built once per ETS6.log and once more to serve.
-  const startMs = 90_000;
-  return new Promise((resolve, reject) => {
-    let timedOut = false;
-    const check = setInterval(() => {
-      if (!text.includes(`connects to :${port}`)) return;
-      clearTimeout(t); clearInterval(check);
-      resolve({ stop });
-    }, 200);
-    const t = setTimeout(() => { timedOut = true; clearInterval(check); void stop().finally(() => reject(new Error(`the simulator did not start within ${startMs / 1000} s: ${text}`))); }, startMs);
-    child.on("exit", (code, sig) => { runningSims.delete(stop); if (timedOut) return; clearTimeout(t); clearInterval(check); reject(new Error(`the simulator ended (${sig ?? `exit ${code}`}): ${text}`)); });
-  });
+// What of this repository the bench host gets: the files git tracks or would track (not what it ignores: build
+// output, `node_modules`, the server's data, local links and scratch space), as they are in the working tree.
+function repoFiles(repo: string): string[] {
+  const r = spawnSync("git", ["-C", repo, "ls-files", "-z", "--cached", "--others", "--exclude-standard"], { maxBuffer: 64 << 20 });
+  if (r.status !== 0) fail(`the code goes to the bench host as git lists it, and git lists nothing in ${repo}: ${r.stderr.toString().trim()}`);
+  return r.stdout.toString().split("\0").filter((f) => f && existsSync(join(repo, f)));
+}
+// The corpus the simulator reads: every file the corpus check requires, the product catalogue and the collections.
+const CORPUS_DIRS = ["catalogue", "collections"];
+
+// The packet capture beside a simulator's log: ets.log -> ets.pcapng.
+export const pcapOf = (log: string) => `${log.replace(/\.log$/, "")}.pcapng`;
+
+function rsync(args: string[]): void {
+  const r = spawnSync("rsync", ["-rlt", "-e", "ssh -o BatchMode=yes -o ConnectTimeout=10", ...args], { timeout: 600_000, maxBuffer: 16 << 20 });
+  if (r.error) throw r.error;
+  if (r.status !== 0) throw new Error(`rsync to ${HOST} (${r.status}): ${r.stderr.toString().trim()}`);
 }
 
-const frameCount = (log: string) => existsSync(log) ? readFileSync(log, "utf8").split("\n").filter((l) => l.includes("ETS->BRIDGE TUNNELLING_REQ")).length : 0;
+// The code and the corpus on the bench host, brought up to date once per run of the driver.
+let benchSynced = false;
+function syncBench(): void {
+  if (benchSynced) return;
+  const h = host(), code = `${h.state}/code`, corpus = `${h.state}/corpus`;
+  const root = process.env[CORPUS_ENV] ?? fail(`${CORPUS_ENV} is not set: the simulator on the bench host reads the corpus copied from it`);
+  const repo = join(import.meta.dir, "..");
+  remote(`mkdir -p ${q(code)} ${q(corpus)}`);
+  const list = join(tmpdir(), `ets-driver-files-${process.pid}.txt`);
+  try {
+    writeFileSync(list, `${repoFiles(repo).join("\n")}\n`);
+    rsync(["--files-from", list, `${repo}/`, `${HOST}:${code}/`]);
+    writeFileSync(list, `${[...CORPUS_FILES, ...CORPUS_DIRS].join("\n")}\n`);
+    rsync(["--files-from", list, `${root}/`, `${HOST}:${corpus}/`]);
+  } finally { rmSync(list, { force: true }); }
+  remote(`cd ${q(code)} && bun install --frozen-lockfile`, { timeoutMs: 300_000 });
+  benchSynced = true;
+}
+
+// sim-unit-serve.ts's arguments with every file they name (--product, --learned-from) as the bench host's copy in
+// `dir`, and the copies to make.
+export function benchSimArgs(unit: string[], dir: string): { args: string[]; uploads: [string, string][] } {
+  const uploads: [string, string][] = [];
+  const args = unit.map((a, i) => {
+    if (i === 0 || !["--product", "--learned-from"].includes(unit[i - 1]!)) return a;
+    const to = `${dir}/in-${uploads.length}-${basename(a)}`;
+    uploads.push([a, to]);
+    return to;
+  });
+  return { args, uploads };
+}
+
+// The bench host's script that starts the simulator on `port` (its proxy; the server one below) with `args`, its log
+// and output in `dir`, and the packet capture of the proxy's port on loopback; both recorded with their start time in
+// `pids` (the state directory's), as `up` records ETS.
+export function simStartScript(o: { code: string; corpus: string; dir: string; state: string; pids: string; args: string[]; log: string; port: number; advertise: string; overrides: string[] }): string {
+  const serve = ["bun", "run", "tools/sim-unit-serve.ts", ...o.args, "--tool", "ETS", "--log", `${o.dir}/${o.log}`, "--port", String(o.port - 1), "--proxy-port", String(o.port), "--advertise", o.advertise, ...o.overrides.flatMap((v) => ["--override", v])];
+  return `${START}; cd ${q(o.code)}
+BUSFORGE_CORPUS=${q(o.corpus)} setsid nohup ${serve.map(q).join(" ")} > ${q(`${o.dir}/serve.txt`)} 2>&1 < /dev/null & echo "sim $! $(st $!)" > ${q(`${o.state}/${o.pids}`)}
+setsid nohup dumpcap -q -i lo -f ${q(`tcp port ${o.port}`)} -w ${q(`${o.dir}/${pcapOf(o.log)}`)} > ${q(`${o.dir}/dumpcap.txt`)} 2>&1 < /dev/null & echo "dumpcap $! $(st $!)" >> ${q(`${o.state}/${o.pids}`)}`;
+}
+
+// The simulator serving a unit on `port` of the bench host, its output kept in <log>.serve.txt, its capture beside
+// `log`. `unit`: tools/sim-unit-serve.ts's arguments that name it (an own unit, or an application with --product,
+// --donor and --learned-from).
+async function startSim(unit: string[], log: string, port: number, advertise: string, overrides: string[] = []): Promise<Sim> {
+  syncBench();
+  const h = host(), dir = `${h.state}/sim-${port}`, pids = `sim-${port}.pids`, name = basename(log);
+  if (owned(pids).length) fail(`a simulator this driver started still serves :${port} on the bench host`);
+  remote(`rm -rf ${q(dir)} && mkdir -p ${q(dir)}`);
+  const { args, uploads } = benchSimArgs(unit, dir);
+  for (const [from, to] of uploads) ssh(`cat > ${q(to)}`, readFileSync(from));
+  remote(simStartScript({ code: `${h.state}/code`, corpus: `${h.state}/corpus`, dir, state: h.state, pids, args, log: name, port, advertise, overrides }));
+  const read = (file: string) => remote(`cat ${q(`${dir}/${file}`)} 2>/dev/null || true`);
+  // SIGTERM makes it print its refusals; what does not end within 20 s is killed (stopOwned). Then the row gets the
+  // log, the simulator's lines and output, and the capture.
+  let stopped = false;
+  const stop = async () => {
+    if (stopped) return;
+    stopped = true;
+    await stopOwned(pids);
+    runningSims.delete(stop);
+    // The row's directory may be gone (moved aside) by the time a signal stops a simulator that ended long before.
+    if (!existsSync(dirname(log))) return;
+    const there = remote(`cd ${q(dir)} && ls -1`).split("\n");
+    for (const [file, to] of [[name, log], [`${name}.sim.txt`, `${log}.sim.txt`], ["serve.txt", `${log}.serve.txt`], [pcapOf(name), pcapOf(log)]] as const) {
+      if (there.includes(file)) writeFileSync(to, ssh(`cat ${q(`${dir}/${file}`)}`, ""));
+    }
+  };
+  runningSims.add(stop);
+  // A catalogue unit takes its time to build (5 to 6 s each), and one with what the identity loop learned is built
+  // once per ETS6.log and once more to serve.
+  for (const until = Date.now() + 90_000; ;) {
+    const text = read("serve.txt");
+    if (text.includes(`connects to :${port}`)) break;
+    if (!owned(pids).some((p) => p.name === "sim")) { await stop(); fail(`the simulator ended on the bench host: ${text}`); }
+    if (Date.now() > until) { await stop(); fail(`the simulator did not start within 90 s on the bench host: ${text}`); }
+    await sleep(1000);
+  }
+  return {
+    stop,
+    frames: () => Number(remote(`grep -c 'ETS->BRIDGE TUNNELLING_REQ' ${q(`${dir}/${name}`)} || true`).trim() || 0),
+    closedByClient: () => read(`${name}.sim.txt`).includes("closed by the client"),
+  };
+}
 
 // ---- the row ----
 
@@ -1702,7 +1777,7 @@ async function runRow(o: RowOptions): Promise<RowRun> {
     }
     const until = Date.now() + 300_000;
     for (;;) {
-      if (o.stopSimAfter !== undefined && sim && frameCount(log) >= o.stopSimAfter) { await sim.stop(); sim = null; console.log(`stopped the simulator after ${o.stopSimAfter} frames of ETS`); }
+      if (o.stopSimAfter !== undefined && sim && sim.frames() >= o.stopSimAfter) { await sim.stop(); sim = null; console.log(`stopped the simulator after ${o.stopSimAfter} frames of ETS`); }
       // The task's end, or the exception that ended it (tools/ets-sweep.ts etsOutcome).
       if (etsLogHas(started, `End LoadApplicationProgram ${ia} `) || etsLogHas(started, "Knx.Ets.Hawk.LoadDeviceTask - ", ETS_TASK_FAILED)) break;
       await downloadDialogs(s, dir, "the download's end");
@@ -1710,7 +1785,7 @@ async function runRow(o: RowOptions): Promise<RowRun> {
       await sleep(2000);
     }
     // ETS closes the tunnel after the task; the capture is whole then.
-    for (let i = 0; i < 20 && sim && !readFileSync(`${log}.sim.txt`, "utf8").includes("closed by the client"); i++) await sleep(500);
+    for (let i = 0; i < 20 && sim && !sim.closedByClient(); i++) await sleep(500);
     etsLogSince(since, join(dir, ROW_FILES.ets6log));
     outcome = etsOutcome(readFileSync(join(dir, ROW_FILES.ets6log), "latin1"), ia, o.simulator);
     if (outcome.kind !== "completed") { shot(join(dir, "failure.png")); await closeDialogs(s); }
@@ -1938,7 +2013,7 @@ function parseOptions(args: string[], valued: string[], repeatable: string[], fl
   return { one: (n) => values.get(n)?.[0], all: (n) => values.get(n) ?? [], flag: (n) => set.has(n) };
 }
 const endpoint = (n: string, v: string | undefined) => { if (v !== undefined && !/^\d+\.\d+\.\d+\.\d+:\d+$/.test(v)) throw new Error(`--${n} ${v} is not <ipv4>:<port>`); return v; };
-const DEFAULT_SIMULATOR = "192.168.1.105:3701", DEFAULT_PROJECT = "Busforge Sweep";
+const DEFAULT_SIMULATOR = "127.0.0.1:3701", DEFAULT_PROJECT = "Busforge Sweep";
 
 function rowOptions(args: string[]): RowOptions {
   const [unit, variant] = args;

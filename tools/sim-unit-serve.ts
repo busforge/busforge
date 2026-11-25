@@ -15,7 +15,7 @@
 //
 // The tool connects to --proxy-port over KNXnet/IP TCP (ETS: a KNXnet/IP interface at this host); --advertise
 // puts that endpoint into the search answers, as knxproxy's PROXY_ADVERTISE does. The simulator's own lines,
-// every refusal among them, go to <log>.sim.txt. Ctrl-C stops it and prints the refusals.
+// every refusal among them, go to <log>.sim.txt. Ctrl-C (or SIGTERM) stops it and prints the refusals.
 import { appendFileSync, readFileSync } from "node:fs";
 import { KnxIpServer, numToIa } from "../packages/knx/src/index.ts";
 import { startProxy, parseEndpoint, toolLabel } from "./knxproxy.ts";
@@ -85,4 +85,6 @@ async function stop(): Promise<void> {
   console.log(sim.refusals.length ? `${sim.refusals.length} refusals:\n  ${sim.refusals.join("\n  ")}` : "no refusals");
   process.exit(sim.refusals.length ? 1 : 0);
 }
+// SIGTERM too: the ETS driver stops the simulator it started on the bench host by its PID (tools/ets-driver.ts).
 process.on("SIGINT", () => { void stop(); });
+process.on("SIGTERM", () => { void stop(); });
