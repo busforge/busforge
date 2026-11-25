@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { attributes, catalogueList, GENERATED_END, GENERATED_START, markdown, readFetched, SWEEP_MASKS, withGenerated, type BussardManifest } from "./ets-catalogue.ts";
+import { cpSync, rmSync, writeFileSync } from "node:fs";
+import { attributes, catalogueList, GENERATED_END, GENERATED_START, markdown, readFetched, SWEEP_MASKS, withGenerated, type BussardManifest, type Fetched } from "./ets-catalogue.ts";
+import { tempDir } from "./test-temp.ts";
 
 // The fixture is a fetched directory as `fetch` writes it, invented: two manufacturers (M-FFF1, M-FFF2) and an
 // empty one, a market Germany and a market Austria, application headers as ETS's product store holds them.
@@ -91,12 +93,52 @@ describe("the catalogue list", () => {
   });
 
   test("the application ETS's store holds, through its catalogue item, under another hash than the index names", () => {
-    expect(row("M-FFF2_A-0013-10-9AB0")).toMatchObject({ application: "M-FFF2_A-0013-10-9AB0", catalogueApplication: "M-FFF2_A-0013-10-4567", mask: "07B0" });
+    // The store's hardware-to-program lists the PEI program first: the application is the program at the index's
+    // number, version and OEM, whatever its place.
+    expect(row("M-FFF2_A-0013-10-9AB0")).toMatchObject({ application: "M-FFF2_A-0013-10-9AB0", catalogueApplications: ["M-FFF2_A-0013-10-4567"], mask: "07B0" });
     // Where the store has no catalogue item for it, the application stands by the index's id.
-    expect(row("M-FFF1_A-0001-11-A001")?.catalogueApplication).toBeUndefined();
+    expect(row("M-FFF1_A-0001-11-A001")?.catalogueApplications).toBeUndefined();
+  });
+
+  test("the store's data refused where it names no such program or is ambiguous", () => {
+    const refusal = (change: (f: Fetched) => void) => {
+      const f = fetched();
+      change(f);
+      return catalogueList(f, "Germany", SWEEP_MASKS).refused.find((r) => r.entry === "M-FFF2_A-0013-10-4567")?.why;
+    };
+    const h2p = "M-FFF2_H-hw4-1_HP-0013-10-9AB0-0013-20-5678", item = "M-FFF2_H-hw4-1_HP-0013-10-0013-20_CI-TWO.2D4-1";
+    expect(refusal((f) => f.programs.set(h2p, [["M-FFF2_A-0014-10-9AB0"]]))).toBe(`hardware-to-program ${h2p} in ETS's product store names no program at M-FFF2_A-0013-10`);
+    // Another OEM suffix is another application.
+    expect(refusal((f) => f.programs.set(h2p, [["M-FFF2_A-0013-10-9AB0-O0002"]]))).toBe(`hardware-to-program ${h2p} in ETS's product store names no program at M-FFF2_A-0013-10`);
+    expect(refusal((f) => f.programs.set(h2p, [["M-FFF2_A-0013-10-9AB0"], ["M-FFF2_A-0013-10-9AB1"]]))).toBe(`ETS's product store holds hardware-to-program ${h2p} twice, with different programs`);
+    expect(refusal((f) => f.items.set(item, [h2p, "M-FFF2_H-hw4-1_HP-0013-10-9AB1"]))).toContain("with several hardware-to-programs");
+    expect(refusal((f) => f.programs.delete(h2p))).toBe(`ETS's product store holds no hardware-to-program ${h2p}`);
+  });
+
+  test("an application the index names under two hashes and the store holds once is one row", () => {
     const f = fetched();
-    f.programs.set("M-FFF2_H-hw4-1_HP-0013-10-9AB0-0013-20-5678", ["M-FFF2_A-0014-10-9AB0"]);
-    expect(catalogueList(f, "Germany", SWEEP_MASKS).refused).toContainEqual({ kind: "application", entry: "M-FFF2_A-0013-10-4567", why: "ETS's product store names M-FFF2_A-0014-10-9AB0 for it" });
+    const index = f.indexes.find((x) => x.ManufacturerId === 0xfff2)!;
+    const again = structuredClone(index.Entries.find((e) => e.OrderNumber === "TWO-4")!);
+    again.Id = "M-FFF2_H-hw4-2_HP-0013-10-9AB0_CI-TWO.2D4B-1";
+    again.FingerPrint = 0x9ab0;
+    again.OrderNumber = "TWO-4B";
+    index.Entries.push(again);
+    index.Markets!.find((m) => m.DefaultName === "Germany")!.CatalogIds.push(again.Id);
+    const rows = catalogueList(f, "Germany", SWEEP_MASKS).rows.filter((r) => r.application === "M-FFF2_A-0013-10-9AB0");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ catalogueApplications: ["M-FFF2_A-0013-10-4567"], orderNumbers: ["TWO-4", "TWO-4B"], catalogueEntries: 2 });
+  });
+
+  test("a mask with an extension is a mask, no row of the sweep's", () => {
+    const f = fetched();
+    f.applications.get("M-FFF1_A-0007-10-0007")!.MaskVersion = "MV-0300-01000001000000000000";
+    expect(catalogueList(f, "Germany", SWEEP_MASKS).counts.byMask).toMatchObject({ "0300-01000001000000000000": 1 });
+  });
+
+  test("an order number of nothing but spaces is none to search for", () => {
+    const f = fetched();
+    f.indexes.find((x) => x.ManufacturerId === 0xfff1)!.Entries.find((e) => e.OrderNumber === "ORDER-4")!.OrderNumber = "  ";
+    expect(catalogueList(f, "Germany", SWEEP_MASKS).rows.find((r) => r.application === "M-FFF1_A-0004-10-D004")).toMatchObject({ orderNumber: "ORDER-3", noOwnOrderNumber: true });
   });
 
   test("a hardware's second program beside the application: named with its type, no row of its own", () => {
@@ -185,4 +227,15 @@ describe("the Markdown", () => {
 test("an XML start tag's attributes, entities decoded", () => {
   expect(attributes('<AP Id="M-FFF1_A-0001-11-A001" Name="A &amp; B &lt;1&gt; &#x41;&#66;" MaskVersion="MV-07B0">'))
     .toEqual({ Id: "M-FFF1_A-0001-11-A001", Name: "A & B <1> AB", MaskVersion: "MV-07B0" });
+});
+
+test("the store's listings read strictly: a program reference outside a hardware-to-program, a missing file", () => {
+  const dir = join(tempDir("ets-catalogue-fetched"), "fetched");
+  cpSync(FIXTURE, dir, { recursive: true });
+  writeFileSync(join(dir, "programs.txt"), 'M-FFF2/H:<APR RefId="M-FFF2_A-0013-10-9AB0" />\n');
+  expect(() => readFetched(dir)).toThrow("a program reference outside a hardware-to-program");
+  writeFileSync(join(dir, "programs.txt"), 'M-FFF2/H:<H2P Id="X">\n');
+  expect(() => readFetched(dir)).toThrow("ends inside hardware-to-program X");
+  rmSync(join(dir, "catalogue-items.txt"));
+  expect(() => readFetched(dir)).toThrow("holds no catalogue-items.txt: fetch it again");
 });

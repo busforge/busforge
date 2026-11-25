@@ -1,8 +1,5 @@
 import { expect, test } from "bun:test";
-import { execFileSync } from "node:child_process";
-import { join } from "node:path";
-import { nextBatchSize, selectionPattern } from "./ets-driver.ts";
-import { tempDir } from "./test-temp.ts";
+import { nextBatchSize, selectedSamples } from "./ets-driver.ts";
 
 test("a catalogue batch halves after a refusal and grows from the last size that loaded", () => {
   const walk = (outcomes: ("loaded" | "refused" | "skipped")[], max = 150) => {
@@ -17,19 +14,13 @@ test("a catalogue batch halves after a refusal and grows from the last size that
   expect(walk(["refused", "skipped", "loaded", "loaded", "loaded", "loaded"])).toEqual([75, 75, 94, 118, 148, 150]);
 });
 
-test("the grid's selection read from its rows' background: ETS's blue selected, white, stripe grey and hover grey not", () => {
-  const dir = tempDir("ets-driver-selection");
-  const png = (name: string, rects: [string, number, number][]) => {
-    const file = join(dir, name);
-    // ETS 6.4.1's colours: selection #DBEAFF, stripe #FBFBFB, row under the mouse #EAEAEA.
-    execFileSync("magick", ["-size", "1920x1200", "xc:white", ...rects.flatMap(([c, y0, y1]) => ["-fill", c, "-draw", `rectangle 316,${y0} 1555,${y1}`]), file]);
-    return file;
-  };
-  const region = { x: 900, y: 698, w: 600, h: 100 };
-  const three = png("three.png", [["#FBFBFB", 698, 717], ["#DBEAFF", 718, 777]]);
-  expect(selectionPattern(three, region)).toBe("00001111111111110000");
-  // The same rows with the mouse over the first: that part reads unselected, so the mouse is moved aside first.
-  expect(selectionPattern(png("hover.png", [["#EAEAEA", 718, 737], ["#DBEAFF", 738, 777]]), region)).toBe("00000000111111110000");
-  // The selection one row down is another pattern.
-  expect(selectionPattern(png("down.png", [["#DBEAFF", 738, 797]]), region)).not.toBe(selectionPattern(three, region));
+test("the grid's selection read from magick's samples of its rows' background", () => {
+  // magick's txt: output of ETS 6.4.1's colours: white, stripe grey #FBFBFB, row under the mouse #EAEAEA, selected #DBEAFF.
+  const txt = (pixels: string[]) => ["# ImageMagick pixel enumeration: 1,4,0,255,srgb", ...pixels.map((p, y) => `0,${y}: ${p}`), ""].join("\n");
+  const white = "(255,255,255)  #FFFFFF  white", stripe = "(251,251,251)  #FBFBFB  srgb(251,251,251)";
+  const hover = "(234,234,234)  #EAEAEA  srgb(234,234,234)", selected = "(219,234,255)  #DBEAFF  srgb(219,234,255)";
+  expect(selectedSamples(txt([white, selected, selected, stripe]))).toBe("0110");
+  // The row under the mouse reads unselected, so the mouse is moved aside before the grid is read.
+  expect(selectedSamples(txt([white, hover, selected, stripe]))).toBe("0010");
+  expect(() => selectedSamples(txt(["(255)  #FFFFFF  gray(255)"]))).toThrow("no pixel in magick's line");
 });

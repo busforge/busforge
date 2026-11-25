@@ -1003,35 +1003,45 @@ bun run tools/ets-catalogue.ts list <fetched dir> --json <file> --md <file> [--m
 - **The mask** is in the product data, which ETS holds only for products it loaded.
   `catalogue-download` loads them all through the catalogue panel's "Herunterladen", which loads the
   selected rows' product data without inserting a device. It walks the whole catalogue grid in
-  batches from its first row (a project open, the catalogue's search empty). The catalogue server
-  refuses a selection by the product data it holds, not by its rows ("Online-Katalog-Download
-  fehlgeschlagen", `(400) Bad Request` in ETS6.log): such a batch is tried again at half its size
-  from where it stood (a refusal keeps the selection and the keyboard focus; where the grid shows
-  another selection after it, the walk starts again at the grid's first row), a
-  batch that loaded is followed by one a quarter larger (up to `--batch`), and a row refused alone is
-  written down with its full-resolution screenshot and passed. `<out>/progress.json` holds the next
-  row and the batch size; `--from` that row resumes at that size. Rows already loaded leave "Herunterladen" disabled and pass
-  at once, so a run started again resumes.
+  batches from its first row (a project open, the catalogue's search empty).
+  - The catalogue server refuses a selection by the product data it holds, not by its rows
+    ("Online-Katalog-Download fehlgeschlagen", `(400) Bad Request` in ETS6.log). Such a batch is tried
+    again at half its size from where it stood: a refusal keeps the selection and the keyboard focus
+    on the batch's last row, so the driver steps back to its first row and checks that the selection
+    followed. Where the grid shows another selection after the refusal, the keys did not move it, or
+    the batch ran into the grid's end, the walk starts again at the grid's first row.
+  - A batch that loaded is followed by one a quarter larger (up to `--batch`); a row refused alone is
+    written down with its full-resolution screenshot and passed.
+  - The walk ends where Down moves nothing, counted from the grid's first row: a Down that moves
+    nothing after a batch is tried once more from there, as the keyboard focus may have left the grid.
+  - `<out>/progress.json` holds the next row, the batch size and every refused row after each step;
+    `--from` that row resumes at that size. Rows already loaded leave "Herunterladen" disabled and
+    pass at once, so a run started again resumes.
 - **`fetch`** copies the index files, the market file, the `<AP …>` element of every application ETS
   loaded, the product store's catalogue items and hardware-to-programs, and where they came from (ETS's
-  version and licence from ETS6.log, the index's date).
-- **`list`** builds one row per application the market offers at the given masks. The application is
-  the one the store's catalogue item for the entry names: ETS's store can hold an application under
-  another hash in its id than the index names, and the row carries the store's id (the one a project
-  ETS exports names) with the index's beside it. Its mask comes from the product data (an application
-  not loaded has no row and is listed as such, never guessed from its name), its version as ETS shows
-  it, every order number it is offered under, and one to search for,
-  where it is the only catalogue row at its version (an order number is searched across the whole
-  catalogue, compared as the driver compares it). Two applications under one order number and version
-  are both rows, each naming the other; a row without an order number of its own is flagged, as the
-  driver refuses an order number that lists more than one catalogue row at the unit's version, whether
-  of two applications or of one application twice. A hardware's second program beside the application (a PEI program, or a second
-  application) is named on the row with its type from the product data. An entry whose id,
-  application identifier, fingerprint or manufacturer disagree, and an application whose product data
-  does not fit it, is refused with the reason. With
-  bussard's manifest it lists the applications in either list and not the other, each with the reason
-  the lists show. The Markdown's generated part is rewritten between its markers; text around it
-  stays.
+  version and licence from ETS6.log, the index's date). `list` refuses a directory fetched without
+  the store's listings: fetch it again.
+- **`list`** builds one row per application the market offers at the given masks.
+  - The application is the program at the index's number, version and OEM in the hardware-to-program
+    of the store's catalogue item for the entry; the other programs there are its second programs (a
+    PEI program, or a second application), named on the row with their type from the product data.
+    ETS's store can hold an application under another hash in its id than the index names: the row
+    carries the store's id (the one a project ETS exports names) with the index's ids beside it, and
+    one the index names under two hashes that the store holds once is one row. A catalogue item or
+    hardware-to-program the store holds twice, or one that names no such program, is refused.
+  - Its mask comes from the product data (an application not loaded has no row and is listed as
+    such, never guessed from its name); its version as ETS shows it; every order number it is offered
+    under, and one to search for, where it is the only catalogue row at its version (an order number
+    is searched across the whole catalogue, compared as the driver compares it).
+  - Two applications under one order number and version are both rows, each naming the other; a row
+    without an order number of its own is flagged, as the driver refuses an order number that lists
+    more than one catalogue row at the unit's version, whether of two applications or of one
+    application twice.
+  - An entry whose id, application identifier, fingerprint or manufacturer disagree, and an
+    application whose product data does not fit it, is refused with the reason.
+  - With bussard's manifest (ids as the index names them) it lists the applications in either list
+    and not the other, each with the reason the lists show. The Markdown's generated part is
+    rewritten between its markers; text around it stays.
 
 ## Why the golden snapshot is not a correctness proof
 

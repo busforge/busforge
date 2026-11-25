@@ -983,22 +983,28 @@ const CATALOGUE = {
 // red 0.14 measured), an unselected one white or grey (0).
 export function selectionPattern(png: string, r: Region = CATALOGUE.rowBackground): string {
   const samples = Math.floor(r.h / 5);
-  const txt = execFileSync("magick", [png, ...crop(r), "-scale", `1x${samples}!`, "-depth", "8", "txt:-"], { encoding: "utf8" });
+  return selectedSamples(execFileSync("magick", [png, ...crop(r), "-scale", `1x${samples}!`, "-colorspace", "sRGB", "-type", "TrueColor", "-depth", "8", "txt:-"], { encoding: "utf8" }));
+}
+
+// The samples of magick's txt: output, one per pixel line: "1" where blue stands 18 of 255 over red.
+export function selectedSamples(txt: string): string {
   return txt.split("\n").slice(1).filter(Boolean).map((l) => {
     const [red, , blue] = (l.match(/\((\d+),(\d+),(\d+)/) ?? fail(`no pixel in magick's line ${l}`)).slice(1).map(Number);
     return blue - red > 18 ? "1" : "0";
   }).join("");
 }
 
+const mouseAside = () => xdo("mousemove", String(CATALOGUE.mouseAside[0]), String(CATALOGUE.mouseAside[1]));
+
 interface CatalogueFailure { row: number; dialog: string; screenshot: string }
 
 // The size of the next batch after one of `size` rows `loaded`, was `refused` or held only loaded rows
-// (`skipped`): half after a refusal; after a load a quarter more, at least one row more, up to `max`. A refusal
-// costs a walk down the grid from its first row, minutes deep in the catalogue, so the size grows from the last
-// one that loaded instead of starting over at `max`.
+// (`skipped`): half after a refusal; after a load a quarter more (at least one row more), up to `max`. Each refusal
+// costs a download refused and its dialog, so the size grows from the last one that loaded instead of starting over
+// at `max`.
 export function nextBatchSize(size: number, outcome: "loaded" | "refused" | "skipped", max: number): number {
   if (outcome === "refused") return Math.max(1, Math.ceil(size / 2));
-  if (outcome === "loaded") return Math.min(max, Math.max(size + 1, Math.ceil(size * 1.25)));
+  if (outcome === "loaded") return Math.min(max, Math.ceil(size * 1.25));
   return size;
 }
 
@@ -1021,12 +1027,13 @@ async function settledGrid(s: Screen, timeoutMs = 60_000): Promise<{ png: string
   }
 }
 
-// The selection set to `size` rows from row `from` (counted from 0 down the grid); false where the grid holds no
-// row `from`: Down from its last row leaves its pixels as they were. Where the keyboard focus is: "top", nowhere
-// known (the walk starts at the grid's first row); "before", on the row before `from` (it stays in the grid while
-// the toolbar is clicked, and through a refusal); "on", on row `from`.
+// The selection set to `size` rows from row `from` (counted from 0 down the grid). `moved` false: Down left the
+// grid's pixels as they were, as at its last row, or with the keyboard focus outside it; `atEnd`: the selection
+// reached the grid's last row before `size` rows. Where the keyboard focus is: "top", nowhere known (the walk starts
+// at the grid's first row); "before", on the row before `from` (it stays in the grid while the toolbar is clicked,
+// and through a refusal); "on", on row `from`.
 type Focus = "top" | "before" | "on";
-async function selectRows(s: Screen, from: number, size: number, focus: Focus): Promise<boolean> {
+async function selectRows(s: Screen, from: number, size: number, focus: Focus): Promise<{ moved: boolean; atEnd: boolean }> {
   const fresh = focus === "top";
   if (fresh) {
     // Scrolled to the top, the first catalogue row stands under the first manufacturer's header.
@@ -1040,10 +1047,14 @@ async function selectRows(s: Screen, from: number, size: number, focus: Focus): 
     // 4,500 rows took ETS over two minutes; a minute and 50 ms per row leaves room.
     const before = (await settledGrid(s, fresh ? 60_000 + from * 50 : 60_000)).hash;
     key("Down");
-    if ((await settledGrid(s)).hash === before) return false;
+    if ((await settledGrid(s)).hash === before) return { moved: false, atEnd: false };
   }
-  if (size > 1) xdo("key", "--delay", "30", "--repeat", String(size - 1), "shift+Down");
-  return true;
+  if (size === 1) return { moved: true, atEnd: false };
+  if (size > 2) xdo("key", "--delay", "30", "--repeat", String(size - 2), "shift+Down");
+  // The last row of the batch selected on its own: where it leaves the grid as it was, the grid ended before it.
+  const short = (await settledGrid(s)).hash;
+  key("shift+Down");
+  return { moved: true, atEnd: (await settledGrid(s)).hash === short };
 }
 
 // How one download ended: ETS6.log's end of the import, or its refusal (ETS's dialog, kept as a screenshot before
@@ -1106,30 +1117,41 @@ async function downloadCatalogue(batch: number, out: string, from: number): Prom
   let focus: Focus = "top";
   const save = (done: boolean) => writeFileSync(progress, `${JSON.stringify({ row, size, ...(done ? { done } : {}), failures }, null, 1)}\n`);
   try {
-    while (await selectRows(s, row, size, focus)) {
+    for (;;) {
+      let sel = await selectRows(s, row, size, focus);
+      // Down that moves nothing ends the walk only from the grid's first row: the keyboard focus may have left it.
+      if (!sel.moved && focus !== "top") { focus = "top"; sel = await selectRows(s, row, size, focus); }
+      if (!sel.moved) break;
       focus = "before";
-      xdo("mousemove", String(CATALOGUE.mouseAside[0]), String(CATALOGUE.mouseAside[1]));
+      mouseAside();
       const selected = await settledGrid(s);
-      if (!downloadEnabled(selected.png)) { row += size; size = nextBatchSize(size, "skipped", batch); continue; }
+      if (!downloadEnabled(selected.png)) { row += size; size = nextBatchSize(size, "skipped", batch); save(false); continue; }
       const pattern = selectionPattern(selected.png);
       const since = etsClock();
       click(CATALOGUE.download[0], CATALOGUE.download[1]);
       const r = await downloadOutcome(s, since);
-      // A refused download keeps the selection and the keyboard focus on its last row; where the grid shows
-      // another selection after it, the next batch is selected from the grid's first row.
+      // A refused download keeps the selection and the keyboard focus on its last row. Where the grid shows another
+      // selection after it, or the batch ran into the grid's end (its last row is not `size` rows down), the next
+      // batch is selected from the grid's first row.
       let kept = false;
       if (!r.ok) {
-        xdo("mousemove", String(CATALOGUE.mouseAside[0]), String(CATALOGUE.mouseAside[1]));
-        kept = selectionPattern((await settledGrid(s)).png) === pattern;
+        mouseAside();
+        kept = !sel.atEnd && pattern.includes("1") && selectionPattern((await settledGrid(s)).png) === pattern;
       }
       if (r.ok) step(`rows ${row}-${row + size - 1} loaded`);
       else if (size > 1) {
         renameSync(r.png, join(out, `refused-rows-${row}-${row + size - 1}.png`));
         const half = nextBatchSize(size, "refused", batch);
+        if (kept) {
+          // Up to the batch's first row: the selection shrinks to it, unless the keys went elsewhere.
+          xdo("key", "--delay", "30", "--repeat", String(size - 1), "Up");
+          mouseAside();
+          kept = selectionPattern((await settledGrid(s)).png) !== pattern;
+        }
         step(`rows ${row}-${row + size - 1} refused, again by ${half}${kept ? "" : " from the grid's first row"}`);
-        if (kept) { xdo("key", "--delay", "30", "--repeat", String(size - 1), "Up"); focus = "on"; }
-        else focus = "top";
+        focus = kept ? "on" : "top";
         size = half;
+        save(false);
         continue;
       } else {
         const screenshot = join(out, `failed-row-${row}.png`);
