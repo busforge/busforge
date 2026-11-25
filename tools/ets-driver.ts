@@ -121,7 +121,7 @@ export const sidecarOf = (png: string) => {
 };
 // The screenshot kept as `to`: `from` copied, or one taken of the display; its sidecar written after it.
 export function keepScreen(to: string, from?: string, why?: string): string {
-  if (from) copyFileSync(from, to); else shot(to);
+  if (from) { mkdirSync(dirname(to), { recursive: true }); copyFileSync(from, to); } else shot(to);
   writeSidecar(to, from, why);
   return to;
 }
@@ -135,7 +135,7 @@ function writeSidecar(to: string, from?: string, why?: string): void {
   } catch (e) { console.error(`no sidecar for ${to}: ${e instanceof Error ? e.message : String(e)}`); }
 }
 // A kept screenshot moved to `to`, its sidecar with it.
-function moveScreen(from: string, to: string): void {
+export function moveScreen(from: string, to: string): void {
   renameSync(from, to);
   if (existsSync(sidecarOf(from))) renameSync(sidecarOf(from), sidecarOf(to));
 }
@@ -785,6 +785,11 @@ const glyphAt = (png: string, y: number) => execFileSync("magick", [png, ...crop
 // where it shows none.
 const arrowAt = (png: string, y: number) => expanderOpen(glyphAt(png, y));
 
+// The catalogue grid's rows as OCR reads them. Rows stand 20 px apart or more (a group header 22): the words within
+// 9 px of a row's first are that row, so a header whose name OCR splits into two lines (7 px apart) is one row, and a
+// stray reading between two rows joins the one above.
+const catalogueRows = (png: string, grid: Region, prep?: Prep) => rows(words(png, grid, { prep }).filter(inside(grid)), 9);
+
 // The product rows of the catalogue grid `grid`. A manufacturer's group header is the row with an expander's arrow at
 // the grid's left (its name, however it begins and however far it reaches into the columns, says nothing OCR could
 // rely on: "B.E.G. …"); a product row has none and fills the name and application columns (an application's name can
@@ -792,7 +797,7 @@ const arrowAt = (png: string, y: number) => expanderOpen(glyphAt(png, y));
 // for "TP,IP", "T", a version glued to the application's name.) `loaded` is false for a row with the cloud of a
 // product whose data ETS has not loaded in front of it.
 export const catalogueProducts = reader("catalogueProducts", (png: string, grid: Region): { y: number; words: Word[]; text: string; loaded: boolean }[] => {
-  return rows(words(png, grid, { prep: "binary" }).filter(inside(grid))).flatMap((r): { y: number; words: Word[]; text: string; loaded: boolean }[] => {
+  return catalogueRows(png, grid, "binary").flatMap((r): { y: number; words: Word[]; text: string; loaded: boolean }[] => {
     const glyph = glyphAt(png, r.y);
     // A row with the cloud is a product row whatever OCR read of its text.
     if (notLoadedMark(glyph)) return [{ ...r, loaded: false }];
@@ -803,7 +808,7 @@ export const catalogueProducts = reader("catalogueProducts", (png: string, grid:
 // The manufacturers' group headers of the catalogue grid `grid` (the rows with an expander's arrow), and those of them
 // that stand closed.
 export const catalogueGroups = reader("catalogueGroups", (png: string, grid: Region): { headers: { y: number; text: string }[]; closed: { y: number; text: string }[] } => {
-  const states = rows(words(png, grid).filter(inside(grid))).map((r) => ({ r, open: arrowAt(png, r.y) })).filter((x) => x.open !== null);
+  const states = catalogueRows(png, grid).map((r) => ({ r, open: arrowAt(png, r.y) })).filter((x) => x.open !== null);
   return { headers: states.map((x) => x.r), closed: states.filter((x) => x.open === false).map((x) => x.r) };
 });
 
@@ -1035,8 +1040,8 @@ async function closeDialogs(s: Screen): Promise<void> {
   if (!etsTitle()) fail("ETS's window is gone");
 }
 
-// Between two steps of a row: ETS's window is there and shows no dialog. A dialog here is none the driver expects:
-// its text read and the screen kept as dialog.png in `dir` before the row fails.
+// Between two steps of a row: ETS's window is there and shows no dialog. A dialog here is none the driver expects: the
+// screen kept as dialog.png in `dir`, its text read, then the sidecar written with it, before the row fails.
 function settled(s: Screen, dir: string, before: string): void {
   if (!etsTitle()) fail(`ETS's window is gone (before "${before}")`);
   const png = s.snap(), box = dialogBox(png);
@@ -1051,9 +1056,8 @@ function settled(s: Screen, dir: string, before: string): void {
 
 // The text of the dialog ETS shows in its window (`box`, where already found), its words in OCR's order; null where
 // it shows none.
-export const dialogText = reader("dialogText", (png: string, box: Region | null = dialogBox(png)): string | null => {
-  return box ? words(png, box).map((w) => w.text).join(" ") : null;
-});
+export const dialogText = reader("dialogText", (png: string, box: Region | null = dialogBox(png)): string | null => box ? dialogWords(png, box) : null);
+const dialogWords = (png: string, box: Region) => words(png, box).map((w) => w.text).join(" ");
 
 // The button labelled `label` in the bottom bar of the dialog in `box`.
 export const dialogButton = reader("dialogButton", (png: string, box: Region, label: string): Box | null => findText(dialogButtons(png, box), label)[0] ?? null);
@@ -1489,7 +1493,7 @@ async function downloadOutcome(s: Screen, since: string): Promise<{ ok: true } |
 
 // The text of ETS's progress dialogs of a catalogue download: its import ("Importiere Daten"), the manufacturers' data
 // merged, the download itself.
-const CATALOGUE_PROGRESS = /Importiere|Zusammenf|Download aus/i;
+const CATALOGUE_PROGRESS = /Importiere|Zusammenf|\bDownload aus/i;
 // "fehlgeschlagen", which OCR reads "fehigeschlagen" in the refusal's title.
 const CATALOGUE_REFUSED = /feh[li1|]geschlagen/i;
 
@@ -1498,7 +1502,7 @@ const CATALOGUE_REFUSED = /feh[li1|]geschlagen/i;
 export const catalogueDownloadDialog = reader("catalogueDownloadDialog", (png: string): { kind: "refused" | "progress" | "other"; text: string; box: Region } | null => {
   const box = dialogBox(png);
   if (!box) return null;
-  const text = dialogText(png, box)!;
+  const text = dialogWords(png, box);
   return { kind: CATALOGUE_REFUSED.test(text) ? "refused" : isCatalogueProgress(text) ? "progress" : "other", text, box };
 });
 
@@ -1710,6 +1714,8 @@ async function runRow(o: RowOptions): Promise<RowRun> {
   if (ownSpec && (o.donor !== undefined || o.learnedFrom.length)) throw new Error("--donor and --learned-from are for an application without an own unit");
   const applicationId = ownSpec ? ownSpec.catalogue.replace(/\.xml\.gz$/, "") : o.unit;
   const dir = o.out ?? join(tmpdir(), "ets-sweep-rows", applicationId, o.variant);
+  // The row's first step: what a failure before the next one keeps holds none of an earlier row's readings.
+  step(`row ${applicationId} ${o.variant}`);
   if (existsSync(dir) && readdirSync(dir).length) throw new Error(`${dir} exists and is not empty: a row is written once`);
   mkdirSync(dir, { recursive: true });
   const [simHost, portText] = o.simulator.split(":");
