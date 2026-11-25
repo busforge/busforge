@@ -919,24 +919,27 @@ flowchart LR
   D --> R[row directory]
 ```
 
-ETS reaches the simulator over loopback (`127.0.0.1:3701`, the proxy; the server behind it on 3700), so no frame of a
-row crosses the network: over a Wi-Fi link between the two machines a loss of a few seconds failed rows for the
-harness ("Verbindungsqualität mit … ist zu schlecht für eine stabile Verbindung"). ETS needs a configured connection
-to that endpoint (KNXnet/IP, TCP). Before the first simulator of a run, the driver copies this repository's code
+ETS reaches the simulator over loopback (`127.0.0.1:3701`, the proxy; the server behind it on 3700; `--simulator`
+takes no other host), so no frame of a row crosses the network: a link that loses frames for a few seconds fails a
+row for the harness ("Verbindungsqualität mit … ist zu schlecht für eine stabile Verbindung"). ETS needs a configured
+connection to that endpoint (KNXnet/IP, TCP). Before the first simulator of a run, the driver copies this repository's code
 (the files git lists, tracked or not ignored, as the working tree holds them; then `bun install --frozen-lockfile`
 there) and the corpus files the simulator reads (every file of the corpus check, `catalogue/`, `collections/`) into
 its state directory on the bench host; it adds and updates there, and deletes nothing. A row's inputs (the product's
-export, the ETS6.logs the identity loop learned from) go beside the simulator's logs. The simulator and a
-`dumpcap` of the proxy's port on loopback are recorded by PID and start time like ETS; the driver stops them by
-SIGTERM (the simulator then prints its refusals), and the row gets the logs, the simulator's output and the
-packet capture. `down` also stops a simulator a row left running.
+export, the ETS6.logs the identity loop learned from) go beside the simulator's logs. A `dumpcap` of the proxy's port
+on loopback, then the simulator, are recorded by PID and start time like ETS; a capture that does not start fails the
+row. The driver stops the simulator first, by SIGTERM (it then prints its refusals), then the capture, and the row
+gets the logs, the simulator's output (`ets.log.serve.txt`), the packet capture and `dumpcap`'s own output
+(`ets.log.dumpcap.txt`); a file of these that is missing fails the row (but the proxy's log, where ETS never
+connected). A row or batch stopped by a signal stops its simulator; a simulator an earlier row left on the port is
+stopped before the next one starts, and `down` stops it too.
 
 ```bash
 bun run tools/ets-driver.ts up        # display, VNC and ETS, each process recorded by PID and start time
 BUSFORGE_CORPUS=... bun run tools/ets-driver.ts row <unit> <variant> --order <order number> \
   [--simulator 127.0.0.1:3701] [--project "Busforge Sweep"] [--password-env <VAR>] [--configured] [--out <dir>]
 BUSFORGE_CORPUS=... bun run tools/ets-driver.ts same <ets.log> <ets.log> <unit> [<from>]   # two runs, frame by frame
-bun run tools/ets-driver.ts down      # closes what `up` started, and nothing else
+bun run tools/ets-driver.ts down      # closes what `up` and the rows started, and nothing else
 bun run tools/ets-driver.ts import <project.knxproj> [--password-env <VAR>]   # prints the copy's name
 bun run tools/ets-driver.ts delete <project name>   # only a project `import` brought in
 ```

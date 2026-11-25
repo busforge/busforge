@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { benchSimArgs, editDistance, expanderOpen, LINE_11, nextBatchSize, oneRowSelected, pcapOf, pickCatalogueRow, selectedSamples, simStartScript, writtenRowKind } from "./ets-driver.ts";
+import { benchSimArgs, editDistance, expanderOpen, LINE_11, nextBatchSize, oneRowSelected, pcapOf, pickCatalogueRow, selectedSamples, simRowFiles, simStartScript, writtenRowKind } from "./ets-driver.ts";
 
 test("a catalogue batch halves after a refusal and grows from the last size that loaded", () => {
   const walk = (outcomes: ("loaded" | "refused" | "skipped")[], max = 150) => {
@@ -139,13 +139,20 @@ test("the simulator's files on the bench host: the product and each learned ETS6
   expect(benchSimArgs(["meanwell-knx40e"], "/h/sim-3701")).toEqual({ args: ["meanwell-knx40e"], uploads: [] });
 });
 
-test("the simulator starts on the bench host with its proxy on the row's port, and its capture on loopback, both recorded by PID", () => {
-  const script = simStartScript({ code: "/h/code", corpus: "/h/corpus", dir: "/h/sim-3701", state: "/h", pids: "sim-3701.pids", args: ["meanwell-knx40e"], log: "ets.log", port: 3701, advertise: "127.0.0.1", overrides: ["0/78=", "it's"] });
-  expect(script).toContain("BUSFORGE_CORPUS='/h/corpus' setsid nohup 'bun' 'run' 'tools/sim-unit-serve.ts' 'meanwell-knx40e' '--tool' 'ETS' '--log' '/h/sim-3701/ets.log' '--port' '3700' '--proxy-port' '3701' '--advertise' '127.0.0.1' '--override' '0/78=' '--override' 'it'\\''s'");
-  expect(script).toContain(`echo "sim $! $(st $!)" > '/h/sim-3701.pids'`);
-  expect(script).toContain("dumpcap -q -i lo -f 'tcp port 3701' -w '/h/sim-3701/ets.pcapng'");
-  expect(script).toContain(`echo "dumpcap $! $(st $!)" >> '/h/sim-3701.pids'`);
-  expect(pcapOf("/rows/x/defaults/ets.log")).toBe("/rows/x/defaults/ets.pcapng");
-  expect(pcapOf("/rows/x/defaults/wrong-interface.log")).toBe("/rows/x/defaults/wrong-interface.pcapng");
+test("the simulator starts on the bench host after its capture on loopback, each recorded by PID in its own file", () => {
+  const script = simStartScript({ code: "/h/code", corpus: "/h/corpus", dir: "/h/sim-3701", state: "/h", pids: "sim-3701.pids", capturePids: "sim-3701-capture.pids", args: ["meanwell-knx40e"], log: "ets.log", port: 3701, advertise: "127.0.0.1", overrides: ["0/78=", "it's"] });
+  const lines = script.split("\n");
+  expect(lines[0]).toEndWith("cd '/h/code' || exit 1");
+  // Both detached from ssh's stdin and output, or the ssh call would wait for them.
+  expect(lines[1]).toBe(`setsid nohup dumpcap -q -i lo -f 'tcp port 3701' -w '/h/sim-3701/ets.pcapng' > '/h/sim-3701/dumpcap.txt' 2>&1 < /dev/null & echo "dumpcap $! $(st $!)" > '/h/sim-3701-capture.pids'`);
+  expect(lines[2]).toBe(`BUSFORGE_CORPUS='/h/corpus' setsid nohup 'bun' 'run' 'tools/sim-unit-serve.ts' 'meanwell-knx40e' '--tool' 'ETS' '--log' '/h/sim-3701/ets.log' '--port' '3700' '--proxy-port' '3701' '--advertise' '127.0.0.1' '--override' '0/78=' '--override' 'it'\\''s' > '/h/sim-3701/serve.txt' 2>&1 < /dev/null & echo "sim $! $(st $!)" > '/h/sim-3701.pids'`);
+  expect(lines.length).toBe(3);
 });
 
+test("what a stopped simulator leaves goes into the row beside its log", () => {
+  expect(simRowFiles("ets.log", "/rows/x/defaults/ets.log")).toEqual([
+    ["ets.log", "/rows/x/defaults/ets.log"], ["ets.log.sim.txt", "/rows/x/defaults/ets.log.sim.txt"], ["serve.txt", "/rows/x/defaults/ets.log.serve.txt"],
+    ["ets.pcapng", "/rows/x/defaults/ets.pcapng"], ["dumpcap.txt", "/rows/x/defaults/ets.log.dumpcap.txt"],
+  ]);
+  expect(pcapOf("/rows/x/defaults/wrong-interface.log")).toBe("/rows/x/defaults/wrong-interface.pcapng");
+});

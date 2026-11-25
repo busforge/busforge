@@ -34,7 +34,8 @@
 // it, exports the project and writes the row (--out, by default under the system's temporary directory; a
 // row goes into the corpus once its explained.json is written): row.json, configuration.json (the device's
 // configuration in ETS's export), ets.log and ets.log.sim.txt (the simulator; ets.log.serve.txt its output),
-// ets.pcapng (every frame between ETS and the simulator's proxy), ets6.log.txt (ETS6.log from the row's start),
+// ets.pcapng (every frame between ETS and the simulator's proxy; ets.log.dumpcap.txt the capture's output),
+// ets6.log.txt (ETS6.log from the row's start),
 // export.knxproj.
 //
 // Every row is judged by ETS6.log (etsOutcome): a download that connected to anything but the simulator is
@@ -70,7 +71,7 @@ import { basename, dirname, join } from "node:path";
 import { iaToNum, numToIa } from "../packages/knx/src/index.ts";
 import { extractAppPrograms, loadKnxproj, readAppProgram } from "../packages/project/src/index.ts";
 import { parseAppConfig } from "../packages/product/src/index.ts";
-import { catalogueXml, CORPUS_ENV, CORPUS_FILES } from "./corpus.ts";
+import { catalogueXml, CORPUS_ENV, CORPUS_FILES, corpusRoot } from "./corpus.ts";
 import { deviceConfiguration, deviceRows, dialogue, dialogueDifferences } from "./etsdiff.ts";
 import { appendLog, BATCH_LOG, batchRows, CATALOGUE_LIST_FORMAT, classifyFailure, clearRowDir, heartbeatLine, loggedRows, moveAttempt, planBatch, RESULT_FORMAT, rowDirOf, rowLine, summary, UNKNOWN_DIALOG, VARIANT, writeResult, type Attempt, type FailureClass, type RowKind, type RowResult } from "./ets-batch.ts";
 import type { CatalogueList, Row as ListRow } from "./ets-catalogue.ts";
@@ -93,8 +94,9 @@ const step = (what: string) => { currentStep = what; console.error(`${new Date()
 // ---- the bench host ----
 
 // One ssh call: `command` as ssh's command line, `input` on its stdin; its stdout.
+const SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"];
 export function ssh(command: string, input: string | Buffer, opts: { timeoutMs?: number; allowFail?: boolean } = {}): Buffer {
-  const r = spawnSync("ssh", ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", HOST, command], { input, timeout: opts.timeoutMs ?? 120_000, maxBuffer: 64 << 20 });
+  const r = spawnSync("ssh", [...SSH_OPTS, HOST, command], { input, timeout: opts.timeoutMs ?? 120_000, maxBuffer: 64 << 20 });
   if (r.error) throw r.error;
   if (r.status !== 0 && !opts.allowFail) throw new Error(`on ${HOST} (${r.status}): ${r.stderr.toString().trim()}\n${command === "bash -s" ? input.toString() : command}`);
   return r.stdout;
@@ -290,7 +292,7 @@ function etsLogHas(since: string, needle: string, pattern?: RegExp): boolean {
   return lines.split("\n").some((l) => l.includes(needle) && (!pattern || pattern.test(l)));
 }
 
-// ---- processes on the bench host: only those `up` started, each by PID and start time ----
+// ---- processes on the bench host: only those this driver started (`up`, a row's simulator), each by PID and start time ----
 
 // A shell function: the start time of a process (field 22 of its stat, counted after its name).
 const START = `st() { [ -r /proc/$1/stat ] && sed 's/.*) //' /proc/$1/stat | awk '{print $20}'; }`;
@@ -353,7 +355,9 @@ done > ets.pids`);
 // Closes ETS (its window, then its processes) and stops the display, both only as far as `up` started them, and
 // every simulator a row left running (sim-<port>.pids).
 async function down(): Promise<void> {
-  for (const f of remote(`cd ${q(host().state)} && ls -1 sim-*.pids 2>/dev/null || true`).split("\n").filter(Boolean)) await stopOwned(f);
+  // A simulator before its capture, so the capture holds its last frames.
+  const sims = remote(`cd ${q(host().state)} && ls -1 sim-*.pids 2>/dev/null || true`).split("\n").filter(Boolean);
+  for (const f of sims.sort((a, b) => Number(a.endsWith("-capture.pids")) - Number(b.endsWith("-capture.pids")))) await stopOwned(f);
   if (owned("ets.pids").some((p) => p.name.startsWith("ETS6"))) {
     remote(`DISPLAY=${DISPLAY} xdotool search --name '^ETS6 - ' windowclose 2>/dev/null || true`, { allowFail: true });
     for (let i = 0; i < 30 && owned("ets.pids").some((p) => p.name.startsWith("ETS6")); i++) await sleep(1000);
@@ -1514,51 +1518,61 @@ async function downloadCatalogue(batch: number, out: string, from: number): Prom
 // ---- the simulator on the bench host ----
 
 // The simulator (tools/sim-unit-serve.ts, with its logging proxy) runs on the bench host beside ETS, which reaches it
-// over loopback: no frame of a row crosses the network, where a loss of a few seconds on the driver's machine's Wi-Fi
-// failed rows for the harness ("Verbindungsqualität ... zu schlecht"). This repository's code and the corpus files the
-// simulator reads go to the bench host first (added and updated, never deleted there), each row's inputs (the
-// product's export, the ETS6.logs the identity loop learned from) beside its logs; the logs, the simulator's output and
-// a packet capture of every frame between ETS and the proxy come back into the row when it stops.
+// over loopback, so no frame of a row crosses the network: a link that loses frames for seconds fails a row for the
+// harness ("Verbindungsqualität ... zu schlecht"). This repository's code and the corpus files the simulator reads go
+// to the bench host first (added and updated, never deleted there), each row's inputs (the product's export, the
+// ETS6.logs the identity loop learned from) beside its logs; the logs, the simulator's output and a packet capture of
+// every frame between ETS and the proxy come back into the row when it stops.
 
 interface Sim { stop(): Promise<void>; frames(): number; closedByClient(): boolean }
 
-// The simulators running, each by its stop: a batch stopped by a signal stops them, so none keeps the port.
+// The simulators running, each by its stop: a run stopped by a signal stops them, so none keeps the port.
 const runningSims = new Set<() => Promise<void>>();
 const stopAllSims = () => Promise.allSettled([...runningSims].map((stop) => stop()));
 
-// What of this repository the bench host gets: the files git tracks or would track (not what it ignores: build
-// output, `node_modules`, the server's data, local links and scratch space), as they are in the working tree.
-function repoFiles(repo: string): string[] {
-  const r = spawnSync("git", ["-C", repo, "ls-files", "-z", "--cached", "--others", "--exclude-standard"], { maxBuffer: 64 << 20 });
-  if (r.status !== 0) fail(`the code goes to the bench host as git lists it, and git lists nothing in ${repo}: ${r.stderr.toString().trim()}`);
-  return r.stdout.toString().split("\0").filter((f) => f && existsSync(join(repo, f)));
-}
 // The corpus the simulator reads: every file the corpus check requires, the product catalogue and the collections.
 const CORPUS_DIRS = ["catalogue", "collections"];
 
 // The packet capture beside a simulator's log: ets.log -> ets.pcapng.
 export const pcapOf = (log: string) => `${log.replace(/\.log$/, "")}.pcapng`;
 
+// What a stopped simulator leaves on the bench host (by name in its directory, for its log `name`) and where each goes
+// beside the row's `log`; every one of them is the row's.
+export function simRowFiles(name: string, log: string): [string, string][] {
+  return [[name, log], [`${name}.sim.txt`, `${log}.sim.txt`], ["serve.txt", `${log}.serve.txt`], [pcapOf(name), pcapOf(log)], ["dumpcap.txt", `${log}.dumpcap.txt`]];
+}
+
+// rsync to the bench host over ssh as `ssh` reaches it; it adds and updates, and never deletes there. Where it fails, the
+// host is asked once more over ssh: a host that does not answer fails with ssh's own message (a batch pauses on it).
 function rsync(args: string[]): void {
-  const r = spawnSync("rsync", ["-rlt", "-e", "ssh -o BatchMode=yes -o ConnectTimeout=10", ...args], { timeout: 600_000, maxBuffer: 16 << 20 });
+  const r = spawnSync("rsync", ["-rlt", "-e", ["ssh", ...SSH_OPTS].join(" "), ...args], { timeout: 600_000, maxBuffer: 16 << 20 });
+  if (!r.error && r.status === 0) return;
+  remote("true", { timeoutMs: 30_000 });
+  throw r.error ?? new Error(`rsync to ${HOST} (${r.status}): ${r.stderr.toString().trim()}`);
+}
+
+// What of this repository the bench host gets: the files git tracks or would track (not what it ignores: build
+// output, `node_modules`, the server's data, local links and scratch space), as they are in the working tree.
+function repoFiles(repo: string): string[] {
+  const r = spawnSync("git", ["-C", repo, "ls-files", "-z", "--cached", "--others", "--exclude-standard"], { maxBuffer: 64 << 20 });
   if (r.error) throw r.error;
-  if (r.status !== 0) throw new Error(`rsync to ${HOST} (${r.status}): ${r.stderr.toString().trim()}`);
+  if (r.status !== 0) fail(`the code goes to the bench host as git lists it, and git lists nothing in ${repo}: ${r.stderr.toString().trim()}`);
+  return r.stdout.toString().split("\0").filter((f) => f && existsSync(join(repo, f)));
 }
 
 // The code and the corpus on the bench host, brought up to date once per run of the driver.
 let benchSynced = false;
 function syncBench(): void {
   if (benchSynced) return;
-  const h = host(), code = `${h.state}/code`, corpus = `${h.state}/corpus`;
-  const root = process.env[CORPUS_ENV] ?? fail(`${CORPUS_ENV} is not set: the simulator on the bench host reads the corpus copied from it`);
-  const repo = join(import.meta.dir, "..");
+  const h = host(), code = `${h.state}/code`, corpus = `${h.state}/corpus`, repo = join(import.meta.dir, "..");
+  const root = corpusRoot() ?? fail(`${CORPUS_ENV} is not set: the simulator on the bench host reads the corpus copied from it`);
   remote(`mkdir -p ${q(code)} ${q(corpus)}`);
   const list = join(tmpdir(), `ets-driver-files-${process.pid}.txt`);
   try {
-    writeFileSync(list, `${repoFiles(repo).join("\n")}\n`);
-    rsync(["--files-from", list, `${repo}/`, `${HOST}:${code}/`]);
-    writeFileSync(list, `${[...CORPUS_FILES, ...CORPUS_DIRS].join("\n")}\n`);
-    rsync(["--files-from", list, `${root}/`, `${HOST}:${corpus}/`]);
+    writeFileSync(list, `${repoFiles(repo).join("\0")}\0`);
+    rsync(["--from0", "--files-from", list, `${repo}/`, `${HOST}:${code}/`]);
+    writeFileSync(list, `${[...CORPUS_FILES, ...CORPUS_DIRS].join("\0")}\0`);
+    rsync(["--from0", "--files-from", list, `${root}/`, `${HOST}:${corpus}/`]);
   } finally { rmSync(list, { force: true }); }
   remote(`cd ${q(code)} && bun install --frozen-lockfile`, { timeoutMs: 300_000 });
   benchSynced = true;
@@ -1578,55 +1592,70 @@ export function benchSimArgs(unit: string[], dir: string): { args: string[]; upl
 }
 
 // The bench host's script that starts the simulator on `port` (its proxy; the server one below) with `args`, its log
-// and output in `dir`, and the packet capture of the proxy's port on loopback; both recorded with their start time in
-// `pids` (the state directory's), as `up` records ETS.
-export function simStartScript(o: { code: string; corpus: string; dir: string; state: string; pids: string; args: string[]; log: string; port: number; advertise: string; overrides: string[] }): string {
+// and output in `dir`, and the packet capture of the proxy's port on loopback; each recorded with its start time in
+// its own file of the state directory (`pids` for the simulator, `capturePids` for the capture), as `up` records ETS.
+export function simStartScript(o: { code: string; corpus: string; dir: string; state: string; pids: string; capturePids: string; args: string[]; log: string; port: number; advertise: string; overrides: string[] }): string {
   const serve = ["bun", "run", "tools/sim-unit-serve.ts", ...o.args, "--tool", "ETS", "--log", `${o.dir}/${o.log}`, "--port", String(o.port - 1), "--proxy-port", String(o.port), "--advertise", o.advertise, ...o.overrides.flatMap((v) => ["--override", v])];
-  return `${START}; cd ${q(o.code)}
-BUSFORGE_CORPUS=${q(o.corpus)} setsid nohup ${serve.map(q).join(" ")} > ${q(`${o.dir}/serve.txt`)} 2>&1 < /dev/null & echo "sim $! $(st $!)" > ${q(`${o.state}/${o.pids}`)}
-setsid nohup dumpcap -q -i lo -f ${q(`tcp port ${o.port}`)} -w ${q(`${o.dir}/${pcapOf(o.log)}`)} > ${q(`${o.dir}/dumpcap.txt`)} 2>&1 < /dev/null & echo "dumpcap $! $(st $!)" >> ${q(`${o.state}/${o.pids}`)}`;
+  return `${START}; cd ${q(o.code)} || exit 1
+setsid nohup dumpcap -q -i lo -f ${q(`tcp port ${o.port}`)} -w ${q(`${o.dir}/${pcapOf(o.log)}`)} > ${q(`${o.dir}/dumpcap.txt`)} 2>&1 < /dev/null & echo "dumpcap $! $(st $!)" > ${q(`${o.state}/${o.capturePids}`)}
+BUSFORGE_CORPUS=${q(o.corpus)} setsid nohup ${serve.map(q).join(" ")} > ${q(`${o.dir}/serve.txt`)} 2>&1 < /dev/null & echo "sim $! $(st $!)" > ${q(`${o.state}/${o.pids}`)}`;
 }
 
 // The simulator serving a unit on `port` of the bench host, its output kept in <log>.serve.txt, its capture beside
 // `log`. `unit`: tools/sim-unit-serve.ts's arguments that name it (an own unit, or an application with --product,
-// --donor and --learned-from).
+// --donor and --learned-from). A simulator and capture an earlier row of this driver left on the port are stopped first.
 async function startSim(unit: string[], log: string, port: number, advertise: string, overrides: string[] = []): Promise<Sim> {
   syncBench();
-  const h = host(), dir = `${h.state}/sim-${port}`, pids = `sim-${port}.pids`, name = basename(log);
-  if (owned(pids).length) fail(`a simulator this driver started still serves :${port} on the bench host`);
+  const h = host(), dir = `${h.state}/sim-${port}`, pids = `sim-${port}.pids`, capturePids = `sim-${port}-capture.pids`, name = basename(log);
+  for (const f of [pids, capturePids]) {
+    if (!owned(f).length) continue;
+    console.error(`stopping what an earlier row of this driver left on :${port} (${f})`);
+    await stopOwned(f);
+  }
   remote(`rm -rf ${q(dir)} && mkdir -p ${q(dir)}`);
   const { args, uploads } = benchSimArgs(unit, dir);
   for (const [from, to] of uploads) ssh(`cat > ${q(to)}`, readFileSync(from));
-  remote(simStartScript({ code: `${h.state}/code`, corpus: `${h.state}/corpus`, dir, state: h.state, pids, args, log: name, port, advertise, overrides }));
-  const read = (file: string) => remote(`cat ${q(`${dir}/${file}`)} 2>/dev/null || true`);
-  // SIGTERM makes it print its refusals; what does not end within 20 s is killed (stopOwned). Then the row gets the
-  // log, the simulator's lines and output, and the capture.
-  let stopped = false;
-  const stop = async () => {
-    if (stopped) return;
-    stopped = true;
-    await stopOwned(pids);
-    runningSims.delete(stop);
-    // The row's directory may be gone (moved aside) by the time a signal stops a simulator that ended long before.
+  // Strict: a file that is not there fails the read (and the row) rather than reading as nothing.
+  const read = (file: string) => remote(`cat ${q(`${dir}/${file}`)}`);
+  // The capture is stopped after the simulator, so it holds the simulator's last frames. The row gets every file
+  // the simulator left (simRowFiles), unless the row's directory was moved aside meanwhile (a signal's stop); one
+  // that is missing fails the stop, but for the proxy's log where ETS never connected.
+  let stopping: Promise<void> | null = null;
+  const stop = () => stopping ??= (async () => {
+    try {
+      await stopOwned(pids);
+      await stopOwned(capturePids);
+    } finally { runningSims.delete(stop); }
     if (!existsSync(dirname(log))) return;
     const there = remote(`cd ${q(dir)} && ls -1`).split("\n");
-    for (const [file, to] of [[name, log], [`${name}.sim.txt`, `${log}.sim.txt`], ["serve.txt", `${log}.serve.txt`], [pcapOf(name), pcapOf(log)]] as const) {
+    const missing: string[] = [];
+    for (const [file, to] of simRowFiles(name, log)) {
       if (there.includes(file)) writeFileSync(to, ssh(`cat ${q(`${dir}/${file}`)}`, ""));
+      else if (file !== name) missing.push(file);
     }
-  };
+    if (missing.length) fail(`the simulator on the bench host left no ${missing.join(", ")}`);
+  })();
   runningSims.add(stop);
+  remote(simStartScript({ code: `${h.state}/code`, corpus: `${h.state}/corpus`, dir, state: h.state, pids, capturePids, args, log: name, port, advertise, overrides }));
   // A catalogue unit takes its time to build (5 to 6 s each), and one with what the identity loop learned is built
-  // once per ETS6.log and once more to serve.
-  for (const until = Date.now() + 90_000; ;) {
-    const text = read("serve.txt");
-    if (text.includes(`connects to :${port}`)) break;
-    if (!owned(pids).some((p) => p.name === "sim")) { await stop(); fail(`the simulator ended on the bench host: ${text}`); }
-    if (Date.now() > until) { await stop(); fail(`the simulator did not start within 90 s on the bench host: ${text}`); }
-    await sleep(1000);
+  // once per ETS6.log and once more to serve. Whatever ends the wait stops what was started.
+  try {
+    for (const until = Date.now() + 90_000; ;) {
+      if (!owned(capturePids).length) fail(`the packet capture did not start on the bench host: ${read("dumpcap.txt")}`);
+      const alive = owned(pids).length > 0, text = read("serve.txt");
+      if (text.includes(`connects to :${port}`)) break;
+      if (!alive) fail(`the simulator ended on the bench host: ${read("serve.txt")}`);
+      if (Date.now() > until) fail(`the simulator did not start within 90 s on the bench host: ${text}`);
+      await sleep(1000);
+    }
+  } catch (e) {
+    await stop().catch((x) => console.error(`stopping the simulator after its start failed: ${x instanceof Error ? x.message : String(x)}`));
+    throw e;
   }
   return {
     stop,
-    frames: () => Number(remote(`grep -c 'ETS->BRIDGE TUNNELLING_REQ' ${q(`${dir}/${name}`)} || true`).trim() || 0),
+    // grep's exit 1 is no match (0 frames); anything else (an unreadable log) fails.
+    frames: () => Number(remote(`f=${q(`${dir}/${name}`)}; if [ -e "$f" ]; then grep -c 'ETS->BRIDGE TUNNELLING_REQ' "$f" || [ $? -eq 1 ]; else echo 0; fi`).trim() || 0),
     closedByClient: () => read(`${name}.sim.txt`).includes("closed by the client"),
   };
 }
@@ -1703,7 +1732,7 @@ async function runRow(o: RowOptions): Promise<RowRun> {
   const log = join(dir, ROW_FILES.ets);
   let since: string | null = null;
   let sim: Sim | null = null, wrong: Sim | null = null, ours = false;
-  let outcome: RowRun["outcome"], failure: FailureClass | undefined, recovered = false;
+  let outcome: RowRun["outcome"] | undefined, failure: FailureClass | undefined, recovered = false;
   try {
     since = etsClock();
     if (remote(`lsusb | grep -c 147b || true`).trim() !== "0") console.log("note: the KNX-USB stick is plugged into the bench host; ETS6.log decides which interface ETS used");
@@ -1835,15 +1864,23 @@ async function runRow(o: RowOptions): Promise<RowRun> {
       }
     }
   } finally {
-    if (sim) await sim.stop();
-    if (wrong) await wrong.stop();
+    // A simulator that does not stop cleanly, or leaves a file of the row missing, fails a row that has no failure
+    // yet; one that has keeps it (a paused batch stays paused), the stop's failure written beside it.
+    const stops: string[] = [];
+    for (const x of [sim, wrong]) if (x) await x.stop().catch((e) => { stops.push(e instanceof Error ? e.message : String(e)); });
     s.clean();
     rmSync(product, { force: true });
+    if (stops.length) {
+      const why = `the simulator's stop failed: ${stops.join("; ")}`;
+      writeFileSync(join(dir, "driver-failed.txt"), `${why}\n`, { flag: "a" });
+      console.error(why);
+      if (outcome?.kind !== "driver-failed") { outcome = { kind: "driver-failed", why }; failure = classifyFailure(why); }
+    }
   }
   if (!existsSync(`${log}.sim.txt`)) writeFileSync(`${log}.sim.txt`, "");
   const refusals = simRefusals(readFileSync(`${log}.sim.txt`, "utf8"));
   if (refusals.length) console.log(`the simulator refused ${refusals.length}: ${refusals[0]}`);
-  return { dir, outcome, minutes: (Date.now() - t0) / 60_000, failure, recovered, unit, catalogueSpec, simRefusals: refusals, ...(ia ? { ia } : {}) };
+  return { dir, outcome: outcome ?? fail("the row ended without an outcome"), minutes: (Date.now() - t0) / 60_000, failure, recovered, unit, catalogueSpec, simRefusals: refusals, ...(ia ? { ia } : {}) };
 }
 
 // ---- the batch ----
@@ -2012,7 +2049,8 @@ function parseOptions(args: string[], valued: string[], repeatable: string[], fl
   }
   return { one: (n) => values.get(n)?.[0], all: (n) => values.get(n) ?? [], flag: (n) => set.has(n) };
 }
-const endpoint = (n: string, v: string | undefined) => { if (v !== undefined && !/^\d+\.\d+\.\d+\.\d+:\d+$/.test(v)) throw new Error(`--${n} ${v} is not <ipv4>:<port>`); return v; };
+// The simulator runs on the bench host beside ETS, which reaches it over loopback only (its capture is of loopback).
+const endpoint = (n: string, v: string | undefined) => { if (v !== undefined && !/^127\.0\.0\.1:\d+$/.test(v)) throw new Error(`--${n} ${v} is not 127.0.0.1:<port>: the simulator runs beside ETS on the bench host`); return v; };
 const DEFAULT_SIMULATOR = "127.0.0.1:3701", DEFAULT_PROJECT = "Busforge Sweep";
 
 function rowOptions(args: string[]): RowOptions {
@@ -2107,6 +2145,8 @@ async function main(): Promise<number> {
     return failures.length ? 1 : 0;
   }
   if (cmd === "row") {
+    // A row stopped by a signal stops the simulator it started on the bench host.
+    for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, () => { void stopAllSims().finally(() => process.exit(sig === "SIGINT" ? 130 : 143)); });
     const r = await runRow(rowOptions(rest));
     console.log(`${r.dir}: ${r.outcome.kind}${"why" in r.outcome ? `: ${r.outcome.why}` : ""} (${r.minutes.toFixed(1)} min)`);
     return r.outcome.kind === "completed" ? 0 : 1;
