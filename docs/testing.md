@@ -934,7 +934,8 @@ One row, step by step:
    which then holds no manufacturer's product data, and opens the project again. ETS's search lists every
    catalogue row whose text holds the order number (other manufacturers' and other versions' too), each
    manufacturer's group opened where its arrow shows it closed (a group that stays closed is refused);
-   each row is selected and its application read back from ETS's properties panel (device type, program
+   each row whose product data ETS has loaded is selected and its application read back from ETS's properties panel
+   (a row not loaded is named, see "The screen readers") (device type, program
    version, fingerprint, which together are the application id: the fingerprint of the id ETS's product
    store holds). The row whose application reads as the unit's is inserted, whatever else the search
    lists; several rows of that one application (it is offered in several catalogue items) are one
