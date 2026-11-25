@@ -426,9 +426,9 @@ async function searchProject(s: Screen, name: string): Promise<void> {
   fail(`ETS's project search for "${name}" lists ${count ?? "no readable number of"} projects, the first read as "${shown}"`);
 }
 
-// The box of the topology tree's row matching `pattern`.
-async function treeRow(s: Screen, pattern: RegExp): Promise<Box | null> {
-  const { ws } = s.look(AT.leftTree);
+// The box of the topology tree's row matching `pattern` (`prep`: how the tree is read, as Screen.look takes it).
+async function treeRow(s: Screen, pattern: RegExp, prep?: Prep): Promise<Box | null> {
+  const { ws } = s.look(AT.leftTree, prep);
   for (const r of rows(ws.filter(inside(AT.leftTree)))) {
     if (pattern.test(r.text)) {
       const x = r.words[0].x, last = r.words[r.words.length - 1];
@@ -447,12 +447,23 @@ async function showTopology(s: Screen): Promise<void> {
     click(entry.cx, entry.cy);
     await sleep(2000);
   }
-  if (!(await treeRow(s, LINE_11))) {
+  if (!(await findLine11(s))) {
     const main = (await treeRow(s, /Haupt/)) ?? fail("the project has no 1.0 IP Hauptlinie in its topology");
-    click(8, main.cy);
-    await sleep(1500);
+    // The click toggles the main line: it is clicked only where nothing stands below it (collapsed), so a line 1.1
+    // OCR misread is never folded away.
+    if (!rows(s.look(AT.leftTree).ws.filter(inside(AT.leftTree))).some((r) => r.y > main.cy + 8)) {
+      click(8, main.cy);
+      await sleep(1500);
+    }
   }
 }
+
+// Line 1.1's row of the topology tree, or null. OCR reads the row worse while it is selected ("111P Line" for
+// "1.1 TP Linie"): a second look reads the tree in grey.
+async function findLine11(s: Screen): Promise<Box | null> {
+  return (await treeRow(s, LINE_11)) ?? (await treeRow(s, LINE_11, "gray"));
+}
+const line11 = async (s: Screen): Promise<Box> => (await findLine11(s)) ?? fail("no line 1.1 in the topology");
 
 // Tree rows as OCR reads them: icons come out as stray characters before the text ("{1.1.20 KNX-…"), and the
 // project has one TP line, the only "Linie" row that is neither the backbone, the main line nor a search folder.
@@ -460,7 +471,8 @@ async function showTopology(s: Screen): Promise<void> {
 // address is looked for only in a row's first word with a dot (a device's name may hold "1.12").
 const iaRow = (ia: string) => new RegExp(`^[^.]*?(?<![\\d.])${ia.replace(/\./g, "\\.?")}(?![\\d.])`);
 const ANY_DEVICE = /(?<![\d.])1\.1\.\d+(?![\d.])/;
-const LINE_11 = /^(?!.*(Backbone|Haupt|Keiner|Programmieren)).*Linie\s*$/;
+// A selected line's "Linie" reads as "Line" now and then; a device's row (its address) whose name ends so is none.
+export const LINE_11 = /^(?!.*(Backbone|Haupt|Keiner|Programmieren|zugewiesen|\d\.\d+\.\d)).*L[il1]n(?:[il1]e|e)\s*$/;
 
 // The sidebar's properties section expanded (ETS opens "Laufende Operationen" instead after a download).
 async function showProperties(s: Screen): Promise<void> {
@@ -474,7 +486,7 @@ async function showProperties(s: Screen): Promise<void> {
 
 // Line 1.1 selected in the tree and its "Geräte" tab in front (whatever the tree shows collapsed).
 async function showLineDevices(s: Screen): Promise<void> {
-  const line = (await treeRow(s, LINE_11)) ?? fail("no line 1.1 in the topology");
+  const line = await line11(s);
   click(line.cx, line.cy);
   await sleep(1500);
   const tab = findText(s.look(AT.mainTabs).ws, "Ger")[0] ?? fail("no 'Geräte' tab with line 1.1 selected");
@@ -503,7 +515,7 @@ function gridRows(s: Screen, prep?: Prep): { y: number; text: string }[] {
 // (1.1.1 begins 1.1.10 to 1.1.19 and 1.1.100 to 1.1.199), and ETS's highlighting of the overlapping matches throws
 // (an ArgumentOutOfRangeException dialog).
 async function selectByAddress(s: Screen, ia: string): Promise<void> {
-  const line = (await treeRow(s, LINE_11)) ?? fail("no line 1.1 in the topology");
+  const line = await line11(s);
   if (!(await treeRow(s, ANY_DEVICE))) { click(15, line.cy); await sleep(2000); }
   const dev = await treeRow(s, iaRow(ia));
   if (dev) {
@@ -539,7 +551,7 @@ async function checkAddress(s: Screen, ia: string): Promise<void> {
 
 // The tree row right under line 1.1: its one device, in a project the driver filled from the catalogue.
 async function lineDeviceRow(s: Screen): Promise<Box> {
-  const line = (await treeRow(s, LINE_11)) ?? fail("no line 1.1 in the topology");
+  const line = await line11(s);
   const below = rows(s.look(AT.leftTree).ws.filter(inside(AT.leftTree))).find((r) => r.y > line.cy + 8) ?? fail("line 1.1 shows no device in the tree");
   return { x: below.words[0].x, y: below.y - 6, w: 200, h: 12, cx: below.words[0].x + 30, cy: Math.round(below.y), text: below.text };
 }
@@ -613,33 +625,52 @@ function catalogueIdentity(applicationId: string): { deviceType: string; version
 }
 
 // Of the catalogue rows read for an order number (in the grid's order), the one to insert for `applicationId`: at the
-// order number (compared as OCR reads it, orderNumberKey) and the application's version, its device type and
-// fingerprint the application's; the first of several such rows (one application in several catalogue items), and
-// how many there were. Rows whose order numbers differ only where OCR confuses letters (O and 0, I, L and 1) pass the
-// order number alike and are told apart by the application they run. `anotherBuild`: where no row has the
-// fingerprint, the one row at the order number, device type and version.
-export function pickCatalogueRow<E extends CatalogueEntry>(entries: E[], orderNumber: string, applicationId: string, anotherBuild: boolean): { hit: E; rows: number } | { refused: string } {
+// order number (compared as OCR reads it, orderNumberKey), the application's version and device type, and of those
+// the one whose fingerprint reads as the application's; the first of several such rows (one application in several
+// catalogue items), and how many there were. OCR reads a fingerprint unreliably ("DC390" for DC90, "1634" for 163A):
+// where none reads exactly, the rows at the version and type are taken whose fingerprint reads closest, where no other
+// reading is as close (rows that read alike count as one application). What was inserted is checked exactly afterwards (runRow, writeRow). Rows
+// whose order numbers differ only where OCR confuses letters (O and 0, I, L and 1) pass the order number alike and
+// are told apart by the application they run.
+export function pickCatalogueRow<E extends CatalogueEntry>(entries: E[], orderNumber: string, applicationId: string): { hit: E; rows: number; exact: boolean } | { refused: string } {
   const want = catalogueIdentity(applicationId);
-  const atVersion = entries.filter((e) => orderNumberKey(e.orderNumber) === orderNumberKey(orderNumber) && e.version === want.version);
   // A device type reads with its "$" as "S" or "3" and an O for a 0 ("SOOB6" for $00B6); a fingerprint the same.
   const hexKey = (v: string) => v.toUpperCase().replace(/^[$S3](?=[0-9A-FO]{4}$)/, "").replace(/O/g, "0");
-  const sameType = (e: CatalogueEntry) => hexKey(e.deviceType) === hexKey(want.deviceType);
-  const hits = atVersion.filter((e) => sameType(e) && hexKey(e.fingerprint) === hexKey(want.fingerprint));
-  if (hits.length) return { hit: hits[0], rows: hits.length };
-  if (anotherBuild && atVersion.length === 1 && sameType(atVersion[0])) return { hit: atVersion[0], rows: 1 };
-  return { refused: `no catalogue row with order number ${orderNumber} runs ${applicationId} (read: ${entries.map((e) => `${e.orderNumber} ${e.deviceType} ${e.version} ${e.fingerprint}`).join("; ")})` };
+  const candidates = entries.filter((e) => orderNumberKey(e.orderNumber) === orderNumberKey(orderNumber) && e.version === want.version && hexKey(e.deviceType) === hexKey(want.deviceType));
+  const read = () => entries.map((e) => `${e.orderNumber} ${e.deviceType} ${e.version} ${e.fingerprint}`).join("; ");
+  const hits = candidates.filter((e) => hexKey(e.fingerprint) === hexKey(want.fingerprint));
+  if (hits.length) return { hit: hits[0], rows: hits.length, exact: true };
+  if (candidates.length === 0) return { refused: `no catalogue row with order number ${orderNumber} runs ${applicationId} (read: ${read()})` };
+  // Rows that read one fingerprint alike are taken as one application (OCR misreads its text the same way each time).
+  const readings = [...new Set(candidates.map((e) => hexKey(e.fingerprint)))];
+  const distance = readings.map((f) => editDistance(f, hexKey(want.fingerprint)));
+  const best = Math.min(...distance);
+  if (distance.filter((d) => d === best).length > 1) return { refused: `${candidates.length} catalogue rows with order number ${orderNumber} at ${want.deviceType} ${want.version} read no fingerprint closest to ${want.fingerprint} alone (read: ${read()})` };
+  const rows = candidates.filter((e) => hexKey(e.fingerprint) === readings[distance.indexOf(best)]);
+  return { hit: rows[0], rows: rows.length, exact: false };
+}
+
+// The Levenshtein distance of two strings.
+export function editDistance(a: string, b: string): number {
+  let row = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const next = [i];
+    for (let j = 1; j <= b.length; j++) next[j] = Math.min(row[j] + 1, next[j - 1] + 1, row[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    row = next;
+  }
+  return row[b.length];
 }
 
 // The product inserted into line 1.1 from the catalogue: a catalogue row listed for the order number whose
 // application is `applicationId`, by its device type, version and fingerprint as ETS's properties panel shows them
 // (the fingerprint of the id ETS's product store holds, which tools/ets-catalogue.ts gives a row as its
 // application). The search lists every row whose text holds the order number, other manufacturers' and other
-// versions' too, each read; several rows of the application (one application in several catalogue items) are one
-// application, the first taken. `anotherBuild`: where no row has the fingerprint, the one row at the order number,
-// device type and version is taken as another build of the application (an OpenKNX release ETS took from an
-// imported project; writeRow takes it only where it parses as the unit's).
-async function insertProduct(s: Screen, orderNumber: string, applicationId: string, anotherBuild: boolean): Promise<void> {
-  const line = (await treeRow(s, LINE_11)) ?? fail("no line 1.1 in the topology");
+// versions' too, each read, and one picked (pickCatalogueRow). The one row at the order number, device type and
+// version may run another build of an own unit's application (an OpenKNX release ETS took from an imported project;
+// writeRow takes it only where it parses as the unit's); a catalogue unit's row is checked to run its application
+// exactly once the project is exported after the insert (runRow).
+async function insertProduct(s: Screen, orderNumber: string, applicationId: string): Promise<void> {
+  const line = await line11(s);
   click(line.cx, line.cy);
   await sleep(1500);
   // The catalogue panel's header in the lower left; its toolbar (search field at the right) on the same row.
@@ -682,9 +713,10 @@ async function insertProduct(s: Screen, orderNumber: string, applicationId: stri
     await sleep(1500);
     entries.push({ ...(await readCatalogueEntry(s)), y: Math.round(r.y) });
   }
-  const picked = pickCatalogueRow(entries, orderNumber, applicationId, anotherBuild);
+  const picked = pickCatalogueRow(entries, orderNumber, applicationId);
   if ("refused" in picked) return fail(picked.refused);
   if (picked.rows > 1) console.log(`${picked.rows} catalogue rows under order number ${orderNumber} run ${applicationId}: the first inserted`);
+  if (!picked.exact) console.log(`the catalogue row inserted reads its fingerprint as ${picked.hit.fingerprint}, not ${catalogueIdentity(applicationId).fingerprint}: what it runs is checked after the insert`);
   const hit = picked.hit;
   click(500, hit.y);
   await sleep(1500);
@@ -702,9 +734,13 @@ async function insertProduct(s: Screen, orderNumber: string, applicationId: stri
       // ETS imports the product's data first, behind a progress dialog.
       importing = findText(ws, "Importiere Daten").length > 0;
       if (importing) continue;
-      if (!findText(ws, "Projektpasswort setzen").length) fail(`ETS shows a dialog after the insert: ${ws.map((w) => w.text).join(" ").slice(0, 160)}`);
-      const cancel = findText(dialogButtons(png, box), "Abbrechen")[0] ?? fail("no Abbrechen under ETS's project password dialog");
+      // A product whose plug-ins need ETS's compatibility mode: ETS asks to restart in it, and inserts nothing
+      // without. The driver runs ETS in its normal mode only; cancelled, the row is refused.
+      const compatibility = findText(ws, "Kompatibilit").length > 0;
+      if (!compatibility && !findText(ws, "Projektpasswort setzen").length) fail(`ETS shows a dialog after the insert: ${ws.map((w) => w.text).join(" ").slice(0, 160)}`);
+      const cancel = findText(dialogButtons(png, box), "Abbrechen")[0] ?? fail(`no Abbrechen under ETS's ${compatibility ? "compatibility warning" : "project password dialog"}`);
       click(cancel.cx, cancel.cy);
+      if (compatibility) { await sleep(1500); fail("refused: the product's plug-ins need ETS's compatibility mode (ETS asks to restart in it after the insert); the driver runs ETS in its normal mode"); }
       continue;
     }
     importing = false;
@@ -1379,6 +1415,14 @@ function catalogueRowUnit(application: string, product: string, donor: string | 
   return spec;
 }
 
+// The application of the one device of an exported project, as its product data name it (hardwareApplications: on
+// hardware with a PEI program its Hardware2Program's id carries both programs' numbers).
+function insertedApplication(bytes: Buffer, password: string | undefined): string {
+  const devices = loadKnxproj(bytes, password, "export").devices;
+  if (devices.length !== 1) fail(`the project holds ${devices.length} devices after the insert, not one`);
+  return hardwareApplications(bytes).get(devices[0].appRef) || appProgramId(devices[0].appRef);
+}
+
 // Whether ETS's window is gone; a bench host that does not answer says nothing about it.
 const etsGone = () => { try { return !etsTitle(); } catch { return false; } };
 
@@ -1424,7 +1468,7 @@ async function runRow(o: RowOptions): Promise<RowRun> {
       await showTopology(s);
       settled(s, dir, "insert");
       step("insert");
-      await insertProduct(s, o.orderNumber ?? fail("--order is needed to insert the product from the catalogue"), applicationId, ownSpec !== null);
+      await insertProduct(s, o.orderNumber ?? fail("--order is needed to insert the product from the catalogue"), applicationId);
       if (o.inject === "kill") { step("injected: ETS killed"); killEts(); await sleep(3000); }
       if (o.inject === "dialog") { step("injected: ETS's project details dialog"); click(AT.projectInfo[0], AT.projectInfo[1]); await sleep(3000); }
       if (!ownSpec) {
@@ -1432,6 +1476,9 @@ async function runRow(o: RowOptions): Promise<RowRun> {
         step("the product's export");
         mkdirSync(dirname(product), { recursive: true });
         await exportProject(s, o.project, product, password);
+        // OCR picked the catalogue row; the export says exactly what it runs.
+        const inserted = insertedApplication(readFileSync(product), password);
+        if (inserted !== applicationId) fail(`the catalogue row inserted runs ${inserted}, not ${applicationId}`);
         const u = catalogueRowUnit(applicationId, product, o.donor, o.learnedFrom);
         if ("refused" in u) throw new NoUnit(u.refused);
         let cu;
