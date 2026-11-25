@@ -749,18 +749,22 @@ async function insertProduct(s: Screen, orderNumber: string, applicationId: stri
   key("Escape");
   await sleep(1000);
   const grid = { x: AT.catalogueGrid.x, y: header.cy + 37, w: AT.catalogueGrid.w, h: 1160 - header.cy - 37 };
-  // Product rows fill the name and application columns (from x 450; an application's name can be digits but for one
-  // letter, "S85166100"); a manufacturer's group header holds its name at the left only. (OCR misreads the narrow
-  // medium and version cells: "4930...TP", "TRIP" for "TP,IP", "T", a version glued to the application's name.)
-  const PRODUCT_TEXT_X = 450;
-  const products = () => rows(s.look(grid, "binary").ws.filter(inside(grid))).filter((r) => r.words.some((w) => w.x >= PRODUCT_TEXT_X && /[A-Za-z0-9]{3}/.test(w.text)));
+  // A manufacturer's group header begins its text at the grid's left (x 341; a long name reaches into the columns); a
+  // product row begins with its icon, which OCR reads as a stray mark or two, and its text from the manufacturer column
+  // on (x 380), filling the name and application columns (an application's name can be digits but for one letter,
+  // "S85166100"). (OCR misreads the narrow medium and version cells: "4930...TP", "TRIP" for "TP,IP", "T", a version
+  // glued to the application's name.)
+  type GridRow = ReturnType<typeof rows>[number];
+  const isHeader = (r: GridRow) => r.words.some((w) => w.x < 360 && /[A-Za-z0-9]{3}/.test(w.text));
+  const isProduct = (r: GridRow) => !isHeader(r) && r.words.some((w) => w.x >= 450 && /[A-Za-z0-9]{3}/.test(w.text));
+  const products = () => rows(s.look(grid, "binary").ws.filter(inside(grid))).filter(isProduct);
   let items = products();
   // Every manufacturer's group the search lists is opened where it stands closed (ETS keeps a group closed from one
   // search to the next): its expander's arrow is read, never toggled blind, one group at a time (opening one moves
   // the groups below it). The online catalogue lists the rows late. A group still closed after that is refused.
   const closedGroups = () => {
     const png = s.snap();
-    const headers = rows(words(png, grid).filter(inside(grid))).filter((r) => !r.words.some((w) => w.x >= PRODUCT_TEXT_X) && r.words[0].x < 360);
+    const headers = rows(words(png, grid).filter(inside(grid))).filter(isHeader);
     return { headers, closed: headers.filter((h) => expanderOpen(execFileSync("magick", [png, ...crop({ x: 316, y: Math.round(h.y) - 10, w: 20, h: 20 }), "-colorspace", "Gray", "-depth", "8", "txt:-"], { encoding: "utf8" })) === false) };
   };
   let groups = closedGroups();
