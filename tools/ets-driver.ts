@@ -405,7 +405,8 @@ async function openProject(s: Screen, name: string, passwordEnv?: string): Promi
 // works in. A tab in front is white with its close mark 18 px left of its end, where the title bar's green begins.
 async function closeExtraProjectTabs(s: Screen, name: string): Promise<void> {
   const first = name.split(/\s+/)[0];
-  const tabs = () => findText(s.look({ x: 200, y: 0, w: 1100, h: 36 }).ws, first).filter((b) => b.y < 30).sort((a, b) => a.x - b.x);
+  // Read in grey: in colour OCR loses a title on the green of a tab not in front.
+  const tabs = () => findText(s.look({ x: 200, y: 0, w: 1100, h: 36 }, "gray").ws, first).filter((b) => b.y < 30).sort((a, b) => a.x - b.x);
   for (let i = 0; ; i++) {
     const t = tabs();
     if (t.length <= 1) break;
