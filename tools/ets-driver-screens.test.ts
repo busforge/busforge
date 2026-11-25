@@ -3,7 +3,7 @@
 // says what each shows). Each reader is fed the screenshot whole, as the driver feeds it its screen, and must read
 // what the screen shows. They run tesseract and ImageMagick, as the driver does.
 import { expect } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { corpusPath, driverScreenFile, type DriverScreen } from "./corpus.ts";
 import { corpusTest } from "./corpus-test.ts";
@@ -194,11 +194,16 @@ corpusTest("a screenshot the driver keeps gets a sidecar: the step, why, and wha
   const kept = keepScreen(join(tempDir("ets-driver-sidecar-"), "dialog.png"), png, "a reason");
   expect(readFileSync(kept)).toEqual(readFileSync(png));
   const sidecar = JSON.parse(readFileSync(sidecarOf(kept), "utf8"));
-  expect(sidecar).toMatchObject({ format: SCREEN_FORMAT, step: "the sidecar's test", why: "a reason" });
-  expect(sidecar.readings).toEqual([{ reader: "projectTabs", args: [PROJECT], read: JSON.parse(JSON.stringify(tabs)) }]);
+  expect(sidecar).toMatchObject({ format: SCREEN_FORMAT, step: "the sidecar's test", why: "a reason", from: "tabs-extra-tab-behind.png" });
+  expect(sidecar.readings).toEqual([{ reader: "projectTabs", screen: "tabs-extra-tab-behind.png", args: [PROJECT], read: JSON.parse(JSON.stringify(tabs)) }]);
   // A new step starts without the readings of the one before.
   step("the next step");
   expect(JSON.parse(readFileSync(sidecarOf(keepScreen(join(tempDir("ets-driver-sidecar-"), "failure.png"), png)), "utf8"))).toMatchObject({ step: "the next step", readings: [] });
+  // A sidecar that cannot be written (here a directory in its place) fails nothing: the screenshot stays kept.
+  const dir = tempDir("ets-driver-sidecar-");
+  mkdirSync(join(dir, "dialog.json"));
+  expect(readFileSync(keepScreen(join(dir, "dialog.png"), png))).toEqual(readFileSync(png));
+  expect(() => sidecarOf(join(dir, "dialog.jpg"))).toThrow("a kept screenshot is a .png");
 }, OCR_TIMEOUT);
 
 corpusTest("the catalogue panel before the download: shown, its search empty or not", () => {

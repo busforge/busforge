@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { editDistance, expanderOpen, LINE_11, nextBatchSize, oneRowSelected, pickCatalogueRow, selectedSamples, writtenRowKind } from "./ets-driver.ts";
+import { editDistance, expanderOpen, isCatalogueProgress, LINE_11, nextBatchSize, notLoadedMark, oneRowSelected, pickCatalogueRow, selectedSamples, writtenRowKind } from "./ets-driver.ts";
 
 test("a catalogue batch halves after a refusal and grows from the last size that loaded", () => {
   const walk = (outcomes: ("loaded" | "refused" | "skipped")[], max = 150) => {
@@ -93,6 +93,23 @@ test("a catalogue group's expander read open or closed from its arrow's pixels",
   expect(expanderOpen(txt(open))).toBe(true);
   // The closed expander's box border (#989898) is no arrow; nothing dark is no expander.
   expect(expanderOpen(txt([[19, 1, 0x98], [19, 2, 0x98]]))).toBeNull();
+  // The cloud of a row whose product data ETS has not loaded, as magick printed it (its outline at the grid's left,
+  // 16 px wide, 10 high), whole and as a row OCR places 9 px too high cuts it: no arrow, not loaded. A group header's
+  // arrow and a loaded row's empty square are no such mark.
+  const cloudRows = ["...........-+++.....", ".........-#-...#....", ".......#+#......#...", "......#.........+-..", ".....-#.........-#-.",
+    "....++............+-", "....#..............#", "....#..............#", "....+-............-#", ".....+#############."];
+  const cloud = (top: number) => cloudRows.flatMap((r, i) => r.split("").flatMap((c, x) => (c === "#" && top + i < 20 ? [[x, top + i, 0x10] as [number, number, number]] : [])));
+  for (const top of [5, 14]) {
+    expect(expanderOpen(txt(cloud(top)))).toBeNull();
+    expect(notLoadedMark(txt(cloud(top)))).toBe(true);
+  }
+  expect([notLoadedMark(txt(open)), notLoadedMark(txt(closed)), notLoadedMark(txt([]))]).toEqual([false, false, false]);
+});
+
+test("ETS's refused catalogue download is no progress dialog, its title as OCR misreads it too", () => {
+  // As OCR read ETS's refusal on the bench host ("fehigeschlagen"), up to where its body says it again.
+  expect(isCatalogueProgress("4 Online-Katalog-Download fehigeschlagen UGW Triple-XT Profinet/LON Der Produktdownload aus dem Online-Katalog")).toBe(false);
+  expect(isCatalogueProgress("Importiere Daten... Hersteller = Download aus dem Online-Katalog")).toBe(true);
 });
 
 test("a written row ends sim-refused where the unit refused first, ETS's message beside the refusal", () => {

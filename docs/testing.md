@@ -1013,11 +1013,15 @@ does with the reading instead: the row is still the one picked, by the closest f
 on a run is kept as such a screenshot, and its test is written, failing, before the reading changes. The tests run
 `tesseract` and ImageMagick (`magick`), as the driver does.
 
-Each screenshot the driver keeps (`dialog.png`, `failure.png`, a refused catalogue download's) gets a sidecar beside it,
-`<name>.json` (format `busforge-ets-driver-screen/1`): the step of the row it was kept in, why it was kept (the failure
-or the dialog), and every reading that step's screen readers made, each reader's name, its arguments besides the
-screenshot and what it read. A misreading on a run is then a grep over its sidecars, and the screenshot beside the
-sidecar is the fixture for its test.
+Each screenshot the driver keeps (a row's `dialog.png` and `failure.png`, the catalogue download's `refused-rows-*`,
+`failed-row-*` and `driver-failed-row-*`) gets a sidecar beside it, `<name>.json` (format
+`busforge-ets-driver-screen/1`): the step it was kept in (a row's step, or a batch of the catalogue download), why it
+was kept (the failure, or the dialog with its text), the screenshot it was copied from where it was one the step's
+readers read, and that step's readings (the latest 200, `dropped` counting older ones): each reader's name, the
+screenshot it read, its arguments besides it, and what it read. A misreading on a run is then a grep over its
+sidecars. Where a reading names the screenshot the sidecar was copied from, the kept screenshot is the fixture for its
+test; a `failure.png` is taken after the failure, so its readings name the step's own earlier screens. A sidecar that
+cannot be written is said on stderr and fails nothing.
 
 In ETS's catalogue a row whose product data ETS has not loaded shows a cloud at the grid's left, where a
 manufacturer's group header shows its arrow. The driver reads such a row as a product row marked not loaded and names

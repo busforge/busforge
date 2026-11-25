@@ -24,8 +24,8 @@
 // catalogue unit (tools/sim-unit-catalogue.ts) borrows the donor its mask's rule picks. From scratch (the default):
 // line 1.1 of the project is emptied and the project compressed (ETS's "Jetzt komprimieren", which deletes the product
 // data no device uses, so the row's export holds its own product only: checked on the export's entries), the product
-// is inserted from the online catalogue by order number (every catalogue row the search lists read in ETS's
-// properties panel: the one whose device type, version and fingerprint are the application's; several rows of one
+// is inserted from the online catalogue by order number (every catalogue row the search lists whose product data ETS
+// has loaded read in ETS's properties panel, the others named: the one whose device type, version and fingerprint are the application's; several rows of one
 // application under the order number are one application), its address set to the unit's. A catalogue unit's
 // application program is read from an export of the project taken right after the insert. --configured instead takes
 // the device the project holds at the unit's address as it is configured there. Then the interface is set explicitly to the
@@ -89,37 +89,50 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // Each step of a row on stderr, with the time: what a run that stalls was doing (and what a batch's heartbeat names).
 // A step starts without the readings of the one before (keepScreen).
 let currentStep = "";
-export const step = (what: string) => { currentStep = what; readings.length = 0; console.error(`${new Date().toISOString().slice(11, 19)} ${what}`); };
+export const step = (what: string) => { currentStep = what; readings.length = 0; dropped = 0; console.error(`${new Date().toISOString().slice(11, 19)} ${what}`); };
 
 // ---- what the screen readers read, kept beside a screenshot ----
 
-// The readings of the current step, newest last (at most READINGS_KEPT): each screen reader's name, its arguments
-// besides the screenshot, and what it read.
-interface Reading { reader: string; args?: unknown[]; read: unknown }
+// The readings of the current step, newest last (the latest READINGS_KEPT; `dropped` counts the older ones): each
+// screen reader's name, the screenshot it read (its file name), its arguments besides it, and what it read.
+interface Reading { reader: string; screen: string; args?: unknown[]; read: unknown }
 const readings: Reading[] = [];
-const READINGS_KEPT = 40;
+let dropped = 0;
+const READINGS_KEPT = 200;
 // A screen reader whose readings are recorded for the current step.
 function reader<A extends unknown[], R>(name: string, read: (png: string, ...args: A) => R): (png: string, ...args: A) => R {
   return (png, ...args) => {
     const r = read(png, ...args);
-    readings.push({ reader: name, ...(args.length ? { args: args.map((a) => (a instanceof RegExp ? String(a) : a)) } : {}), read: r });
-    if (readings.length > READINGS_KEPT) readings.shift();
+    readings.push({ reader: name, screen: basename(png), ...(args.length ? { args: args.map((a) => (a instanceof RegExp ? String(a) : a)) } : {}), read: r });
+    if (readings.length > READINGS_KEPT) { readings.shift(); dropped++; }
     return r;
   };
 }
 
-// Each screenshot the driver keeps gets a sidecar beside it (`<name>.json`, SCREEN_FORMAT): the step of the row it was
-// kept in, why (a failure's reason, where it is one) and the step's readings. A misreading is then found by a grep over
-// a run's sidecars, and the screenshot beside it is a fixture candidate (tools/ets-driver-screens.test.ts).
+// Each screenshot the driver keeps gets a sidecar beside it (`<name>.json`, SCREEN_FORMAT): the step it was kept in,
+// why (a failure's reason, or the dialog it shows), the screenshot it was copied from (`from`, the one the step's
+// readers read; a screenshot taken after a failure has none) and the step's readings. A misreading is then found by a
+// grep over a run's sidecars; the screenshot a reading names, where it is the kept one, is a fixture candidate
+// (tools/ets-driver-screens.test.ts).
 export const SCREEN_FORMAT = "busforge-ets-driver-screen/1";
-export const sidecarOf = (png: string) => png.replace(/\.png$/, ".json");
+export const sidecarOf = (png: string) => {
+  if (!png.endsWith(".png")) throw new Error(`a kept screenshot is a .png, not ${png}`);
+  return png.replace(/\.png$/, ".json");
+};
 // The screenshot kept as `to`: `from` copied, or one taken of the display; its sidecar written after it.
 export function keepScreen(to: string, from?: string, why?: string): string {
   if (from) copyFileSync(from, to); else shot(to);
-  // OCR's words of a row stand in its text already.
-  const json = JSON.stringify({ format: SCREEN_FORMAT, etsBuild: ETS_BUILD, step: currentStep, ...(why ? { why } : {}), readings }, (k, v: unknown) => (k === "words" ? undefined : v), 1);
-  writeFileSync(sidecarOf(to), `${json}\n`);
+  writeSidecar(to, from, why);
   return to;
+}
+// The sidecar of the kept screenshot `to`. One that cannot be written is said on stderr and fails nothing: the
+// screenshot and the failure it goes with are the evidence, the sidecar an index into it.
+function writeSidecar(to: string, from?: string, why?: string): void {
+  try {
+    // OCR's words of a row stand in its text already.
+    const json = JSON.stringify({ format: SCREEN_FORMAT, etsBuild: ETS_BUILD, step: currentStep, ...(why ? { why } : {}), ...(from ? { from: basename(from) } : {}), readings, ...(dropped ? { dropped } : {}) }, (k, v: unknown) => (k === "words" ? undefined : v), 1);
+    writeFileSync(sidecarOf(to), `${json}\n`);
+  } catch (e) { console.error(`no sidecar for ${to}: ${e instanceof Error ? e.message : String(e)}`); }
 }
 // A kept screenshot moved to `to`, its sidecar with it.
 function moveScreen(from: string, to: string): void {
@@ -748,17 +761,12 @@ export function expanderOpen(txt: string): boolean | null {
   return top === bottom ? null : top < bottom;
 }
 
-// Whether the glyph (magick's txt: output, as expanderOpen reads it) is the cloud ETS shows in front of a catalogue row
-// whose product data it has not loaded: its outline stands on one straight dark run at its bottom, 13 px in ETS 6.4.1,
-// where no arrow has more than 3 dark pixels side by side.
+// Whether the glyph (magick's txt: output, as expanderOpen reads it) marks a catalogue row whose product data ETS has
+// not loaded. In ETS 6.4.1 a loaded product row shows nothing at the grid's left, a group header its arrow, a row not
+// loaded a cloud (16 px wide, 10 high): any glyph there that is no arrow is taken for the cloud, also one a row OCR
+// places off its centre shows cut.
 export function notLoadedMark(txt: string): boolean {
-  const dark = darkPixels(txt);
-  if (dark.length === 0) return false;
-  const bottom = Math.max(...dark.map((p) => p.y));
-  const xs = dark.filter((p) => p.y === bottom).map((p) => p.x).sort((a, b) => a - b);
-  let run = 1, longest = 1;
-  for (let i = 1; i < xs.length; i++) { run = xs[i] === xs[i - 1] + 1 ? run + 1 : 1; longest = Math.max(longest, run); }
-  return longest >= 10;
+  return darkPixels(txt).length >= 3 && expanderOpen(txt) === null;
 }
 
 // The catalogue panel's header in the lower left; its toolbar (search field at the right) on the same row.
@@ -784,9 +792,11 @@ const arrowAt = (png: string, y: number) => expanderOpen(glyphAt(png, y));
 // for "TP,IP", "T", a version glued to the application's name.) `loaded` is false for a row with the cloud of a
 // product whose data ETS has not loaded in front of it.
 export const catalogueProducts = reader("catalogueProducts", (png: string, grid: Region): { y: number; words: Word[]; text: string; loaded: boolean }[] => {
-  return rows(words(png, grid, { prep: "binary" }).filter(inside(grid))).flatMap((r) => {
+  return rows(words(png, grid, { prep: "binary" }).filter(inside(grid))).flatMap((r): { y: number; words: Word[]; text: string; loaded: boolean }[] => {
     const glyph = glyphAt(png, r.y);
-    return expanderOpen(glyph) === null && r.words.some((w) => w.x >= 450 && /[A-Za-z0-9]{3}/.test(w.text)) ? [{ ...r, loaded: !notLoadedMark(glyph) }] : [];
+    // A row with the cloud is a product row whatever OCR read of its text.
+    if (notLoadedMark(glyph)) return [{ ...r, loaded: false }];
+    return expanderOpen(glyph) === null && r.words.some((w) => w.x >= 450 && /[A-Za-z0-9]{3}/.test(w.text)) ? [{ ...r, loaded: true }] : [];
   });
 });
 
@@ -871,7 +881,7 @@ async function downloadDialogs(s: Screen, dir: string, before: string): Promise<
 // application is `applicationId`, by its device type, version and fingerprint as ETS's properties panel shows them
 // (the fingerprint of the id ETS's product store holds, which tools/ets-catalogue.ts gives a row as its
 // application). The search lists every row whose text holds the order number, other manufacturers' and other
-// versions' too, each read, and one picked (pickCatalogueRow). The one row at the order number, device type and
+// versions' too, each whose product data ETS has loaded read (the others named), and one picked (pickCatalogueRow). The one row at the order number, device type and
 // version may run another build of an own unit's application (an OpenKNX release ETS took from an imported project;
 // writeRow takes it only where it parses as the unit's); a catalogue unit's row is checked to run its application
 // exactly once the project is exported after the insert (runRow).
@@ -915,14 +925,15 @@ async function insertProduct(s: Screen, orderNumber: string, applicationId: stri
   for (let i = 0, before = -1; i < 5 && (items = products()).length !== before; i++) { before = items.length; await sleep(2000); }
   if (items.length === 0) fail(`the catalogue holds no product for order number ${orderNumber}`);
   // A list that reaches the grid's last row may go on below it, where the driver does not scroll.
-  if (Math.max(...items.map((r) => r.y)) > grid.y + grid.h - 30) fail(`the catalogue lists more rows for order number ${orderNumber} than its grid shows at once`);
   // A row whose product data ETS has not loaded is named, not read: what ETS's properties panel shows for it is not
   // known. The sweep's rows run applications whose product data ETS loaded (tools/ets-catalogue.ts), so a row it inserts
-  // is a loaded one; rows not loaded stand in the search as other products holding the order number.
-  const notLoaded = items.filter((r) => !r.loaded);
-  const unread = notLoaded.length ? `; not read, their product data not loaded in ETS: ${notLoaded.map((r) => r.text).join(" | ")}` : "";
-  if (notLoaded.length) console.log(`${notLoaded.length} catalogue rows under order number ${orderNumber} are not loaded in ETS, not read: ${notLoaded.map((r) => r.text).join(" | ")}`);
-  if (notLoaded.length === items.length) fail(`the catalogue lists for order number ${orderNumber} only rows whose product data ETS has not loaded${unread}`);
+  // is a loaded one; rows not loaded stand in the search as other products holding the order number. They are named
+  // before anything else ends the row.
+  const notLoaded = items.filter((r) => !r.loaded).map((r) => r.text).join(" | ");
+  const unread = notLoaded ? `; not read, their product data not loaded in ETS: ${notLoaded}` : "";
+  if (notLoaded) console.log(`catalogue rows under order number ${orderNumber} not loaded in ETS, not read: ${notLoaded}`);
+  if (Math.max(...items.map((r) => r.y)) > grid.y + grid.h - 30) fail(`the catalogue lists more rows for order number ${orderNumber} than its grid shows at once${unread}`);
+  if (items.every((r) => !r.loaded)) fail(`the catalogue lists for order number ${orderNumber} only rows whose product data ETS has not loaded: ${notLoaded}`);
   const entries: (CatalogueEntry & { y: number })[] = [];
   for (const r of items.filter((x) => x.loaded)) {
     // A click that did not select the row leaves the properties panel on line 1.1 (no Katalog tab): clicked once more.
@@ -1030,10 +1041,12 @@ function settled(s: Screen, dir: string, before: string): void {
   if (!etsTitle()) fail(`ETS's window is gone (before "${before}")`);
   const png = s.snap(), box = dialogBox(png);
   if (!box) return;
-  // Kept before OCR reads it, which can fail too.
-  const why = `${UNKNOWN_DIALOG} (before "${before}")`;
-  keepScreen(join(dir, "dialog.png"), png, why);
-  fail(`${why}: ${dialogText(png, box)!.slice(0, 300)}`);
+  // Kept before OCR reads it, which can fail too; its sidecar after, with the dialog's text where OCR read it.
+  const why = `${UNKNOWN_DIALOG} (before "${before}")`, kept = join(dir, "dialog.png");
+  copyFileSync(png, kept);
+  let text: string | undefined;
+  try { text = dialogText(png, box)!; } finally { writeSidecar(kept, png, text === undefined ? why : `${why}: ${text}`); }
+  fail(`${why}: ${text.slice(0, 300)}`);
 }
 
 // The text of the dialog ETS shows in its window (`box`, where already found), its words in OCR's order; null where
@@ -1457,7 +1470,9 @@ async function downloadOutcome(s: Screen, since: string): Promise<{ ok: true } |
     if (d?.kind === "other") fail(`ETS shows a dialog during the catalogue download: ${d.text.slice(0, 200)}`);
     if (d?.kind === "refused") {
       const { text } = d;
-      const kept = keepScreen(png.replace(/\.png$/, "-refused.png"), png, "ETS refused the catalogue download");
+      // Kept outside the screen's own files (Screen.clean removes those), so a failure before the batch moves it leaves
+      // it in place.
+      const kept = keepScreen(join(dirname(png), "refused-download.png"), png, `ETS refused the catalogue download: ${text}`);
       const ok = dialogButton(png, d.box, "OK") ?? fail(`no OK under ETS's refusal: ${text.slice(0, 160)}`);
       click(ok.cx, ok.cy);
       await waitNoDialog(s);
@@ -1475,7 +1490,8 @@ async function downloadOutcome(s: Screen, since: string): Promise<{ ok: true } |
 // The text of ETS's progress dialogs of a catalogue download: its import ("Importiere Daten"), the manufacturers' data
 // merged, the download itself.
 const CATALOGUE_PROGRESS = /Importiere|Zusammenf|Download aus/i;
-const CATALOGUE_REFUSED = /fehlgeschlagen/i;
+// "fehlgeschlagen", which OCR reads "fehigeschlagen" in the refusal's title.
+const CATALOGUE_REFUSED = /feh[li1|]geschlagen/i;
 
 // The dialog ETS shows during a catalogue download, by its text: its refusal ("… fehlgeschlagen"), its progress
 // (isCatalogueProgress) or any other; null where it shows none.
@@ -1522,6 +1538,8 @@ async function downloadCatalogue(batch: number, out: string, from: number): Prom
   const save = (done: boolean) => writeFileSync(progress, `${JSON.stringify({ row, size, ...(done ? { done } : {}), failures }, null, 1)}\n`);
   try {
     for (;;) {
+      // Each batch its own step, so a kept screenshot's sidecar holds that batch's readings.
+      step(`rows ${row}-${row + size - 1}`);
       let sel = await selectRows(s, row, size, focus);
       // Down that moves nothing ends the walk only from the grid's first row: the keyboard focus may have left it.
       if (!sel.moved && focus !== "top") { focus = "top"; sel = await selectRows(s, row, size, focus); }
