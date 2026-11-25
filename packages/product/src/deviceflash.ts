@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { AppConfig, CfgAbsSegment, ModuleInstance } from "./appconfig.ts";
 import { buildAbsoluteSegmentTargets, absoluteBuildInstances, mergeOwnedBits, wholeBytes, parameterMemoryBytes, differingConstants, type ConstantDifference, type DeviceSegmentTarget } from "./deviceimage.ts";
-import { flattenSteps, lsmIdx, stepAddress, stepSize, memType, segType, segAccess, segFlags, closingSteps, taskCtrl1Of, taskPtrOf, taskCtrl2Of, masterResetOf, capturedMasterResetRefusal, delayOf, bracketWritePropOf, PEI_LSM, relativeFullStepRefusal, relParamFullMode, stepObject, type LoadProcedures, type McbWrite, type ClosingStep, type ClosingOp } from "./loadproc.ts";
+import { flattenSteps, lsmIdx, stepAddress, stepSize, stepOffset, objIdx, memType, segType, segAccess, segFlags, closingSteps, taskCtrl1Of, taskPtrOf, taskCtrl2Of, masterResetOf, capturedMasterResetRefusal, delayOf, bracketWritePropOf, PEI_LSM, relativeFullStepRefusal, relParamFullMode, stepObject, type LoadProcedures, type McbWrite, type ClosingStep, type ClosingOp } from "./loadproc.ts";
 import { buildGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
 import { buildComObjectTableMv0705 } from "./comobjbuild.ts";
 import type { CfgComObjImage } from "./config.ts";
@@ -808,10 +808,10 @@ export function procedureSizeRefusal(app: AppConfig, procedure: LoadProcedures):
       if (sg && size !== undefined && size !== sg.size) return disagree(`LdCtrlAbsSegment at ${s.attrs.Address} declares ${s.attrs.Size} bytes, the segment ${sg.id} ${sg.size}`);
     }
     if (s.verb === "LdCtrlRelSegment" || s.verb === "LdCtrlWriteRelMem") {
-      const lsm = Number(s.verb === "LdCtrlRelSegment" ? s.attrs.LsmIdx ?? 4 : s.attrs.ObjIdx ?? 4);
+      const lsm = (s.verb === "LdCtrlRelSegment" ? lsmIdx(s) : objIdx(s)) ?? 4;
       const sg = app.segments.find((x) => x.lsm === lsm);
       if (!sg) continue;
-      const offset = Number(s.attrs.Offset ?? 0);
+      const offset = stepOffset(s) ?? 0;
       if (size === undefined) return { code: "LOAD_PROCEDURE_SIZE_MISMATCH", message: `${s.verb} on LSM ${lsm} declares no Size; refusing to take the segment's (${sg.id}, ${sg.size} bytes) before anything is written` };
       if (offset !== 0) return { code: "LOAD_PROCEDURE_SIZE_MISMATCH", message: `${s.verb} on LSM ${lsm} declares a write of ${s.attrs.Size} bytes at offset ${offset} into the ${sg.size}-byte segment ${sg.id}; the download writes the whole segment, as every captured procedure declares it, refusing before anything is written` };
       if (size !== sg.size) return disagree(`${s.verb} on LSM ${lsm} declares ${s.attrs.Size} bytes, the segment ${sg.id} ${sg.size}`);

@@ -8,7 +8,7 @@ import { buildComObjectTable, comObjectTableRefusal, refuseObjectZeroOverride, p
 import { buildDeviceConfig, type DeviceCapabilities, type CfgComObjImage, type DeviceConfigBuild } from "./config.ts";
 import { decodeParameterImage, decodeAbsoluteImage, imageValueForm } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
-import { assessParCoverage, fullDownloadParCoverage, systemBMasterResets, declaredPropChecks, relParamFillByte, relParamFullMode, declaredMcbWrites, unrunGrpSteps, lsmIdx, stepAddress, type ParCoverage, type LoadProcedures, type McbWrite } from "./loadproc.ts";
+import { assessParCoverage, malformedStepRefusal, fullDownloadParCoverage, systemBMasterResets, declaredPropChecks, relParamFillByte, relParamFullMode, declaredMcbWrites, unrunGrpSteps, lsmIdx, stepAddress, type ParCoverage, type LoadProcedures, type McbWrite } from "./loadproc.ts";
 import { planAbsoluteParFlash, buildAbsoluteParFlash, absoluteStructuralBuild, planRelativeParFlash, planRelativeStructuralFlash, planRelativePartialFullDownload, changedOwned, differentialMask, declaredMcbRegions, type McbRegion, planAbsoluteStructuralFlash, absoluteStructuralImages, differingBytes, planAbsoluteFullDownload, absoluteFullStepRefusal, fullDownloadSegmentRefusal, absoluteFullForm, withClosing, withConfirmedRestart, planSystem7GaFlash, planSystem7TableBrackets, fullDownloadImageDigest, procedureSizeRefusal, relativeFullDownloadRefusal, type AbsFullSegment } from "./deviceflash.ts";
 import { maskInfo, isMemoryMappedLsm, verifyModeDeclared, type MemoryModel, type SystemFamily } from "./masks.ts";
 import { type AppConfig, type ModuleInstance } from "./appconfig.ts";
@@ -1235,8 +1235,8 @@ export class SystemBProfile extends DeviceProfile {
   // The group-address flash refuses a step named for it ("grp" or "all") that it does not run.
   override operationRefusals(): OperationRefusals {
     if (!this.cfg) return {};
-    const sizes = procedureSizeRefusal(this.cfg, this.cfg.loadProcedures);
-    if (sizes) return { flashParams: sizes, flashLinks: sizes, fullDownload: sizes };
+    const procedure = malformedStepRefusal(this.cfg.loadProcedures) ?? procedureSizeRefusal(this.cfg, this.cfg.loadProcedures);
+    if (procedure) return { flashParams: procedure, flashLinks: procedure, fullDownload: procedure };
     const par = parRefusal(assessParCoverage(this.cfg.loadProcedures, "relative"), "parameter download");
     const grp = parRefusal({ blocked: unrunGrpSteps(this.cfg.loadProcedures), skipped: [], checks: [] }, "group-address flash");
     const table = downloadPluginRefusal(this.cfg) ?? comObjectTableRefusal(this.cfg);
@@ -2052,8 +2052,8 @@ export class System7Profile extends DeviceProfile {
   override operationRefusals(): OperationRefusals {
     const cfg = this.cfg;
     if (!cfg) return {};
-    const sizes = procedureSizeRefusal(cfg, cfg.loadProcedures);
-    if (sizes) return { flashParams: sizes, flashLinks: sizes, fullDownload: sizes };
+    const procedure = malformedStepRefusal(cfg.loadProcedures) ?? procedureSizeRefusal(cfg, cfg.loadProcedures);
+    if (procedure) return { flashParams: procedure, flashLinks: procedure, fullDownload: procedure };
     const out: OperationRefusals = {};
     const par = absoluteParRefusal(cfg.loadProcedures);
     if (par) out.flashParams = par;

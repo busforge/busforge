@@ -77,7 +77,9 @@ bus interfaces its programs declare, the application each `Hardware2Program` nam
 products, programs and images alike: an entry elsewhere whose name ends the same (a baggage, a file at the
 root, a manufacturer directory below another folder, another manufacturer's directory) is none of the
 archive's product data. The inner archive of a project holds none of them. A `Hardware.xml` at its place
-that does not parse is refused (`HARDWARE_XML_MALFORMED`), not read as an archive without products. An
+that does not parse is refused (`HARDWARE_XML_MALFORMED`), not read as an archive without products. Product
+data that describe one `Hardware2Program` twice, in one `Hardware.xml` or in two, are refused as well, by
+the project and the catalogue import (`HARDWARE_PROGRAM_DUPLICATE`): Busforge takes neither description. An
 OpenKNX release ZIP holds no manufacturer directory: its product database is the plain manufacturer XML `data/<name>.xml`, which the
 catalogue imports on its own.
 
@@ -380,6 +382,11 @@ rather than burning past the device's ~6 s connection timeout and killing the se
    writes `0x05`), and every chunk's answer is checked, so a dropped write stops the download at
    that chunk. The answer is not proof that the bytes are stored: thelsing/knx answers with a
    copy of the request data (§16), so the CRC or the read-back after the restart is the proof.
+   The answer also paces the download. The Theben theLuxa P300 (BIM M112) answers most writes
+   30 to 70 ms after its T_ACK, but some writes to 0x4000, 0x4009, 0x400B, 0x4438 and 0x4800
+   only 250 to 285 ms after it. A frame sent in that time, right behind the T_ACK, gets no
+   layer-2 acknowledgement, and the interface confirms it negatively. ETS sends its next frame
+   only after the answer, so it never meets this.
    An `A_MemoryExtended_Write` takes no verify mode; its answer is a return code and the
    address. The protocol has a return code for a success that carries a CRC of the written
    data (thelsing/knx defines it and never sends it); every one of the extended-write answers

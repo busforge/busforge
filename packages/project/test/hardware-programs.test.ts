@@ -76,6 +76,28 @@ describe("the application of two-application hardware comes from its Application
   });
 });
 
+// The same Hardware2Program described twice, naming another program the second time: which one its devices
+// run the product data do not say. No archive of the private corpus has one (tools/hardware-applications.test.ts
+// loads every project of it).
+describe("a Hardware2Program described twice is refused", () => {
+  const OTHER = "M-0083_A-CCCC-01-0000";
+  const twice = (where: "one Hardware.xml" | "two Hardware.xml") => {
+    const first = hardware([APP]), second = hardware([OTHER]);
+    if (where === "two Hardware.xml") return storeZip({ "M-0083/Hardware.xml": first, "M-0001/Hardware.xml": second.replace('RefId="M-0083"', 'RefId="M-0001"') });
+    const hw = second.slice(second.indexOf("  <Hardware Id="), second.indexOf("</Hardware></Manufacturer>"));
+    return storeZip({ "M-0083/Hardware.xml": first.replace("</Hardware></Manufacturer>", `${hw}</Hardware></Manufacturer>`) });
+  };
+  const refused = expect.objectContaining({ code: "HARDWARE_PROGRAM_DUPLICATE" });
+  for (const where of ["one Hardware.xml", "two Hardware.xml"] as const) {
+    test(`in ${where}: the application of its devices, their program and the catalogue's products are not read`, () => {
+      const bytes = twice(where);
+      expect(() => hardwareApplications(bytes)).toThrow(refused);
+      expect(() => readAppProgram(bytes, H2P)).toThrow(refused);
+      expect(() => extractCatalogProducts(bytes)).toThrow(refused);
+    });
+  }
+});
+
 describe("a project device takes the application resolved for its Hardware2Program", () => {
   const xml0 = (refId: string) => `<?xml version="1.0" encoding="utf-8"?>
 <KNX xmlns="http://knx.org/xml/project/20"><Project Id="P-0001"><Installations><Installation Name=""><Topology><Area Address="1"><Line Address="1">

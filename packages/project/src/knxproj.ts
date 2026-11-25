@@ -279,13 +279,23 @@ function applicationOf(h2p: XmlNode, source: ProductSource): string {
   return application.length === 1 && types.filter((t) => t === "PeiProgram").length === refs.length - 1 ? application[0] : "";
 }
 
+// A Hardware2Program a product source describes twice, in one Hardware.xml or in two, is refused by every
+// reader of the product data (the project, the catalogue import, hardwarePrograms): Busforge takes neither description.
+function claimHardwareProgram(seen: Set<string>, appRef: string): void {
+  if (seen.has(appRef)) throw new KnxprojError("HARDWARE_PROGRAM_DUPLICATE", `the product data describe the Hardware2Program ${appRef} twice; refusing to take either description`);
+  seen.add(appRef);
+}
+
 // The application program of every Hardware2Program a product source describes, by Hardware2Program id
 // ("" where it names none, or none Busforge can tell apart from a PEI program: applicationOf).
 function hardwareApplicationsOf(source: ProductSource): Map<string, string> {
   const out = new Map<string, string>();
+  const seen = new Set<string>();
   for (const h2p of hardware2ProgramsOf(source)) {
     const appRef = text(h2p.Id);
-    if (appRef && !out.has(appRef)) out.set(appRef, applicationOf(h2p, source));
+    if (!appRef) continue;
+    claimHardwareProgram(seen, appRef);
+    out.set(appRef, applicationOf(h2p, source));
   }
   return out;
 }
@@ -297,10 +307,11 @@ export const hardwareApplications = (bytes: Buffer): Map<string, string> => hard
 // Hardware2Program is described twice or names a program without its RefId: which programs it runs is then not said.
 export function hardwarePrograms(source: Buffer | Map<string, Buffer>): Map<string, string[]> {
   const out = new Map<string, string[]>();
+  const seen = new Set<string>();
   for (const h2p of hardware2ProgramsOf(source instanceof Map ? zipProducts(source) : productsOf(source))) {
     const appRef = text(h2p.Id);
     if (!appRef) continue;
-    if (out.has(appRef)) throw new Error(`the product data describe the Hardware2Program ${appRef} twice`);
+    claimHardwareProgram(seen, appRef);
     const refs = kids(h2p.ApplicationProgramRef).map((r) => text(r.RefId));
     if (refs.includes("")) throw new Error(`the Hardware2Program ${appRef} names an application program without its RefId`);
     out.set(appRef, refs);
@@ -389,12 +400,14 @@ export function extractPictureBaggage(bytes: Buffer, programs: Map<string, strin
 export function extractCatalogProducts(bytes: Buffer): CatalogProduct[] {
   const source = productsOf(bytes);
   const out: CatalogProduct[] = [];
+  const seen = new Set<string>();
   for (const doc of source.hardware) {
     for (const hw of hardwareOf(doc)) {
       // The Hardware2Program, not the hardware's HasApplicationProgram flag, says whether a
       // program belongs to the product: ETS's conversion of Hager's ETS2 data sets the flag on
       // a Hardware2Program that names none.
       const programs = kids(node(hw.Hardware2Programs)?.Hardware2Program).filter((h2p) => text(h2p.Id)).map((h2p) => {
+        claimHardwareProgram(seen, text(h2p.Id));
         const hasApplication = h2p.ApplicationProgramRef !== undefined;
         return { appRef: text(h2p.Id), hasApplication, peiProgram: kids(h2p.ApplicationProgramRef).length > 1, appProgramId: hasApplication ? applicationOf(h2p, source) : "" };
       });
