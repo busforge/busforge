@@ -1,5 +1,5 @@
 import { test, expect, describe, setDefaultTimeout } from "bun:test";
-import { KnxIpServer, type ServerSocket, type ServerTcpListener } from "../src/ipserver.ts";
+import { KnxIpServer, searchExtendedRefusal, type ServerSocket, type ServerTcpListener } from "../src/ipserver.ts";
 import type { KnxTransport } from "../src/transport.ts";
 import { SVC, CEMI, knxFrame, hpai, iaToNum, cemiLData, withMessageCode, tpConnect, tpAck, type Endpoint } from "../src/frame.ts";
 
@@ -146,6 +146,62 @@ describe("KnxIpServer: discovery", () => {
   test("joins the KNXnet/IP discovery multicast group, or no client would ever find it", async () => {
     const { sock } = await serve();
     expect(sock.groups).toEqual(["224.0.23.12"]);
+  });
+
+  test("answers a SEARCH_REQUEST_EXTENDED at the HPAI it carries with the description's DIBs", async () => {
+    const { sock } = await serve();
+    const at: Endpoint = { address: "198.51.100.77", port: 40000 };
+    sock.deliver(knxFrame(SVC.SEARCH_REQ_EXT, Buffer.concat([hpai(at.address, at.port), Buffer.from([0x06, 0x04, 0x01, 0x02, 0x08, 0x06])])), CLIENT);
+    sock.deliver(knxFrame(SVC.SEARCH_REQ, hpai("0.0.0.0", 0)), CLIENT);
+
+    const ext = sock.ofService(SVC.SEARCH_RES_EXT), plain = sock.ofService(SVC.SEARCH_RES);
+    expect(ext.length).toBe(1);
+    expect(sock.sent[0]!.to).toEqual(at);
+    expect(ext[0]!.subarray(6).equals(plain[0]!.subarray(6))).toBe(true); // HPAI, device information, families
+  });
+
+  describe("which SEARCH_REQUEST_EXTENDED it answers", () => {
+    const MAC = Buffer.from("0a0b0c0d0e0f", "hex");
+    const FAMILIES = Buffer.from([0x08, 0x02, 0x02, 0x02, 0x03, 0x02, 0x04, 0x01]);
+    const HPAI = Buffer.from("0802000000000000", "hex");
+    const why = (srps: string, hpaiPart = HPAI) => searchExtendedRefusal(Buffer.concat([hpaiPart, Buffer.from(srps, "hex")]), MAC, FAMILIES, [0x01, 0x02]);
+
+    test.each([
+      ["no parameter", ""],
+      ["ETS's request for DIBs, padded", "0804010802060700"],
+      ["its own MAC", "08020a0b0c0d0e0f"],
+      ["tunnelling v1, which it offers", "04030401"],
+      ["core v1, below the v2 it offers", "04030201"],
+      ["an unknown optional parameter", "027f"],
+      ["a mandatory request for the DIBs it sends", "04840201"],
+      ["two parameters it can meet", "04030401060401020806"],
+    ])("answers one with %s", (_what, srps) => { expect(why(srps)).toBeNull(); });
+
+    test.each([
+      ["only servers in programming mode", "0201", /programming mode/],
+      ["only servers in programming mode, mandatory", "0281", /programming mode/],
+      ["another MAC", "0802ffffffffffff", /MAC ffffffffffff/],
+      ["tunnelling v2, above the v1 it offers", "04030402", /family 4 version 2/],
+      ["routing, which it does not offer", "04030501", /family 5 version 1/],
+      ["an unknown mandatory parameter", "02ff", /mandatory search parameter type 0x7f/],
+      ["a bare mandatory parameter of type 0", "0280", /mandatory search parameter type 0x0/],
+      ["a MAC of 5 octets", "0702ffffffffff", /MAC parameter holds 5 octets/],
+      ["a service of 1 octet", "030304", /service parameter holds 1 octets/],
+      ["a mandatory request for a DIB it does not send", "04840800", /requires DIB types 0x8/],
+      ["a DIB request without padding", "0504010208", /DIB request holds 3 octets/],
+      ["an empty DIB request", "0204", /DIB request holds 0 octets/],
+      ["a second parameter it cannot meet", "0604010208060201", /programming mode/],
+      ["a parameter running past the frame", "0604010208", /offset 8 cannot be read/],
+      ["a parameter shorter than its header", "0104", /offset 8 cannot be read/],
+    ])("does not answer one asking %s", (_what, srps, re) => { expect(why(srps)).toMatch(re); });
+
+    test.each([
+      ["of 9 octets", "0902000000000000"],
+      ["of 4 octets", "0402000000000000"],
+      ["cut short", "08020000"],
+    ])("does not answer one whose HPAI is %s", (_what, hex) => {
+      expect(why("", Buffer.from(hex, "hex"))).toMatch(/HPAI cannot be read/);
+    });
   });
 });
 
@@ -682,6 +738,9 @@ describe("KnxIpServer: malformed input from the LAN", () => {
   const cases: [string, Buffer][] = [
     ["empty SEARCH_REQ body (parseHpai over-reads)", knxFrame(SVC.SEARCH_REQ, Buffer.alloc(0))],
     ["empty DESCRIPTION_REQ body", knxFrame(SVC.DESCRIPTION_REQ, Buffer.alloc(0))],
+    ["empty SEARCH_REQ_EXT body", knxFrame(SVC.SEARCH_REQ_EXT, Buffer.alloc(0))],
+    ["SEARCH_REQ_EXT with a 2-octet HPAI", knxFrame(SVC.SEARCH_REQ_EXT, Buffer.from([0x02, 0x01]))],
+    ["SEARCH_REQ_EXT with a parameter cut short", knxFrame(SVC.SEARCH_REQ_EXT, Buffer.concat([hpai("0.0.0.0", 0), Buffer.from([0x06, 0x04, 0x01])]))],
     ["short CONNECT_REQ (no HPAIs)", knxFrame(SVC.CONNECT_REQ, Buffer.from([0x08, 0x01]))],
     ["short CONNECTIONSTATE_REQ", knxFrame(SVC.CONNECTIONSTATE_REQ, Buffer.from([0x01]))],
     ["short DISCONNECT_REQ", knxFrame(SVC.DISCONNECT_REQ, Buffer.from([0x01]))],

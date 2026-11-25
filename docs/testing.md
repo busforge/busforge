@@ -650,7 +650,18 @@ another first element for a property than its collection holds, or none (`0/78=`
 identity, to see what ETS makes of it; the first line of `<log>.sim.txt` names it. An application id without an
 own unit serves its catalogue unit (below) of the application program in `--product` (a `.knxproj` or `.knxprod`
 holding it, or its manufacturer XML), with the donor its mask's rule picks or `--donor`, and with what ETS required
-in each `--learned-from` ETS6.log, in order. A download into the simulator is evidence on no axis
+in each `--learned-from` ETS6.log, in order.
+
+ETS connects to the simulator as to an IP interface: a DESCRIPTION_REQUEST, then a `SEARCH_REQUEST_EXTENDED` on
+each of two further TCP connections, then its tunnel and device-management connections on the last. `KnxIpServer`
+answers each search ([connections.md](connections.md#speaking-enough-knxnetip-for-ets)); ETS was connected
+within a fifth of a second of the download's start in every run of the catalogue rows measured. A server that leaves the searches unanswered costs 3 s each: ETS's setup
+then takes 6 to 7 s, and where anything delays it by another second (frames lost on the way back to ETS) it
+gives the connection up as "Die Verbindung … ist nicht verfügbar" before its CONNECT_REQUEST, and the row fails
+for the harness, not for the product. What ETS sends
+once connected is the same either way.
+
+A download into the simulator is evidence on no axis
 of [evidence-contract.md](evidence-contract.md) by itself: it shows what a tool sends given the
 simulator's answers, and the answers are a real unit's only as far as the table above says.
 

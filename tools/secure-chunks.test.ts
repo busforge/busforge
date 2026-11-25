@@ -56,7 +56,8 @@ corpusDescribe("secured write sizes against ETS's own logs", () => {
       expect(Math.max(0, ...log.memory)).toBeLessThanOrEqual(log.negotiated - MEMORY_OCTETS);
       expect(Math.max(0, ...log.flags)).toBeLessThanOrEqual(log.negotiated - PROPERTY_OCTETS);
       // Busforge for the same pair; where ETS fell back, Busforge's size for an interface that announces
-      // nothing, which is also what it reads from Busforge's bridge (no answer to the extended search).
+      // nothing, which is also what it reads from Busforge's bridge (its extended search answer has no
+      // Extended Device Information DIB).
       const ends = Math.min(log.limited ?? log.negotiated, SHOWN_APDU);
       const c = transferChunks(log.deviceMax, true, log.limited === null ? log.interfaceMax : null);
       expect({ memory: c.extWrite, flags: c.propWrite }).toEqual({ memory: ends - MEMORY_OCTETS, flags: ends - PROPERTY_OCTETS });

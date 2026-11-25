@@ -20,11 +20,12 @@ depends on is hardware-proven.
 - **The bytes of a hidden-byte refusal in the UI.** `PARAM_HIDDEN_BYTES_UNKNOWN` names the bytes and the
   remedy in the server's message; the localized text shows the remedy only, and not which parameters
   without memory are still to be assumed.
-- **The interface's maximum APDU from the Busforge bridge.** Over TCP the bridge does not answer the
-  `SEARCH_REQUEST_EXTENDED` Busforge asks the interface's maximum APDU with; ETS asks the interface
-  object's PID 56 with a cEMI `M_PropRead` (`DEVICE_CONFIGURATION_REQUEST`) and gets the USB limit (40).
-  Busforge writes 12 bytes there. Either the bridge answers the search over TCP, or Busforge asks as ETS
-  does ([status.md](status.md#known-unproven)).
+- **The interface's maximum APDU from the Busforge bridge.** The bridge answers the
+  `SEARCH_REQUEST_EXTENDED` Busforge asks the interface's maximum APDU with, but without the Extended
+  Device Information DIB, so it announces none; ETS asks the interface object's PID 56 with a cEMI
+  `M_PropRead` (`DEVICE_CONFIGURATION_REQUEST`) and gets the USB limit (40). Busforge writes 12 bytes
+  there. Either the bridge puts that DIB into its answer, or Busforge asks as ETS does
+  ([status.md](status.md#known-unproven)).
 - **The tunnelling feature services as ETS uses them.** On an interface that advertises tunnelling
   version 2 (the MDT IP interface), ETS 6 asks the bus connection status (`TUNNELLING_FEATURE_GET`,
   feature 0x03) right after it connects over TCP, and switches the interface's feature info service on

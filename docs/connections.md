@@ -265,11 +265,20 @@ supports it and harmless where it does not.
 
 ### Speaking enough KNXnet/IP for ETS
 
-ETS is stricter than Busforge's own client. Six things were needed to make it use the bridge as an
+ETS is stricter than Busforge's own client. Seven things were needed to make it use the bridge as an
 interface, each of them a real interoperability constraint worth knowing:
 
 - **Advertise Core service family v2.** Tunnelling over TCP is a Core-v2 feature. On Core v1, ETS
   does the description exchange over TCP and then gives up without ever sending a connect request.
+- **Answer the extended search Core v2 implies.** ETS sends a `SEARCH_REQUEST_EXTENDED` on a TCP
+  connection of its own to an interface that advertises Core v2, twice before it connects (once
+  asking DIBs 01 02 08 06, once 01 08 02 06 07), and waits 3 s for each answer. Unanswered, its
+  connection setup takes 6 to 7 s, and a delay of another second (frames lost on the way back) makes
+  ETS give the connection up ("Die Verbindung … ist nicht verfügbar") before its connect request. The bridge answers with its control
+  endpoint as a UDP endpoint (an MDT IP Interface/Router answers so over TCP too) and the
+  description's two DIBs (device information, supported service families); it leaves out every other
+  requested DIB, which it does not model. It stays silent where the search asks only for servers in
+  programming mode, another MAC, a service it does not offer, or makes a DIB it leaves out mandatory.
 - **Serve the local device-management connection.** ETS opens a device-management connection
   alongside its tunnel and reads the interface's own interface-object properties over it. Refusing it
   makes ETS abort the whole session. The bridge answers the two hard requirements (maximum APDU
@@ -297,9 +306,9 @@ interface, each of them a real interoperability constraint worth knowing:
 
 ### What the bridge implements, and what it refuses
 
-Implemented: SEARCH, DESCRIPTION, CONNECT, CONNECTIONSTATE, DISCONNECT, TUNNELLING_REQUEST/ACK, and
-DEVICE_CONFIGURATION_REQUEST/ACK for the local device-management connection. It listens on **both**
-UDP and TCP on the same port.
+Implemented: SEARCH, SEARCH_EXTENDED, DESCRIPTION, CONNECT, CONNECTIONSTATE, DISCONNECT,
+TUNNELLING_REQUEST/ACK, and DEVICE_CONFIGURATION_REQUEST/ACK for the local device-management
+connection. It listens on **both** UDP and TCP on the same port.
 
 | Request | Answer | Why |
 |---|---|---|
