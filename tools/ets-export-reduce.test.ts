@@ -64,7 +64,13 @@ describe("an ETS export reduced to the product data of its project's devices", (
     ]);
     const r = reduceExport(withApps, DEVICES);
     expect([...readZip(r.bytes).keys()].filter((n) => n.includes("UserFiles"))).toEqual(["P-0561/UserFiles/M0083-A0011.etsapp", "P-0561/UserFiles/notes.pdf"]);
-    expect(r.dropped).toContain("P-0561/UserFiles/M0048-A00C8.etsapp");
+    // The project's signature signed the dropped app too.
+    expect(r.dropped).toEqual(expect.arrayContaining(["P-0561/UserFiles/M0048-A00C8.etsapp", "P-0561.signature"]));
+    // An app of the manufacturer whose directory holds a device's program (an OEM product's) stays, and so does the
+    // project's signature where nothing of the project is dropped.
+    const oem = zipOf([...ENTRIES, { name: "P-0561/UserFiles/M0002-A0011.etsapp", data: Buffer.from("an app of the second device's program's manufacturer") }]);
+    const kept = reduceExport(oem, [DEVICES[0], { ...DEVICES[1], productRef: "M-00C8_H-2-P-2" }]);
+    expect([...readZip(kept.bytes).keys()]).toEqual(expect.arrayContaining(["P-0561/UserFiles/M0002-A0011.etsapp", "P-0561.signature"]));
   });
 
   test("keeps the project, the master data, the devices' manufacturers' hardware and catalogue and the programs their Hardware2Program entries name, byte for byte", () => {

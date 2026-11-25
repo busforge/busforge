@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { appProgramId, loadKnxproj, readAppProgram } from "../packages/project/src/index.ts";
 import { parseAppConfig } from "../packages/product/src/index.ts";
 import { iaToNum } from "../packages/knx/src/index.ts";
+import { storeZip } from "../packages/project/test/ziputil.ts";
 import { captureText, corpusPath, corpusRoot } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { capturedOnLoadedUnit, deviceConfiguration, deviceRows, dialogueDifferences, parseCapture } from "./etsdiff.ts";
@@ -11,7 +12,6 @@ import { causes, compareRuns, configuredApplication, etsBranches, etsOutcome, ex
 import { ROW_WORKERS, RowPool } from "./ets-sweep-workers.ts";
 import { mismatchLines } from "./sim-unit-product.ts";
 import { tempDir } from "./test-temp.ts";
-import { storeZip } from "../packages/project/test/ziputil.ts";
 
 // Each row runs Busforge's download into a simulated unit on the wall clock (tools/sim-unit.test.ts: about
 // 15 s alone, twenty times that under a loaded full check), counted from when a worker takes the row.
@@ -37,7 +37,7 @@ function con(tpdu: string, neg = false): string {
 const capture = (...lines: string[]) => lines.join("\n");
 
 // Hardware with a PEI program, in the form ETS writes its Hardware2Program id (both programs' numbers, each with its
-// OEM part): synthetic ids, the shape the catalogue's 305 such rows take.
+// OEM part): synthetic ids, in the shape such catalogue rows take.
 describe("the application a row's configuration runs", () => {
   const H2P = "M-0083_H-PEI.2F1-0-O0007_HP-4201-13-6B9E-O0007-4201-23-00B3-O0007";
   const APP = "M-0083_A-4201-13-6B9E-O0007", PEI = "M-0083_A-4201-23-00B3-O0007";

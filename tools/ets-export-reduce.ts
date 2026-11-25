@@ -6,11 +6,12 @@
 //
 // Kept, byte for byte as ETS wrote them (local header, data, data descriptor): every entry outside the
 // manufacturers' product data (the project P-xxxx with its signature and certificate, knx_master.xml,
-// .validation), but an ETS app attached to the project (a DCA) of no device's manufacturer; of each manufacturer of a
-// device of the project its directory, Hardware.xml and Catalog.xml; and every application program the devices'
-// Hardware2Program entries name (an application and a PEI program alike). Dropped: the other manufacturers'
-// directories and signatures, the other application programs, the baggages, the other manufacturers' attached ETS
-// apps, and the kept manufacturers' signatures (each signs its whole directory, so it no longer holds). The
+// .validation), but an ETS app attached to the project (a DCA) of a manufacturer whose data no device needs; of each
+// manufacturer of a device of the project its directory, Hardware.xml and Catalog.xml; and every application program
+// the devices' Hardware2Program entries name (an application and a PEI program alike). Dropped: the other
+// manufacturers' directories and signatures, the other application programs, the baggages, those attached ETS apps
+// with the project's signature then, and the kept manufacturers' signatures (each signs its whole directory, so it no
+// longer holds). The
 // reduced export is the record of the row's project and devices that Busforge reads, not an archive to import
 // into ETS again: without the signatures and baggages ETS may refuse it.
 import { readFileSync, writeFileSync } from "node:fs";
@@ -22,8 +23,9 @@ const DESCRIPTOR_SIG = 0x08074b50;
 const MANUFACTURER = /^(m-[0-9a-f]{4})(?:[/.]|$)/;
 // A project attachment ETS writes for an ETS app a product brought (a DCA: `P-xxxx/UserFiles/M<manufacturer>-A<app>.etsapp`,
 // `<UserFile … Comment="DCA">` in project.xml). ETS keeps it in the project after the product is gone, so a sweep
-// project carries an earlier row's app into every later row's export.
-const APP_ATTACHMENT = /^p-[0-9a-f]{4}\/userfiles\/m([0-9a-f]{4})-a[0-9a-f]+\.etsapp$/;
+// project carries an earlier row's app into every later row's export. A password-protected project keeps its
+// attachments in its encrypted archive (P-xxxx.zip), which is kept whole.
+const APP_ATTACHMENT = /^(p-[0-9a-f]{4})\/userfiles\/m([0-9a-f]{4})-a[0-9a-f]+\.etsapp$/;
 
 // The export reduced to the product data of `devices` (the devices of its project: their ProductRefId and
 // Hardware2ProgramRefId), with the names of what was dropped. Refuses a device whose application program the
@@ -47,11 +49,15 @@ export function reduceExport(bytes: Buffer, devices: readonly Pick<Device, "ia" 
   }
   // A program may lie in another manufacturer's directory than its product's (the loader reads it from there).
   const directories = new Set([...manufacturers, ...[...programs].map((p) => p.split("/")[0])]);
+  // An ETS app attached to the project is kept where its manufacturer's data are (a device's, or a program's a device
+  // runs); a project that loses one loses its signature too, which signs its whole directory.
+  const appKept = (n: string) => { const a = APP_ATTACHMENT.exec(n); return a ? directories.has(`m-${a[2]}`) : undefined; };
+  const changedProjects = new Set(entries.map((e) => e.name.toLowerCase()).filter((n) => appKept(n) === false).map((n) => n.split("/")[0]));
   const kept = (name: string): boolean => {
     const n = name.toLowerCase(), m = MANUFACTURER.exec(n)?.[1];
-    // An ETS app attached to the project: kept where a device of the project is of its manufacturer.
-    const app = APP_ATTACHMENT.exec(n)?.[1];
-    if (app !== undefined) return manufacturers.has(`m-${app}`);
+    const app = appKept(n);
+    if (app !== undefined) return app;
+    if (/^p-[0-9a-f]{4}\.signature$/.test(n)) return !changedProjects.has(n.replace(/\.signature$/, ""));
     if (m === undefined) return true;
     if (programs.has(n) || n === `${m}/` && directories.has(m)) return true;
     return manufacturers.has(m) && (n === `${m}/hardware.xml` || n === `${m}/catalog.xml`);

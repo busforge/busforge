@@ -963,7 +963,9 @@ One row, step by step:
    project and exports them all. Every entry outside the manufacturers' product data stays (the project with its
    signature and certificate, `knx_master.xml`, `.validation`), but for an ETS app attached to the project
    (`UserFiles/M<manufacturer>-A<app>.etsapp`, a DCA a product brought, which ETS keeps after the product
-   is gone) of no device's manufacturer; and of each manufacturer of a device its
+   is gone) of a manufacturer whose data no device needs, and the project's signature with it (a
+   password-protected project's attachments lie in its encrypted archive, which stays whole); and of each
+   manufacturer of a device its
    `Hardware.xml`, `Catalog.xml` and the application programs the devices' Hardware2Program entries name, each
    entry byte for byte as ETS wrote it; baggages, the other products and the manufacturers' signatures go. A
    Hardware2Program described twice, or naming a program without its id, refuses the reduction: which programs to
@@ -1032,9 +1034,10 @@ HA_TOKEN=... BUSFORGE_CORPUS=... bun run tools/ets-driver.ts batch <catalogue-li
   row that ETS fails on a `Required data mismatch` runs again with what ETS required, up to three rounds;
   each earlier run is kept under `<out>/.attempts/`. No donor for the row's mask, or a product identity the
   donor cannot carry, ends the row `sim-refused` before any download. A unit that refused a request of
-  ETS's run ends the written row `sim-refused` as `tools/ets-sweep.ts` judges it, whatever ETS made of the
-  missing answer (ETS's message beside the refusal); a refusal after the unit's restart that leaves the
-  comparison whole is only named.
+  ETS's run ends the written row `sim-refused`, whatever ETS made of the missing answer (ETS's message
+  beside the refusal), as `tools/ets-sweep.ts` reads ETS's side of a row (Busforge's run, which the batch
+  does not make, can still make the row `busforge-only` when it is judged); a refusal after the unit's
+  restart that leaves the comparison whole is only named.
 - **Before it starts**, the bench host must be kept awake (it sleeps in the evening otherwise): the batch
   reads its keep-awake switch in Home Assistant (`HA_TOKEN`) and refuses to start where it is not on.
 - **A failure of a row** is classified by its message (`classifyFailure`, `tools/ets-batch.ts`):

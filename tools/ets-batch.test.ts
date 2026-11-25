@@ -77,8 +77,8 @@ test("a row's attempts kept under the next free number, an earlier batch's too; 
   expect(readdirSync(rowDirOf(out, app)).sort()).toEqual([RESULT_FILE, "ets6.log.txt"]);
 });
 
-// The driver's messages: as recorded in the batch logs and row directories of the runner's acceptance batches and in
-// the logs of the catalogue download (tools/ets-driver.ts catalogue-download), whose bench host went to sleep; and as
+// The driver's messages: as recorded in batch logs and row directories on the bench host and in the logs of the
+// catalogue download (tools/ets-driver.ts catalogue-download), whose bench host went to sleep; and as
 // the driver composes them from such (ETS gone wrapped around what a step met, a failed recovery).
 test("a failure's class from the driver's recorded messages", () => {
   const c = (why: string) => named(classifyFailure(why));

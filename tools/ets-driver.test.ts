@@ -50,7 +50,7 @@ test("the catalogue row inserted: the one whose read application is the row's, w
     e("TB/U1", "$4201", "1.3", "6B9E", 873), e("TB/U1", "$4201", "1.7", "88D1", 893)];
   expect(pick(tbu1, "TB/U1", "M-0002_A-4201-13-6B9E-O0007")).toEqual({ row: 3, rows: 1, exact: true });
   expect(pick(tbu1, "TB/U1", "M-0007_A-4201-13-D98E")).toEqual({ row: 0, rows: 1, exact: true });
-  // Fingerprints OCR misread (as the runner's acceptance batch read them): the one row at the type and version, and
+  // Fingerprints OCR misread (as OCR reads them on the bench host): the one row at the type and version, and
   // one application in two catalogue items read alike, are taken, not exact (the insert is checked on the export).
   expect(pick([e("4093KRMTSD", "$1471", "1.2", "1634", 700)], "4093KRMTSD", "M-0004_A-1471-12-163A-O00F4")).toEqual({ row: 0, rows: 1, exact: false });
   expect(pick([e("75314019", "$20B3", "1.1", "DCc3s0", 700), e("75314019", "$20B3", "1.1", "DCc3s0", 720)], "75314019", "M-0006_A-20B3-11-DC90-O000A")).toEqual({ row: 0, rows: 2, exact: false });
@@ -58,7 +58,7 @@ test("the catalogue row inserted: the one whose read application is the row's, w
   // are refused.
   expect(pick([e("TB/U1", "$4201", "1.3", "D9BE", 731), e("TB/U1", "$4201", "1.3", "6B93E", 873)], "TB/U1", "M-0002_A-4201-13-6B9E-O0007")).toEqual({ row: 1, rows: 1, exact: false });
   expect(pick([e("X", "$4201", "1.3", "6B0E", 731), e("X", "$4201", "1.3", "6B9F", 873)], "X", "M-0002_A-4201-13-6B9E-O0007")).toEqual({ refused: "2 catalogue rows with order number X at $4201 1.3 read no fingerprint closest to 6B9E alone (read: X $4201 1.3 6B0E; X $4201 1.3 6B9F)" });
-  // The order number a row reads is not what tells it apart (the runner's acceptance batch read GW90883 as "Gws308s3");
+  // The order number a row reads is not what tells it apart (OCR reads GW90883 as "Gws308s3");
   // order numbers that differ only where OCR confuses letters are told apart by the application, and OCR's "S" for the
   // device type's "$" and O for 0 are read as meant.
   expect(pick([e("Gws308s3", "$5222", "1.2", "B809", 700)], "GW90883", "M-0019_A-5222-12-B809-O00C9")).toEqual({ row: 0, rows: 1, exact: true });
@@ -96,7 +96,7 @@ test("a catalogue group's expander read open or closed from its arrow's pixels",
 });
 
 test("a written row ends sim-refused where the unit refused first, ETS's message beside the refusal", () => {
-  // The simulator's lines of rows the runner's acceptance batch recorded ETS failing on with "Das Gerät antwortet nicht".
+  // The simulator's lines of rows ETS failed on with "Das Gerät antwortet nicht", as recorded on the bench host.
   const ets = { kind: "ets-failed" as const, why: "ETS's load task failed: Knx.Ets.Hawk.DeviceManagementException: Das Gerät antwortet nicht." };
   const segment = "sim-refused A_PropertyValue_Write 3/5 030b0000096e00000000: 2414 bytes at 0x1c06 reach into the segment of object 4; where the unit places them then is not known";
   const order = "sim-refused A_PropertyValue_Write 4/27 0000080000320000: element 2 before element 1";
@@ -106,6 +106,27 @@ test("a written row ends sim-refused where the unit refused first, ETS's message
   // Nothing refused: ETS's outcome as it is.
   expect(writtenRowKind(ets, "2026-11-25T14:57:56.745Z catalogue unit of …", "", "1.1.20", "MV-07B0")).toEqual({ kind: "ets-failed", why: ets.why });
   expect(writtenRowKind({ kind: "completed" }, "", "", "1.1.20", "MV-07B0")).toEqual({ kind: "completed" });
-  // A row whose address is not known: no refusal is shown to leave the comparison whole.
-  expect(writtenRowKind({ kind: "completed" }, sim(order), "", undefined, "MV-07B0").kind).toBe("sim-refused");
+  // A refusal after the unit's restart that leaves the comparison whole (ETS's T_Disconnect after the restart, confirmed
+  // negatively on the line): ETS's outcome stays, the refusal named.
+  const dev = 0x110a, tool = 0x11ff;
+  const frame = (tpdu: string, code: number, src: number, dst: number) => {
+    const t = Buffer.from(tpdu, "hex");
+    const cemi = Buffer.concat([Buffer.from([code, 0x00, 0xb0, 0x60, src >> 8, src & 0xff, dst >> 8, dst & 0xff, t.length - 1]), t]);
+    return Buffer.concat([Buffer.from([0x06, 0x10, 0x04, 0x20, 0x00, 10 + cemi.length, 0x04, 0x01, 0x00, 0x00]), cemi]).toString("hex");
+  };
+  const sent = (tpdu: string) => `2026-01-01T00:00:00.000Z ETS->BRIDGE TUNNELLING_REQ  | ${frame(tpdu, 0x11, tool, dev)}`;
+  const capture = [sent("80"), sent("4282400001"), sent("4780"), sent("81"), `2026-01-01T00:00:00.000Z BRIDGE->ETS TUNNELLING_REQ CON-NEG  | ${frame("81", 0x2e, tool, dev)}`].join("\n");
+  const after = "sim-refused 81 1275 ms after the restart: whether the unit acknowledges a frame then is not shown";
+  expect(writtenRowKind({ kind: "completed" }, ["connected to 1.1.255", "restart", `2026-01-01T00:00:01.000Z ${after}`].join("\n"), capture, "1.1.10", "MV-07B0"))
+    .toEqual({ kind: "completed", why: `the simulator refused 1 after the restart, the comparison whole: ${after}` });
+});
+
+test("of rows at one application number and version, the row's manufacturer's where OCR cannot tell the fingerprints apart", () => {
+  const e = (manufacturer: string, fingerprint: string, y: number) => ({ orderNumber: "TB/U1", deviceType: "$4201", version: "1.3", fingerprint, manufacturer, y });
+  // Both read alike: without a manufacturer the first, with it the one whose manufacturer reads as the row's.
+  const alike = [e("ABB AG - BUSCH-JAEGER", "6B8E", 731), e("ABB AG - STOTZ-KONTAKT", "6B8E", 873)];
+  expect(pickCatalogueRow(alike, "TB/U1", "M-0002_A-4201-13-6B9E-O0007")).toMatchObject({ hit: alike[0] });
+  expect(pickCatalogueRow(alike, "TB/U1", "M-0002_A-4201-13-6B9E-O0007", "ABB AG - STOTZ-KONTAKT")).toMatchObject({ hit: alike[1], rows: 1 });
+  // A manufacturer no row reads as narrows nothing: the insert is checked afterwards.
+  expect(pickCatalogueRow(alike, "TB/U1", "M-0002_A-4201-13-6B9E-O0007", "Siemens")).toMatchObject({ hit: alike[0] });
 });
