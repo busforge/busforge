@@ -1004,9 +1004,11 @@ bun run tools/ets-catalogue.ts list <fetched dir> --json <file> --md <file> [--m
   `catalogue-download` loads them all through the catalogue panel's "Herunterladen", which loads the
   selected rows' product data without inserting a device. It walks the whole catalogue grid in
   batches from its first row (a project open, the catalogue's search empty). The catalogue server
-  refuses some selections ("Online-Katalog-Download fehlgeschlagen", `(400) Bad Request` in ETS6.log):
-  such a batch is tried again at half its size, and a row refused alone is written down with its
-  full-resolution screenshot and passed. Rows already loaded leave "Herunterladen" disabled and pass
+  refuses a selection by the product data it holds, not by its rows ("Online-Katalog-Download
+  fehlgeschlagen", `(400) Bad Request` in ETS6.log): such a batch is tried again at half its size, a
+  batch that loaded is followed by one a quarter larger (up to `--batch`), and a row refused alone is
+  written down with its full-resolution screenshot and passed. `<out>/progress.json` holds the next
+  row and the batch size; `--from` that row resumes at that size. Rows already loaded leave "Herunterladen" disabled and pass
   at once, so a run started again resumes.
 - **`fetch`** copies the index files, the market file, the `<AP …>` element of every application ETS
   loaded, and where they came from (ETS's version and licence from ETS6.log, the index's date).

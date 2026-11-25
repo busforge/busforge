@@ -965,10 +965,11 @@ async function deleteProject(name: string): Promise<void> {
 // The catalogue's index on disk (tools/ets-catalogue.ts reads it) names each product's application but not its
 // mask; the mask is in the product data, which ETS keeps only for products it loaded. The catalogue panel's
 // Herunterladen loads the selected rows' product data without inserting anything. The catalogue server refuses
-// some selections with "(400) Bad Request", large ones always, smaller ones now and then: the grid is walked in
-// batches from its first row, a batch that fails is tried again at half its size, and one row that fails alone
-// is written down and passed. Rows already loaded leave Herunterladen disabled and pass at once, so a run started
-// again from the first row resumes where the last one ended.
+// a selection with "(400) Bad Request" by the product data it holds, not by its rows (60 rows with 390 MB loaded,
+// 24 rows of an application with 73 MB did not, one of them alone did): the grid is walked in batches from its
+// first row, their size set by nextBatchSize, and one row that fails alone is written down and passed. Rows
+// already loaded leave Herunterladen disabled and pass at once, so a run started again from the first row
+// resumes where the last one ended.
 
 const CATALOGUE = {
   download: [470, 659], downloadText: { x: 440, y: 652, w: 80, h: 14 }, firstRow: [700, 731],
@@ -976,6 +977,16 @@ const CATALOGUE = {
 } as const;
 
 interface CatalogueFailure { row: number; dialog: string; screenshot: string }
+
+// The size of the next batch after one of `size` rows `loaded`, was `refused` or held only loaded rows
+// (`skipped`): half after a refusal; after a load a quarter more, at least one row more, up to `max`. A refusal
+// costs a walk down the grid from its first row, minutes deep in the catalogue, so the size grows from the last
+// one that loaded instead of starting over at `max`.
+export function nextBatchSize(size: number, outcome: "loaded" | "refused" | "skipped", max: number): number {
+  if (outcome === "refused") return Math.max(1, Math.ceil(size / 2));
+  if (outcome === "loaded") return Math.min(max, Math.max(size + 1, Math.ceil(size * 1.25)));
+  return size;
+}
 
 // Whether the toolbar's Herunterladen is enabled: its dark label (darkest pixel 0.19 measured) against the grey
 // of a disabled one (0.58).
@@ -1060,9 +1071,10 @@ async function waitNoDialog(s: Screen): Promise<void> {
   }
 }
 
-// The whole catalogue grid loaded, `batch` rows at a time, from row `from`. Needs a project open with the
+// The whole catalogue grid loaded in batches of at most `batch` rows, from row `from`. Needs a project open with the
 // catalogue panel showing the whole catalogue (its search empty). Refused rows and their screenshots go to `out`;
-// <out>/progress.json holds the next row and every refused row, an earlier run's too, after every batch.
+// <out>/progress.json holds the next row, the batch size and every refused row, an earlier run's too, after every
+// batch.
 async function downloadCatalogue(batch: number, out: string, from: number): Promise<CatalogueFailure[]> {
   mkdirSync(out, { recursive: true });
   const s = new Screen(out);
@@ -1070,22 +1082,26 @@ async function downloadCatalogue(batch: number, out: string, from: number): Prom
   if (!findText(s.look(CATALOGUE.header).ws, "Katalog").length) fail("ETS shows no catalogue panel");
   if (!findText(s.look(CATALOGUE.search).ws, "Suchen").length) fail("the catalogue's search is not empty: the grid would not show the whole catalogue");
   const progress = join(out, "progress.json");
-  let failures: CatalogueFailure[] = existsSync(progress) ? (JSON.parse(readFileSync(progress, "utf8")) as { failures: CatalogueFailure[] }).failures : [];
-  const save = (row: number, done: boolean) => writeFileSync(progress, `${JSON.stringify({ row, ...(done ? { done } : {}), failures }, null, 1)}\n`);
-  let row = from, size = batch, fresh = true;
+  const before = existsSync(progress) ? JSON.parse(readFileSync(progress, "utf8")) as { row: number; size?: number; failures: CatalogueFailure[] } : null;
+  let failures = before?.failures ?? [];
+  // A run resumed where the last one stopped starts at the last one's batch size.
+  let row = from, size = before?.row === from && before.size ? Math.min(before.size, batch) : batch, fresh = true;
+  const save = (done: boolean) => writeFileSync(progress, `${JSON.stringify({ row, size, ...(done ? { done } : {}), failures }, null, 1)}\n`);
   try {
     while (await selectRows(s, row, size, fresh)) {
       fresh = false;
-      if (!downloadEnabled((await settledGrid(s)).png)) { row += size; size = batch; continue; }
+      if (!downloadEnabled((await settledGrid(s)).png)) { row += size; size = nextBatchSize(size, "skipped", batch); continue; }
       const since = etsClock();
       click(CATALOGUE.download[0], CATALOGUE.download[1]);
       const r = await downloadOutcome(s, since);
-      // A refused download leaves the grid reloaded: the next batch is selected from its first row.
+      // A refused download leaves the keyboard focus elsewhere in the grid: the next batch is selected from its
+      // first row.
       if (r.ok) step(`rows ${row}-${row + size - 1} loaded`);
       else if (size > 1) {
         renameSync(r.png, join(out, `refused-rows-${row}-${row + size - 1}.png`));
-        step(`rows ${row}-${row + size - 1} refused, again by ${Math.ceil(size / 2)}`);
-        size = Math.ceil(size / 2);
+        const half = nextBatchSize(size, "refused", batch);
+        step(`rows ${row}-${row + size - 1} refused, again by ${half}`);
+        size = half;
         fresh = true;
         continue;
       } else {
@@ -1096,14 +1112,14 @@ async function downloadCatalogue(batch: number, out: string, from: number): Prom
         fresh = true;
       }
       row += size;
-      size = batch;
-      save(row, false);
+      size = nextBatchSize(size, r.ok ? "loaded" : "refused", batch);
+      save(false);
     }
   } catch (e) {
     try { shot(join(out, `driver-failed-row-${row}.png`)); } catch { /* the failure stays the one thrown */ }
     throw e;
   } finally { s.clean(); }
-  save(row, true);
+  save(true);
   return failures;
 }
 
