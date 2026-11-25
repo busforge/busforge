@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { editDistance, expanderOpen, LINE_11, nextBatchSize, oneRowSelected, pickCatalogueRow, selectedSamples } from "./ets-driver.ts";
+import { editDistance, expanderOpen, LINE_11, nextBatchSize, oneRowSelected, pickCatalogueRow, selectedSamples, writtenRowKind } from "./ets-driver.ts";
 
 test("a catalogue batch halves after a refusal and grows from the last size that loaded", () => {
   const walk = (outcomes: ("loaded" | "refused" | "skipped")[], max = 150) => {
@@ -93,4 +93,19 @@ test("a catalogue group's expander read open or closed from its arrow's pixels",
   expect(expanderOpen(txt(open))).toBe(true);
   // The closed expander's box border (#989898) is no arrow; nothing dark is no expander.
   expect(expanderOpen(txt([[19, 1, 0x98], [19, 2, 0x98]]))).toBeNull();
+});
+
+test("a written row ends sim-refused where the unit refused first, ETS's message beside the refusal", () => {
+  // The simulator's lines of rows the runner's acceptance batch recorded ETS failing on with "Das Gerät antwortet nicht".
+  const ets = { kind: "ets-failed" as const, why: "ETS's load task failed: Knx.Ets.Hawk.DeviceManagementException: Das Gerät antwortet nicht." };
+  const segment = "sim-refused A_PropertyValue_Write 3/5 030b0000096e00000000: 2414 bytes at 0x1c06 reach into the segment of object 4; where the unit places them then is not known";
+  const order = "sim-refused A_PropertyValue_Write 4/27 0000080000320000: element 2 before element 1";
+  const sim = (refusal: string) => ["2026-11-25T14:57:56.745Z catalogue unit of …", `2026-11-25T14:58:25.751Z ${refusal}`, `2026-11-25T14:58:30.987Z ${refusal}`].join("\n");
+  expect(writtenRowKind(ets, sim(segment), "", "1.1.20", "MV-07B0")).toEqual({ kind: "sim-refused", why: `the simulator refused 2: ${segment}; ETS: ${ets.why}` });
+  expect(writtenRowKind(ets, sim(order), "", "1.1.20", "MV-07B0")).toEqual({ kind: "sim-refused", why: `the simulator refused 2: ${order}; ETS: ${ets.why}` });
+  // Nothing refused: ETS's outcome as it is.
+  expect(writtenRowKind(ets, "2026-11-25T14:57:56.745Z catalogue unit of …", "", "1.1.20", "MV-07B0")).toEqual({ kind: "ets-failed", why: ets.why });
+  expect(writtenRowKind({ kind: "completed" }, "", "", "1.1.20", "MV-07B0")).toEqual({ kind: "completed" });
+  // A row whose address is not known: no refusal is shown to leave the comparison whole.
+  expect(writtenRowKind({ kind: "completed" }, sim(order), "", undefined, "MV-07B0").kind).toBe("sim-refused");
 });

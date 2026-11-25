@@ -66,7 +66,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { numToIa } from "../packages/knx/src/index.ts";
+import { iaToNum, numToIa } from "../packages/knx/src/index.ts";
 import { extractAppPrograms, loadKnxproj, readAppProgram } from "../packages/project/src/index.ts";
 import { parseAppConfig } from "../packages/product/src/index.ts";
 import { catalogueXml } from "./corpus.ts";
@@ -74,7 +74,7 @@ import { deviceConfiguration, deviceRows, dialogue, dialogueDifferences } from "
 import { appendLog, BATCH_LOG, batchRows, CATALOGUE_LIST_FORMAT, classifyFailure, clearRowDir, heartbeatLine, loggedRows, moveAttempt, planBatch, RESULT_FORMAT, rowDirOf, rowLine, summary, UNKNOWN_DIALOG, VARIANT, writeResult, type Attempt, type FailureClass, type RowKind, type RowResult } from "./ets-batch.ts";
 import type { CatalogueList, Row as ListRow } from "./ets-catalogue.ts";
 import { reduceProjectExport } from "./ets-export-reduce.ts";
-import { ETS_TASK_FAILED, etsOutcome, ROW_FILES, ROW_FORMAT, simRefusals, type EtsOutcome, type RowConfiguration, type RowSpec } from "./ets-sweep.ts";
+import { ETS_TASK_FAILED, etsOutcome, refusalsAfterRestart, ROW_FILES, ROW_FORMAT, runState, simRefusals, type EtsOutcome, type RowConfiguration, type RowSpec } from "./ets-sweep.ts";
 import { catalogueUnit, catalogueUnitFrom, catalogueUnitRecord, learnIdentity, type CatalogueUnitSpec } from "./sim-unit-catalogue.ts";
 import { productUnit, rerunIdentity } from "./sim-unit-product.ts";
 import { newSimUnit, SIM_UNITS, simUnitSpec } from "./sim-units.ts";
@@ -1725,12 +1725,14 @@ async function batchRow(row: ListRow, b: BatchOptions, inject: RowOptions["injec
       appendLog(b.out, `${row.application}: ETS restarted (${r.failure.reason}), the row runs again: ${why}`);
       continue;
     }
-    const kind: RowKind = r.outcome.kind;
-    // What the unit refused is named; whether it counts against the row tools/ets-sweep.ts judges (a refusal after the
-    // unit's last restart may not).
-    let more = r.simRefusals.length ? `; the simulator refused ${r.simRefusals.length}: ${r.simRefusals[0]}` : "";
+    let kind: RowKind = r.outcome.kind, rowWhy = why, more = "";
+    if (r.outcome.kind === "completed" || r.outcome.kind === "ets-failed") {
+      const conf = join(dir, ROW_FILES.configuration);
+      const ia = existsSync(conf) ? (JSON.parse(readFileSync(conf, "utf8")) as RowConfiguration).ia : undefined;
+      ({ kind, why: rowWhy } = writtenRowKind(r.outcome, readFileSync(join(dir, ROW_FILES.etsSim), "utf8"), existsSync(join(dir, ROW_FILES.ets)) ? readFileSync(join(dir, ROW_FILES.ets), "utf8") : "", ia, `MV-${row.mask}`));
+    }
     // The identity loop: what ETS required of the catalogue unit, learned from this run's ETS6.log, for the next run.
-    if (kind === "ets-failed" && r.catalogueSpec && !r.simRefusals.length) {
+    if (kind === "ets-failed" && r.catalogueSpec) {
       const ets6log = join(dir, ROW_FILES.ets6log);
       const l = learned.length >= IDENTITY_ROUNDS ? { refused: `${IDENTITY_ROUNDS} rounds of the identity loop ran` } : learnIdentity(r.catalogueSpec, readFileSync(ets6log));
       if (!("refused" in l)) {
@@ -1743,11 +1745,25 @@ async function batchRow(row: ListRow, b: BatchOptions, inject: RowOptions["injec
       more += `; identity loop: ${l.refused}`;
     }
     if (r.failure?.kind === "restart" && restarted) more += "; ETS was gone or failed under the row again after its restart";
-    attempts.push({ kind, why, minutes: r.minutes });
+    attempts.push({ kind, why: rowWhy, minutes: r.minutes });
     const screenshot = ["dialog.png", "failure.png"].find((f) => existsSync(join(dir, f)));
     const unitName = r.unit === undefined ? undefined : typeof r.unit === "string" ? r.unit : `donor ${r.unit.donor}`;
-    return result(kind, why === undefined && !more ? undefined : `${why ?? ""}${more}`.replace(/^; /, ""), { ...(unitName ? { unit: unitName } : {}), ...(screenshot && kind !== "completed" ? { screenshot } : {}) });
+    return result(kind, rowWhy === undefined && !more ? undefined : `${rowWhy ?? ""}${more}`.replace(/^; /, ""), { ...(unitName ? { unit: unitName } : {}), ...(screenshot && kind !== "completed" ? { screenshot } : {}) });
   }
+}
+
+// How a written row ended, as tools/ets-sweep.ts judges it (judge): sim-refused where the unit refused a request of
+// ETS's run that leaves the comparison not whole (refusalsAfterRestart; decision 1: what the donor cannot answer ends
+// the row sim-refused), whatever ETS made of the missing answer ("Das Gerät antwortet nicht"), ETS's message beside the
+// refusal; else ETS's outcome, any refusal after the unit's restart named. Without the row's configuration (the unit's
+// address) no refusal is shown to leave the comparison whole: each counts.
+export function writtenRowKind(outcome: { kind: "completed" } | { kind: "ets-failed"; why: string }, simLines: string, capture: string, ia: string | undefined, mask: string): { kind: RowKind; why?: string } {
+  const split = ia === undefined ? { after: [], others: simRefusals(simLines) } : refusalsAfterRestart(simLines, runState(capture, "ETS", iaToNum(ia), mask));
+  const ets = outcome.kind === "ets-failed" ? outcome.why : undefined;
+  if (split.others.length) return { kind: "sim-refused", why: `the simulator refused ${split.others.length}: ${split.others[0]}${ets ? `; ETS: ${ets}` : ""}` };
+  const after = split.after.length ? `the simulator refused ${split.after.length} after the restart, the comparison whole: ${split.after[0]}` : undefined;
+  const why = [ets, after].filter(Boolean).join("; ");
+  return why ? { kind: outcome.kind, why } : { kind: outcome.kind };
 }
 
 async function runBatch(b: BatchOptions): Promise<number> {

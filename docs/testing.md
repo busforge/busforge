@@ -1029,8 +1029,10 @@ HA_TOKEN=... BUSFORGE_CORPUS=... bun run tools/ets-driver.ts batch <catalogue-li
 - **The unit.** An application with an own unit runs on it; every other on its catalogue unit. A catalogue
   row that ETS fails on a `Required data mismatch` runs again with what ETS required, up to three rounds;
   each earlier run is kept under `<out>/.attempts/`. No donor for the row's mask, or a product identity the
-  donor cannot carry, ends the row `sim-refused` before any download. What a unit refused of what ETS
-  sent is named in the row's result; whether it counts against the row, `tools/ets-sweep.ts` judges.
+  donor cannot carry, ends the row `sim-refused` before any download. A unit that refused a request of
+  ETS's run ends the written row `sim-refused` as `tools/ets-sweep.ts` judges it, whatever ETS made of the
+  missing answer (ETS's message beside the refusal); a refusal after the unit's restart that leaves the
+  comparison whole is only named.
 - **Before it starts**, the bench host must be kept awake (it sleeps in the evening otherwise): the batch
   reads its keep-awake switch in Home Assistant (`HA_TOKEN`) and refuses to start where it is not on.
 - **A failure of a row** is classified by its message (`classifyFailure`, `tools/ets-batch.ts`):
