@@ -3,6 +3,7 @@ import { KnxIpTunnel, type TcpSocket } from "../src/connection.ts";
 import { KnxIpServer, type ServerSocket, type ServerTcpSocket, type ServerTcpListener } from "../src/ipserver.ts";
 import type { KnxTransport } from "../src/transport.ts";
 import { KnxError } from "../src/errors.ts";
+import { localIPv4 } from "../src/localnet.ts";
 import {
   KnxIpStreamParser, SVC, CEMI, knxFrame, hpai, hpaiTcp, iaToNum, cemiLData, type Endpoint,
 } from "../src/frame.ts";
@@ -687,7 +688,8 @@ describe("KnxIpServer over TCP", () => {
     conn.feed(Buffer.from(hex, "hex"));
     const res = conn.ofService(SVC.SEARCH_RES_EXT);
     expect(res.length).toBe(1);
-    expect([...res[0]!.subarray(6, 14)]).toEqual([...hpaiTcp()]); // the connection is the endpoint
+    // The control endpoint as an IPv4 UDP HPAI, as an MDT IP Interface/Router answers ETS over TCP.
+    expect([...res[0]!.subarray(6, 14)]).toEqual([...hpai(localIPv4(), 3671)]);
     expect(res[0]!.subarray(14).equals(description)).toBe(true);  // device information, service families
   });
 

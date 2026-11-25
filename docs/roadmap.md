@@ -24,7 +24,8 @@ depends on is hardware-proven.
   `SEARCH_REQUEST_EXTENDED` Busforge asks the interface's maximum APDU with, but without the Extended
   Device Information DIB, so it announces none; ETS asks the interface object's PID 56 with a cEMI
   `M_PropRead` (`DEVICE_CONFIGURATION_REQUEST`) and gets the USB limit (40). Busforge writes 12 bytes
-  there. Either the bridge puts that DIB into its answer, or Busforge asks as ETS does ([status.md](status.md#known-unproven)).
+  there. Either the bridge puts that DIB into its answer, or Busforge asks as ETS does
+  ([status.md](status.md#known-unproven)).
 - **The tunnelling feature services as ETS uses them.** On an interface that advertises tunnelling
   version 2 (the MDT IP interface), ETS 6 asks the bus connection status (`TUNNELLING_FEATURE_GET`,
   feature 0x03) right after it connects over TCP, and switches the interface's feature info service on

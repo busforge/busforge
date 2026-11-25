@@ -132,9 +132,10 @@ export function realTcpListener(onListening?: (port: number) => void): ServerTcp
 // answered by a server with MAC `mac`, never in programming mode, offering the families of `suppSvcDib`; null
 // where it is. A parameter is length, type (0x80: mandatory) and data (KNXnet/IP Core v2): 0x01 asks only
 // servers in programming mode, 0x02 only the one with that MAC, 0x03 only those offering that family at
-// that version or above, 0x04 names the DIBs the client wants (a zero pads the list to even length).
-export function searchExtendedRefusal(body: Buffer, mac: Buffer, suppSvcDib: Buffer): string | null {
-  if (body.length < 2 || body[0] < 2 || body[0] > body.length) return "its HPAI cannot be read";
+// that version or above, 0x04 names the DIBs the client wants (a zero pads the list to even length). `served`
+// are the DIB types the answer carries: a mandatory 0x04 naming another is not answered.
+export function searchExtendedRefusal(body: Buffer, mac: Buffer, suppSvcDib: Buffer, served: readonly number[]): string | null {
+  if (body.length < 8 || body[0] !== 8) return "its HPAI cannot be read"; // an IPv4 HPAI is 8 octets
   for (let at = body[0]; at < body.length;) {
     const len = body[at], type = body[at + 1];
     if (len === undefined || type === undefined || len < 2 || at + len > body.length) return `its search parameter at offset ${at} cannot be read`;
@@ -152,7 +153,12 @@ export function searchExtendedRefusal(body: Buffer, mac: Buffer, suppSvcDib: Buf
         if (!offered) return `it asks only servers offering service family ${data[0]} version ${data[1]}`;
         break;
       }
-      case 0x04: break;
+      case 0x04: {
+        if (data.length === 0 || data.length % 2) return `its DIB request holds ${data.length} octets, not an even number above 0`;
+        const missing = [...data].filter((t) => t !== 0 && !served.includes(t));
+        if (type & 0x80 && missing.length) return `it requires DIB types ${missing.map((t) => `0x${t.toString(16)}`).join(", ")}, which this server does not send`;
+        break;
+      }
       default:
         if (type & 0x80) return `it carries mandatory search parameter type 0x${(type & 0x7f).toString(16)}, which this server does not know`;
     }
@@ -394,7 +400,7 @@ export class KnxIpServer {
 
   // ---- discovery / description ----
 
-  private deviceInfoDib(): Buffer {
+  private deviceInfoDib(mac: Buffer): Buffer {
     const b = Buffer.alloc(54);
     b[0] = 54;
     b[1] = 0x01;                              // DIB type: device information
@@ -405,7 +411,7 @@ export class KnxIpServer {
     this.serialNumber.copy(b, 8, 0, 6);
     // 14..17 stay zero: the routing multicast address. This server does not route, and saying so
     // with 0.0.0.0 is what tells a client not to expect routing from it.
-    localMac().copy(b, 18, 0, 6);
+    mac.copy(b, 18, 0, 6);
     b.write(this.name, 24, "latin1");         // 30-byte field, NUL-padded; the name is capped to 29
     return b;
   }
@@ -417,8 +423,8 @@ export class KnxIpServer {
   // now answer it (acceptMgmt / onDeviceConfig).
   private static readonly SUPP_SVC_DIB = Buffer.from([0x08, 0x02, 0x02, 0x02, 0x03, 0x02, 0x04, 0x01]);
 
-  private describe(): Buffer {
-    return Buffer.concat([this.deviceInfoDib(), KnxIpServer.SUPP_SVC_DIB]);
+  private describe(mac = localMac()): Buffer {
+    return Buffer.concat([this.deviceInfoDib(mac), KnxIpServer.SUPP_SVC_DIB]);
   }
 
   // SEARCH_REQUEST_EXTENDED, which Core v2 obliges a server to answer. ETS 6 sends it on its own TCP
@@ -426,16 +432,20 @@ export class KnxIpServer {
   // ReadDeviceDescription, then its tunnelling connector's), and waits 3 s for each answer. Left
   // unanswered, those 6 s are most of what ETS's connection setup allows: where ETS is slow besides, it
   // gives the connection up as "nicht verfügbar" before its CONNECT_REQUEST. The answer is
-  // SEARCH_RESPONSE_EXTENDED: the control HPAI, the description's two DIBs (device information, supported
-  // service families), and nothing else: a requested DIB this server does not model (extended device
-  // information, tunnelling slots, IP configuration, secured families) is left out, which the protocol
-  // allows. A search the parameters restrict to a programming mode this server is never in, to another
-  // MAC, or to a service it does not offer is not answered, as the protocol requires; so is one carrying
-  // a mandatory parameter it does not know, or parameters it cannot read.
+  // SEARCH_RESPONSE_EXTENDED: the control endpoint as an IPv4 UDP HPAI on TCP too (an MDT IP
+  // Interface/Router answers ETS so over TCP, and Calimero refuses a TCP HPAI there), then the
+  // description's two DIBs (device information, supported service families) and nothing else: a requested
+  // DIB this server does not model (extended device information, tunnelling slots, IP configuration,
+  // secured families) is left out, which the protocol allows unless the request makes it mandatory. A
+  // search the parameters restrict to a programming mode this server is never in, to another MAC, or to a
+  // service it does not offer is not answered, as the protocol requires; so is one carrying a mandatory
+  // parameter it does not know, or parameters it cannot read.
+  private static readonly SEARCH_EXT_DIBS = [0x01, 0x02];
   private onSearchExtended(body: Buffer, origin: Origin): void {
-    const why = searchExtendedRefusal(body, localMac(), KnxIpServer.SUPP_SVC_DIB);
+    const mac = localMac();
+    const why = searchExtendedRefusal(body, mac, KnxIpServer.SUPP_SVC_DIB, KnxIpServer.SEARCH_EXT_DIBS);
     if (why) { this.log(`not answering a SEARCH_REQUEST_EXTENDED: ${why}`); return; }
-    this.answer(origin, () => parseHpai(body, 0, this.originFrom(origin)), knxFrame(SVC.SEARCH_RES_EXT, Buffer.concat([this.responseHpai(origin), this.describe()])));
+    this.answer(origin, () => parseHpai(body, 0, this.originFrom(origin)), knxFrame(SVC.SEARCH_RES_EXT, Buffer.concat([hpai(this.me.address, this.me.port), this.describe(mac)])));
   }
 
   // ---- datagram dispatch ----

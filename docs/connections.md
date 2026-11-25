@@ -273,11 +273,12 @@ interface, each of them a real interoperability constraint worth knowing:
 - **Answer the extended search Core v2 implies.** ETS sends a `SEARCH_REQUEST_EXTENDED` on a TCP
   connection of its own to an interface that advertises Core v2, twice before it connects (once
   asking DIBs 01 02 08 06, once 01 08 02 06 07), and waits 3 s for each answer. Unanswered, its
-  connection setup takes over 6 s, close to what ETS allows it: an ETS that is slow besides gives the
-  connection up ("Die Verbindung … ist nicht verfügbar") before its connect request. The bridge
-  answers with the description's two DIBs (device information, supported service families) and leaves
-  out every other requested DIB, which it does not model; it stays silent where the search asks only
-  for servers in programming mode, another MAC or a service it does not offer.
+  connection setup takes over 6 s, and an ETS that is slow besides gives the connection up ("Die
+  Verbindung … ist nicht verfügbar") before its connect request. The bridge answers with its control
+  endpoint as a UDP endpoint (an MDT IP Interface/Router answers so over TCP too) and the
+  description's two DIBs (device information, supported service families); it leaves out every other
+  requested DIB, which it does not model. It stays silent where the search asks only for servers in
+  programming mode, another MAC, a service it does not offer, or makes a DIB it leaves out mandatory.
 - **Serve the local device-management connection.** ETS opens a device-management connection
   alongside its tunnel and reads the interface's own interface-object properties over it. Refusing it
   makes ETS abort the whole session. The bridge answers the two hard requirements (maximum APDU
@@ -305,9 +306,9 @@ interface, each of them a real interoperability constraint worth knowing:
 
 ### What the bridge implements, and what it refuses
 
-Implemented: SEARCH, SEARCH_EXTENDED, DESCRIPTION, CONNECT, CONNECTIONSTATE, DISCONNECT, TUNNELLING_REQUEST/ACK, and
-DEVICE_CONFIGURATION_REQUEST/ACK for the local device-management connection. It listens on **both**
-UDP and TCP on the same port.
+Implemented: SEARCH, SEARCH_EXTENDED, DESCRIPTION, CONNECT, CONNECTIONSTATE, DISCONNECT,
+TUNNELLING_REQUEST/ACK, and DEVICE_CONFIGURATION_REQUEST/ACK for the local device-management
+connection. It listens on **both** UDP and TCP on the same port.
 
 | Request | Answer | Why |
 |---|---|---|

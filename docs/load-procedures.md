@@ -494,9 +494,9 @@ interface, the OpenKNX RaumController captures), 3 for `A_Memory_Write` (52 on t
 55); its log names which limited it ("restricted by ByInterface", "ByTargetDevice"). Busforge asks the
 same on the open tunnel, once per device, before the first load-state event of a download
 (`KnxIpTunnel.queryMaxApdu`, `writeChunks`). Where the interface announces nothing (a USB interface, an
-IP one that does not answer within a second, Busforge's own KNXnet/IP server, which answers the extended
-search without that DIB), the path limit stays: 32 bytes extended, 12 classic. A frame whose TPDU is longer than
-16 octets goes as an extended frame (control field 1 `0x3C`), as ETS sends it (`0x30`, also through
+IP one that does not answer within a second, Busforge's own KNXnet/IP server, which answers the
+extended search without that DIB), the path limit stays: 32 bytes extended, 12 classic. A frame whose
+TPDU is longer than 16 octets goes as an extended frame (control field 1 `0x3C`), as ETS sends it (`0x30`, also through
 Busforge's KNXnet/IP server to its USB interface). In a plain session, a device on another line than
 the interface, behind a coupler, gets standard frames only
 ([connections.md](connections.md#devices-behind-a-coupler)); no capture shows how ETS sizes its
