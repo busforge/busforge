@@ -1000,9 +1000,10 @@ ETS gone. Two options exist to check the verdicts on real
 logs: `--stop-sim-after <n>` stops the simulator once ETS sent it n frames (a download ETS aborts),
 `--wrong-interface <host:port>` sets ETS to another configured connection than the row's simulator.
 
-**The screen readers.** Each reading of ETS's screen the driver relies on is a function of a screenshot, which the
-driver takes fresh for each reading (`projectTabs`, `treeRowIn`, `catalogueGroups`, `catalogueProducts`, `propertiesTable`, `compatibilityWarning`,
-`catalogueDownloadDialog`, `selectionPattern` and the others `tools/ets-driver.ts` exports). `tools/ets-driver-screens.test.ts`
+**The screen readers.** The readings of ETS's screen that runs showed to be fragile are functions of a screenshot,
+which the driver takes fresh for each reading (`projectTabs`, `treeRowIn`, `catalogueGroups`, `catalogueProducts`,
+`propertiesTable`, `compatibilityWarning`, `catalogueDownloadDialog`, `selectionPattern` and the others
+`tools/ets-driver.ts` exports; its other steps still read the screen in place). `tools/ets-driver-screens.test.ts`
 feeds them full-resolution screenshots of ETS 6.4.1 that real driver runs left, kept in the private corpus (they show
 manufacturers' product names), and checks what each must read: the project's tabs and which one stands in front, line
 1.1 collapsed, open or selected and the row under it, a catalogue group's arrow and its product rows, the properties

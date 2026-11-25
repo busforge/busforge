@@ -147,13 +147,16 @@ function measure(png: string, r: Region, ops: string[]): number {
 const OCR_SCALE = 2;
 type Prep = "gray" | "binary";
 const PREP: Record<Prep, string[]> = { gray: ["-colorspace", "Gray"], binary: ["-colorspace", "Gray", "-threshold", "75%"] };
+// The enlarged copy goes to the system's temporary directory, never beside the screenshot read (which may be one
+// another process reads too, or not writable), and is removed however OCR ends.
+let ocrCopies = 0;
 function tesseract(png: string, region: Region | undefined, scale: number, psm: number, tsv: boolean, prep?: Prep): string {
-  const big = join(dirname(png), `.${basename(png, ".png")}-ocr.png`);
-  execFileSync("magick", [png, ...(region ? crop(region) : []), "-resize", `${scale * 100}%`, ...(prep ? PREP[prep] : []), big]);
-  // Leptonica fails to open some absolute paths on macOS (/tmp through its symlink): read it by name from its directory.
-  const out = execFileSync("tesseract", [basename(big), "-", "--psm", String(psm), ...(tsv ? ["tsv"] : [])], { cwd: dirname(big), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-  rmSync(big, { force: true });
-  return out;
+  const big = join(tmpdir(), `ets-driver-ocr-${process.pid}-${ocrCopies++}.png`);
+  try {
+    execFileSync("magick", [png, ...(region ? crop(region) : []), "-resize", `${scale * 100}%`, ...(prep ? PREP[prep] : []), big]);
+    // Leptonica fails to open some absolute paths on macOS (/tmp through its symlink): read it by name from its directory.
+    return execFileSync("tesseract", [basename(big), "-", "--psm", String(psm), ...(tsv ? ["tsv"] : [])], { cwd: dirname(big), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  } finally { rmSync(big, { force: true }); }
 }
 
 // The words OCR reads, each with its box (scaled back to the screen) and the id of its OCR line.

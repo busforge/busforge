@@ -3,24 +3,15 @@
 // says what each shows). Each reader is fed the screenshot whole, as the driver feeds it its screen, and must read
 // what the screen shows. They run tesseract and ImageMagick, as the driver does.
 import { expect } from "bun:test";
-import { copyFileSync } from "node:fs";
-import { join } from "node:path";
 import { corpusPath, driverScreenFile, type DriverScreen } from "./corpus.ts";
 import { corpusTest } from "./corpus-test.ts";
 import {
   catalogueDownloadDialog, catalogueGroups, catalogueHeader, cataloguePanelShown, catalogueProducts, catalogueSearchEmpty, compatibilityWarning, dialogBox, dialogButton, dialogText, downloadEnabled, frontTabWidth, LINE_11,
   oneRowSelected, pickCatalogueRow, projectTabs, projectTabShown, propertiesTab, propertiesTable, propertyValue, searchGrid, selectionPattern, treeRowBelow, treeRowIn,
 } from "./ets-driver.ts";
-import { tempDir } from "./test-temp.ts";
 
-// A copy of the screenshot outside the corpus: the readers write their enlarged copy for OCR beside the file read.
-let dir: string | undefined;
-const screen = (name: DriverScreen) => {
-  dir ??= tempDir("ets-driver-screens-");
-  const png = join(dir, `${name}.png`);
-  copyFileSync(corpusPath(driverScreenFile(name)), png);
-  return png;
-};
+// The readers only read the screenshot (their enlarged copies for OCR go to the system's temporary directory).
+const screen = (name: DriverScreen) => corpusPath(driverScreenFile(name));
 
 const PROJECT = "Busforge Sweep";
 // OCR and ImageMagick run many times per test: the longest took 10 s alone (the catalogue grid's arrows), room left
@@ -33,31 +24,25 @@ const expectNear = (got: readonly (number | null | undefined)[], want: readonly 
   expect(got.map((g, i) => (typeof g === "number" && Math.abs(g - want[i]) <= 2 ? want[i] : g))).toEqual([...want]);
 
 corpusTest("the tab bar: the project's tabs, and which one stands in front with its close mark", () => {
-  // Where the close mark of a tab in front is clicked (closeExtraProjectTabs): 18 px left of where its white ends.
-  const closeMark = (png: string, i: number) => {
-    const tab = projectTabs(png, PROJECT)[i];
+  // Each tab read, and where its close mark is clicked where it stands in front (closeExtraProjectTabs): 18 px left
+  // of where its white ends.
+  const closeMarks = (png: string) => projectTabs(png, PROJECT).map((tab) => {
     const width = frontTabWidth(png, tab);
     return width === null ? null : tab.x + width - 18;
-  };
+  });
   const overview = screen("overview-no-project");
   expect(projectTabShown(overview)).toBe(false);
-  expect(projectTabs(overview, PROJECT)).toEqual([]);
+  expect(closeMarks(overview)).toEqual([]);
   const one = screen("tabs-one-project-line-collapsed");
   expect(projectTabShown(one)).toBe(true);
-  expect(projectTabs(one, PROJECT)).toHaveLength(1);
-  expect(closeMark(one, 0)).toBe(382);
+  expect(closeMarks(one)).toEqual([382]);
   // A second tab of the project, as ETS restores one after it crashed: behind the first, then brought to the front.
-  const behind = screen("tabs-extra-tab-behind");
-  expect(projectTabs(behind, PROJECT)).toHaveLength(2);
-  expect([closeMark(behind, 0), closeMark(behind, 1)]).toEqual([382, null]);
-  const front = screen("tabs-extra-tab-in-front");
-  expect(projectTabs(front, PROJECT)).toHaveLength(2);
-  expect([closeMark(front, 0), closeMark(front, 1)]).toEqual([null, 582]);
+  expect(closeMarks(screen("tabs-extra-tab-behind"))).toEqual([382, null]);
+  expect(closeMarks(screen("tabs-extra-tab-in-front"))).toEqual([null, 582]);
   // The project's tab on the green, the overview in front: its title (with the views it shows under it) read too.
   const overviewInFront = screen("tabs-overview-in-front");
   expect(projectTabShown(overviewInFront)).toBe(true);
-  expect(projectTabs(overviewInFront, PROJECT)).toHaveLength(1);
-  expect(closeMark(overviewInFront, 0)).toBeNull();
+  expect(closeMarks(overviewInFront)).toEqual([null]);
 }, OCR_TIMEOUT);
 
 corpusTest("the topology tree: line 1.1 collapsed, open, selected, and the row under it", () => {
