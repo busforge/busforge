@@ -661,8 +661,8 @@ async function readCatalogueEntry(s: Screen): Promise<CatalogueEntry> {
 
 // The properties panel's tab `name` (Katalog, Applikation). A product picture beside the tabs cuts OCR's reading of
 // their names short ("Katal"): found by their start.
-export function propertiesTab(png: string, name: string): Box | undefined {
-  return findText(words(png, AT.properties), name.slice(0, 5)).find((b) => b.y < 165);
+export function propertiesTab(png: string, name: string): Box | null {
+  return findText(words(png, AT.properties), name.slice(0, 5)).find((b) => b.y < 165) ?? null;
 }
 
 // The label/value table under the properties panel's tab `tab`, line by line: read as one block (word by word, OCR
@@ -671,10 +671,10 @@ export function propertiesTable(png: string, tab: Box): string[] {
   return textLines(png, { x: AT.properties.x, y: tab.y + 20, w: AT.properties.w, h: 200 }, 3);
 }
 
-// The value of a properties table's line that begins with `label`, or undefined.
-export function propertyValue(lines: string[], label: string): string | undefined {
+// The value of a properties table's line that begins with `label`, or null.
+export function propertyValue(lines: string[], label: string): string | null {
   const l = lines.find((x) => norm(x).startsWith(norm(label)));
-  return l?.split(/\s+/).slice(label.split(/\s+/).length).join(" ");
+  return l ? l.split(/\s+/).slice(label.split(/\s+/).length).join(" ") : null;
 }
 
 // An application's version as ETS's catalogue shows it: 0x11 is "1.1".
@@ -703,7 +703,7 @@ export function expanderOpen(txt: string): boolean | null {
 // The catalogue panel's header in the lower left; its toolbar (search field at the right) on the same row.
 const CATALOGUE_PANEL = { x: 0, y: 600, w: 315, h: 120 };
 // The catalogue panel's header among a full screen's words, where the panel shows.
-const catalogueHeaderIn = (ws: Word[]) => findText(ws, "Katalog").find(inside(CATALOGUE_PANEL));
+const catalogueHeaderIn = (ws: Word[]) => findText(ws, "Katalog").find(inside(CATALOGUE_PANEL)) ?? null;
 export const catalogueHeader = (png: string) => catalogueHeaderIn(words(png));
 
 // The catalogue grid's rows under a search, below the panel's header `header` and the grid's column header.
@@ -825,7 +825,7 @@ async function insertProduct(s: Screen, orderNumber: string, applicationId: stri
   await sleep(6000);
   // A dialog now (a KNX-ID login, the online catalogue failing) is read before Escape, which closes the search's
   // suggestions, could close it unread.
-  { const png = s.snap(), box = dialogBox(png); if (box) fail(`${UNKNOWN_DIALOG} (after the catalogue search): ${words(png, box).map((w) => w.text).join(" ").slice(0, 300)}`); }
+  { const text = dialogText(s.snap()); if (text !== null) fail(`${UNKNOWN_DIALOG} (after the catalogue search): ${text.slice(0, 300)}`); }
   key("Escape");
   await sleep(1000);
   const grid = searchGrid(header);
@@ -953,17 +953,21 @@ async function closeDialogs(s: Screen): Promise<void> {
 // its text read and the screen kept as dialog.png in `dir` before the row fails.
 function settled(s: Screen, dir: string, before: string): void {
   if (!etsTitle()) fail(`ETS's window is gone (before "${before}")`);
-  const png = s.snap(), text = dialogText(png);
-  if (text === null) return;
+  const png = s.snap(), box = dialogBox(png);
+  if (!box) return;
+  // Kept before OCR reads it, which can fail too.
   copyFileSync(png, join(dir, "dialog.png"));
-  fail(`${UNKNOWN_DIALOG} (before "${before}"): ${text.slice(0, 300)}`);
+  fail(`${UNKNOWN_DIALOG} (before "${before}"): ${dialogText(png, box)!.slice(0, 300)}`);
 }
 
-// The text of the dialog ETS shows in its window, its words in OCR's order; null where it shows none.
-export function dialogText(png: string): string | null {
-  const box = dialogBox(png);
+// The text of the dialog ETS shows in its window (`box`, where already found), its words in OCR's order; null where
+// it shows none.
+export function dialogText(png: string, box = dialogBox(png)): string | null {
   return box ? words(png, box).map((w) => w.text).join(" ") : null;
 }
+
+// The button labelled `label` in the bottom bar of the dialog in `box`.
+export const dialogButton = (png: string, box: Region, label: string): Box | null => findText(dialogButtons(png, box), label)[0] ?? null;
 
 // The project compressed: ETS's "Jetzt komprimieren" in its details dialog deletes the product data no device of the
 // project uses (ETS6.log: "Deleting folder of unreferenced manufacturer …"). ETS closes the project for it; it is
@@ -1278,7 +1282,7 @@ const CATALOGUE = {
 
 // Whether the catalogue panel stands in the lower left (its header), and whether its search is empty (its
 // placeholder "Suchen" shows): the grid then lists the whole catalogue.
-export const cataloguePanelShown = (png: string) => findText(words(png, CATALOGUE.header), "Katalog").length > 0;
+export const cataloguePanelShown = (png: string) => catalogueHeaderIn(words(png, CATALOGUE.header)) !== null;
 export const catalogueSearchEmpty = (png: string) => findText(words(png, CATALOGUE.search), "Suchen").length > 0;
 
 // Which parts of the grid are selected, every 5 px down its rows: a selected row's background is blue (blue over
@@ -1379,7 +1383,7 @@ async function downloadOutcome(s: Screen, since: string): Promise<{ ok: true } |
       const { text } = d;
       const kept = png.replace(/\.png$/, "-refused.png");
       copyFileSync(png, kept);
-      const ok = d.ok ?? fail(`no OK under ETS's refusal: ${text.slice(0, 160)}`);
+      const ok = dialogButton(png, d.box, "OK") ?? fail(`no OK under ETS's refusal: ${text.slice(0, 160)}`);
       click(ok.cx, ok.cy);
       await waitNoDialog(s);
       return { ok: false, dialog: text, png: kept };
@@ -1393,15 +1397,17 @@ async function downloadOutcome(s: Screen, since: string): Promise<{ ok: true } |
   return { ok: true };
 }
 
-// The dialog ETS shows during a catalogue download, by its text: its refusal ("… fehlgeschlagen", with the OK that
-// confirms it), its progress ("Importiere Daten", the manufacturers' data merged, the download itself) or any other;
-// null where it shows none.
-export function catalogueDownloadDialog(png: string): { kind: "refused"; text: string; ok: Box | undefined } | { kind: "progress" | "other"; text: string } | null {
+// The text of ETS's progress dialogs of a catalogue download: its import ("Importiere Daten"), the manufacturers' data
+// merged, the download itself.
+const CATALOGUE_PROGRESS = /Importiere|Zusammenf|Download aus/i;
+
+// The dialog ETS shows during a catalogue download, by its text: its refusal ("… fehlgeschlagen"), its progress
+// (CATALOGUE_PROGRESS) or any other; null where it shows none.
+export function catalogueDownloadDialog(png: string): { kind: "refused" | "progress" | "other"; text: string; box: Region } | null {
   const box = dialogBox(png);
   if (!box) return null;
-  const text = words(png, box).map((w) => w.text).join(" ");
-  if (/fehlgeschlagen/i.test(text)) return { kind: "refused", text, ok: findText(dialogButtons(png, box), "OK")[0] };
-  return { kind: /Importiere|Zusammenf|Download aus/i.test(text) ? "progress" : "other", text };
+  const text = dialogText(png, box)!;
+  return { kind: /fehlgeschlagen/i.test(text) ? "refused" : CATALOGUE_PROGRESS.test(text) ? "progress" : "other", text, box };
 }
 
 // ETS's progress dialogs ("Importiere Daten") waited out; any other dialog fails.
@@ -1409,11 +1415,10 @@ async function waitNoDialog(s: Screen): Promise<void> {
   const until = Date.now() + 15 * 60_000;
   for (let clear = 0; clear < 2;) {
     await sleep(2000);
-    const png = s.snap(), box = dialogBox(png);
-    if (!box) { clear++; continue; }
+    const text = dialogText(s.snap());
+    if (text === null) { clear++; continue; }
     clear = 0;
-    const text = words(png, box).map((w) => w.text).join(" ");
-    if (!/Importiere|Zusammenf|Download aus/i.test(text)) fail(`ETS shows a dialog during the catalogue download: ${text.slice(0, 200)}`);
+    if (!CATALOGUE_PROGRESS.test(text)) fail(`ETS shows a dialog during the catalogue download: ${text.slice(0, 200)}`);
     if (Date.now() > until) fail("ETS's import dialog did not end within 15 min");
   }
 }

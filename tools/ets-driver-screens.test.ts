@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { corpusPath, driverScreenFile, type DriverScreen } from "./corpus.ts";
 import { corpusTest } from "./corpus-test.ts";
 import {
-  catalogueDownloadDialog, catalogueGroups, catalogueHeader, cataloguePanelShown, catalogueProducts, catalogueSearchEmpty, compatibilityWarning, dialogBox, dialogText, downloadEnabled, frontTabWidth, LINE_11,
+  catalogueDownloadDialog, catalogueGroups, catalogueHeader, cataloguePanelShown, catalogueProducts, catalogueSearchEmpty, compatibilityWarning, dialogBox, dialogButton, dialogText, downloadEnabled, frontTabWidth, LINE_11,
   oneRowSelected, pickCatalogueRow, projectTabs, projectTabShown, propertiesTab, propertiesTable, propertyValue, searchGrid, selectionPattern, treeRowBelow, treeRowIn,
 } from "./ets-driver.ts";
 import { tempDir } from "./test-temp.ts";
@@ -26,6 +26,11 @@ const PROJECT = "Busforge Sweep";
 // OCR and ImageMagick run many times per test: the longest took 10 s alone (the catalogue grid's arrows), room left
 // for a loaded machine.
 const OCR_TIMEOUT = 60_000;
+
+// Positions OCR places a word at, held to the screen within 2 px (another tesseract build may shift a box by a
+// pixel); a value off by more, or missing, shows as itself.
+const expectNear = (got: readonly (number | null | undefined)[], want: readonly number[]) =>
+  expect(got.map((g, i) => (typeof g === "number" && Math.abs(g - want[i]) <= 2 ? want[i] : g))).toEqual([...want]);
 
 corpusTest("the tab bar: the project's tabs, and which one stands in front with its close mark", () => {
   // Where the close mark of a tab in front is clicked (closeExtraProjectTabs): 18 px left of where its white ends.
@@ -62,52 +67,57 @@ corpusTest("the topology tree: line 1.1 collapsed, open, selected, and the row u
   const collapsed = screen("tree-main-line-collapsed");
   expect(line(collapsed)).toBeNull();
   const main = treeRowIn(collapsed, /Haupt/);
-  expect(main?.cy).toBe(217);
+  expectNear([main?.cy], [217]);
   expect(treeRowBelow(collapsed, main!.cy)).toBeNull();
   // The main line open: line 1.1 under it (here collapsed itself), and nothing under line 1.1.
   const open = screen("tabs-one-project-line-collapsed");
-  expect(treeRowBelow(open, treeRowIn(open, /Haupt/)!.cy)?.cy).toBe(241);
-  expect(line(open)?.cy).toBe(241);
-  expect(treeRowBelow(open, 241)).toBeNull();
+  expectNear([treeRowBelow(open, treeRowIn(open, /Haupt/)!.cy)?.cy, line(open)?.cy], [241, 241]);
+  expect(treeRowBelow(open, line(open)!.cy)).toBeNull();
   // Line 1.1 selected with its one device under it (lineDeviceRow, selectByAddress): OCR reads the selected row
   // as "111P Line", a tree row's address with stray characters before it.
   const device = screen("tree-line-selected-device-below");
-  expect(line(device)?.cy).toBe(240);
-  expect(treeRowBelow(device, 240)?.text).toMatch(/^\S*\s?1\.1\.1 6108\/06-BS-500/);
+  expectNear([line(device)?.cy], [240]);
+  expect(treeRowBelow(device, line(device)!.cy)?.text).toMatch(/^\S*\s?1\.1\.1 6108\/06-BS-500/);
   const tbu1 = screen("catalogue-two-groups-katalog-tab");
-  expect(line(tbu1)?.cy).toBe(241);
-  expect(treeRowBelow(tbu1, 241)?.text).toMatch(/1\.1\.1 ?TB\/U1/);
+  expectNear([line(tbu1)?.cy], [241]);
+  expect(treeRowBelow(tbu1, line(tbu1)!.cy)?.text).toMatch(/1\.1\.1 ?TB\/U1/);
   // Line 1.1 selected and empty (the line emptied before an insert).
   const empty = screen("tree-line-selected-empty");
-  expect(line(empty)?.cy).toBe(241);
-  expect(treeRowBelow(empty, 241)).toBeNull();
+  expectNear([line(empty)?.cy], [241]);
+  expect(treeRowBelow(empty, line(empty)!.cy)).toBeNull();
 }, OCR_TIMEOUT);
 
 corpusTest("the catalogue's search: manufacturers' groups by their arrow, open or closed, and the product rows under them", () => {
-  const grid = (png: string) => searchGrid(catalogueHeader(png) ?? { x: 0, y: 0, w: 0, h: 0, cx: 0, cy: -1, text: "no catalogue header" });
+  // Every screen here shows the catalogue panel's header at y 661, under which the search's grid begins.
   const read = (png: string) => {
-    const g = grid(png), groups = catalogueGroups(png, g);
+    const header = catalogueHeader(png);
+    if (!header) throw new Error(`${png}: no catalogue header read`);
+    expectNear([header.cy], [661]);
+    const g = searchGrid(header), groups = catalogueGroups(png, g);
     return { headers: groups.headers.map((r) => Math.round(r.y)), closed: groups.closed.map((r) => Math.round(r.y)), products: catalogueProducts(png, g).map((r) => ({ y: Math.round(r.y), text: r.text })) };
   };
   // Two groups open, six rows each, as ETS lists them for TB/U1. OCR reads the second header's name as two lines
   // ("STOTZ-KO" and the rest, 7 px apart): both stand on the header's arrow.
   for (const name of ["catalogue-two-groups-katalog-tab", "catalogue-two-groups-applikation-tab"] as const) {
-    const png = screen(name);
-    expect(catalogueHeader(png)?.cy).toBe(661);
-    const r = read(png);
+    const r = read(screen(name));
     expect(r.closed).toEqual([]);
-    expect(r.headers[0]).toBe(710);
-    expect(r.headers.slice(1).every((y) => y >= 845 && y <= 853)).toBe(true);
-    expect(r.products.map((p) => p.y)).toEqual([731, 751, 771, 791, 811, 831, 874, 894, 914, 934, 954, 974]);
+    expectNear(r.headers.slice(0, 1), [710]);
+    expect(r.headers.length).toBeGreaterThan(1);
+    expect(r.headers.slice(1).every((y) => y >= 843 && y <= 855)).toBe(true);
+    expectNear(r.products.map((p) => p.y), [731, 751, 771, 791, 811, 831, 874, 894, 914, 934, 954, 974]);
   }
   // The group ETS kept closed from an earlier search: its arrow read closed, no product row.
-  expect(read(screen("catalogue-group-closed"))).toEqual({ headers: [711], closed: [711], products: [] });
+  const closed = read(screen("catalogue-group-closed"));
+  expectNear([...closed.headers, ...closed.closed], [711, 711]);
+  expect(closed.products).toEqual([]);
   // Opened, its one row, whose application's name is digits but for one letter ("S85166100"), is a product.
   const digits = read(screen("catalogue-application-name-digits"));
-  expect([digits.headers, digits.closed, digits.products.map((p) => p.y)]).toEqual([[711], [], [731]]);
+  expect(digits.closed).toEqual([]);
+  expectNear([...digits.headers, ...digits.products.map((p) => p.y)], [711, 731]);
   expect(digits.products[0].text).toMatch(/85166100/);
   const two = read(screen("properties-fingerprint-misread-2"));
-  expect([two.headers, two.closed, two.products.map((p) => p.y)]).toEqual([[710], [], [731, 751]]);
+  expect(two.closed).toEqual([]);
+  expectNear([...two.headers, ...two.products.map((p) => p.y)], [710, 731, 751]);
 }, OCR_TIMEOUT);
 
 corpusTest("the properties panel of a catalogue row: its tabs, the order number, and the application's manufacturer, device type, version and fingerprint", () => {
@@ -124,16 +134,22 @@ corpusTest("the properties panel of a catalogue row: its tabs, the order number,
   expect(app(screen("properties-fingerprint-leading-zero"))).toEqual(["GIRA Giersiepen", "$5014", "1.1", "0883"]);
   expect(app(screen("properties-hex-values"))).toEqual(["GEWISS", "$5222", "1.2", "B809"]);
   // Two fingerprints OCR misreads at every scale and preparation tried ("1634" for 163A, "DCc3s0" for DC90): the
-  // device type and version read exactly, and the row is still the one picked (pickCatalogueRow takes the closest
-  // reading; what was inserted is checked on the project's export).
-  for (const [name, application] of [["properties-fingerprint-misread-1", "M-0004_A-1471-12-163A-O00F4"], ["properties-fingerprint-misread-2", "M-0006_A-20B3-11-DC90-O000A"]] as const) {
+  // manufacturer, device type and version read exactly, and the fingerprint read stays closer to the application's
+  // than to another application's at the same type and version ("EEEE", 4 edits from either), so pickCatalogueRow
+  // takes the row (what was inserted is then checked on the project's export). A fingerprint read as nothing would
+  // stand as far from both, and be refused.
+  for (const [name, application, want] of [
+    ["properties-fingerprint-misread-1", "M-0004_A-1471-12-163A-O00F4", ["Albrecht Jung", "$1471", "1.2"]],
+    ["properties-fingerprint-misread-2", "M-0006_A-20B3-11-DC90-O000A", ["Berker", "$20B3", "1.1"]],
+  ] as const) {
     const [manufacturer, deviceType, version, fingerprint] = app(screen(name)) ?? [];
-    expect([deviceType, version]).toEqual(application === "M-0004_A-1471-12-163A-O00F4" ? ["$1471", "1.2"] : ["$20B3", "1.1"]);
-    const entry = { orderNumber: "?", manufacturer, deviceType: deviceType!, version: version!, fingerprint: fingerprint! };
-    expect(pickCatalogueRow([entry], "?", application)).toMatchObject({ hit: entry, rows: 1 });
+    expect([manufacturer, deviceType, version]).toEqual([...want]);
+    const entry = { orderNumber: "?", manufacturer: manufacturer!, deviceType: deviceType!, version: version!, fingerprint: fingerprint! };
+    const other = { ...entry, fingerprint: "EEEE" };
+    expect(pickCatalogueRow([other, entry], "?", application)).toMatchObject({ hit: entry, rows: 1 });
   }
   // The panel still on line 1.1 (a click that did not select the catalogue row): no Katalog tab.
-  expect(propertiesTab(screen("tabs-one-project-line-collapsed"), "Katalog")).toBeUndefined();
+  expect(propertiesTab(screen("tabs-one-project-line-collapsed"), "Katalog")).toBeNull();
 }, OCR_TIMEOUT);
 
 corpusTest("ETS's dialogs: its compatibility warning, after the insert and at the download, and none where it shows none", () => {
@@ -153,10 +169,12 @@ corpusTest("ETS's dialogs: its compatibility warning, after the insert and at th
 }, OCR_TIMEOUT);
 
 corpusTest("the catalogue download: ETS's refusal with its OK, and its progress", () => {
-  const refused = catalogueDownloadDialog(screen("catalogue-download-refused"));
+  const png = screen("catalogue-download-refused");
+  const refused = catalogueDownloadDialog(png);
   expect(refused).toMatchObject({ kind: "refused", text: expect.stringMatching(/Online-Katalog-Download .*fehlgeschlagen/) });
-  // The OK in the dialog's bottom bar, where downloadOutcome clicks it.
-  expect(refused?.kind === "refused" && refused.ok && [refused.ok.cx, refused.ok.cy]).toEqual([1243, 695]);
+  // The OK in the dialog's bottom bar, where downloadOutcome clicks it: its label spans x 1233-1253, y 686-704.
+  const ok = dialogButton(png, refused!.box, "OK");
+  expect(ok && ok.cx >= 1233 && ok.cx <= 1253 && ok.cy >= 686 && ok.cy <= 704).toBe(true);
   expect(catalogueDownloadDialog(screen("catalogue-download-progress"))?.kind).toBe("progress");
 }, OCR_TIMEOUT);
 
