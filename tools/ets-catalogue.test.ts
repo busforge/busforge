@@ -127,9 +127,10 @@ describe("the catalogue list", () => {
     const rows = catalogueList(f, "Germany", SWEEP_MASKS).rows.filter((r) => r.application === "M-FFF2_A-0013-10-9AB0");
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ catalogueApplications: ["M-FFF2_A-0013-10-4567"], orderNumbers: ["TWO-4", "TWO-4B"], catalogueEntries: 2 });
-    // bussard naming it by either of its index ids finds the one row.
-    const b = catalogueList(f, "Germany", SWEEP_MASKS, { generated: "2000-01-01", apps: { "M-FFF2_A-0013-10-9AB0": { mask: "07B0", manufacturer: "M-FFF2", outcome: "captured" } } }).bussard!;
-    expect([b.theirs, b.both]).toEqual([1, 1]);
+    // bussard naming it by both of its index ids finds the one row, once.
+    const captured = { mask: "07B0", manufacturer: "M-FFF2", outcome: "captured" };
+    const b = catalogueList(f, "Germany", SWEEP_MASKS, { generated: "2000-01-01", apps: { "M-FFF2_A-0013-10-9AB0": captured, "M-FFF2_A-0013-10-4567": captured } }).bussard!;
+    expect([b.theirs, b.both]).toEqual([2, 1]);
     expect(b.oursNotTheirs.map((d) => d.application)).not.toContain("M-FFF2_A-0013-10-9AB0");
   });
 

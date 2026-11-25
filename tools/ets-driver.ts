@@ -994,6 +994,9 @@ export function selectedSamples(txt: string): string {
   }).join("");
 }
 
+// Whether a selection pattern holds one row: one run of selected samples, a row (20 px) at most (5 px samples).
+export const oneRowSelected = (pattern: string) => /^0*1{1,5}0*$/.test(pattern);
+
 const mouseAside = () => xdo("mousemove", String(CATALOGUE.mouseAside[0]), String(CATALOGUE.mouseAside[1]));
 
 interface CatalogueFailure { row: number; dialog: string; screenshot: string }
@@ -1028,8 +1031,9 @@ async function settledGrid(s: Screen, timeoutMs = 60_000): Promise<{ png: string
 }
 
 // The selection set to `size` rows from row `from` (counted from 0 down the grid). `moved` false: Down left the
-// grid's pixels as they were, as at its last row, or with the keyboard focus outside it; `atEnd`: the selection
-// reached the grid's last row before `size` rows. Where the keyboard focus is: "top", nowhere known (the walk starts
+// grid's pixels as they were, as at its last row, or with the keyboard focus outside it; `atEnd`: the batch's last
+// shift+Down left the grid as it was, as at the grid's end (or where that key did not arrive): a refused batch at its
+// end is selected again from the grid's first row; the walk itself ends only where Down moves nothing. Where the keyboard focus is: "top", nowhere known (the walk starts
 // at the grid's first row); "before", on the row before `from` (it stays in the grid while the toolbar is clicked,
 // and through a refusal); "selected", the selection already holds the batch.
 type Focus = "top" | "before" | "selected";
@@ -1126,11 +1130,7 @@ async function downloadCatalogue(batch: number, out: string, from: number): Prom
       focus = "before";
       mouseAside();
       const selected = await settledGrid(s);
-      if (!downloadEnabled(selected.png)) {
-        if (sel.atEnd) break;
-        row += size; size = nextBatchSize(size, "skipped", batch); save(false);
-        continue;
-      }
+      if (!downloadEnabled(selected.png)) { row += size; size = nextBatchSize(size, "skipped", batch); save(false); continue; }
       const pattern = selectionPattern(selected.png);
       const since = etsClock();
       click(CATALOGUE.download[0], CATALOGUE.download[1]);
@@ -1143,10 +1143,8 @@ async function downloadCatalogue(batch: number, out: string, from: number): Prom
         mouseAside();
         kept = !sel.atEnd && pattern.includes("1") && selectionPattern((await settledGrid(s)).png) === pattern;
       }
-      if (r.ok) {
-        step(`rows ${row}-${sel.atEnd ? "the grid's end" : row + size - 1} loaded`);
-        if (sel.atEnd) break;
-      } else if (size > 1) {
+      if (r.ok) step(`rows ${row}-${sel.atEnd ? "the grid's end" : row + size - 1} loaded`);
+      else if (size > 1) {
         renameSync(r.png, join(out, `refused-rows-${row}-${row + size - 1}.png`));
         const half = nextBatchSize(size, "refused", batch);
         if (kept) {
@@ -1162,6 +1160,12 @@ async function downloadCatalogue(batch: number, out: string, from: number): Prom
         focus = kept ? "selected" : "top";
         size = half;
         save(false);
+        continue;
+      } else if (!oneRowSelected(pattern)) {
+        // A selection that kept more rows than one, as shift keys that did not arrive leave it, is selected again
+        // from the grid's first row.
+        step(`row ${row} refused, but more than one row was selected: again from the grid's first row`);
+        focus = "top";
         continue;
       } else {
         const screenshot = join(out, `failed-row-${row}.png`);

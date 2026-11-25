@@ -1012,9 +1012,9 @@ bun run tools/ets-catalogue.ts list <fetched dir> --json <file> --md <file> [--m
     nothing, or the batch ran into the grid's end, the walk starts again at the grid's first row.
   - A batch that loaded is followed by one a quarter larger (up to `--batch`); a row refused alone is
     written down with its full-resolution screenshot and passed.
-  - The walk ends after a batch that reached the grid's end, or where Down moves nothing counted from
-    the grid's first row: a Down that moves nothing after a batch is tried once more from there, as
-    the keyboard focus may have left the grid.
+  - The walk ends where Down moves nothing counted from the grid's first row: a Down that moves
+    nothing after a batch is tried once more from there, as the keyboard focus may have left the grid.
+    A row is written down as refused alone only where the grid shows one row selected.
   - `<out>/progress.json` holds the next row, the batch size and every refused row after each step;
     `--from` that row resumes at that size. Rows already loaded leave "Herunterladen" disabled and
     pass at once, so a run started again resumes.
@@ -1035,7 +1035,8 @@ bun run tools/ets-catalogue.ts list <fetched dir> --json <file> --md <file> [--m
     such, never guessed from its name); its version as ETS shows it; every order number it is offered
     under, and one to search for, where it is the only catalogue row at its version (an order number
     is searched across the whole catalogue, compared as the driver compares it).
-  - Two applications under one order number and version are both rows, each naming the other; a row
+  - Two applications under one order number and version are both rows (one whose product data is
+    refused is listed as refused instead), each naming the other; a row
     without an order number of its own is flagged, as the driver refuses an order number that lists
     more than one catalogue row at the unit's version, whether of two applications or of one
     application twice.

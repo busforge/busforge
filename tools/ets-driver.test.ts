@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { nextBatchSize, selectedSamples } from "./ets-driver.ts";
+import { nextBatchSize, oneRowSelected, selectedSamples } from "./ets-driver.ts";
 
 test("a catalogue batch halves after a refusal and grows from the last size that loaded", () => {
   const walk = (outcomes: ("loaded" | "refused" | "skipped")[], max = 150) => {
@@ -23,4 +23,13 @@ test("the grid's selection read from magick's samples of its rows' background", 
   // The row under the mouse reads unselected, so the mouse is moved aside before the grid is read.
   expect(selectedSamples(txt([white, hover, selected, stripe]))).toBe("0010");
   expect(() => selectedSamples(txt(["(255)  #FFFFFF  gray(255)"]))).toThrow("no pixel in magick's line");
+});
+
+test("one row selected: one run of selected samples, a row high at most", () => {
+  expect(oneRowSelected("0000111100000")).toBe(true);
+  expect(oneRowSelected("0000111110000")).toBe(true);
+  // Two rows, or two runs, or nothing.
+  expect(oneRowSelected("00001111111100")).toBe(false);
+  expect(oneRowSelected("0011000011000")).toBe(false);
+  expect(oneRowSelected("0000000000000")).toBe(false);
 });
