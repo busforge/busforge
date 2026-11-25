@@ -78,13 +78,14 @@ export function readResult(dir: string): RowResult | null {
 }
 
 // What the batch does with each row: run it (no result yet, or a rerun asked for its kind or its application), or
-// pass it with the result it has.
+// pass it with the result it has. A rerun by kind passes a row the driver refused by name (`why` "refused: …": it
+// would be refused the same); naming the row reruns it.
 export interface Plan { run: ListRow[]; finished: { row: ListRow; result: RowResult }[] }
 export function planBatch(out: string, rows: ListRow[], rerun: { kinds?: RowKind[]; applications?: string[] } = {}): Plan {
   const plan: Plan = { run: [], finished: [] };
   for (const row of rows) {
     const result = readResult(rowDirOf(out, row.application));
-    const again = result && (rerun.kinds?.includes(result.kind) || rerun.applications?.includes(row.application));
+    const again = result && ((rerun.kinds?.includes(result.kind) && !result.why?.startsWith("refused:")) || rerun.applications?.includes(row.application));
     if (result && !again) plan.finished.push({ row, result });
     else plan.run.push(row);
   }

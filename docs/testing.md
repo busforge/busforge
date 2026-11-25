@@ -1023,7 +1023,7 @@ HA_TOKEN=... BUSFORGE_CORPUS=... bun run tools/ets-driver.ts batch <catalogue-li
   the unit, the screenshot of a failure. `<out>/batch.log` holds a line per row with its minutes and how it
   ended, every restart of ETS, every pause, and a heartbeat line every three minutes naming the row and step.
 - **Resume.** A row with a result is never run again unless asked (`--rerun-failed` for the `driver-failed`
-  ones, `--rerun` for one row). A row directory without a result is a run that stopped in the middle: it is
+  ones but those the driver refused by name, `--rerun` for one row). A row directory without a result is a run that stopped in the middle: it is
   moved aside under `<out>/.interrupted/` and the row runs again from its start. A batch stopped by a signal
   stops its simulator with it.
 - **The unit.** An application with an own unit runs on it; every other on its catalogue unit. A catalogue
