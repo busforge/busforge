@@ -128,6 +128,39 @@ export function realTcpListener(onListening?: (port: number) => void): ServerTcp
   };
 }
 
+// Why a SEARCH_REQUEST_EXTENDED body (the client's HPAI, then its search request parameters) is not to be
+// answered by a server with MAC `mac`, never in programming mode, offering the families of `suppSvcDib`; null
+// where it is. A parameter is length, type (0x80: mandatory) and data (KNXnet/IP Core v2): 0x01 asks only
+// servers in programming mode, 0x02 only the one with that MAC, 0x03 only those offering that family at
+// that version or above, 0x04 names the DIBs the client wants (a zero pads the list to even length).
+export function searchExtendedRefusal(body: Buffer, mac: Buffer, suppSvcDib: Buffer): string | null {
+  if (body.length < 2 || body[0] < 2 || body[0] > body.length) return "its HPAI cannot be read";
+  for (let at = body[0]; at < body.length;) {
+    const len = body[at], type = body[at + 1];
+    if (len === undefined || type === undefined || len < 2 || at + len > body.length) return `its search parameter at offset ${at} cannot be read`;
+    const data = body.subarray(at + 2, at + len);
+    switch (type & 0x7f) {
+      case 0x01: return "it asks only servers in programming mode, and this one never is";
+      case 0x02:
+        if (data.length !== 6) return `its MAC parameter holds ${data.length} octets, not 6`;
+        if (!data.equals(mac.subarray(0, 6))) return `it asks only the server with MAC ${data.toString("hex")}`;
+        break;
+      case 0x03: {
+        if (data.length !== 2) return `its service parameter holds ${data.length} octets, not 2`;
+        let offered = false;
+        for (let i = 2; i + 1 < suppSvcDib.length; i += 2) if (suppSvcDib[i] === data[0] && suppSvcDib[i + 1]! >= data[1]!) offered = true;
+        if (!offered) return `it asks only servers offering service family ${data[0]} version ${data[1]}`;
+        break;
+      }
+      case 0x04: break;
+      default:
+        if (type & 0x80) return `it carries mandatory search parameter type 0x${(type & 0x7f).toString(16)}, which this server does not know`;
+    }
+    at += len;
+  }
+  return null;
+}
+
 interface Channel {
   id: number;
   mgmt?: boolean;      // a local device-management channel (cEMI property access), not a tunnel
@@ -388,6 +421,23 @@ export class KnxIpServer {
     return Buffer.concat([this.deviceInfoDib(), KnxIpServer.SUPP_SVC_DIB]);
   }
 
+  // SEARCH_REQUEST_EXTENDED, which Core v2 obliges a server to answer. ETS 6 sends it on its own TCP
+  // connection to an interface whose description names Core v2, twice before it connects a tunnel (its
+  // ReadDeviceDescription, then its tunnelling connector's), and waits 3 s for each answer. Left
+  // unanswered, those 6 s are most of what ETS's connection setup allows: where ETS is slow besides, it
+  // gives the connection up as "nicht verfügbar" before its CONNECT_REQUEST. The answer is
+  // SEARCH_RESPONSE_EXTENDED: the control HPAI, the description's two DIBs (device information, supported
+  // service families), and nothing else: a requested DIB this server does not model (extended device
+  // information, tunnelling slots, IP configuration, secured families) is left out, which the protocol
+  // allows. A search the parameters restrict to a programming mode this server is never in, to another
+  // MAC, or to a service it does not offer is not answered, as the protocol requires; so is one carrying
+  // a mandatory parameter it does not know, or parameters it cannot read.
+  private onSearchExtended(body: Buffer, origin: Origin): void {
+    const why = searchExtendedRefusal(body, localMac(), KnxIpServer.SUPP_SVC_DIB);
+    if (why) { this.log(`not answering a SEARCH_REQUEST_EXTENDED: ${why}`); return; }
+    this.answer(origin, () => parseHpai(body, 0, this.originFrom(origin)), knxFrame(SVC.SEARCH_RES_EXT, Buffer.concat([this.responseHpai(origin), this.describe()])));
+  }
+
   // ---- datagram dispatch ----
 
   private onDatagram(m: Buffer, from: Endpoint): void {
@@ -413,6 +463,9 @@ export class KnxIpServer {
         return;
       case SVC.DESCRIPTION_REQ:
         this.answer(origin, () => parseHpai(body, 0, this.originFrom(origin)), knxFrame(SVC.DESCRIPTION_RES, this.describe()));
+        return;
+      case SVC.SEARCH_REQ_EXT:
+        this.onSearchExtended(body, origin);
         return;
       case SVC.CONNECT_REQ:
         this.onConnect(body, origin);

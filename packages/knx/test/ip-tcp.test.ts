@@ -670,6 +670,36 @@ describe("KnxIpServer over TCP", () => {
     expect(conn.ended).toBe(false);
   });
 
+  // ETS 6 asks every interface whose description names Core v2 with a SEARCH_REQUEST_EXTENDED on a TCP
+  // connection of its own, twice before its CONNECT_REQUEST (its ReadDeviceDescription asking DIBs 01 02 08 06,
+  // its tunnelling connector 01 08 02 06 07), and waits 3 s for each answer. Unanswered, those 6 s ran ETS's
+  // connection setup out where ETS was slow besides ("Die Verbindung ... ist nicht verfügbar").
+  test.each([
+    ["ReadDeviceDescription", "0610020b00140802000000000000060401020806"],
+    ["the tunnelling connector", "0610020b001608020000000000000804010802060700"],
+  ])("ETS's SEARCH_REQUEST_EXTENDED of %s is answered on its TCP connection with the description's DIBs", async (_who, hex) => {
+    const rig = await serveTcp();
+    const conn = new FakeServerConn();
+    rig.listener.accept(conn);
+    conn.feed(knxFrame(SVC.DESCRIPTION_REQ, hpaiTcp()));
+    const description = conn.ofService(SVC.DESCRIPTION_RES)[0]!.subarray(6);
+
+    conn.feed(Buffer.from(hex, "hex"));
+    const res = conn.ofService(SVC.SEARCH_RES_EXT);
+    expect(res.length).toBe(1);
+    expect([...res[0]!.subarray(6, 14)]).toEqual([...hpaiTcp()]); // the connection is the endpoint
+    expect(res[0]!.subarray(14).equals(description)).toBe(true);  // device information, service families
+  });
+
+  test("a SEARCH_REQUEST_EXTENDED for servers in programming mode, or for another MAC, is not answered", async () => {
+    const rig = await serveTcp();
+    const conn = new FakeServerConn();
+    rig.listener.accept(conn);
+    conn.feed(knxFrame(SVC.SEARCH_REQ_EXT, Buffer.concat([hpaiTcp(), Buffer.from([0x02, 0x01])])));
+    conn.feed(knxFrame(SVC.SEARCH_REQ_EXT, Buffer.concat([hpaiTcp(), Buffer.from([0x08, 0x02, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe])])));
+    expect(conn.ofService(SVC.SEARCH_RES_EXT).length).toBe(0);
+  });
+
   test("a malformed TCP stream drops that connection without crashing the server", async () => {
     const rig = await serveTcp();
     const conn = new FakeServerConn();
