@@ -107,8 +107,8 @@ is not held to the list; one that opens what it finds through the helpers (`list
 the issue or pull request, and a maintainer adds it.
 
 Most corpus projects are password-protected, and the check holds no password. What
-`tools/ets-records.test.ts` needs of them (ETS's download record of each device, its load flags and
-the configuration the project stores, never a key) is kept in
+`tools/ets-records.test.ts` needs of them (ETS's download record of each device, its load flags, the
+configuration the project stores and the application the device runs, never a key) is kept in
 `captures/ets-download-records.json.gz`, written by `tools/ets-records.ts` with the password from the
 environment. The test fails when a corpus project is added, removed or changed without that file
 following it. `--missing` records every project the file lacks, in the whole corpus or under the
@@ -116,7 +116,10 @@ directories named (relative to the corpus root), and leaves the entries the file
 (a changed project). Every run also drops the entries of projects no longer in the corpus. A project
 that cannot be recorded (no password opens it, or the import leaves devices out) is named, with every
 other one that cannot, and nothing is written. `--dry-run` lists what a run would record and drop,
-opens nothing and writes nothing.
+opens nothing and writes nothing. A device's record names its application as the project's product
+data do (on hardware with a PEI program the Hardware2Program's id carries both programs' numbers and
+names neither); a device with a download record whose product data name no application is refused. A
+file of an earlier format is written again only by `--missing` over the whole corpus.
 
 ```bash
 # the passwords, one per line, never on disk; every protected project is tried with each
