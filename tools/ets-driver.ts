@@ -778,9 +778,17 @@ async function insertProduct(s: Screen, orderNumber: string, applicationId: stri
   if (Math.max(...items.map((r) => r.y)) > grid.y + grid.h - 30) fail(`the catalogue lists more rows for order number ${orderNumber} than its grid shows at once`);
   const entries: (CatalogueEntry & { y: number })[] = [];
   for (const r of items) {
-    click(500, Math.round(r.y));
-    await sleep(1500);
-    entries.push({ ...(await readCatalogueEntry(s)), y: Math.round(r.y) });
+    // A click that did not select the row leaves the properties panel on line 1.1 (no Katalog tab): clicked once more.
+    for (let attempt = 0; ; attempt++) {
+      click(500, Math.round(r.y));
+      await sleep(1500);
+      try {
+        entries.push({ ...(await readCatalogueEntry(s)), y: Math.round(r.y) });
+        break;
+      } catch (e) {
+        if (attempt === 1 || !(e instanceof DriverFailure) || !/shows no Katalog tab/.test(e.message)) throw e;
+      }
+    }
   }
   const picked = pickCatalogueRow(entries, orderNumber, applicationId);
   if ("refused" in picked) return fail(picked.refused);
