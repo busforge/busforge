@@ -706,6 +706,17 @@ export function editDistance(a: string, b: string): number {
   return row[b.length];
 }
 
+// ETS's compatibility warning cancelled and the row refused: the product's plug-ins (after the insert) or its download
+// plug-in (at the download) need ETS's compatibility mode, which ETS offers to restart in; the driver runs ETS in its
+// normal mode only. The warning's buttons ("Im Kompatibilitätsmodus neu starten", framed as the default, and
+// "Abbrechen") read unreliably; Escape cancels it.
+async function refuseCompatibilityMode(s: Screen, when: string): Promise<never> {
+  key("Escape");
+  await sleep(1500);
+  if (dialogBox(s.snap())) fail("ETS's compatibility warning stays open after Escape");
+  return fail(`refused: the product's plug-ins need ETS's compatibility mode (ETS asks to restart in it ${when}); the driver runs ETS in its normal mode`);
+}
+
 // The product inserted into line 1.1 from the catalogue: a catalogue row listed for the order number whose
 // application is `applicationId`, by its device type, version and fingerprint as ETS's properties panel shows them
 // (the fingerprint of the id ETS's product store holds, which tools/ets-catalogue.ts gives a row as its
@@ -796,13 +807,7 @@ async function insertProduct(s: Screen, orderNumber: string, applicationId: stri
       // without. The driver runs ETS in its normal mode only; cancelled, the row is refused.
       const compatibility = findText(ws, "Kompatibilit").length > 0;
       if (!compatibility && !findText(ws, "Projektpasswort setzen").length) fail(`ETS shows a dialog after the insert: ${ws.map((w) => w.text).join(" ").slice(0, 160)}`);
-      if (compatibility) {
-        // Its buttons ("Im Kompatibilitätsmodus neu starten", "Abbrechen") read unreliably; Escape cancels it.
-        key("Escape");
-        await sleep(1500);
-        if (dialogBox(s.snap())) fail("ETS's compatibility warning stays open after Escape");
-        fail("refused: the product's plug-ins need ETS's compatibility mode (ETS asks to restart in it after the insert); the driver runs ETS in its normal mode");
-      }
+      if (compatibility) await refuseCompatibilityMode(s, "after the insert");
       const cancel = findText(dialogButtons(png, box), "Abbrechen")[0] ?? fail("no Abbrechen under ETS's project password dialog");
       click(cancel.cx, cancel.cy);
       continue;
@@ -1577,6 +1582,9 @@ async function runRow(o: RowOptions): Promise<RowRun> {
     const started = etsClock();
     key("ctrl+alt+shift+d");
     for (let i = 0; !etsLogHas(started, `StartLoadDevice(Application) ${ia} `); i++) {
+      // A product with a download plug-in: ETS warns instead of downloading.
+      const png = s.snap(), box = dialogBox(png);
+      if (box && findText(words(png, box), "Kompatibilit").length) await refuseCompatibilityMode(s, "at the download");
       if (i === 15) fail(`ETS did not start the application download of ${ia} within 30 s of its shortcut`);
       await sleep(2000);
     }

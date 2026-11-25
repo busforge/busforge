@@ -96,6 +96,8 @@ test("a failure's class from the driver's recorded messages", () => {
   // ETS that cannot be brought back, or is not this driver's: no row could run.
   expect(c("ETS not recovered: ETS did not start: no ETS6 process in its prefix after the launcher (after: ETS's window is gone)")).toBe("pause ets");
   expect(c("an ETS this driver did not start runs on the bench host")).toBe("pause ets");
+  // ETS that does not start the download is the row's (recorded: a download plug-in's compatibility warning held it).
+  expect(c("ETS did not start the application download of 1.1.201 within 30 s of its shortcut")).toBe("row");
   // A row's own failure.
   expect(c("no catalogue row with order number GW90883 runs M-0019_A-5222-12-B809-O00C9 (read: Gws308s3 $5222 1.2 B809)")).toBe("row");
   expect(c("the catalogue lists more rows for order number 1 than its grid shows at once")).toBe("row");

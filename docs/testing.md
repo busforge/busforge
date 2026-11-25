@@ -941,7 +941,8 @@ One row, step by step:
    more rows than the grid shows at once is refused. ETS's
    question for a project password, which it asks for a product that can run Data Secure,
    is cancelled (the device stays plain). A product whose plug-ins need ETS's compatibility mode (ETS asks
-   to restart in it right after the insert) is refused: the driver runs ETS in its normal mode only. A catalogue row's unit (above) takes its application program
+   to restart in it right after the insert, or for a download plug-in at the download) is refused: the
+   driver runs ETS in its normal mode only. A catalogue row's unit (above) takes its application program
    from an export of the project taken right after the insert. The device then gets the unit's address. `--configured` skips
    this step and downloads the device the project holds at that address as it is configured there: its
    row in line 1.1's opened tree, or else line 1.1's device list filtered by ETS's search to the address

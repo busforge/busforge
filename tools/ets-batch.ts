@@ -149,7 +149,7 @@ const CATALOGUE = /Online-Katalog|Produktdownload|WebException|Katalog.{0,40}(?:
 const ETS_INTERNAL = /Sammlung wurde ge|Collection was modified|Exception|unerwartete[nr]? Fehler|Ein Fehler ist aufgetreten|Fehlerbericht|Unhandled/i;
 const ETS_GONE = /^ETS's window is gone/;
 // ETS that cannot be started or is not this driver's: nothing a row can change.
-const ETS_UNAVAILABLE = /ETS did not start|ETS needs a restart|an ETS this driver did not start|another Xvfb serves|ETS not recovered/;
+const ETS_UNAVAILABLE = /ETS did not start:|ETS needs a restart|an ETS this driver did not start|another Xvfb serves|ETS not recovered/;
 
 // What a failure of a row means for the batch, from the driver's message.
 export function classifyFailure(why: string): FailureClass {
