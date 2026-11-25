@@ -961,7 +961,8 @@ One row, step by step:
    which then holds no manufacturer's product data, and opens the project again. ETS's search lists every
    catalogue row whose text holds the order number (other manufacturers' and other versions' too), each
    manufacturer's group opened where its arrow shows it closed (a group that stays closed is refused);
-   each row is selected and its application read back from ETS's properties panel (device type, program
+   each row whose product data ETS has loaded is selected and its application read back from ETS's properties panel
+   (a row not loaded is named, see "The screen readers") (device type, program
    version, fingerprint, which together are the application id: the fingerprint of the id ETS's product
    store holds). The row whose application reads as the unit's is inserted, whatever else the search
    lists; several rows of that one application (it is offered in several catalogue items) are one
@@ -1039,6 +1040,21 @@ misreads a value at every size the driver could read it at (a fingerprint now an
 does with the reading instead: the row is still the one picked, by the closest fingerprint. A screen the driver misreads
 on a run is kept as such a screenshot, and its test is written, failing, before the reading changes. The tests run
 `tesseract` and ImageMagick (`magick`), as the driver does.
+
+Each screenshot the driver keeps (a row's `dialog.png` and `failure.png`, the catalogue download's `refused-rows-*`,
+`failed-row-*` and `driver-failed-row-*`) gets a sidecar beside it, `<name>.json` (format
+`busforge-ets-driver-screen/1`): the step it was kept in (a row's step, or a batch of the catalogue download), why it
+was kept (the failure, or the dialog with its text), the screenshot it was copied from where it was one the step's
+readers read, and that step's readings (the latest 200, `dropped` counting older ones): each reader's name, the
+screenshot it read, its arguments besides it, and what it read. A misreading on a run is then a grep over its
+sidecars. Where a reading names the screenshot the sidecar was copied from, the kept screenshot is the fixture for its
+test; a `failure.png` is taken after the failure, so its readings name the step's own earlier screens. A sidecar that
+cannot be written is said on stderr and fails nothing.
+
+In ETS's catalogue a row whose product data ETS has not loaded shows a cloud at the grid's left, where a
+manufacturer's group header shows its arrow. The driver reads such a row as a product row marked not loaded and names
+it in its output and in a refusal; it does not select it, since what ETS's properties panel shows for it is not known. A
+search that lists only rows not loaded is refused.
 
 **A wrong identity.** `--sim-override <object>/<PID>=<hex>` passes `--override` to the simulator. ETS
 reads the unit's identity before it writes and refuses one that does not fit the product: the load

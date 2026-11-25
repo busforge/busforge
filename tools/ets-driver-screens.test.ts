@@ -3,12 +3,15 @@
 // says what each shows). Each reader is fed the screenshot whole, as the driver feeds it its screen, and must read
 // what the screen shows. They run tesseract and ImageMagick, as the driver does.
 import { expect } from "bun:test";
+import { mkdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { corpusPath, driverScreenFile, type DriverScreen } from "./corpus.ts";
 import { corpusTest } from "./corpus-test.ts";
 import {
   catalogueDownloadDialog, catalogueGroups, catalogueHeader, cataloguePanelShown, catalogueProducts, catalogueSearchEmpty, compatibilityWarning, dialogBox, dialogButton, dialogText, downloadEnabled, frontTabWidth, LINE_11,
-  oneRowSelected, pickCatalogueRow, projectTabs, projectTabShown, propertiesTab, propertiesTable, propertyValue, searchGrid, selectionPattern, treeRowBelow, treeRowIn,
+  isCatalogueProgress, keepScreen, moveScreen, oneRowSelected, pickCatalogueRow, projectTabs, projectTabShown, propertiesTab, propertiesTable, propertyValue, SCREEN_FORMAT, searchGrid, selectionPattern, sidecarOf, step, treeRowBelow, treeRowIn,
 } from "./ets-driver.ts";
+import { tempDir } from "./test-temp.ts";
 
 // The readers only read the screenshot (their enlarged copies for OCR go to the system's temporary directory).
 const screen = (name: DriverScreen) => corpusPath(driverScreenFile(name));
@@ -82,13 +85,11 @@ corpusTest("the catalogue's search: manufacturers' groups by their arrow, open o
     return { headers: groups.headers.map((r) => Math.round(r.y)), closed: groups.closed.map((r) => Math.round(r.y)), products: catalogueProducts(png, g).map((r) => ({ y: Math.round(r.y), text: r.text })) };
   };
   // Two groups open, six rows each, as ETS lists them for TB/U1. OCR reads the second header's name as two lines
-  // ("STOTZ-KO" and the rest, 7 px apart): both stand on the header's arrow.
+  // ("STOTZ-KO" and the rest, 7 px apart): within half a row of each other, they are one header.
   for (const name of ["catalogue-two-groups-katalog-tab", "catalogue-two-groups-applikation-tab"] as const) {
     const r = read(screen(name));
     expect(r.closed).toEqual([]);
-    expectNear(r.headers.slice(0, 1), [710]);
-    expect(r.headers.length).toBeGreaterThan(1);
-    expect(r.headers.slice(1).every((y) => y >= 843 && y <= 855)).toBe(true);
+    expectNear(r.headers, [710, 846]);
     expectNear(r.products.map((p) => p.y), [731, 751, 771, 791, 811, 831, 874, 894, 914, 934, 954, 974]);
   }
   // The group ETS kept closed from an earlier search: its arrow read closed, no product row.
@@ -161,6 +162,59 @@ corpusTest("the catalogue download: ETS's refusal with its OK, and its progress"
   const ok = dialogButton(png, refused!.box, "OK");
   expect(ok && ok.cx >= 1233 && ok.cx <= 1253 && ok.cy >= 686 && ok.cy <= 704).toBe(true);
   expect(catalogueDownloadDialog(screen("catalogue-download-progress"))?.kind).toBe("progress");
+  // waitNoDialog's test of a dialog it waits out: the progress dialog is one, the refusal ("Der Produktdownload aus
+  // dem Online-Katalog ist fehlgeschlagen") none, however much of the progress dialog's text it shares.
+  expect(isCatalogueProgress(dialogText(screen("catalogue-download-progress"))!)).toBe(true);
+  expect(isCatalogueProgress(refused!.text)).toBe(false);
+}, OCR_TIMEOUT);
+
+corpusTest("the catalogue's search over rows whose product data ETS has not loaded: product rows marked so, not group headers", () => {
+  // A search for STEINEL: one group open, its rows each with the cloud of a product whose data ETS has not loaded in
+  // front of the product's icon, where a group header has its arrow.
+  const png = screen("catalogue-rows-not-loaded");
+  const header = catalogueHeader(png)!;
+  expectNear([header.cy], [661]);
+  const grid = searchGrid(header), groups = catalogueGroups(png, grid), products = catalogueProducts(png, grid);
+  expectNear(groups.headers.map((r) => r.y), [710]);
+  expect(groups.closed).toEqual([]);
+  // Every row the grid shows whole under the header (the last one stands cut off by the grid's end).
+  expectNear(products.map((r) => r.y).slice(0, 21), Array.from({ length: 21 }, (_, i) => 731 + 20 * i));
+  expect(products.every((r) => !r.loaded)).toBe(true);
+  // A loaded row reads as loaded.
+  const loaded = screen("catalogue-two-groups-katalog-tab");
+  expect(catalogueProducts(loaded, searchGrid(catalogueHeader(loaded)!)).map((r) => r.loaded)).toEqual(Array(12).fill(true));
+}, OCR_TIMEOUT);
+
+corpusTest("a screenshot the driver keeps gets a sidecar: the step, why, and what the step's readers read", () => {
+  const png = screen("tabs-extra-tab-behind");
+  step("the sidecar's test");
+  const tabs = projectTabs(png, PROJECT);
+  const kept = keepScreen(join(tempDir("ets-driver-sidecar-"), "dialog.png"), png, "a reason");
+  expect(readFileSync(kept)).toEqual(readFileSync(png));
+  const sidecar = JSON.parse(readFileSync(sidecarOf(kept), "utf8"));
+  expect(sidecar).toMatchObject({ format: SCREEN_FORMAT, step: "the sidecar's test", why: "a reason", from: "tabs-extra-tab-behind.png" });
+  expect(sidecar.readings).toEqual([{ reader: "projectTabs", screen: "tabs-extra-tab-behind.png", args: [PROJECT], read: JSON.parse(JSON.stringify(tabs)) }]);
+  // A new step starts without the readings of the one before; a screenshot kept without a reason has no `why`.
+  step("the next step");
+  const next = JSON.parse(readFileSync(sidecarOf(keepScreen(join(tempDir("ets-driver-sidecar-"), "failure.png"), png)), "utf8"));
+  expect(next).toMatchObject({ step: "the next step", readings: [] });
+  expect("why" in next).toBe(false);
+  // A tree reader's pattern is kept as its source; a grid reader's rows without OCR's words (their text holds them).
+  step("the grid's step");
+  const grid = screen("catalogue-two-groups-katalog-tab");
+  treeRowIn(grid, LINE_11);
+  catalogueProducts(grid, searchGrid(catalogueHeader(grid)!));
+  const moved = join(tempDir("ets-driver-sidecar-"), "refused-rows-0-9.png");
+  // A kept screenshot moved, as a refused batch's is, takes its sidecar along.
+  moveScreen(keepScreen(join(dirname(moved), "refused-download.png"), grid), moved);
+  const gridSidecar = JSON.parse(readFileSync(sidecarOf(moved), "utf8"));
+  expect(gridSidecar.readings.map((r: { reader: string; args?: unknown[] }) => [r.reader, r.args?.[0]])).toEqual([["treeRowIn", String(LINE_11)], ["catalogueHeader", undefined], ["catalogueProducts", expect.anything()]]);
+  expect(JSON.stringify(gridSidecar)).not.toContain('"words"');
+  // A sidecar that cannot be written (here a directory in its place) fails nothing: the screenshot stays kept.
+  const dir = tempDir("ets-driver-sidecar-");
+  mkdirSync(join(dir, "dialog.json"));
+  expect(readFileSync(keepScreen(join(dir, "dialog.png"), png))).toEqual(readFileSync(png));
+  expect(() => sidecarOf(join(dir, "dialog.jpg"))).toThrow("a kept screenshot is a .png");
 }, OCR_TIMEOUT);
 
 corpusTest("the catalogue panel before the download: shown, its search empty or not", () => {
