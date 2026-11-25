@@ -974,7 +974,21 @@ async function deleteProject(name: string): Promise<void> {
 const CATALOGUE = {
   download: [470, 659], downloadText: { x: 440, y: 652, w: 80, h: 14 }, firstRow: [700, 731],
   header: { x: 0, y: 645, w: 315, h: 30 }, search: { x: 1375, y: 648, w: 170, h: 22 },
+  // The grid's rows right of its last column (background only), and a place for the mouse outside the grid: a
+  // row under the mouse turns grey over its selection's blue.
+  rowBackground: { x: 900, y: 698, w: 600, h: 462 }, mouseAside: [1700, 1000],
 } as const;
+
+// Which parts of the grid are selected, every 5 px down its rows: a selected row's background is blue (blue over
+// red 0.14 measured), an unselected one white or grey (0).
+export function selectionPattern(png: string, r: Region = CATALOGUE.rowBackground): string {
+  const samples = Math.floor(r.h / 5);
+  const txt = execFileSync("magick", [png, ...crop(r), "-scale", `1x${samples}!`, "-depth", "8", "txt:-"], { encoding: "utf8" });
+  return txt.split("\n").slice(1).filter(Boolean).map((l) => {
+    const [red, , blue] = (l.match(/\((\d+),(\d+),(\d+)/) ?? fail(`no pixel in magick's line ${l}`)).slice(1).map(Number);
+    return blue - red > 18 ? "1" : "0";
+  }).join("");
+}
 
 interface CatalogueFailure { row: number; dialog: string; screenshot: string }
 
@@ -1008,9 +1022,12 @@ async function settledGrid(s: Screen, timeoutMs = 60_000): Promise<{ png: string
 }
 
 // The selection set to `size` rows from row `from` (counted from 0 down the grid); false where the grid holds no
-// row `from`: Down from its last row leaves its pixels as they were. `fresh`: counted from the grid's first row,
-// else `from` is the row after the selection (the keyboard focus stays in the grid while the toolbar is clicked).
-async function selectRows(s: Screen, from: number, size: number, fresh: boolean): Promise<boolean> {
+// row `from`: Down from its last row leaves its pixels as they were. Where the keyboard focus is: "top", nowhere
+// known (the walk starts at the grid's first row); "before", on the row before `from` (it stays in the grid while
+// the toolbar is clicked, and through a refusal); "on", on row `from`.
+type Focus = "top" | "before" | "on";
+async function selectRows(s: Screen, from: number, size: number, focus: Focus): Promise<boolean> {
+  const fresh = focus === "top";
   if (fresh) {
     // Scrolled to the top, the first catalogue row stands under the first manufacturer's header.
     const g = AT.catalogueGrid;
@@ -1019,7 +1036,7 @@ async function selectRows(s: Screen, from: number, size: number, fresh: boolean)
     key("ctrl+Home");
     if (from > 1) xdo("key", "--delay", "4", "--repeat", String(from - 1), "Down");
   }
-  if (!fresh || from > 0) {
+  if (focus !== "on" && (!fresh || from > 0)) {
     // 4,500 rows took ETS over two minutes; a minute and 50 ms per row leaves room.
     const before = (await settledGrid(s, fresh ? 60_000 + from * 50 : 60_000)).hash;
     key("Down");
@@ -1085,31 +1102,41 @@ async function downloadCatalogue(batch: number, out: string, from: number): Prom
   const before = existsSync(progress) ? JSON.parse(readFileSync(progress, "utf8")) as { row: number; size?: number; failures: CatalogueFailure[] } : null;
   let failures = before?.failures ?? [];
   // A run resumed where the last one stopped starts at the last one's batch size.
-  let row = from, size = before?.row === from && before.size ? Math.min(before.size, batch) : batch, fresh = true;
+  let row = from, size = before?.row === from && before.size ? Math.min(before.size, batch) : batch;
+  let focus: Focus = "top";
   const save = (done: boolean) => writeFileSync(progress, `${JSON.stringify({ row, size, ...(done ? { done } : {}), failures }, null, 1)}\n`);
   try {
-    while (await selectRows(s, row, size, fresh)) {
-      fresh = false;
-      if (!downloadEnabled((await settledGrid(s)).png)) { row += size; size = nextBatchSize(size, "skipped", batch); continue; }
+    while (await selectRows(s, row, size, focus)) {
+      focus = "before";
+      xdo("mousemove", String(CATALOGUE.mouseAside[0]), String(CATALOGUE.mouseAside[1]));
+      const selected = await settledGrid(s);
+      if (!downloadEnabled(selected.png)) { row += size; size = nextBatchSize(size, "skipped", batch); continue; }
+      const pattern = selectionPattern(selected.png);
       const since = etsClock();
       click(CATALOGUE.download[0], CATALOGUE.download[1]);
       const r = await downloadOutcome(s, since);
-      // A refused download leaves the keyboard focus elsewhere in the grid: the next batch is selected from its
-      // first row.
+      // A refused download keeps the selection and the keyboard focus on its last row; where the grid shows
+      // another selection after it, the next batch is selected from the grid's first row.
+      let kept = false;
+      if (!r.ok) {
+        xdo("mousemove", String(CATALOGUE.mouseAside[0]), String(CATALOGUE.mouseAside[1]));
+        kept = selectionPattern((await settledGrid(s)).png) === pattern;
+      }
       if (r.ok) step(`rows ${row}-${row + size - 1} loaded`);
       else if (size > 1) {
         renameSync(r.png, join(out, `refused-rows-${row}-${row + size - 1}.png`));
         const half = nextBatchSize(size, "refused", batch);
-        step(`rows ${row}-${row + size - 1} refused, again by ${half}`);
+        step(`rows ${row}-${row + size - 1} refused, again by ${half}${kept ? "" : " from the grid's first row"}`);
+        if (kept) { xdo("key", "--delay", "30", "--repeat", String(size - 1), "Up"); focus = "on"; }
+        else focus = "top";
         size = half;
-        fresh = true;
         continue;
       } else {
         const screenshot = join(out, `failed-row-${row}.png`);
         renameSync(r.png, screenshot);
         failures = [...failures.filter((f) => f.row !== row), { row, dialog: r.dialog, screenshot }];
         step(`row ${row} refused alone: ${r.dialog.slice(0, 120)}`);
-        fresh = true;
+        focus = kept ? "before" : "top";
       }
       row += size;
       size = nextBatchSize(size, r.ok ? "loaded" : "refused", batch);

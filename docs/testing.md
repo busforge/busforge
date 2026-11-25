@@ -1005,7 +1005,9 @@ bun run tools/ets-catalogue.ts list <fetched dir> --json <file> --md <file> [--m
   selected rows' product data without inserting a device. It walks the whole catalogue grid in
   batches from its first row (a project open, the catalogue's search empty). The catalogue server
   refuses a selection by the product data it holds, not by its rows ("Online-Katalog-Download
-  fehlgeschlagen", `(400) Bad Request` in ETS6.log): such a batch is tried again at half its size, a
+  fehlgeschlagen", `(400) Bad Request` in ETS6.log): such a batch is tried again at half its size
+  from where it stood (a refusal keeps the selection and the keyboard focus; where the grid shows
+  another selection after it, the walk starts again at the grid's first row), a
   batch that loaded is followed by one a quarter larger (up to `--batch`), and a row refused alone is
   written down with its full-resolution screenshot and passed. `<out>/progress.json` holds the next
   row and the batch size; `--from` that row resumes at that size. Rows already loaded leave "Herunterladen" disabled and pass
