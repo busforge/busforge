@@ -84,18 +84,20 @@ test("a failure's class from the driver's recorded messages", () => {
   expect(c("the driver broke off: on tf@192.168.1.231 (255): ssh: connect to host 192.168.1.231 port 22: Host is down")).toBe("pause host");
   // The online catalogue refusing a product download (OCR reads "fehigeschlagen").
   expect(c("ETS shows a dialog after the insert: 4 Online-Katalog-Download fehigeschlagen UGW Triple-XT Profinet/LON Der Produktdownload aus dem Online-Katalog ist fehlgeschlagen. Bitte tiberp")).toBe("pause catalogue");
-  // ETS killed under the row, whatever the step met then.
+  // ETS killed under the row (--inject-kill), and ETS gone while a step failed on what it met.
+  expect(c("ETS's window is gone (before \"insert\")")).toBe("restart ets-gone");
   expect(c("ETS's window is gone: the catalogue's insert target is not line 1.1")).toBe("restart ets-gone");
-  expect(c("ETS's window is gone (before \"the product's export\")")).toBe("restart ets-gone");
-  // A dialog the driver does not know: ETS's project details, opened under a row.
-  expect(c(`${UNKNOWN_DIALOG} (before "the product's export"): Busforge Sweep Details > Beschreibung Zuletzt geandert Geschatzte Projektgrae Jetzt komprimieren...`)).toBe("dialog");
+  // A dialog the driver does not know: ETS's project details, opened under a row (--inject-dialog).
+  expect(c(`${UNKNOWN_DIALOG} (before "insert"): 4 Busforge Sweep @ Details > © Historie > Beschreibung ++ Projekt-Eintrag hinzufiigen Zuletzt geandert Geschatzte ProjektgréRe 11/25/2026 2:12:14 PM P Projektverfolgung 10 Eintrage Vv 552,99 KB = G`)).toBe("dialog");
+  // A product refused by name: ETS asks to restart in its compatibility mode for the product's plug-ins.
+  expect(c("refused: the product's plug-ins need ETS's compatibility mode (ETS asks to restart in it after the insert); the driver runs ETS in its normal mode")).toBe("row");
   // ETS gone while a step read a dialog: ETS gone, not the dialog.
   expect(c("ETS's window is gone: ETS shows a dialog after the insert: Kompatibilitatswarnung Das Gerat enthalt Plug-Ins")).toBe("restart ets-gone");
   // ETS that cannot be brought back, or is not this driver's: no row could run.
   expect(c("ETS not recovered: ETS did not start: no ETS6 process in its prefix after the launcher (after: ETS's window is gone)")).toBe("pause ets");
   expect(c("an ETS this driver did not start runs on the bench host")).toBe("pause ets");
   // A row's own failure.
-  expect(c("no catalogue row with order number TB/U1 runs M-0002_A-4201-13-6B9E-O0007 (read: TB/U1 $4201 1.3 D98E)")).toBe("row");
+  expect(c("no catalogue row with order number GW90883 runs M-0019_A-5222-12-B809-O00C9 (read: Gws308s3 $5222 1.2 B809)")).toBe("row");
   expect(c("the catalogue lists more rows for order number 1 than its grid shows at once")).toBe("row");
 });
 

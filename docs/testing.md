@@ -1099,13 +1099,14 @@ bun run tools/ets-catalogue.ts list <fetched dir> --json <file> --md <file> [--m
   - Its mask comes from the product data (an application not loaded has no row and is listed as
     such, never guessed from its name); its version as ETS shows it; every order number it is offered
     under, and one to search for, where it is the only catalogue row at its version (an order number
-    is searched across the whole catalogue, compared as the driver compares it).
+    is searched across the whole catalogue; compared without spaces and with O and 0, I, L and 1 taken
+    as one).
   - Two applications under one order number and version are both rows (one whose product data is
     refused is listed as refused instead), each naming the other; a row
     without an order number of its own (each one lists more than one catalogue row at its version,
     another application's or its own again) is flagged: the driver tells them apart by the application
-    id it reads for each catalogue row, as it does for every row. Order numbers are compared with O and
-    0, I, L and 1 taken as one (OCR confuses them), so two that differ only so are flagged the same way.
+    id it reads for each catalogue row, as it does for every row. Two order numbers that differ only in
+    O and 0, I, L and 1 (which OCR confuses) are flagged the same way.
   - An entry whose id, application identifier, fingerprint or manufacturer disagree, and an
     application whose product data does not fit it, is refused with the reason.
   - With bussard's manifest (ids as the index names them) it lists the applications in either list

@@ -58,8 +58,10 @@ test("the catalogue row inserted: the one whose read application is the row's, w
   // are refused.
   expect(pick([e("TB/U1", "$4201", "1.3", "D9BE", 731), e("TB/U1", "$4201", "1.3", "6B93E", 873)], "TB/U1", "M-0002_A-4201-13-6B9E-O0007")).toEqual({ row: 1, rows: 1, exact: false });
   expect(pick([e("X", "$4201", "1.3", "6B0E", 731), e("X", "$4201", "1.3", "6B9F", 873)], "X", "M-0002_A-4201-13-6B9E-O0007")).toEqual({ refused: "2 catalogue rows with order number X at $4201 1.3 read no fingerprint closest to 6B9E alone (read: X $4201 1.3 6B0E; X $4201 1.3 6B9F)" });
-  // Order numbers that differ only where OCR confuses letters pass alike; the application tells them apart, and OCR's
-  // "S" for the device type's "$" and O for 0 are read as meant.
+  // The order number a row reads is not what tells it apart (the runner's acceptance batch read GW90883 as "Gws308s3");
+  // order numbers that differ only where OCR confuses letters are told apart by the application, and OCR's "S" for the
+  // device type's "$" and O for 0 are read as meant.
+  expect(pick([e("Gws308s3", "$5222", "1.2", "B809", 700)], "GW90883", "M-0019_A-5222-12-B809-O00C9")).toEqual({ row: 0, rows: 1, exact: true });
   const folded = [e("GH Q631 0070 RO111", "S0A01", "1.3", "1111", 700), e("GH Q631 0070 R0111", "$A001", "1.3", "63C2", 720)];
   expect(pick(folded, "GH Q631 0070 R0111", "M-0002_A-A001-13-63C2")).toEqual({ row: 1, rows: 1, exact: true });
   // A version or device type that differs is never taken.

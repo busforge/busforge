@@ -611,9 +611,9 @@ async function readCatalogueEntry(s: Screen): Promise<CatalogueEntry> {
   return { orderNumber, deviceType: value(app, "Gerätetyp"), version: value(app, "Programmversion"), fingerprint: value(app, "Fingerprint") };
 }
 
-// An order number as the catalogue search compares it: OCR breaks a long order number into words
-// ("OpenKnxRau mController") and confuses O and 0, I, l and 1 ("RO111"), so it is compared without spaces and with
-// those taken as one.
+// An order number as the sweep's list compares the catalogue's rows by it (tools/ets-catalogue.ts): without spaces and
+// with O and 0, I, L and 1 taken as one, as OCR of ETS's catalogue breaks a long one into words ("OpenKnxRau
+// mController") and confuses those letters ("RO111"), so rows whose numbers differ only so are flagged as sharing one.
 export const orderNumberKey = (n: string) => n.replace(/\s+/g, "").toUpperCase().replace(/O/g, "0").replace(/[IL]/g, "1");
 
 // An application's version as ETS's catalogue shows it: 0x11 is "1.1".
@@ -639,20 +639,21 @@ export function expanderOpen(txt: string): boolean | null {
   return top === bottom ? null : top < bottom;
 }
 
-// Of the catalogue rows read for an order number (in the grid's order), the one to insert for `applicationId`: at the
-// order number (compared as OCR reads it, orderNumberKey), the application's version and device type, and of those
-// the one whose fingerprint reads as the application's; the first of several such rows (one application in several
-// catalogue items), and how many there were. OCR reads a fingerprint unreliably ("DC390" for DC90, "1634" for 163A):
-// where none reads exactly, the rows at the version and type are taken whose fingerprint reads closest, where no other
-// reading is as close (rows that read alike count as one application). What a catalogue unit's row inserted is
-// checked exactly on the project's export right after the insert (runRow); an own unit's in writeRow, which takes
-// another build only where it parses as the unit's. Rows whose order numbers differ only where OCR confuses letters
-// (O and 0, I, L and 1) pass the order number alike and are told apart by the application they run.
+// Of the catalogue rows ETS's search lists for an order number (in the grid's order), the one to insert for
+// `applicationId`: at the application's version and device type, and of those the one whose fingerprint reads as the
+// application's; the first of several such rows (one application in several catalogue items), and how many there
+// were. The order number each row reads is not compared: the search lists only rows that hold it, and OCR reads it as
+// unreliably as a fingerprint ("Gws308s3" for GW90883, O for 0); rows under other order numbers that hold it
+// (TB/U12.7 for TB/U1) are told apart by the application they run. Where no fingerprint reads exactly ("DC390" for
+// DC90, "1634" for 163A), the rows whose fingerprint reads closest are taken, where no other reading is as close
+// (rows that read alike count as one application). What a catalogue unit's row inserted is checked exactly on the
+// project's export right after the insert (runRow); an own unit's in writeRow, which takes another build only where
+// it parses as the unit's.
 export function pickCatalogueRow<E extends CatalogueEntry>(entries: E[], orderNumber: string, applicationId: string): { hit: E; rows: number; exact: boolean } | { refused: string } {
   const want = catalogueIdentity(applicationId);
   // A device type reads with its "$" as "S" or "3" and an O for a 0 ("SOOB6" for $00B6); a fingerprint the same.
   const hexKey = (v: string) => v.toUpperCase().replace(/^[$S3](?=[0-9A-FO]{4}$)/, "").replace(/O/g, "0");
-  const candidates = entries.filter((e) => orderNumberKey(e.orderNumber) === orderNumberKey(orderNumber) && e.version === want.version && hexKey(e.deviceType) === hexKey(want.deviceType));
+  const candidates = entries.filter((e) => e.version === want.version && hexKey(e.deviceType) === hexKey(want.deviceType));
   const read = () => entries.map((e) => `${e.orderNumber} ${e.deviceType} ${e.version} ${e.fingerprint}`).join("; ");
   const hits = candidates.filter((e) => hexKey(e.fingerprint) === hexKey(want.fingerprint));
   if (hits.length) return { hit: hits[0], rows: hits.length, exact: true };
@@ -709,17 +710,18 @@ async function insertProduct(s: Screen, orderNumber: string, applicationId: stri
   key("Escape");
   await sleep(1000);
   const grid = { x: AT.catalogueGrid.x, y: header.cy + 37, w: AT.catalogueGrid.w, h: 1160 - header.cy - 37 };
-  // Product rows fill the application column; a manufacturer's group header holds its name at the left only. (OCR
-  // misreads the narrow medium and version cells: "4930...TP", "TRIP" for "TP,IP", "T", a version glued to the
-  // application's name.)
-  const products = () => rows(s.look(grid, "binary").ws.filter(inside(grid))).filter((r) => r.words.some((w) => w.x >= 610 && /[A-Za-z]{3}/.test(w.text)));
+  // Product rows fill the name and application columns (from x 450; an application's name can be digits but for one
+  // letter, "S85166100"); a manufacturer's group header holds its name at the left only. (OCR misreads the narrow
+  // medium and version cells: "4930...TP", "TRIP" for "TP,IP", "T", a version glued to the application's name.)
+  const PRODUCT_TEXT_X = 450;
+  const products = () => rows(s.look(grid, "binary").ws.filter(inside(grid))).filter((r) => r.words.some((w) => w.x >= PRODUCT_TEXT_X && /[A-Za-z0-9]{3}/.test(w.text)));
   let items = products();
   // Every manufacturer's group the search lists is opened where it stands closed (ETS keeps a group closed from one
   // search to the next): its expander's arrow is read, never toggled blind, one group at a time (opening one moves
   // the groups below it). The online catalogue lists the rows late. A group still closed after that is refused.
   const closedGroups = () => {
     const png = s.snap();
-    const headers = rows(words(png, grid).filter(inside(grid))).filter((r) => !r.words.some((w) => w.x >= 610) && r.words[0].x < 360);
+    const headers = rows(words(png, grid).filter(inside(grid))).filter((r) => !r.words.some((w) => w.x >= PRODUCT_TEXT_X) && r.words[0].x < 360);
     return { headers, closed: headers.filter((h) => expanderOpen(execFileSync("magick", [png, ...crop({ x: 316, y: Math.round(h.y) - 10, w: 20, h: 20 }), "-colorspace", "Gray", "-depth", "8", "txt:-"], { encoding: "utf8" })) === false) };
   };
   let groups = closedGroups();
@@ -1551,6 +1553,9 @@ async function runRow(o: RowOptions): Promise<RowRun> {
       if (o.stopSimAfter !== undefined && sim && frameCount(log) >= o.stopSimAfter) { await sim.stop(); sim = null; console.log(`stopped the simulator after ${o.stopSimAfter} frames of ETS`); }
       // The task's end, or the exception that ended it (tools/ets-sweep.ts etsOutcome).
       if (etsLogHas(started, `End LoadApplicationProgram ${ia} `) || etsLogHas(started, "Knx.Ets.Hawk.LoadDeviceTask - ", ETS_TASK_FAILED)) break;
+      // ETS shows no dialog while it downloads; one before the task's end ("Verbindung auswählen": the simulator's
+      // connection not available) ends the row with its text at once.
+      settled(s, dir, "the download's end");
       if (Date.now() > until) fail(`ETS did not end the download of ${ia} within 300 s`);
       await sleep(2000);
     }
