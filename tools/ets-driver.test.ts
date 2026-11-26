@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { benchSimArgs, compatibilityRefusalWhy, editDistance, expanderOpen, isCatalogueProgress, isCompatibilityWarningText, LINE_11, nextBatchSize, notLoadedMark, oneRowSelected, pcapOf, pickCatalogueRow, propertiesTabIn, selectedSamples, simRowFiles, simStartScript, writtenRowKind } from "./ets-driver.ts";
+import { benchSimArgs, compatibilityRefusalWhy, editDistance, expanderOpen, isCatalogueProgress, isCompatibilityWarningText, LINE_11, nextBatchSize, notLoadedMark, oneRowSelected, pcapOf, pickCatalogueRow, propertiesTabIn, selectedSamples, simRowFiles, simStartScript, waitDialogButton, writtenRowKind } from "./ets-driver.ts";
 
 test("a catalogue batch halves after a refusal and grows from the last size that loaded", () => {
   const walk = (outcomes: ("loaded" | "refused" | "skipped")[], max = 150) => {
@@ -193,4 +193,89 @@ test("propertiesTabIn matches the tab prefix above y=165 and rejects longer desc
   expect(propertiesTabIn([w("Applikation", 180)], "Applikation")).toBeNull();
   expect(propertiesTabIn([w("Applikationsprogramm", 140, "1.1.1"), w("Appli", 144, "1.1.2")], "Applikation")?.text).toBe("Appli");
   expect(propertiesTabIn([w("Katal", 144)], "Katalog")?.text).toBe("Katal");
+});
+
+test("waitDialogButton returns immediately when painted, retries transient misses only on the same dialog, and stops after attempts", async () => {
+  const initialBox = { x: 600, y: 400, w: 720, h: 320 };
+  const grownBox = { x: 600, y: 400, w: 720, h: 360 };
+  const otherBox = { x: 650, y: 420, w: 620, h: 280 };
+  const okBox = { x: 1233, y: 730, w: 20, h: 14, cx: 1243, cy: 737, text: "OK" };
+
+  // Painted on the first frame: no extra snap, no box re-read, no dialog re-check, no sleep.
+  let snaps = 0, boxReads = 0, dialogChecks = 0;
+  const sleeps: number[] = [];
+  const wait = async (ms: number) => { sleeps.push(ms); };
+  expect(await waitDialogButton(
+    { png: "frame-0.png", box: initialBox },
+    "OK",
+    () => { dialogChecks++; return true; },
+    { snap: () => `frame-${++snaps}.png`, boxOf: () => { boxReads++; return initialBox; }, readButton: () => okBox, wait },
+  )).toEqual(okBox);
+  expect([snaps, boxReads, dialogChecks, sleeps]).toEqual([0, 0, 0, []]);
+
+  // Transiently unpainted on the first frame, missing dialog box on the second, foreign dialog with OK on the third,
+  // then the expected dialog with its grown box and OK on the fourth.
+  snaps = 0;
+  sleeps.length = 0;
+  const calls: [string, typeof initialBox, string][] = [];
+  expect(await waitDialogButton(
+    { png: "frame-0.png", box: initialBox },
+    "OK",
+    (png) => png !== "frame-2.png",
+    {
+      snap: () => `frame-${++snaps}.png`,
+      attempts: 5,
+      delayMs: 250,
+      boxOf: (png) => (png === "frame-1.png" ? null : png === "frame-2.png" ? otherBox : grownBox),
+      readButton: (png, box, label) => {
+        calls.push([png, box, label]);
+        return png === "frame-2.png" || png === "frame-3.png" ? okBox : null;
+      },
+      wait,
+    },
+  )).toEqual(okBox);
+  expect(snaps).toBe(3);
+  expect(sleeps).toEqual([250, 250, 250]);
+  expect(calls).toEqual([
+    ["frame-0.png", initialBox, "OK"],
+    ["frame-3.png", grownBox, "OK"],
+  ]);
+
+  // Different dialog replaces the original one on every retry: its OK button is never accepted.
+  snaps = 0;
+  sleeps.length = 0;
+  let reads = 0;
+  expect(await waitDialogButton(
+    { png: "frame-0.png", box: initialBox },
+    "OK",
+    () => false,
+    {
+      snap: () => `frame-${++snaps}.png`,
+      attempts: 4,
+      delayMs: 200,
+      boxOf: () => otherBox,
+      readButton: (png) => { reads++; return png === "frame-0.png" ? null : okBox; },
+      wait,
+    },
+  )).toBeNull();
+  expect([reads, snaps, sleeps]).toEqual([1, 3, [200, 200, 200]]);
+
+  // Never appears on the same dialog: tries `attempts` times with `attempts - 1` sleeps (no trailing sleep) and returns null.
+  snaps = 0;
+  sleeps.length = 0;
+  reads = 0;
+  expect(await waitDialogButton(
+    { png: "frame-0.png", box: initialBox },
+    "OK",
+    () => true,
+    {
+      snap: () => `frame-${++snaps}.png`,
+      attempts: 4,
+      delayMs: 300,
+      boxOf: () => initialBox,
+      readButton: () => { reads++; return null; },
+      wait,
+    },
+  )).toBeNull();
+  expect([reads, snaps, sleeps]).toEqual([4, 3, [300, 300, 300]]);
 });

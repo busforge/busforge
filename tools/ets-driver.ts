@@ -89,7 +89,7 @@ const DISPLAY = ":5";
 const ETS_BUILD = "ETS 6.4.1 Home (6.4.8718)";
 
 export const q = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 // Each step of a row on stderr, with the time: what a run that stalls was doing (and what a batch's heartbeat names).
 // A step starts without the readings of the one before (keepScreen).
 let currentStep = "";
@@ -304,6 +304,16 @@ class Screen {
       if (Date.now() > until) return fail(`${what} did not appear within ${timeoutMs / 1000} s`);
       await sleep(1500);
     }
+  }
+  // The button labelled `label` in a dialog's bottom bar, retried briefly on fresh screenshots when the dialog's first
+  // frame has not finished painting its buttons yet.
+  async waitDialogButton(
+    first: { png: string; box: Region },
+    label: string,
+    sameDialog: (png: string, box: Region) => boolean,
+    what: string,
+  ): Promise<Box> {
+    return (await waitDialogButton(first, label, sameDialog, { snap: () => this.snap() })) ?? fail(what);
   }
   clean(): void { for (const f of readdirSync(this.dir)) if (f.startsWith(".screen-")) rmSync(join(this.dir, f), { force: true }); }
 }
@@ -1040,7 +1050,7 @@ async function insertProduct(s: Screen, dir: string, orderNumber: string, applic
       // without. The driver runs ETS in its normal mode only; dialog kept before Escape, then the row refused.
       if (isCompatibilityWarningText(text)) await refuseCompatibilityMode(s, dir, png, box, "after the insert", text);
       if (!textHasPhrase(text, "Projektpasswort setzen")) fail(`ETS shows a dialog after the insert: ${text.slice(0, 160)}`);
-      const cancel = findText(dialogButtons(png, box), "Abbrechen")[0] ?? fail("no Abbrechen under ETS's project password dialog");
+      const cancel = await s.waitDialogButton({ png, box }, "Abbrechen", (p, b) => textHasPhrase(dialogText(p, b) ?? "", "Projektpasswort setzen"), "no Abbrechen under ETS's project password dialog");
       click(cancel.cx, cancel.cy);
       continue;
     }
@@ -1121,6 +1131,38 @@ const dialogWords = (png: string, box: Region) => words(png, box).map((w) => w.t
 
 // The button labelled `label` in the bottom bar of the dialog in `box`.
 export const dialogButton = reader("dialogButton", (png: string, box: Region, label: string): Box | null => findText(dialogButtons(png, box), label)[0] ?? null);
+
+// A dialog's button labelled `label`, retried briefly on fresh screenshots when the dialog's first frame has not
+// finished painting its buttons yet. On retries, `sameDialog` verifies the fresh frame still shows the same dialog
+// before accepting its button.
+export async function waitDialogButton(
+  first: { png: string; box: Region },
+  label: string,
+  sameDialog: (png: string, box: Region) => boolean,
+  io: {
+    snap: () => string;
+    attempts?: number;
+    delayMs?: number;
+    boxOf?: (png: string) => Region | null;
+    readButton?: (png: string, box: Region, label: string) => Box | null;
+    wait?: (ms: number) => Promise<void>;
+  },
+): Promise<Box | null> {
+  const attempts = io.attempts ?? 6;
+  const delayMs = io.delayMs ?? 500;
+  const boxOf = io.boxOf ?? dialogBox;
+  const readButton = io.readButton ?? dialogButton;
+  const wait = io.wait ?? sleep;
+  for (let i = 0; i < attempts; i++) {
+    if (i > 0) await wait(delayMs);
+    const png = i === 0 ? first.png : io.snap();
+    const box = i === 0 ? first.box : boxOf(png);
+    if (!box || (i > 0 && !sameDialog(png, box))) continue;
+    const hit = readButton(png, box, label);
+    if (hit) return hit;
+  }
+  return null;
+}
 
 // The project compressed: ETS's "Jetzt komprimieren" in its details dialog deletes the product data no device of the
 // project uses (ETS6.log: "Deleting folder of unreferenced manufacturer …"). ETS closes the project for it; it is
@@ -1229,7 +1271,7 @@ async function exportProject(s: Screen, project: string, to: string, password: s
   await s.waitText("Export erfolgreich", undefined, 120_000, "the export");
   const png = s.snap();
   const box = dialogBox(png) ?? fail("the export's result is no dialog");
-  const close = findText(dialogButtons(png, box), "Schlie")[0] ?? fail("no Schließen under the export's result");
+  const close = await s.waitDialogButton({ png, box }, "Schlie", (p, b) => textHasPhrase(dialogText(p, b) ?? "", "Export erfolgreich"), "no Schließen under the export's result");
   click(close.cx, close.cy);
   const remoteFile = `${h.exportDir}/${file}`;
   writeFileSync(to, ssh(`cat ${q(remoteFile)}`, ""));
@@ -1350,7 +1392,7 @@ async function importProject(file: string, passwordEnv?: string): Promise<string
       if (!box) continue;
       const ws = words(png, box);
       if (findText(ws, "Import erfolgreich").length) {
-        const ok = findText(dialogButtons(png, box), "OK")[0] ?? fail("no OK under ETS's import result");
+        const ok = await s.waitDialogButton({ png, box }, "OK", (p, b) => textHasPhrase(dialogText(p, b) ?? "", "Import erfolgreich"), "no OK under ETS's import result");
         click(ok.cx, ok.cy);
         break;
       }
@@ -1537,7 +1579,7 @@ async function downloadOutcome(s: Screen, since: string): Promise<{ ok: true } |
       // Kept outside the screen's own files (Screen.clean removes those), so a failure before the batch moves it leaves
       // it in place.
       const kept = keepScreen(join(dirname(png), "refused-download.png"), png, `ETS refused the catalogue download: ${text}`);
-      const ok = dialogButton(png, d.box, "OK") ?? fail(`no OK under ETS's refusal: ${text.slice(0, 160)}`);
+      const ok = await s.waitDialogButton({ png, box: d.box }, "OK", (p, b) => CATALOGUE_REFUSED.test(dialogText(p, b) ?? ""), `no OK under ETS's refusal: ${text.slice(0, 160)}`);
       click(ok.cx, ok.cy);
       await waitNoDialog(s);
       return { ok: false, dialog: text, png: kept };
