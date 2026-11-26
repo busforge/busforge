@@ -137,7 +137,7 @@ same byte. The active branch's own placement still writes it.
 
 ### A block that is invisible still runs its side effects
 
-A `<choose>` can be gated on a Merker (an `Access="None"` or `Access="Read"`, no-memory visibility flag) that
+A `<choose>` can be gated on a Merker (an `Access="None"` or `Access="Read"`, memoryless and non-property visibility flag) that
 is only placed by a `<ParameterRefRef>` inside an invisible block. Skipping an
 `Access="None"` block wholesale therefore leaves the Merker unplaced and the dependent
 `choose` reads it as unset, so whole channels vanish from the config view while the image
