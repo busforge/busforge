@@ -5,8 +5,9 @@ import { storeZip } from "./ziputil.ts";
 
 // Two-application hardware: a Hardware2Program naming an application and a PEI program. Its id carries
 // both programs' parts, so it names neither; the application is the ApplicationProgramRef whose program
-// declares ProgramType="ApplicationProgram". No product of the private corpus has one: synthetic data,
-// in the id form two-program hardware takes.
+// declares ProgramType="ApplicationProgram". Synthetic data here covers the resolution cases offline, in
+// the id form two-program hardware takes (real exports of the private corpus are verified in
+// tools/hardware-applications.test.ts).
 const H2P = "M-0083_H-2P-1_HP-AAAA-01-0000-BBBB-01-0000";
 const APP = "M-0083_A-AAAA-01-0000";
 const PEI = "M-0083_A-BBBB-01-0000";
