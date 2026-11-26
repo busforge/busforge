@@ -69,6 +69,9 @@ corpusTest("the topology tree: line 1.1 collapsed, open, selected, and the row u
   const device = screen("tree-line-selected-device-below");
   expectNear([line(device)?.cy], [240]);
   expect(treeRowBelow(device, line(device)!.cy)?.text).toMatch(/^\S*\s?1\.1\.1 6108\/06-BS-500/);
+  // An explicit tree region narrows or extends the scan (used for the lower half of the tree when the catalogue panel is closed).
+  expect(treeRowIn(device, /1\.1\.1/, undefined, { x: 0, y: 250, w: 315, h: 40 })?.text).toMatch(/1\.1\.1/);
+  expect(treeRowIn(device, /1\.1\.1/, undefined, { x: 0, y: 300, w: 315, h: 40 })).toBeNull();
   const tbu1 = screen("catalogue-two-groups-katalog-tab");
   expectNear([line(tbu1)?.cy], [241]);
   expect(treeRowBelow(tbu1, line(tbu1)!.cy)?.text).toMatch(/1\.1\.1 ?TB\/U1/);

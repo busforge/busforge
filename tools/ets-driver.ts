@@ -546,8 +546,8 @@ async function searchProject(s: Screen, name: string): Promise<void> {
 async function treeRow(s: Screen, pattern: RegExp, prep?: Prep): Promise<Box | null> {
   return treeRowIn(s.snap(), pattern, prep);
 }
-export const treeRowIn = reader("treeRowIn", (png: string, pattern: RegExp, prep?: Prep): Box | null => {
-  for (const r of rows(words(png, AT.leftTree, { prep }).filter(inside(AT.leftTree)))) {
+export const treeRowIn = reader("treeRowIn", (png: string, pattern: RegExp, prep?: Prep, region: Region = AT.leftTree): Box | null => {
+  for (const r of rows(words(png, region, { prep }).filter(inside(region)))) {
     if (pattern.test(r.text)) {
       const x = r.words[0].x, last = r.words[r.words.length - 1];
       return { x, y: r.y - 6, w: last.x + last.w - x, h: 12, cx: x + 30, cy: Math.round(r.y), text: r.text };
@@ -634,8 +634,14 @@ function gridRows(s: Screen, prep?: Prep): { y: number; text: string }[] {
 // (an ArgumentOutOfRangeException dialog).
 async function selectByAddress(s: Screen, ia: string): Promise<void> {
   const line = await line11(s);
-  if (!(await treeRow(s, ANY_DEVICE))) { click(15, line.cy); await sleep(2000); }
-  const dev = await treeRow(s, iaRow(ia));
+  // Without the catalogue panel open, the topology tree reaches the bottom bar (y=1160); a 24 px overlap covers one tree row across the seam.
+  const lowerTop = AT.leftTree.y + AT.leftTree.h - 24;
+  const lowerTree: Region = { x: AT.leftTree.x, y: lowerTop, w: AT.leftTree.w, h: 1160 - lowerTop };
+  const findInTree = (png: string, pattern: RegExp) =>
+    treeRowIn(png, pattern) ?? (cataloguePanelShown(png) ? null : treeRowIn(png, pattern, undefined, lowerTree));
+  let png = s.snap();
+  if (!findInTree(png, ANY_DEVICE)) { click(15, line.cy); await sleep(2000); png = s.snap(); }
+  const dev = findInTree(png, iaRow(ia));
   if (dev) {
     click(dev.cx, dev.cy);
     await sleep(1500);
@@ -839,8 +845,8 @@ export const catalogueGroups = reader("catalogueGroups", (png: string, grid: Reg
 // it parses as the unit's.
 export function pickCatalogueRow<E extends CatalogueEntry>(entries: E[], orderNumber: string, applicationId: string, manufacturer?: string): { hit: E; rows: number; exact: boolean } | { refused: string } {
   const want = catalogueIdentity(applicationId);
-  // A device type reads with its "$" as "S" or "3" and an O for a 0 ("SOOB6" for $00B6); a fingerprint the same.
-  const hexKey = (v: string) => v.toUpperCase().replace(/^[$S3](?=[0-9A-FO]{4}$)/, "").replace(/O/g, "0");
+  // A device type reads with its "$" as "S", "3" or doubled "S$" and an O for a 0 ("SOOB6" for $00B6, "S$FEO1" for $FE01); a fingerprint the same.
+  const hexKey = (v: string) => v.toUpperCase().replace(/^(?:[$S3]|S\$)(?=[0-9A-FO]{4}$)/, "").replace(/O/g, "0");
   const atTypeAndVersion = entries.filter((e) => e.version === want.version && hexKey(e.deviceType) === hexKey(want.deviceType));
   const madeBy = (e: CatalogueEntry) => manufacturer !== undefined && e.manufacturer !== undefined && editDistance(nameKey(e.manufacturer), nameKey(manufacturer)) <= Math.max(2, Math.floor(nameKey(manufacturer).length / 5));
   const candidates = atTypeAndVersion.some(madeBy) ? atTypeAndVersion.filter(madeBy) : atTypeAndVersion;
