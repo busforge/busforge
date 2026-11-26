@@ -10,7 +10,8 @@ import { etsBranches, rowUnit, ROW_FORMAT, SWEEP_DIR, type RowSpec } from "./ets
 import { tempDir } from "./test-temp.ts";
 import { segmentAllocationRefusal, type SimUnit } from "./sim-unit.ts";
 import type { SystemBBehaviour, UnitBehaviour } from "./sim-unit-model.ts";
-import { catalogueUnit, catalogueUnitRecord, catalogueUnitSpec, chooseDonor, donorDigest, donorUnfit, DONOR_RULES, learnIdentity, unitMask, type CatalogueUnitSpec } from "./sim-unit-catalogue.ts";
+import { gzipSync } from "node:zlib";
+import { catalogueUnit, catalogueUnitRecord, catalogueUnitSpec, chooseDonor, donorDigest, donorUnfit, DONOR_RULES, learnIdentity, normalizeProductStoreXml, precheckDonor, unitMask, type CatalogueUnitSpec } from "./sim-unit-catalogue.ts";
 import { mismatchLines } from "./sim-unit-product.ts";
 import { framePairs, replayCapture } from "./sim-unit-replay.ts";
 import { AURO_M0081, GIRA_TS3, MDT_BE02001, MEANWELL_KNX40E, newSimUnit, OPENKNX_RAUMCONTROLLER, SIM_UNITS, THEBEN_DALI_GATEWAY, type SimUnitSpec } from "./sim-units.ts";
@@ -156,6 +157,56 @@ corpusDescribe("a catalogue unit's donor", () => {
     expect(refused(be06001.replace("<LdCtrlRestart />", '<LdCtrlTaskSegment LsmIdx="4" Address="17408" /><LdCtrlRestart />'))).toBe("no donor for MV-0705: the application declares a segment or task on object 4, whose load-state machine no unit of the mask shows");
     // ETS never sends a task segment on machine 5 (the Gira Tastsensor 3's application declares one).
     expect(refused(be06001.replace("<LdCtrlRestart />", '<LdCtrlRestart /><LdCtrlTaskSegment LsmIdx="5" Address="17408" />'))).toBe("mdt-be02001");
+  });
+
+  test("precheckDonor normalizes ETS ProductStore XML (plain or gzipped) to the same chooseDonor verdict and falls back on broken or mismatched files", () => {
+    // Convert standard KNX XML to ETS ProductStore shortened tag form with BOM, comments and CDATA to mirror real A files.
+    const toProductStore = (xml: string) => {
+      const short: Record<string, string> = {
+        ApplicationPrograms: "APS", ApplicationProgram: "AP", Static: "St",
+        AbsoluteSegment: "AS", RelativeSegment: "RS", AddressTable: "ADRT", AssociationTable: "ASSOT",
+        ComObjectTable: "COT", ComObjects: "COs", ComObject: "CO", ComObjectRefs: "CORS", ComObjectRef: "COR",
+        ParameterTypes: "PTS", ParameterType: "PT", TypeRestriction: "TR", TypeNumber: "TNr", TypeFloat: "TFl",
+        TypeText: "TTxt", TypeColor: "TColor", TypeTime: "TTime", TypeIPAddress: "TIP", TypeNone: "TNone", TypePicture: "TPic",
+        Parameters: "PS", Parameter: "P", Union: "U", Memory: "M", Property: "Prop",
+        ParameterRefs: "PRS", ParameterRef: "PR", Options: "Opt", Extension: "Ext",
+        Languages: "LS", Language: "L", TranslationUnit: "TU", TranslationElement: "TE", Translation: "T",
+      };
+      return `\uFEFF${xml.replace(/<(\/?)([A-Za-z_][A-Za-z0-9_:-]*)(?=[\s/>])/g, (m, slash: string, tag: string) => (short[tag] ? `<${slash}${short[tag]}` : m))}`;
+    };
+    // CDATA and comments stay untouched while shortened tags expand; standard XML is idempotent.
+    const withCdata = "\uFEFF<KNX><!-- <AP Id=\"x\"/> --><Script><![CDATA[if (a <P && b <M) {}]]></Script><APS><AP Id=\"a\"/></APS></KNX>";
+    const expanded = normalizeProductStoreXml(withCdata);
+    expect(expanded).toBe('<KNX><!-- <AP Id="x"/> --><Script><![CDATA[if (a <P && b <M) {}]]></Script><ApplicationPrograms><ApplicationProgram Id="a"/></ApplicationPrograms></KNX>');
+    expect(normalizeProductStoreXml(expanded)).toBe(expanded);
+
+    // Every corpus application: precheckDonor on shortened ProductStore XML matches chooseDonor() verbatim;
+    // Buffer and gzipped-Buffer inputs are exercised on both a qualifying and a refused application.
+    const bufferChecked = new Set(["M-0083_A-00B4-32-3919", "M-0008_A-10D7-11-2783-O000A"]);
+    for (const f of listCatalogue()) {
+      const app = f.replace(/\.xml\.gz$/, "");
+      const std = catalogueXml(f);
+      const expected = chooseDonor(std);
+      const storeXml = toProductStore(std);
+      const inputs: (string | Buffer)[] = bufferChecked.has(app)
+        ? [storeXml, Buffer.from(storeXml, "utf8"), gzipSync(Buffer.from(storeXml, "utf8"))]
+        : [storeXml];
+      for (const input of inputs) {
+        const got = precheckDonor(app, input);
+        if ("refused" in expected) expect(got).toEqual({ kind: "refused", why: expected.refused });
+        else expect(got).toEqual({ kind: "donor", donor: expected.donor, rule: expected.rule });
+      }
+    }
+
+    // Broken, truncated, corrupt-gzip, wrong-id or wrong-mask inputs fall back instead of refusing.
+    const okApp = "M-0083_A-00B4-32-3919";
+    const okStore = toProductStore(catalogueXml(`${okApp}.xml.gz`));
+    expect(precheckDonor(okApp, okStore, { mask: "0705" })).toMatchObject({ kind: "donor", donor: MDT_BE02001 });
+    expect(precheckDonor(okApp, okStore, { mask: "07B0" })).toEqual({ kind: "fallback", why: "ProductStore XML mask MV-0705 disagrees with MV-07B0" });
+    expect(precheckDonor("M-0083_A-00B4-32-9999", okStore)).toEqual({ kind: "fallback", why: `ProductStore XML holds ${okApp}, expected M-0083_A-00B4-32-9999` });
+    expect(precheckDonor(okApp, okStore.replace(/<\/KNX>\s*$/, ""))).toEqual({ kind: "fallback", why: "ProductStore XML is incomplete (missing closing </KNX>)" });
+    expect(precheckDonor(okApp, Buffer.from([0x1f, 0x8b, 0x08, 0x00, 0xff, 0xff]))).toMatchObject({ kind: "fallback", why: expect.stringContaining("could not decode ProductStore XML") });
+    expect(precheckDonor(okApp, "<KNX><NoApp/></KNX>")).toMatchObject({ kind: "fallback", why: expect.stringContaining("could not parse ProductStore XML") });
   });
 });
 

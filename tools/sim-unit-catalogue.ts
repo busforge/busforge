@@ -280,6 +280,77 @@ const collectedInAnotherState = (u: SimUnitSpec) => "stateInCaptures" in u.behav
 
 export type DonorChoice = { donor: SimUnitSpec; rule: string } | { refused: string };
 
+// ETS's local ProductStore (ProductStore/M-*/M-*_A-*/A) keeps application programs as UTF-8 XML with shortened
+// element names (<AP>, <St>, <Opt>, <COT>, <CO>, <P>, ...) and the same attributes as an exported .knxproj.
+// None of these keys is a standard KNX XML element name, so expanding them is idempotent on standard XML.
+const PRODUCT_STORE_TAGS: Record<string, string> = {
+  APS: "ApplicationPrograms", AP: "ApplicationProgram", St: "Static",
+  AS: "AbsoluteSegment", RS: "RelativeSegment",
+  ADRT: "AddressTable", ASSOT: "AssociationTable",
+  COT: "ComObjectTable", COs: "ComObjects", CO: "ComObject",
+  CORS: "ComObjectRefs", COR: "ComObjectRef",
+  PTS: "ParameterTypes", PT: "ParameterType",
+  TR: "TypeRestriction", TNr: "TypeNumber", TFl: "TypeFloat", TTxt: "TypeText",
+  TColor: "TypeColor", TTime: "TypeTime", TIP: "TypeIPAddress",
+  TNone: "TypeNone", TPic: "TypePicture", TDate: "TypeDate", TRaw: "TypeRawData",
+  PS: "Parameters", P: "Parameter", U: "Union", M: "Memory", Prop: "Property",
+  PRS: "ParameterRefs", PR: "ParameterRef",
+  Opt: "Options", Ext: "Extension",
+  PCs: "ParameterCalculations", PC: "ParameterCalculation",
+  LPars: "LParameters", RPars: "RParameters", LRT: "LRTransformation", RLT: "RLTransformation",
+  LS: "Languages", L: "Language", TU: "TranslationUnit", TE: "TranslationElement", T: "Translation",
+  Ms: "Message",
+};
+
+// ETS ProductStore application XML (plain UTF-8 or gzipped) normalized to standard KNX XML element names so
+// parseAppConfig and chooseDonor read it identically to an exported .knxproj application program.
+export function normalizeProductStoreXml(raw: string | Buffer): string {
+  const text = typeof raw === "string"
+    ? raw
+    : (raw.length >= 2 && raw[0] === 0x1f && raw[1] === 0x8b ? gunzipSync(raw) : raw).toString("utf8");
+  const stripped = text.startsWith("\uFEFF") ? text.slice(1) : text;
+  return stripped.replace(
+    /<!\[CDATA\[[\s\S]*?\]\]>|<!--[\s\S]*?-->|<(\/?)([A-Za-z_][A-Za-z0-9_:-]*)(?=[\s/>])/g,
+    (m, slash: string | undefined, tag: string | undefined) => {
+      if (!tag) return m;
+      const mapped = PRODUCT_STORE_TAGS[tag];
+      return mapped ? `<${slash ?? ""}${mapped}` : m;
+    },
+  );
+}
+
+export type PrecheckOutcome =
+  | { kind: "donor"; donor: SimUnitSpec; rule: string }
+  | { kind: "refused"; why: string }
+  | { kind: "fallback"; why: string };
+
+// Offline donor pre-check for `application` against an ETS ProductStore application file (`raw`, plain or gzipped
+// XML). Returns the exact chooseDonor() verdict when the file parses cleanly and matches `application` (and `mask`,
+// when given, as "07B0" or "MV-07B0"), or `fallback` when the file is truncated, unparseable, or disagrees on
+// identity so the batch runner falls back to ETS's export instead of refusing on broken local data.
+export function precheckDonor(
+  application: string,
+  raw: string | Buffer,
+  opts: { mask?: string; units?: readonly SimUnitSpec[] } = {},
+): PrecheckOutcome {
+  let xml: string;
+  try { xml = normalizeProductStoreXml(raw); } catch (e) {
+    return { kind: "fallback", why: `could not decode ProductStore XML: ${e instanceof Error ? e.message : String(e)}` };
+  }
+  if (!xml.trimEnd().endsWith("</KNX>")) return { kind: "fallback", why: "ProductStore XML is incomplete (missing closing </KNX>)" };
+  let cfg: AppConfig;
+  try { cfg = parseAppConfig(xml); } catch (e) {
+    return { kind: "fallback", why: `could not parse ProductStore XML: ${e instanceof Error ? e.message : String(e)}` };
+  }
+  if (cfg.id !== application) return { kind: "fallback", why: `ProductStore XML holds ${cfg.id || "no application id"}, expected ${application}` };
+  if (opts.mask !== undefined) {
+    const wantMask = opts.mask.startsWith("MV-") ? opts.mask : `MV-${opts.mask}`;
+    if (cfg.mask !== wantMask) return { kind: "fallback", why: `ProductStore XML mask ${cfg.mask || "missing"} disagrees with ${wantMask}` };
+  }
+  const choice = chooseDonorFor(cfg, opts.units ?? SIM_UNITS);
+  return "refused" in choice ? { kind: "refused", why: choice.refused } : { kind: "donor", donor: choice.donor, rule: choice.rule };
+}
+
 // The donor of `appXml` by the rule of its mask, among `units`.
 export function chooseDonor(appXml: string, units: readonly SimUnitSpec[] = SIM_UNITS): DonorChoice {
   return chooseDonorFor(parseAppConfig(appXml), units);

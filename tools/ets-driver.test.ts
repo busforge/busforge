@@ -1,5 +1,11 @@
 import { expect, test } from "bun:test";
-import { benchSimArgs, compatibilityRefusalWhy, editDistance, expanderOpen, isCatalogueProgress, isCompatibilityWarningText, LINE_11, nextBatchSize, notLoadedMark, oneRowSelected, pcapOf, pickCatalogueRow, propertiesTabIn, selectedSamples, simRowFiles, simStartScript, waitDialogButton, writtenRowKind } from "./ets-driver.ts";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { catalogueXml } from "./corpus.ts";
+import { corpusDescribe } from "./corpus-test.ts";
+import { planBatch, readResult, rowDirOf, writeResult } from "./ets-batch.ts";
+import { batchRowPrecheck, benchSimArgs, compatibilityRefusalWhy, editDistance, expanderOpen, isCatalogueProgress, isCompatibilityWarningText, LINE_11, nextBatchSize, notLoadedMark, oneRowSelected, pcapOf, pickCatalogueRow, productStoreAppPath, propertiesTabIn, readProductStoreApp, selectedSamples, simRowFiles, simStartScript, waitDialogButton, writtenRowKind } from "./ets-driver.ts";
+import { tempDir } from "./test-temp.ts";
 
 test("a catalogue batch halves after a refusal and grows from the last size that loaded", () => {
   const walk = (outcomes: ("loaded" | "refused" | "skipped")[], max = 150) => {
@@ -278,4 +284,71 @@ test("waitDialogButton returns immediately when painted, retries transient misse
     },
   )).toBeNull();
   expect([reads, snaps, sleeps]).toEqual([4, 3, [300, 300, 300]]);
+});
+
+test("productStoreAppPath validates manufacturer and application ids and rejects traversal", () => {
+  expect(productStoreAppPath("M-0008", "M-0008_A-A030-11-AE5D-O00F4")).toBe("M-0008/M-0008_A-A030-11-AE5D-O00F4/A");
+  expect(productStoreAppPath("M-0083", "M-0083_A-0006-32-2FF2")).toBe("M-0083/M-0083_A-0006-32-2FF2/A");
+  expect(productStoreAppPath("../M-0008", "M-0008_A-A030-11-AE5D-O00F4")).toBeNull();
+  expect(productStoreAppPath("M-0008", "M-0008_A-A030-11-AE5D/../../etc")).toBeNull();
+});
+
+corpusDescribe("offline donor pre-check for batch rows", () => {
+  const row = (application: string, mask: string) => ({
+    application, manufacturer: application.slice(0, 6), manufacturerName: "Mfr", mask, version: "1.0", name: application, orderNumber: "ORD-1", orderNumbers: ["ORD-1"], catalogueEntries: 1,
+  });
+
+  test("refuses a no-donor row directly with sim-refused.txt and a valid batch result, proceeds on qualifying and own-unit rows, and falls back when ProductStore data is missing or corrupt", () => {
+    const out = tempDir("ets-precheck-out-");
+    const store = tempDir("ets-precheck-store-");
+    const put = (app: string, xml: string) => {
+      const mfr = app.slice(0, 6);
+      mkdirSync(join(store, mfr, app), { recursive: true });
+      writeFileSync(join(store, mfr, app, "A"), xml);
+    };
+
+    // 1. A no-donor catalogue row (synthetic clone of M-0008_A-10D7-11-2783-O000A under a catalogue id without an own unit):
+    //    written as sim-refused.txt + batch-result.json, skipped by planBatch on resume and --rerun-failed.
+    const noDonorApp = "M-0008_A-10D7-11-FFFF";
+    const noDonorXml = catalogueXml("M-0008_A-10D7-11-2783-O000A.xml.gz").replaceAll("M-0008_A-10D7-11-2783-O000A", noDonorApp);
+    put(noDonorApp, noDonorXml);
+    const noDonorRow = row(noDonorApp, "0705");
+    const r1 = batchRowPrecheck(noDonorRow, out, (m, a) => readProductStoreApp(m, a, store));
+    expect("refused" in r1).toBe(true);
+    if (!("refused" in r1)) throw new Error("expected refusal");
+    expect(r1.refused.kind).toBe("sim-refused");
+    expect(r1.refused.why).toContain("no donor for MV-0705");
+    expect(r1.refused.attempts).toHaveLength(1);
+    expect(r1.refused.attempts[0].kind).toBe("sim-refused");
+    expect(readFileSync(join(rowDirOf(out, noDonorApp), "sim-refused.txt"), "utf8")).toBe(`${r1.refused.why}\n`);
+    writeResult(out, r1.refused);
+    expect(readResult(rowDirOf(out, noDonorApp))?.kind).toBe("sim-refused");
+    expect(planBatch(out, [noDonorRow], { kinds: ["driver-failed"] }).run).toEqual([]);
+
+    // 2. A qualifying catalogue row proceeds to ETS without creating a row dir or sim-refused.txt.
+    const okApp = "M-0083_A-0137-20-7EB2";
+    put(okApp, catalogueXml(`${okApp}.xml.gz`));
+    const r2 = batchRowPrecheck(row(okApp, "07B0"), out, (m, a) => readProductStoreApp(m, a, store));
+    expect(r2).toEqual({ proceed: true, donor: "gvs-amma" });
+    expect(existsSync(rowDirOf(out, okApp))).toBe(false);
+
+    // 3. An application with its own unit in SIM_UNITS (even one chooseDonor() would refuse, like Jung 400021SE)
+    //    proceeds directly without consulting ProductStore.
+    let called = false;
+    const r3 = batchRowPrecheck(row("M-0004_A-7072-21-99A7-O000A", "07B0"), out, () => { called = true; return { fallback: "should not be read" }; });
+    expect(r3).toEqual({ proceed: true });
+    expect(called).toBe(false);
+
+    // 4. Missing or truncated ProductStore file falls back to ETS (never silently skips or refuses).
+    const missingApp = "M-0008_A-10D7-11-FFFE";
+    const r4 = batchRowPrecheck(row(missingApp, "0705"), out, (m, a) => readProductStoreApp(m, a, store));
+    expect(r4).toMatchObject({ proceed: true, fallback: expect.stringContaining("missing in local ProductStore") });
+    expect(existsSync(rowDirOf(out, missingApp))).toBe(false);
+
+    const brokenApp = "M-0008_A-10D7-11-FFFD";
+    put(brokenApp, "<KNX><ManufacturerData><AP Id=\"M-0008_A-10D7-11-FFFD\" MaskVersion=\"MV-0705\">");
+    const r5 = batchRowPrecheck(row(brokenApp, "0705"), out, (m, a) => readProductStoreApp(m, a, store));
+    expect(r5).toMatchObject({ proceed: true, fallback: expect.stringContaining("incomplete") });
+    expect(existsSync(rowDirOf(out, brokenApp))).toBe(false);
+  });
 });

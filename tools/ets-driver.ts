@@ -15,7 +15,7 @@
 //                                     the online catalogue's product data into ETS's product store (downloadCatalogue)
 //   HA_TOKEN=... BUSFORGE_CORPUS=... bun run tools/ets-driver.ts batch <catalogue-list.json> --out <dir> \
 //     [--only <file of application ids>] [--from <application>] [--count <rows>] [--rerun-failed] [--rerun <application>]... \
-//     [--simulator 127.0.0.1:<port>] [--project <name>] [--inject-kill <application>] [--inject-dialog <application>]
+//     [--simulator 127.0.0.1:<port>] [--project <name>] [--product-store <dir>] [--inject-kill <application>] [--inject-dialog <application>]
 //                                     the list's rows one after the other, unattended (runBatch, tools/ets-batch.ts)
 //   bun run tools/ets-driver.ts up | down | shot <png> | words [<png>] | xdo <args>... | type <text>
 //
@@ -52,7 +52,10 @@
 //
 // THE BATCH (runBatch). The rows of the catalogue list (tools/ets-catalogue.ts) in its order, each written as a row is
 // under <out>/<application>/defaults/ with batch-result.json beside it (tools/ets-batch.ts: resume, failure classes,
-// batch.log). Before it starts, the bench host must be kept awake: Home Assistant's switch.x390_wach on (HA_TOKEN; the
+// batch.log). Before driving ETS for a catalogue-unit row, the runner pre-checks chooseDonor() against the application's
+// XML in ETS's local ProductStore (read-only over ssh from the bench host, or from --product-store <dir>); a donor
+// refusal writes sim-refused.txt and batch-result.json directly without touching ETS, while a missing or unreadable
+// ProductStore file falls back to the normal ETS export path. Before it starts, the bench host must be kept awake: Home Assistant's switch.x390_wach on (HA_TOKEN; the
 // host sleeps in the evening without it). Before each row ETS is up and in its layout (its project open, no dialog).
 // A failure of a row is classified (classifyFailure): ETS gone or one of its internal errors restarts ETS and runs the
 // row once more; an unknown dialog ends the row driver-failed with its screenshot and closes the dialog (or restarts
@@ -80,9 +83,9 @@ import { appendLog, BATCH_LOG, batchRows, CATALOGUE_LIST_FORMAT, classifyFailure
 import type { CatalogueList, Row as ListRow } from "./ets-catalogue.ts";
 import { reduceProjectExport } from "./ets-export-reduce.ts";
 import { ETS_TASK_FAILED, etsOutcome, refusalsAfterRestart, ROW_FILES, ROW_FORMAT, runState, simRefusals, type EtsOutcome, type RowConfiguration, type RowSpec } from "./ets-sweep.ts";
-import { catalogueUnit, catalogueUnitFrom, catalogueUnitRecord, learnIdentity, type CatalogueUnitSpec } from "./sim-unit-catalogue.ts";
+import { catalogueUnit, catalogueUnitFrom, catalogueUnitRecord, learnIdentity, precheckDonor, type CatalogueUnitSpec } from "./sim-unit-catalogue.ts";
 import { productUnit, rerunIdentity } from "./sim-unit-product.ts";
-import { newSimUnit, SIM_UNITS, simUnitSpec } from "./sim-units.ts";
+import { newSimUnit, SIM_UNITS, simUnitSpec, type SimUnitSpec } from "./sim-units.ts";
 
 const HOST = process.env.ETS_HOST ?? "tf@192.168.1.231";
 const DISPLAY = ":5";
@@ -2110,7 +2113,69 @@ async function hostKeptAwake(): Promise<void> {
 
 interface BatchOptions {
   list: string; out: string; only?: string[]; from?: string; count?: number; rerunFailed: boolean; rerun: string[];
-  simulator: string; project: string; injectKill?: string; injectDialog?: string;
+  simulator: string; project: string; productStore?: string; injectKill?: string; injectDialog?: string;
+}
+
+const MANUFACTURER_ID = /^M-[0-9A-F]{4}$/;
+const APPLICATION_ID = /^M-[0-9A-F]{4}_A-[0-9A-F]{4}-[0-9A-F]{2}-[0-9A-F]{4}(?:-O[0-9A-F]+)?$/;
+
+// Relative path of an application's XML inside ETS's local ProductStore: M-XXXX/M-XXXX_A-.../A.
+export function productStoreAppPath(manufacturer: string, application: string): string | null {
+  if (!MANUFACTURER_ID.test(manufacturer) || !APPLICATION_ID.test(application)) return null;
+  return `${manufacturer}/${application}/A`;
+}
+
+// Read an application's XML from a local ProductStore directory (when `productStore` is given) or read-only over ssh
+// from ETS's ProductStore on the bench host (gzip-compressed in transit so large XMLs stay well below ssh's buffer).
+// Any missing or unreadable file returns `{ fallback }` so the batch falls back to ETS's export instead of skipping.
+export function readProductStoreApp(manufacturer: string, application: string, productStore?: string): { bytes: Buffer } | { fallback: string } {
+  const rel = productStoreAppPath(manufacturer, application);
+  if (!rel) return { fallback: `invalid ProductStore path components (${manufacturer}, ${application})` };
+  if (productStore !== undefined) {
+    const file = join(productStore, rel);
+    if (!existsSync(file)) return { fallback: `missing in local ProductStore (${rel})` };
+    try { return { bytes: readFileSync(file) }; } catch (e) {
+      return { fallback: `could not read ${file}: ${e instanceof Error ? e.message : String(e)}` };
+    }
+  }
+  try {
+    const remoteFile = `${host().data}/ProductStore/${rel}`;
+    const bytes = ssh("bash -s", `f=${q(remoteFile)}; [ -r "$f" ] || { echo "missing: $f" >&2; exit 1; }; gzip -1 -c "$f"`, { timeoutMs: 120_000 });
+    return { bytes };
+  } catch (e) {
+    return { fallback: `could not read ProductStore/${rel} from ${HOST}: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
+// Offline donor pre-check for one batch row before ETS is opened: own-unit rows proceed directly to ETS; otherwise
+// chooseDonor() runs against the application's ProductStore XML. A refusal writes sim-refused.txt and returns the
+// finished sim-refused RowResult without touching ETS; missing, unreadable or unparseable ProductStore data returns
+// `{ proceed: true, fallback }` so the batch falls back to the normal ETS export path.
+export function batchRowPrecheck(
+  row: Pick<ListRow, "application" | "manufacturer" | "mask" | "orderNumber">,
+  out: string,
+  readApp: (manufacturer: string, application: string) => { bytes: Buffer } | { fallback: string },
+  opts: { units?: readonly SimUnitSpec[] } = {},
+): { refused: RowResult } | { proceed: true; donor?: string; fallback?: string } {
+  const units = opts.units ?? SIM_UNITS;
+  if (units.some((u) => u.catalogue === `${row.application}.xml.gz`)) return { proceed: true };
+  const t0 = Date.now(), startedAt = new Date().toISOString();
+  const loaded = readApp(row.manufacturer, row.application);
+  if ("fallback" in loaded) return { proceed: true, fallback: loaded.fallback };
+  const pre = precheckDonor(row.application, loaded.bytes, { mask: row.mask, units });
+  if (pre.kind === "fallback") return { proceed: true, fallback: pre.why };
+  if (pre.kind === "donor") return { proceed: true, donor: pre.donor.id };
+  const dir = rowDirOf(out, row.application);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "sim-refused.txt"), `${pre.why}\n`);
+  const minutes = (Date.now() - t0) / 60_000;
+  return {
+    refused: {
+      format: RESULT_FORMAT, application: row.application, manufacturer: row.manufacturer, mask: row.mask, orderNumber: row.orderNumber,
+      kind: "sim-refused", why: pre.why, minutes, startedAt, endedAt: new Date().toISOString(),
+      attempts: [{ kind: "sim-refused", why: pre.why, minutes }],
+    },
+  };
 }
 
 // One row of the batch, run until it has a result: once more after ETS was restarted under it, again for each round
@@ -2132,6 +2197,18 @@ async function batchRow(row: ListRow, b: BatchOptions, inject: RowOptions["injec
     const why = `the hardware's second program ${second.map((p) => `${p.application} (${p.programType ?? "not loaded"})`).join(", ")} is no PEI program; a row downloads one application`;
     writeFileSync(join(dir, "driver-refused.txt"), `${why}\n`);
     return result("driver-refused", why);
+  }
+  if (!own && !inject) {
+    const pre = batchRowPrecheck(row, b.out, (m, a) => readProductStoreApp(m, a, b.productStore));
+    if ("refused" in pre) {
+      console.error(`sim-refused (offline pre-check): ${pre.refused.why}`);
+      return pre.refused;
+    }
+    if (pre.fallback) {
+      const note = `${row.application}: offline donor pre-check fell back to ETS (${pre.fallback})`;
+      appendLog(b.out, note);
+      console.error(note);
+    }
   }
   const learned: string[] = [];
   let restarted = false;
@@ -2282,7 +2359,7 @@ function rowOptions(args: string[]): RowOptions {
 function batchOptions(args: string[]): BatchOptions {
   const [list] = args;
   if (!list || list.startsWith("--")) throw new Error("usage: bun run tools/ets-driver.ts batch <catalogue-list.json> --out <dir> [...] (see the file's head)");
-  const o = parseOptions(args.slice(1), ["out", "only", "from", "count", "simulator", "project", "inject-kill", "inject-dialog"], ["rerun"], ["rerun-failed"]);
+  const o = parseOptions(args.slice(1), ["out", "only", "from", "count", "simulator", "project", "product-store", "inject-kill", "inject-dialog"], ["rerun"], ["rerun-failed"]);
   const out = o.one("out") ?? fail("--out <dir> is needed: the batch's rows and its log go there");
   const count = o.one("count");
   if (count !== undefined && !/^[1-9]\d*$/.test(count)) throw new Error(`--count ${count} is no number of rows`);
@@ -2291,7 +2368,7 @@ function batchOptions(args: string[]): BatchOptions {
     list, out, only: only === undefined ? undefined : readFileSync(only, "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#")),
     from: o.one("from"), count: count === undefined ? undefined : Number(count), rerunFailed: o.flag("rerun-failed"), rerun: o.all("rerun"),
     simulator: endpoint("simulator", o.one("simulator")) ?? DEFAULT_SIMULATOR, project: o.one("project") ?? DEFAULT_PROJECT,
-    injectKill: o.one("inject-kill"), injectDialog: o.one("inject-dialog"),
+    productStore: o.one("product-store"), injectKill: o.one("inject-kill"), injectDialog: o.one("inject-dialog"),
   };
 }
 
