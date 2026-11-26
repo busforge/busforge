@@ -45,9 +45,10 @@ test("a batch resumes at the first row without a result and passes the finished 
   expect(plan.finished.map((f) => `${f.row.application.slice(0, 6)} ${f.result.kind}`)).toEqual(["M-0001 completed", "M-0002 driver-failed", "M-0004 sim-refused"]);
   // Asked: the driver-failed rows again, and one named row.
   expect(ids(planBatch(out, rows, { kinds: ["driver-failed"] }).run)).toEqual(["M-0002", "M-0003", "M-0005"]);
-  // A row the driver refused by name is no failure to run again by kind; named, it runs.
-  writeFileSync(join(rowDirOf(out, "M-0002_A-0002-11-BBBB"), RESULT_FILE), JSON.stringify({ ...result("M-0002_A-0002-11-BBBB", "driver-failed"), why: "refused: the product's plug-ins need ETS's compatibility mode" }));
+  // A driver-refused row is its own kind: --rerun-failed (driver-failed) passes it; naming the row or its kind reruns it.
+  writeFileSync(join(rowDirOf(out, "M-0002_A-0002-11-BBBB"), RESULT_FILE), JSON.stringify({ ...result("M-0002_A-0002-11-BBBB", "driver-refused"), why: "the product's plug-ins need ETS's compatibility mode (ETS asks to restart in it after the insert); the driver runs ETS in its normal mode" }));
   expect(ids(planBatch(out, rows, { kinds: ["driver-failed"] }).run)).toEqual(["M-0003", "M-0005"]);
+  expect(ids(planBatch(out, rows, { kinds: ["driver-refused"] }).run)).toEqual(["M-0002", "M-0003", "M-0005"]);
   expect(ids(planBatch(out, rows, { kinds: ["driver-failed"], applications: ["M-0002_A-0002-11-BBBB"] }).run)).toEqual(["M-0002", "M-0003", "M-0005"]);
   expect(ids(planBatch(out, rows, { applications: ["M-0001_A-0001-11-AAAA"] }).run)).toEqual(["M-0001", "M-0003", "M-0005"]);
   // The stopped row's directory moved aside before it runs again, never deleted; an empty or missing one stays.
@@ -93,13 +94,14 @@ test("a failure's class from the driver's recorded messages", () => {
   expect(c("ETS's window is gone: the catalogue's insert target is not line 1.1")).toBe("restart ets-gone");
   // A dialog the driver does not know: ETS's project details, opened under a row (--inject-dialog).
   expect(c(`${UNKNOWN_DIALOG} (before "insert"): 4 Busforge Sweep @ Details > © Historie > Beschreibung ++ Projekt-Eintrag hinzufiigen Zuletzt geandert Geschatzte ProjektgréRe 11/25/2026 2:12:14 PM P Projektverfolgung 10 Eintrage Vv 552,99 KB = G`)).toBe("dialog");
-  // A product refused by name: ETS asks to restart in its compatibility mode for the product's plug-ins.
-  expect(c("refused: the product's plug-ins need ETS's compatibility mode (ETS asks to restart in it after the insert); the driver runs ETS in its normal mode")).toBe("row");
+  // ETS's compatibility warning that did not close on Escape stays a driver failure of the row.
+  expect(c("ETS's compatibility warning stays open after Escape")).toBe("row");
   // ETS gone while a step read a dialog: ETS gone, not the dialog.
   expect(c("ETS's window is gone: ETS shows a dialog after the insert: Kompatibilitatswarnung Das Gerat enthalt Plug-Ins")).toBe("restart ets-gone");
-  // ETS that cannot be brought back, or is not this driver's: no row could run.
+  // ETS that cannot be brought back, or is not this driver's, or runs in compatibility mode: no row could run.
   expect(c("ETS not recovered: ETS did not start: no ETS6 process in its prefix after the launcher (after: ETS's window is gone)")).toBe("pause ets");
   expect(c("an ETS this driver did not start runs on the bench host")).toBe("pause ets");
+  expect(c("ETS started in its compatibility mode (ETS6C.exe); the driver runs ETS in its normal mode only")).toBe("pause ets");
   // ETS that does not start the download is the row's (recorded: a download plug-in's compatibility warning held it).
   expect(c("ETS did not start the application download of 1.1.201 within 30 s of its shortcut")).toBe("row");
   // A row's own failure.
@@ -125,21 +127,25 @@ test("a dialog's class from the words that name it", () => {
 test("the batch log: a line per row with its minutes and kind, the last of a row counted", () => {
   const at = new Date("2026-11-25T12:00:00.000Z");
   const r = { ...result("M-0002_A-0002-11-BBBB", "driver-failed"), why: "ETS's window is gone: x\n y", attempts: [{ kind: "restarted" as const, minutes: 2 }, { kind: "driver-failed" as const, minutes: 2.2 }] };
+  const refused = { ...result("M-0004_A-0004-11-DDDD", "driver-refused"), why: "the product's plug-ins need ETS's compatibility mode (ETS asks to restart in it after the insert); the driver runs ETS in its normal mode" };
   const log = [
-    logLine(at, "batch of 3 rows of list.json: 0 with a result, 3 to run"),
-    logLine(at, rowLine(1, 3, result("M-0001_A-0001-11-AAAA", "completed"))),
-    logLine(at, heartbeatLine(2, 3, "M-0002_A-0002-11-BBBB", "insert", 3.04)),
-    logLine(at, rowLine(2, 3, r)),
-    logLine(at, rowLine(3, 3, result("M-0003_A-0003-11-CCCC", "sim-refused"))),
+    logLine(at, "batch of 4 rows of list.json: 0 with a result, 4 to run"),
+    logLine(at, rowLine(1, 4, result("M-0001_A-0001-11-AAAA", "completed"))),
+    logLine(at, heartbeatLine(2, 4, "M-0002_A-0002-11-BBBB", "insert", 3.04)),
+    logLine(at, rowLine(2, 4, r)),
+    logLine(at, rowLine(3, 4, result("M-0003_A-0003-11-CCCC", "sim-refused"))),
+    logLine(at, rowLine(4, 4, refused)),
     // Row 2 run again (--rerun-failed): its last line counts.
-    logLine(at, rowLine(2, 3, result("M-0002_A-0002-11-BBBB", "completed"))),
+    logLine(at, rowLine(2, 4, result("M-0002_A-0002-11-BBBB", "completed"))),
   ].join("");
-  expect(log.split("\n")[2]).toBe('2026-11-25T12:00:00.000Z heartbeat row 2/3 M-0002_A-0002-11-BBBB at "insert" for 3.0 min');
-  expect(log.split("\n")[3]).toBe("2026-11-25T12:00:00.000Z row 2/3 M-0002_A-0002-11-BBBB M-0002 07B0: driver-failed 4.2 min (2 attempts): ETS's window is gone: x y");
+  expect(log.split("\n")[2]).toBe('2026-11-25T12:00:00.000Z heartbeat row 2/4 M-0002_A-0002-11-BBBB at "insert" for 3.0 min');
+  expect(log.split("\n")[3]).toBe("2026-11-25T12:00:00.000Z row 2/4 M-0002_A-0002-11-BBBB M-0002 07B0: driver-failed 4.2 min (2 attempts): ETS's window is gone: x y");
+  expect(log.split("\n")[5]).toBe("2026-11-25T12:00:00.000Z row 4/4 M-0004_A-0004-11-DDDD M-0004 07B0: driver-refused 4.2 min: the product's plug-ins need ETS's compatibility mode (ETS asks to restart in it after the insert); the driver runs ETS in its normal mode");
   expect(loggedRows(log)).toEqual([
     { application: "M-0001_A-0001-11-AAAA", kind: "completed", minutes: 4.2, attempts: 1 },
     { application: "M-0003_A-0003-11-CCCC", kind: "sim-refused", minutes: 4.2, attempts: 1 },
+    { application: "M-0004_A-0004-11-DDDD", kind: "driver-refused", minutes: 4.2, attempts: 1 },
     { application: "M-0002_A-0002-11-BBBB", kind: "completed", minutes: 4.2, attempts: 1 },
   ]);
-  expect(summary(loggedRows(log))).toBe("3 rows: completed 2 (4.2 min each), sim-refused 1 (4.2 min each)");
+  expect(summary(loggedRows(log))).toBe("4 rows: completed 2 (4.2 min each), sim-refused 1 (4.2 min each), driver-refused 1 (4.2 min each)");
 });

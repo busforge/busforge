@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { benchSimArgs, editDistance, expanderOpen, isCatalogueProgress, LINE_11, nextBatchSize, notLoadedMark, oneRowSelected, pcapOf, pickCatalogueRow, selectedSamples, simRowFiles, simStartScript, writtenRowKind } from "./ets-driver.ts";
+import { benchSimArgs, compatibilityRefusalWhy, editDistance, expanderOpen, isCatalogueProgress, isCompatibilityWarning, LINE_11, nextBatchSize, notLoadedMark, oneRowSelected, pcapOf, pickCatalogueRow, selectedSamples, simRowFiles, simStartScript, writtenRowKind } from "./ets-driver.ts";
 
 test("a catalogue batch halves after a refusal and grows from the last size that loaded", () => {
   const walk = (outcomes: ("loaded" | "refused" | "skipped")[], max = 150) => {
@@ -172,4 +172,14 @@ test("what a stopped simulator leaves goes into the row beside its log", () => {
     ["ets.pcapng", "/rows/x/defaults/ets.pcapng"], ["dumpcap.txt", "/rows/x/defaults/ets.log.dumpcap.txt"],
   ]);
   expect(pcapOf("/rows/x/defaults/wrong-interface.log")).toBe("/rows/x/defaults/wrong-interface.pcapng");
+});
+
+test("ETS's compatibility warning: recognized from OCR words with or without umlauts, refusal reason names when", () => {
+  const wordsOf = (text: string) => text.split(/\s+/).map((w, i) => ({ text: w, x: i * 50, y: 10, w: 40, h: 12, line: "1.1.1" }));
+  expect(isCompatibilityWarning(wordsOf("Kompatibilitätswarnung Das Gerät enthält Plug-Ins"))).toBe(true);
+  expect(isCompatibilityWarning(wordsOf("Kompatibilitatswarnung Diese Gerate verwenden ein Download Plug-in und benotigen einen aktivierten Kompatibilitatsmodus"))).toBe(true);
+  expect(isCompatibilityWarning(wordsOf("Verbindung auswählen Die Verbindung Sim-Local ist nicht verfügbar"))).toBe(false);
+  expect(isCompatibilityWarning(wordsOf("Projektpasswort setzen"))).toBe(false);
+  expect(compatibilityRefusalWhy("after the insert")).toBe("the product's plug-ins need ETS's compatibility mode (ETS asks to restart in it after the insert); the driver runs ETS in its normal mode");
+  expect(compatibilityRefusalWhy("at the download")).toBe("the product's plug-ins need ETS's compatibility mode (ETS asks to restart in it at the download); the driver runs ETS in its normal mode");
 });

@@ -39,7 +39,10 @@
 // export.knxproj.
 //
 // Every row is judged by ETS6.log (etsOutcome): a download that connected to anything but the simulator is
-// driver-failed. A row the driver cannot finish gets driver-failed.txt first, then a full-resolution
+// driver-failed. A row the driver refuses for a permanent reason (a product whose plug-ins need ETS's compatibility
+// mode, which does not run under Wine; a hardware's second program that is no PEI program) ends driver-refused with
+// driver-refused.txt and, for ETS's compatibility warning, dialog.png kept with its sidecar before Escape closes it.
+// A row the driver cannot finish gets driver-failed.txt first, then a full-resolution
 // screenshot (with its sidecar, keepScreen), the ETS6.log tail and the simulator's log; dialogs in ETS's window are
 // closed (cancelling where they offer it), otherwise ETS is restarted: only the processes `up` started, each known by
 // PID and start time.
@@ -57,7 +60,7 @@
 // ETS); a bench host that does not answer, a KNX-ID login ETS asks for, an online catalogue that does not answer or an
 // ETS that cannot be started or brought back pauses the batch: it ends early (exit 3) and the row runs again on resume. A catalogue unit's row that ETS fails on
 // a `Required data mismatch` runs again with what ETS required (the identity loop, learnIdentity), at most
-// IDENTITY_ROUNDS times. A hardware whose second program is no PEI program is refused (no row of the list has one).
+// IDENTITY_ROUNDS times. A hardware whose second program is no PEI program ends driver-refused (no row of the list has one).
 // --inject-kill and --inject-dialog kill ETS, or open its project details dialog, in that application's row once the
 // project is compressed, before the insert: they exist to show the runner's recovery on a real run.
 //
@@ -383,6 +386,7 @@ setsid nohup env -u WAYLAND_DISPLAY -u XDG_SESSION_TYPE x11vnc -display ${DISPLA
   const ours = owned("ets.pids");
   const running = remote(`pgrep -f 'ETS6\\.exe' || true`).split("\n").filter(Boolean).map(Number);
   if (running.some((p) => !ours.some((o) => o.pid === p))) fail("an ETS this driver did not start runs on the bench host");
+  if (ours.some((p) => p.name === "ETS6C.exe")) fail("ETS runs in its compatibility mode (ETS6C.exe); the driver runs ETS in its normal mode only");
   if (ours.some((p) => p.name.startsWith("ETS6"))) return;
   remote(`cd ${q(h.state)}; ps -e -o pid= | tr -d ' ' | sort > wine-before.txt
 WINEPREFIX=${q(h.prefix)} DISPLAY=${DISPLAY} setsid nohup wine 'C:\\Program Files (x86)\\ETS6\\ETS6N.exe' > ets-run.log 2>&1 < /dev/null &`);
@@ -400,7 +404,9 @@ for p in $(comm -13 wine-before.txt wine-after.txt); do
   tr '\\0' '\\n' < "$e" | grep -qx 'DISPLAY=${DISPLAY}' || continue
   n=$(ps -o comm= -p "$p"); case "$n" in ETS6*|explorer.exe) echo "$n $p $(st "$p")";; esac
 done > ets.pids`);
-  if (!owned("ets.pids").some((p) => p.name.startsWith("ETS6"))) fail("ETS did not start: no ETS6 process in its prefix after the launcher");
+  const started = owned("ets.pids");
+  if (!started.some((p) => p.name.startsWith("ETS6"))) fail("ETS did not start: no ETS6 process in its prefix after the launcher");
+  if (started.some((p) => p.name === "ETS6C.exe")) fail("ETS started in its compatibility mode (ETS6C.exe); the driver runs ETS in its normal mode only");
 }
 
 // Closes ETS (its window, then its processes) and stops the display, both only as far as `up` started them, and
@@ -862,31 +868,48 @@ export function editDistance(a: string, b: string): number {
   return row[b.length];
 }
 
-// ETS's compatibility warning cancelled and the row refused: the product's plug-ins (after the insert) or its download
-// plug-in (at the download) need ETS's compatibility mode, which ETS offers to restart in; the driver runs ETS in its
-// normal mode only. The warning's buttons ("Im Kompatibilitätsmodus neu starten", framed as the default, and
-// "Abbrechen") read unreliably; Escape cancels it.
-async function refuseCompatibilityMode(s: Screen, when: string): Promise<never> {
+export type CompatibilityMoment = "after the insert" | "at the download";
+
+export const compatibilityRefusalWhy = (when: CompatibilityMoment) =>
+  `the product's plug-ins need ETS's compatibility mode (ETS asks to restart in it ${when}); the driver runs ETS in its normal mode`;
+
+// Keep the compatibility warning's screenshot as dialog.png with its sidecar (the step's readings and the dialog's
+// text) before Escape closes it; returns the refusal reason.
+export function keepCompatibilityDialog(dir: string, png: string, box: Region, when: CompatibilityMoment): string {
+  const why = compatibilityRefusalWhy(when);
+  try { dialogText(png, box); } finally { keepScreen(join(dir, "dialog.png"), png, `driver-refused: ${why}`); }
+  return why;
+}
+
+// ETS's compatibility warning kept as dialog.png (with its sidecar), then cancelled and the row refused: the product's
+// plug-ins (after the insert) or its download plug-in (at the download) need ETS's compatibility mode, which does not
+// run under Wine; the driver runs ETS in its normal mode only. The warning's buttons ("Im Kompatibilitätsmodus neu
+// starten", framed as the default, and "Abbrechen") read unreliably; Escape cancels it.
+async function refuseCompatibilityMode(s: Screen, dir: string, png: string, box: Region, when: CompatibilityMoment): Promise<never> {
+  const why = keepCompatibilityDialog(dir, png, box, when);
   key("Escape");
   await sleep(1500);
   if (dialogBox(s.snap())) fail("ETS's compatibility warning stays open after Escape");
-  return fail(`refused: the product's plug-ins need ETS's compatibility mode (ETS asks to restart in it ${when}); the driver runs ETS in its normal mode`);
+  throw new DriverRefused(why);
 }
 
 // Whether a dialog's words are ETS's warning that the product's plug-ins need its compatibility mode.
-const isCompatibilityWarning = (ws: Word[]) => findText(ws, "Kompatibilit").length > 0;
-// Whether ETS's window shows its compatibility warning.
-export const compatibilityWarning = reader("compatibilityWarning", (png: string): boolean => {
-  const box = dialogBox(png);
+export const isCompatibilityWarning = (ws: Word[]) => findText(ws, "Kompatibilit").length > 0;
+// Whether ETS's window shows its compatibility warning (`box`, where already found).
+export const compatibilityWarning = reader("compatibilityWarning", (png: string, box: Region | null = dialogBox(png)): boolean => {
   return box !== null && isCompatibilityWarning(words(png, box));
 });
 
 // ETS shows no dialog while it downloads: one ends the row at once, a product's download plug-in that needs the
-// compatibility mode refused by name (ETS warns instead of downloading), any other with its text ("Verbindung
-// auswählen": the simulator's connection not available; a login; an internal error) and its screenshot.
+// compatibility mode refused by name with dialog.png kept before Escape (ETS warns instead of downloading), any other
+// with its text ("Verbindung auswählen": the simulator's connection not available; a login; an internal error) and its
+// screenshot.
 async function downloadDialogs(s: Screen, dir: string, before: string): Promise<void> {
-  if (compatibilityWarning(s.snap())) await refuseCompatibilityMode(s, "at the download");
-  settled(s, dir, before);
+  if (!etsTitle()) fail(`ETS's window is gone (before "${before}")`);
+  const png = s.snap(), box = dialogBox(png);
+  if (!box) return;
+  if (compatibilityWarning(png, box)) await refuseCompatibilityMode(s, dir, png, box, "at the download");
+  settled(s, dir, before, { png, box });
 }
 
 // The product inserted into line 1.1 from the catalogue: a catalogue row listed for the order number whose
@@ -897,7 +920,7 @@ async function downloadDialogs(s: Screen, dir: string, before: string): Promise<
 // version may run another build of an own unit's application (an OpenKNX release ETS took from an imported project;
 // writeRow takes it only where it parses as the unit's); a catalogue unit's row is checked to run its application
 // exactly once the project is exported after the insert (runRow).
-async function insertProduct(s: Screen, orderNumber: string, applicationId: string, manufacturer?: string): Promise<void> {
+async function insertProduct(s: Screen, dir: string, orderNumber: string, applicationId: string, manufacturer?: string): Promise<void> {
   const line = await line11(s);
   click(line.cx, line.cy);
   await sleep(1500);
@@ -983,10 +1006,12 @@ async function insertProduct(s: Screen, orderNumber: string, applicationId: stri
       importing = findText(ws, "Importiere Daten").length > 0;
       if (importing) continue;
       // A product whose plug-ins need ETS's compatibility mode: ETS asks to restart in it, and inserts nothing
-      // without. The driver runs ETS in its normal mode only; cancelled, the row is refused.
-      const compatibility = isCompatibilityWarning(ws);
-      if (!compatibility && !findText(ws, "Projektpasswort setzen").length) fail(`ETS shows a dialog after the insert: ${ws.map((w) => w.text).join(" ").slice(0, 160)}`);
-      if (compatibility) await refuseCompatibilityMode(s, "after the insert");
+      // without. The driver runs ETS in its normal mode only; dialog kept before Escape, then the row refused.
+      if (isCompatibilityWarning(ws)) {
+        compatibilityWarning(png, box);
+        await refuseCompatibilityMode(s, dir, png, box, "after the insert");
+      }
+      if (!findText(ws, "Projektpasswort setzen").length) fail(`ETS shows a dialog after the insert: ${ws.map((w) => w.text).join(" ").slice(0, 160)}`);
       const cancel = findText(dialogButtons(png, box), "Abbrechen")[0] ?? fail("no Abbrechen under ETS's project password dialog");
       click(cancel.cx, cancel.cy);
       continue;
@@ -1049,9 +1074,9 @@ async function closeDialogs(s: Screen): Promise<void> {
 
 // Between two steps of a row: ETS's window is there and shows no dialog. A dialog here is none the driver expects: the
 // screen kept as dialog.png in `dir`, its text read, then the sidecar written with it, before the row fails.
-function settled(s: Screen, dir: string, before: string): void {
+function settled(s: Screen, dir: string, before: string, seen?: { png: string; box: Region | null }): void {
   if (!etsTitle()) fail(`ETS's window is gone (before "${before}")`);
-  const png = s.snap(), box = dialogBox(png);
+  const png = seen ? seen.png : s.snap(), box = seen ? seen.box : dialogBox(png);
   if (!box) return;
   // Kept before OCR reads it, which can fail too; its sidecar after, with the dialog's text where OCR read it.
   const why = `${UNKNOWN_DIALOG} (before "${before}")`, kept = join(dir, "dialog.png");
@@ -1777,9 +1802,10 @@ interface RowOptions {
   manufacturerName?: string;
 }
 
-// How a row ended: ETS's outcome, or no unit for it (sim-refused); a driver failure with its class.
+// How a row ended: ETS's outcome, no unit for it (sim-refused), or refused by the driver for a permanent reason
+// (driver-refused); a driver failure with its class.
 interface RowRun {
-  dir: string; outcome: EtsOutcome | { kind: "sim-refused"; why: string }; minutes: number;
+  dir: string; outcome: EtsOutcome | { kind: "sim-refused"; why: string } | { kind: "driver-refused"; why: string }; minutes: number;
   // recovered: ETS was brought back after a driver failure (its dialogs closed, or restarted).
   // ia: the unit's address, where the row came that far.
   failure?: FailureClass; recovered: boolean; unit?: RowSpec["unit"]; catalogueSpec?: CatalogueUnitSpec; simRefusals: string[]; ia?: string;
@@ -1787,6 +1813,8 @@ interface RowRun {
 
 // No catalogue unit for the row (no donor of its mask, a product identity the donor cannot carry).
 class NoUnit extends Error {}
+// A row the driver refuses for a known, permanent reason (e.g. ETS asks for its compatibility mode): not a driver failure.
+class DriverRefused extends Error {}
 
 const isOwnUnit = (id: string) => SIM_UNITS.some((u) => u.id === id);
 // Where a catalogue row's project export right after the insert lies while the row runs.
@@ -1855,7 +1883,7 @@ async function runRow(o: RowOptions): Promise<RowRun> {
       if (o.inject === "dialog") { step("injected: ETS's project details dialog"); click(AT.projectInfo[0], AT.projectInfo[1]); await sleep(3000); }
       settled(s, dir, "insert");
       step("insert");
-      await insertProduct(s, o.orderNumber ?? fail("--order is needed to insert the product from the catalogue"), applicationId, o.manufacturerName);
+      await insertProduct(s, dir, o.orderNumber ?? fail("--order is needed to insert the product from the catalogue"), applicationId, o.manufacturerName);
       if (!ownSpec) {
         settled(s, dir, "the product's export");
         step("the product's export");
@@ -1930,6 +1958,18 @@ async function runRow(o: RowOptions): Promise<RowRun> {
       outcome = { kind: "sim-refused", why: e.message };
       writeFileSync(join(dir, "sim-refused.txt"), `${e.message}\n`);
       console.error(`sim-refused: ${e.message}`);
+    } else if (e instanceof DriverRefused) {
+      // Permanent refusal by the driver (ETS's compatibility warning): dialog.png was kept before Escape closed it;
+      // any inserted device stays until the next row empties the line.
+      outcome = { kind: "driver-refused", why: e.message };
+      writeFileSync(join(dir, "driver-refused.txt"), `${e.message}\n`);
+      console.error(`driver-refused: ${e.message}`);
+      if (since !== null) {
+        try {
+          etsLogSince(since, join(dir, ROW_FILES.ets6log));
+          writeFileSync(join(dir, "ets6.log.tail.txt"), readFileSync(join(dir, ROW_FILES.ets6log)).toString("latin1").split("\n").slice(-200).join("\n"), "latin1");
+        } catch (x) { writeFileSync(join(dir, "driver-refused.txt"), `no ETS6.log: ${x instanceof Error ? x.message : String(x)}\n`, { flag: "a" }); }
+      }
     } else {
       // Every other failure of the row is the driver's: its reason first, then what evidence can still be taken.
       let why = e instanceof DriverFailure ? e.message : `the driver broke off: ${e instanceof Error ? e.message : String(e)}`;
@@ -2020,7 +2060,9 @@ async function batchRow(row: ListRow, b: BatchOptions, inject: RowOptions["injec
   const second = (row.secondProgram ?? []).filter((p) => p.programType !== "PeiProgram");
   if (second.length) {
     mkdirSync(dir, { recursive: true });
-    return result("driver-failed", `refused: the hardware's second program ${second.map((p) => `${p.application} (${p.programType ?? "not loaded"})`).join(", ")} is no PEI program; a row downloads one application`);
+    const why = `the hardware's second program ${second.map((p) => `${p.application} (${p.programType ?? "not loaded"})`).join(", ")} is no PEI program; a row downloads one application`;
+    writeFileSync(join(dir, "driver-refused.txt"), `${why}\n`);
+    return result("driver-refused", why);
   }
   const learned: string[] = [];
   let restarted = false;

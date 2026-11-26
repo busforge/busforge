@@ -23,9 +23,11 @@ export const VARIANT = "defaults";
 // judged (tools/ets-sweep.ts); ets-failed: ETS's load task failed, the row written with it; both with any refusal of
 // the unit after its restart that leaves the comparison whole named; sim-refused: no unit for the row (no donor of its
 // mask, the product's identity does not fit its donor), nothing downloaded, or the unit refused a request of ETS's run
-// that leaves the comparison not whole (the row written, ETS's message beside the refusal); driver-failed: the driver
-// could not finish the row, or refuses to drive it, with the reason.
-export type RowKind = "completed" | "ets-failed" | "sim-refused" | "driver-failed";
+// that leaves the comparison not whole (the row written, ETS's message beside the refusal); driver-refused: the driver
+// refused to drive the row for a known, permanent reason (the product's plug-ins need ETS's compatibility mode, which
+// does not run under Wine; a hardware's second program is no PEI program), skipped by --rerun-failed; driver-failed:
+// the driver could not finish the row, with the reason.
+export type RowKind = "completed" | "ets-failed" | "sim-refused" | "driver-refused" | "driver-failed";
 
 // One run of the row: a row runs again after ETS was restarted under it, and for each round of the identity loop.
 export interface Attempt { kind: RowKind | "restarted" | "identity"; why?: string; minutes: number; dir?: string }
@@ -79,14 +81,14 @@ export function readResult(dir: string): RowResult | null {
 }
 
 // What the batch does with each row: run it (no result yet, or a rerun asked for its kind or its application), or
-// pass it with the result it has. A rerun by kind passes a row the driver refused by name (`why` "refused: …": it
-// would be refused the same); naming the row reruns it.
+// pass it with the result it has. driver-refused is its own kind, so a rerun of driver-failed passes it; naming the
+// row or its kind reruns it.
 export interface Plan { run: ListRow[]; finished: { row: ListRow; result: RowResult }[] }
 export function planBatch(out: string, rows: ListRow[], rerun: { kinds?: RowKind[]; applications?: string[] } = {}): Plan {
   const plan: Plan = { run: [], finished: [] };
   for (const row of rows) {
     const result = readResult(rowDirOf(out, row.application));
-    const again = result && ((rerun.kinds?.includes(result.kind) && !result.why?.startsWith("refused:")) || rerun.applications?.includes(row.application));
+    const again = result && (rerun.kinds?.includes(result.kind) || rerun.applications?.includes(row.application));
     if (result && !again) plan.finished.push({ row, result });
     else plan.run.push(row);
   }
@@ -151,7 +153,7 @@ const CATALOGUE = /Online-Katalog|Produktdownload|WebException|Katalog.{0,40}(?:
 const ETS_INTERNAL = /Sammlung wurde ge|Collection was modified|Exception|unerwartete[nr]? Fehler|Ein Fehler ist aufgetreten|Fehlerbericht|Unhandled/i;
 const ETS_GONE = /^ETS's window is gone/;
 // ETS that cannot be started or is not this driver's: nothing a row can change.
-const ETS_UNAVAILABLE = /ETS did not start:|ETS needs a restart|an ETS this driver did not start|another Xvfb serves|ETS not recovered/;
+const ETS_UNAVAILABLE = /ETS did not start:|ETS needs a restart|an ETS this driver did not start|another Xvfb serves|ETS not recovered|compatibility mode \(ETS6C\.exe\)/;
 
 // What a failure of a row means for the batch, from the driver's message.
 export function classifyFailure(why: string): FailureClass {
@@ -187,7 +189,7 @@ export interface LoggedRow { application: string; kind: RowKind; minutes: number
 export function loggedRows(log: string): LoggedRow[] {
   const out = new Map<string, LoggedRow>();
   for (const l of log.split("\n")) {
-    const m = l.match(/^\S+ row \d+\/\d+ (\S+) \S+ \S+: (completed|ets-failed|sim-refused|driver-failed) ([\d.]+) min(?: \((\d+) attempts\))?/);
+    const m = l.match(/^\S+ row \d+\/\d+ (\S+) \S+ \S+: (completed|ets-failed|sim-refused|driver-refused|driver-failed) ([\d.]+) min(?: \((\d+) attempts\))?/);
     if (m) { out.delete(m[1]); out.set(m[1], { application: m[1], kind: m[2] as RowKind, minutes: Number(m[3]), attempts: m[4] ? Number(m[4]) : 1 }); }
   }
   return [...out.values()];

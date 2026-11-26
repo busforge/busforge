@@ -973,8 +973,9 @@ One row, step by step:
    more rows than the grid shows at once is refused. ETS's
    question for a project password, which it asks for a product that can run Data Secure,
    is cancelled (the device stays plain). A product whose plug-ins need ETS's compatibility mode (ETS asks
-   to restart in it right after the insert, or for a download plug-in at the download) is refused: the
-   driver runs ETS in its normal mode only. A catalogue row's unit (above) takes its application program
+   to restart in it right after the insert, or for a download plug-in at the download) ends `driver-refused`: the
+   driver runs ETS in its normal mode only (ETS's compatibility mode does not run under Wine), keeps the warning
+   dialog as `dialog.png` with its sidecar before Escape closes it, and writes `driver-refused.txt`. A catalogue row's unit (above) takes its application program
    from an export of the project taken right after the insert. The device then gets the unit's address. `--configured` skips
    this step and downloads the device the project holds at that address as it is configured there: its
    row in line 1.1's opened tree, or else line 1.1's device list filtered by ETS's search to the address
@@ -1083,11 +1084,11 @@ HA_TOKEN=... BUSFORGE_CORPUS=... bun run tools/ets-driver.ts batch <catalogue-li
 
 - **Where it writes.** Each row under `<out>/<application>/defaults/` (the corpus's layout, outside the
   corpus until the row is judged), with `batch-result.json` beside the row's files: how it ended
-  (`completed`, `ets-failed`, `sim-refused`, `driver-failed` with the reason), its minutes, every attempt,
-  the unit, the screenshot of a failure. `<out>/batch.log` holds a line per row with its minutes and how it
+  (`completed`, `ets-failed`, `sim-refused`, `driver-refused`, `driver-failed` with the reason), its minutes, every attempt,
+  the unit, the screenshot of a refusal or failure. `<out>/batch.log` holds a line per row with its minutes and how it
   ended, every restart of ETS, every pause, and a heartbeat line every three minutes naming the row and step.
 - **Resume.** A row with a result is never run again unless asked (`--rerun-failed` for the `driver-failed`
-  ones but those the driver refused by name, `--rerun` for one row). A row directory without a result is a run that stopped in the middle: it is
+  ones only, never `driver-refused`, `--rerun` for one row). A row directory without a result is a run that stopped in the middle: it is
   moved aside under `<out>/.interrupted/` and the row runs again from its start. A batch stopped by a signal
   stops its simulator with it.
 - **The unit.** An application with an own unit runs on it; every other on its catalogue unit. A catalogue
@@ -1112,7 +1113,7 @@ HA_TOKEN=... BUSFORGE_CORPUS=... bun run tools/ets-driver.ts batch <catalogue-li
   - Anything else is the row's own failure: `driver-failed`.
 - **Second programs.** ETS downloads a hardware's PEI program with its application; such a row is driven
   (where the unit has no place for the PEI program's segment, it refuses it). A second program that is
-  no PEI program is refused before the row runs.
+  no PEI program ends `driver-refused` before the row runs.
 - `--inject-kill <application>` and `--inject-dialog <application>` kill ETS, or open its project details
   dialog, in that row once the project is compressed (the row must be one the batch runs): they exist
   to show the recovery on a real run. A batch stopped by SIGINT or SIGTERM stops its simulator and
