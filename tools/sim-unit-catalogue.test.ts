@@ -11,7 +11,7 @@ import { tempDir } from "./test-temp.ts";
 import { segmentAllocationRefusal, type SimUnit } from "./sim-unit.ts";
 import type { SystemBBehaviour, UnitBehaviour } from "./sim-unit-model.ts";
 import { gzipSync } from "node:zlib";
-import { catalogueUnit, catalogueUnitRecord, catalogueUnitSpec, chooseDonor, donorDigest, donorUnfit, DONOR_RULES, learnIdentity, normalizeProductStoreXml, precheckDonor, unitMask, type CatalogueUnitSpec } from "./sim-unit-catalogue.ts";
+import { catalogueUnit, catalogueUnitRecord, catalogueUnitSpec, chooseDonor, donorDigest, donorUnfit, DONOR_RULES, learnIdentity, normalizeProductStoreXml, precheckDonor, PRODUCT_STORE_TAGS, unitMask, type CatalogueUnitSpec } from "./sim-unit-catalogue.ts";
 import { mismatchLines } from "./sim-unit-product.ts";
 import { framePairs, replayCapture } from "./sim-unit-replay.ts";
 import { AURO_M0081, GIRA_TS3, MDT_BE02001, MEANWELL_KNX40E, newSimUnit, OPENKNX_RAUMCONTROLLER, SIM_UNITS, THEBEN_DALI_GATEWAY, type SimUnitSpec } from "./sim-units.ts";
@@ -160,25 +160,23 @@ corpusDescribe("a catalogue unit's donor", () => {
   });
 
   test("precheckDonor normalizes ETS ProductStore XML (plain or gzipped) to the same chooseDonor verdict and falls back on broken or mismatched files", () => {
-    // Convert standard KNX XML to ETS ProductStore shortened tag form with BOM, comments and CDATA to mirror real A files.
-    const toProductStore = (xml: string) => {
-      const short: Record<string, string> = {
-        ApplicationPrograms: "APS", ApplicationProgram: "AP", Static: "St",
-        AbsoluteSegment: "AS", RelativeSegment: "RS", AddressTable: "ADRT", AssociationTable: "ASSOT",
-        ComObjectTable: "COT", ComObjects: "COs", ComObject: "CO", ComObjectRefs: "CORS", ComObjectRef: "COR",
-        ParameterTypes: "PTS", ParameterType: "PT", TypeRestriction: "TR", TypeNumber: "TNr", TypeFloat: "TFl",
-        TypeText: "TTxt", TypeColor: "TColor", TypeTime: "TTime", TypeIPAddress: "TIP", TypeNone: "TNone", TypePicture: "TPic",
-        Parameters: "PS", Parameter: "P", Union: "U", Memory: "M", Property: "Prop",
-        ParameterRefs: "PRS", ParameterRef: "PR", Options: "Opt", Extension: "Ext",
-        Languages: "LS", Language: "L", TranslationUnit: "TU", TranslationElement: "TE", Translation: "T",
-      };
-      return `\uFEFF${xml.replace(/<(\/?)([A-Za-z_][A-Za-z0-9_:-]*)(?=[\s/>])/g, (m, slash: string, tag: string) => (short[tag] ? `<${slash}${short[tag]}` : m))}`;
-    };
-    // CDATA and comments stay untouched while shortened tags expand; standard XML is idempotent.
-    const withCdata = "\uFEFF<KNX><!-- <AP Id=\"x\"/> --><Script><![CDATA[if (a <P && b <M) {}]]></Script><APS><AP Id=\"a\"/></APS></KNX>";
+    // Invert PRODUCT_STORE_TAGS to convert standard KNX XML to ETS ProductStore shortened tag form (skipping comments/CDATA).
+    const shortOf = new Map([...PRODUCT_STORE_TAGS].map(([short, full]) => [full, short]));
+    const toProductStore = (xml: string) =>
+      `\uFEFF${xml.replace(/<!\[CDATA\[[\s\S]*?\]\]>|<!--[\s\S]*?-->|<(\/?)([A-Za-z_][A-Za-z0-9_:-]*)(?=[\s/>])/g, (m, slash: string | undefined, tag: string | undefined) => {
+        if (!tag) return m;
+        const short = shortOf.get(tag);
+        return short ? `<${slash ?? ""}${short}` : m;
+      })}`;
+    // CDATA, comments, and Object.prototype-named tags stay untouched while every shortened tag expands; standard XML is idempotent.
+    const withCdata = "\uFEFF<KNX><!-- <AP Id=\"x\"/> --><Script><![CDATA[if (a <P && b <M) {}]]></Script><toString/><constructor/><APS><AP Id=\"a\"/></APS></KNX>";
     const expanded = normalizeProductStoreXml(withCdata);
-    expect(expanded).toBe('<KNX><!-- <AP Id="x"/> --><Script><![CDATA[if (a <P && b <M) {}]]></Script><ApplicationPrograms><ApplicationProgram Id="a"/></ApplicationPrograms></KNX>');
+    expect(expanded).toBe('<KNX><!-- <AP Id="x"/> --><Script><![CDATA[if (a <P && b <M) {}]]></Script><toString/><constructor/><ApplicationPrograms><ApplicationProgram Id="a"/></ApplicationPrograms></KNX>');
     expect(normalizeProductStoreXml(expanded)).toBe(expanded);
+    // Every single entry in PRODUCT_STORE_TAGS round-trips cleanly.
+    for (const [short, full] of PRODUCT_STORE_TAGS) {
+      expect(normalizeProductStoreXml(`<${short}></${short}>`)).toBe(`<${full}></${full}>`);
+    }
 
     // Every corpus application: precheckDonor on shortened ProductStore XML matches chooseDonor() verbatim;
     // Buffer and gzipped-Buffer inputs are exercised on both a qualifying and a refused application.
@@ -198,13 +196,16 @@ corpusDescribe("a catalogue unit's donor", () => {
       }
     }
 
-    // Broken, truncated, corrupt-gzip, wrong-id or wrong-mask inputs fall back instead of refusing.
+    // Trailing comment after </KNX> is valid XML and does not fall back.
     const okApp = "M-0083_A-00B4-32-3919";
     const okStore = toProductStore(catalogueXml(`${okApp}.xml.gz`));
-    expect(precheckDonor(okApp, okStore, { mask: "0705" })).toMatchObject({ kind: "donor", donor: MDT_BE02001 });
+    expect(precheckDonor(okApp, `${okStore}\n<!-- trailing comment -->`, { mask: "0705" })).toMatchObject({ kind: "donor", donor: MDT_BE02001 });
+    // Broken, mid-file corrupted, truncated, invalid-UTF8, corrupt-gzip, wrong-id or wrong-mask inputs fall back instead of refusing.
     expect(precheckDonor(okApp, okStore, { mask: "07B0" })).toEqual({ kind: "fallback", why: "ProductStore XML mask MV-0705 disagrees with MV-07B0" });
     expect(precheckDonor("M-0083_A-00B4-32-9999", okStore)).toEqual({ kind: "fallback", why: `ProductStore XML holds ${okApp}, expected M-0083_A-00B4-32-9999` });
-    expect(precheckDonor(okApp, okStore.replace(/<\/KNX>\s*$/, ""))).toEqual({ kind: "fallback", why: "ProductStore XML is incomplete (missing closing </KNX>)" });
+    expect(precheckDonor(okApp, okStore.replace(/<\/KNX>\s*$/, ""))).toMatchObject({ kind: "fallback", why: expect.stringContaining("ProductStore XML is malformed") });
+    expect(precheckDonor(okApp, okStore.replace("</AP>", "</Wrong>"))).toMatchObject({ kind: "fallback", why: expect.stringContaining("ProductStore XML is malformed") });
+    expect(precheckDonor(okApp, Buffer.concat([Buffer.from(okStore, "utf8"), Buffer.from([0xff, 0xfe])]))).toMatchObject({ kind: "fallback", why: expect.stringContaining("could not decode ProductStore XML") });
     expect(precheckDonor(okApp, Buffer.from([0x1f, 0x8b, 0x08, 0x00, 0xff, 0xff]))).toMatchObject({ kind: "fallback", why: expect.stringContaining("could not decode ProductStore XML") });
     expect(precheckDonor(okApp, "<KNX><NoApp/></KNX>")).toMatchObject({ kind: "fallback", why: expect.stringContaining("could not parse ProductStore XML") });
   });

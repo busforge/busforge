@@ -1077,12 +1077,13 @@ earlier run's ETS6.log required.
 
 ### Unattended batches
 
-`batch` runs the rows of the catalogue list (below) one after the other, each as `row` runs it, for hours
-without anyone watching.
+`batch` runs the rows of the catalogue list (below) one after the other, each as `row` runs it (except catalogue-unit
+rows whose offline donor pre-check already refuses them before ETS opens), for hours without anyone watching.
 
 ```bash
 HA_TOKEN=... BUSFORGE_CORPUS=... bun run tools/ets-driver.ts batch <catalogue-list.json> --out <dir> \
-  [--only <file of application ids>] [--from <application>] [--count <rows>] [--rerun-failed] [--rerun <application>]...
+  [--only <file of application ids>] [--from <application>] [--count <rows>] [--rerun-failed] [--rerun <application>]... \
+  [--product-store <dir>] [--no-precheck]
 ```
 
 - **Where it writes.** Each row under `<out>/<application>/defaults/` (the corpus's layout, outside the
@@ -1094,10 +1095,15 @@ HA_TOKEN=... BUSFORGE_CORPUS=... bun run tools/ets-driver.ts batch <catalogue-li
   ones only, never `driver-refused`, `--rerun` for one row). A row directory without a result is a run that stopped in the middle: it is
   moved aside under `<out>/.interrupted/` and the row runs again from its start. A batch stopped by a signal
   stops its simulator with it.
-- **The unit.** An application with an own unit runs on it; every other on its catalogue unit. A catalogue
-  row that ETS fails on a `Required data mismatch` runs again with what ETS required, up to three rounds;
-  each earlier run is kept under `<out>/.attempts/`. No donor for the row's mask, or a product identity the
-  donor cannot carry, ends the row `sim-refused` before any download. A unit that refused a request of
+- **The unit.** An application with an own unit runs on it; every other on its catalogue unit. Before opening ETS
+  for a catalogue-unit row, the runner pre-checks `chooseDonor()` against the application's XML in ETS's local
+  `ProductStore` (read-only over ssh from the bench host, or from `--product-store <dir>`; disabled with
+  `--no-precheck`). When `chooseDonor()` refuses it, the row ends `sim-refused` directly (`sim-refused.txt` and
+  `batch-result.json`) without driving ETS; when the ProductStore file is missing, unreadable, malformed or disagrees
+  on application id or mask, the fallback reason is logged to `batch.log` and the row runs through the normal ETS
+  export path. A catalogue row that ETS fails on a `Required data mismatch` runs again with what ETS required, up to
+  three rounds; each earlier run is kept under `<out>/.attempts/`. No donor for the row's mask, or a product identity
+  the donor cannot carry, ends the row `sim-refused` before any download. A unit that refused a request of
   ETS's run ends the written row `sim-refused`, whatever ETS made of the missing answer (ETS's message
   beside the refusal), as `tools/ets-sweep.ts` reads ETS's side of a row (Busforge's run, which the batch
   does not make, can still make the row `busforge-only` when it is judged); a refusal after the unit's
