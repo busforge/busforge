@@ -64,8 +64,10 @@ test("the catalogue row inserted: the one whose read application is the row's, w
   expect(pick([e("Gws308s3", "$5222", "1.2", "B809", 700)], "GW90883", "M-0019_A-5222-12-B809-O00C9")).toEqual({ row: 0, rows: 1, exact: true });
   const folded = [e("GH Q631 0070 RO111", "S0A01", "1.3", "1111", 700), e("GH Q631 0070 R0111", "$A001", "1.3", "63C2", 720)];
   expect(pick(folded, "GH Q631 0070 R0111", "M-0002_A-A001-13-63C2")).toEqual({ row: 1, rows: 1, exact: true });
-  // OCR also doubles "$" as "S$" on a device type ("S$FEO1" for $FE01, recorded on the bench host).
+  // OCR also doubles "$" as "S$" on a device type ("S$FEO1" for $FE01) and reads 7 as T ("SAOAT" for $A0A7, "ATD6" for A7D6), all recorded on the bench host.
   expect(pick([e("180-02", "S$FEO1", "1.1", "75D9", 731), e("77024-180-02", "SAC12", "1.2", "C529", 751)], "180-02", "M-0081_A-FE01-11-75D9")).toEqual({ row: 0, rows: 1, exact: true });
+  expect(pickCatalogueRow([{ deviceType: "SAOAT", version: "1.0", fingerprint: "33B9" }], "2CDG 110 192 R0011", "M-0002_A-A0A7-10-33B9")).toMatchObject({ rows: 1, exact: true });
+  expect(pickCatalogueRow([{ deviceType: "S10BA", version: "1.0", fingerprint: "ATD6" }], "70251", "M-00C9_A-10BA-10-A7D6-O00A2")).toMatchObject({ rows: 1, exact: true });
   // A version or device type that differs is never taken.
   expect("refused" in pickCatalogueRow([e("X1", "$A0B1", "1.2", "1234", 700), e("X1", "$A0B2", "1.1", "1234", 720)], "X1", "M-00FA_A-A0B1-11-1234")).toBe(true);
   expect(editDistance("DC390", "DC90")).toBe(1);

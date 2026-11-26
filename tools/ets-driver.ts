@@ -713,23 +713,25 @@ async function emptyLine(s: Screen): Promise<void> {
   }
 }
 
-export interface CatalogueEntry { orderNumber: string; version: string; deviceType: string; fingerprint: string; manufacturer?: string }
+export interface CatalogueEntry { orderNumber?: string; version: string; deviceType: string; fingerprint: string; manufacturer?: string }
 
-// The properties panel's reading of the selected catalogue row: the Katalog tab's order number, the
-// Applikation tab's manufacturer, device type, program version and fingerprint.
+// The properties panel's reading of the selected catalogue row: the Applikation tab's manufacturer, device type,
+// program version and fingerprint. The Katalog tab holds a scrollable product description that can scroll the panel
+// (tab bar included) down to the bottom; pickCatalogueRow does not compare its order number, so the driver stays on
+// Applikation and scrolls the properties panel back to its top if an earlier Katalog view hid the tab bar.
 async function readCatalogueEntry(s: Screen): Promise<CatalogueEntry> {
   await showProperties(s);
-  const tab = async (name: string) => {
-    const t = propertiesTab(s.snap(), name) ?? fail(`the properties panel shows no ${name} tab for the catalogue row`);
-    click(t.cx, t.cy);
-    await sleep(1500);
-    return propertiesTable(s.snap(), t);
-  };
+  let t = propertiesTab(s.snap(), "Applikation");
+  if (!t) {
+    xdo("mousemove", "1750", "400", "click", "--repeat", "15", "4");
+    await sleep(500);
+    t = propertiesTab(s.snap(), "Applikation") ?? fail("the properties panel shows no Applikation tab for the catalogue row");
+  }
+  click(t.cx, t.cy);
+  await sleep(1500);
+  const app = propertiesTable(s.snap(), t);
   const value = (lines: string[], label: string) => propertyValue(lines, label) ?? fail(`the properties panel shows no ${label} for the catalogue row`);
-  const cat = await tab("Katalog");
-  const orderNumber = value(cat, "Bestellnummer");
-  const app = await tab("Applikation");
-  return { orderNumber, manufacturer: value(app, "Hersteller"), deviceType: value(app, "Gerätetyp"), version: value(app, "Programmversion"), fingerprint: value(app, "Fingerprint") };
+  return { manufacturer: value(app, "Hersteller"), deviceType: value(app, "Gerätetyp"), version: value(app, "Programmversion"), fingerprint: value(app, "Fingerprint") };
 }
 
 // The properties panel's tab `name` (Katalog, Applikation). A product picture beside the tabs cuts OCR's reading of
@@ -845,12 +847,12 @@ export const catalogueGroups = reader("catalogueGroups", (png: string, grid: Reg
 // it parses as the unit's.
 export function pickCatalogueRow<E extends CatalogueEntry>(entries: E[], orderNumber: string, applicationId: string, manufacturer?: string): { hit: E; rows: number; exact: boolean } | { refused: string } {
   const want = catalogueIdentity(applicationId);
-  // A device type reads with its "$" as "S", "3" or doubled "S$" and an O for a 0 ("SOOB6" for $00B6, "S$FEO1" for $FE01); a fingerprint the same.
-  const hexKey = (v: string) => v.toUpperCase().replace(/^(?:[$S3]|S\$)(?=[0-9A-FO]{4}$)/, "").replace(/O/g, "0");
+  // A device type reads with its "$" as "S", "3" or doubled "S$", an O for a 0 and a T for a 7 ("SOOB6" for $00B6, "S$FEO1" for $FE01, "SAOAT" for $A0A7, "ATD6" for A7D6); a fingerprint the same.
+  const hexKey = (v: string) => v.toUpperCase().replace(/^(?:[$S3]|S\$)(?=[0-9A-FOT]{4}$)/, "").replace(/O/g, "0").replace(/T/g, "7");
   const atTypeAndVersion = entries.filter((e) => e.version === want.version && hexKey(e.deviceType) === hexKey(want.deviceType));
   const madeBy = (e: CatalogueEntry) => manufacturer !== undefined && e.manufacturer !== undefined && editDistance(nameKey(e.manufacturer), nameKey(manufacturer)) <= Math.max(2, Math.floor(nameKey(manufacturer).length / 5));
   const candidates = atTypeAndVersion.some(madeBy) ? atTypeAndVersion.filter(madeBy) : atTypeAndVersion;
-  const read = () => entries.map((e) => `${e.orderNumber} ${e.deviceType} ${e.version} ${e.fingerprint}`).join("; ");
+  const read = () => entries.map((e) => `${e.orderNumber ? `${e.orderNumber} ` : ""}${e.deviceType} ${e.version} ${e.fingerprint}`).join("; ");
   const hits = candidates.filter((e) => hexKey(e.fingerprint) === hexKey(want.fingerprint));
   if (hits.length) return { hit: hits[0], rows: hits.length, exact: true };
   if (candidates.length === 0) return { refused: `no catalogue row with order number ${orderNumber} runs ${applicationId} (read: ${read()})` };
@@ -993,7 +995,7 @@ async function insertProduct(s: Screen, dir: string, orderNumber: string, applic
   if (items.every((r) => !r.loaded)) fail(`the catalogue lists for order number ${orderNumber} only rows whose product data ETS has not loaded: ${notLoaded}`);
   const entries: (CatalogueEntry & { y: number })[] = [];
   for (const r of items.filter((x) => x.loaded)) {
-    // A click that did not select the row leaves the properties panel on line 1.1 (no Katalog tab): clicked once more.
+    // A click that did not select the row leaves the properties panel on line 1.1 (no Applikation tab): clicked once more.
     for (let attempt = 0; ; attempt++) {
       click(500, Math.round(r.y));
       await sleep(1500);
@@ -1001,13 +1003,13 @@ async function insertProduct(s: Screen, dir: string, orderNumber: string, applic
         entries.push({ ...(await readCatalogueEntry(s)), y: Math.round(r.y) });
         break;
       } catch (e) {
-        if (attempt === 1 || !(e instanceof DriverFailure) || !/shows no Katalog tab/.test(e.message)) throw e;
+        if (attempt === 1 || !(e instanceof DriverFailure) || !/shows no Applikation tab/.test(e.message)) throw e;
       }
     }
   }
   const picked = pickCatalogueRow(entries, orderNumber, applicationId, manufacturer);
   if ("refused" in picked) return fail(`${picked.refused}${unread}`);
-  console.log(`inserting the catalogue row read as ${picked.hit.manufacturer ?? "?"} ${picked.hit.orderNumber} ${picked.hit.deviceType} ${picked.hit.version} ${picked.hit.fingerprint}`);
+  console.log(`inserting the catalogue row read as ${picked.hit.manufacturer ?? "?"} ${picked.hit.orderNumber ?? orderNumber} ${picked.hit.deviceType} ${picked.hit.version} ${picked.hit.fingerprint}`);
   if (picked.rows > 1) console.log(`${picked.rows} catalogue rows under order number ${orderNumber} run ${applicationId}: the first inserted`);
   if (!picked.exact) console.log(`the catalogue row inserted reads its fingerprint as ${picked.hit.fingerprint}, not ${catalogueIdentity(applicationId).fingerprint}: what it runs is checked after the insert`);
   const hit = picked.hit;
