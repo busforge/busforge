@@ -509,18 +509,22 @@ function buildDeviceConfigReading(
   // else the module-def ref default else the parameter default. `e` is the working
   // value map; it defaults to the UI walk's `env`, but the image pass passes its own
   // so its Assigns resolve in document order independently of the UI pass.
-  // A "Merker": an Access=None parameter with no memory, used purely as a visibility
-  // flag in choose conditions. ETS does NOT give it its static default; it is UNSET
-  // until a ParameterRefRef placing it is reached in an active branch (which assigns the
+  // A "Merker": an Access=None or Access=Read parameter with no memory or property, used as
+  // a visibility flag in choose conditions. ETS does NOT give it its static default; it is
+  // UNSET until a ParameterRefRef placing it is reached in an active branch (which assigns the
   // ref's value). So a never-placed Merker reads as unset, its choose tests fail, and the
   // blocks it gates stay hidden, exactly as ETS leaves their parameter memory at the
-  // segment default. Hardware-verified on the Theben HMG6T Notprogramm block (gated by a
-  // Merker that is only placed when its real switch P-6 = 1; with P-6 = 0 the device
-  // keeps those bytes at 0, which only this rule reproduces). Memory-backed or visible
+  // segment default. Hardware-verified on the Theben HMG6T Notprogramm block (Access="None",
+  // gated by a Merker only placed when its real switch P-6 = 1; with P-6 = 0 the device
+  // keeps those bytes at 0), and shown by ETS simulator capture and LoadedImage on the
+  // Theben M-0048_A-0103-11-72A2 (Access="Read" P-68, unplaced at defaults; ETS leaves
+  // com-objects #5-#7 at 00 00). Memory-backed, property-backed, or editable (ReadWrite)
   // parameters are unaffected and keep their default.
-  const isMerker = (paramId: string): boolean => {
-    const p = app.params.get(paramId);
-    return !!p && p.access === "None" && !p.hasMemory;
+  const isMerker = (ref: CfgParamRef): boolean => {
+    const p = app.params.get(ref.paramId);
+    if (!p || holdsValue(p)) return false;
+    const access = ref.access ?? p.access;
+    return access === "None" || access === "Read";
   };
   // Several ParameterRefs of one Parameter share its single value. A ref's own Value is only the
   // default of the ref that is shown (placed in an active branch): ETS applies it when that ref is
@@ -560,7 +564,7 @@ function buildDeviceConfigReading(
     const instId = scope.rewrite(defRefId);
     const ref = app.refs.get(defRefId);
     if (!ref) return e.get(instId);
-    if (isMerker(ref.paramId)) return e.get(instId); // unplaced Merker: no static default for choose evaluation
+    if (isMerker(ref)) return e.get(instId); // unplaced Merker: no static default for choose evaluation
     const paramDefault = app.params.get(ref.paramId)?.value;
     const siblings = (refsOfParam.get(ref.paramId) ?? []).filter((r) => r !== defRefId);
     const placed = [...(placement.get(scope.rewrite(ref.paramId)) ?? [])];
@@ -579,11 +583,14 @@ function buildDeviceConfigReading(
     return (e.has(instId) ? e.get(instId) : undefined) ?? storedOn(siblings, scope, e) ?? ref.value ?? paramDefault;
   };
   // Placing a ParameterRefRef to a Merker in an active branch assigns it (the ref's value
-  // or the parameter default), so a later choose on that ref sees it as set. Document-order
-  // walk guarantees the assignment precedes the read.
+  // or the parameter default) when not already set in `e` (preserving a stored override or
+  // earlier Assign), so a later choose on that ref sees it as set. Document-order walk
+  // guarantees the assignment precedes the read.
   const assignIfMerker = (defRefId: string, scope: Scope, e: Map<string, string>) => {
     const ref = app.refs.get(defRefId);
-    if (ref && isMerker(ref.paramId)) e.set(scope.rewrite(defRefId), ref.value ?? app.params.get(ref.paramId)?.value ?? "");
+    if (!ref || !isMerker(ref)) return;
+    const instId = scope.rewrite(defRefId);
+    if (!e.has(instId)) e.set(instId, ref.value ?? app.params.get(ref.paramId)?.value ?? "");
   };
   const tr = (elemId: string | undefined, attr: string, base: string): string => {
     const t = !elemId || language === app.defaultLanguage ? base : app.translations.get(language)?.get(elemId)?.get(attr) ?? base;

@@ -406,6 +406,82 @@ describe("a Merker computed in a hidden (Access=None) block still gates visible 
   });
 });
 
+describe("unplaced memoryless Access=Read Merker in <choose>", () => {
+  // Theben M-0048_A-0103-11-72A2 pattern: P-68 is declared Access="Read" with Value="1" and no
+  // <Memory>, placed only when a controlling switch is active. When unplaced, ETS treats it as
+  // unset so <when test="1"> does not fire; once placed, it evaluates to 1 and activates its
+  // gated com-object while displaying as read-only. A stored value on a placed Access="Read"
+  // memoryless ref (e.g. from a DCA or Assign) is preserved rather than overwritten by the default.
+  const readMerkerXml = `<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-TEST"><ApplicationPrograms>
+<ApplicationProgram Id="M-TEST_A-31" ApplicationNumber="31" ApplicationVersion="1" MaskVersion="MV-07B0" Name="Read Merker" DefaultLanguage="en-US">
+  <Static>
+    <ParameterTypes>
+      <ParameterType Id="M-TEST_A-31_PT-N" Name="N"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="10" /></ParameterType>
+    </ParameterTypes>
+    <Parameters>
+      <Parameter Id="M-TEST_A-31_P-1" Name="Switch" ParameterType="M-TEST_A-31_PT-N" Text="Switch" Value="0"><Memory CodeSegment="M-TEST_A-31_RS-4" Offset="0" BitOffset="0" /></Parameter>
+      <Parameter Id="M-TEST_A-31_P-M" Name="ReadMerker" ParameterType="M-TEST_A-31_PT-N" Text="Dimmable" Value="1" Access="Read" />
+    </Parameters>
+    <ParameterRefs>
+      <ParameterRef Id="M-TEST_A-31_P-1_R-1" RefId="M-TEST_A-31_P-1" />
+      <ParameterRef Id="M-TEST_A-31_P-M_R-2" RefId="M-TEST_A-31_P-M" />
+    </ParameterRefs>
+    <ComObjectTable>
+      <ComObject Id="M-TEST_A-31_O-1" Name="Dim" Number="5" Text="Dimming" FunctionText="dim" ObjectSize="4 Bit" DatapointType="DPST-3-7" ReadFlag="Disabled" WriteFlag="Enabled" CommunicationFlag="Enabled" TransmitFlag="Disabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled" />
+    </ComObjectTable>
+    <ComObjectRefs>
+      <ComObjectRef Id="M-TEST_A-31_O-1_R-1" RefId="M-TEST_A-31_O-1" />
+    </ComObjectRefs>
+  </Static>
+  <Dynamic>
+    <ChannelIndependentBlock>
+      <ParameterBlock Id="M-TEST_A-31_PB-1" Name="main" Text="Main">
+        <ParameterRefRef RefId="M-TEST_A-31_P-1_R-1" />
+        <choose ParamRefId="M-TEST_A-31_P-1_R-1">
+          <when test="1">
+            <ParameterRefRef RefId="M-TEST_A-31_P-M_R-2" />
+          </when>
+        </choose>
+        <choose ParamRefId="M-TEST_A-31_P-M_R-2">
+          <when test="1">
+            <ComObjectRefRef RefId="M-TEST_A-31_O-1_R-1" />
+          </when>
+        </choose>
+      </ParameterBlock>
+    </ChannelIndependentBlock>
+  </Dynamic>
+</ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+  const readMerkerApp = parseAppConfig(readMerkerXml);
+
+  test("unplaced memoryless Access=Read parameter reads as unset in <choose>", () => {
+    const v = buildDeviceConfig(readMerkerApp, new Map());
+    expect(v.imageComObjects.size).toBe(0);
+    expect(comObjs(v)).toHaveLength(0);
+    expect(v.paramValue("M-TEST_A-31_P-M_R-2")).toBeUndefined();
+  });
+
+  test("once placed by an active branch, memoryless Access=Read evaluates to its value and renders read-only", () => {
+    const v = buildDeviceConfig(readMerkerApp, new Map([["M-TEST_A-31_P-1_R-1", "1"]]));
+    expect([...v.imageComObjects.keys()]).toEqual([5]);
+    expect(comObjs(v)).toHaveLength(1);
+    const merkerParam = params(v).find((p) => p.param.refId === "M-TEST_A-31_P-M_R-2");
+    expect(merkerParam?.param.value).toBe("1");
+    expect(merkerParam?.param.readOnly).toBe(true);
+    expect(merkerParam?.param.memoryless).toBe(true);
+  });
+
+  test("a stored value on a placed memoryless Access=Read ref is preserved instead of overwritten by its default", () => {
+    const v = buildDeviceConfig(readMerkerApp, new Map([
+      ["M-TEST_A-31_P-1_R-1", "1"],
+      ["M-TEST_A-31_P-M_R-2", "2"],
+    ]));
+    expect(v.imageComObjects.size).toBe(0);
+    const merkerParam = params(v).find((p) => p.param.refId === "M-TEST_A-31_P-M_R-2");
+    expect(merkerParam?.param.value).toBe("2");
+  });
+});
+
 describe("localization", () => {
   test("German overrides param and enum text, falls back to base otherwise", () => {
     const v = buildDeviceConfig(app, new Map(), "de-DE");
