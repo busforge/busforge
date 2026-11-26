@@ -8,8 +8,8 @@ import { dirname, join } from "node:path";
 import { corpusPath, driverScreenFile, type DriverScreen } from "./corpus.ts";
 import { corpusTest } from "./corpus-test.ts";
 import {
-  catalogueDownloadDialog, catalogueGroups, catalogueHeader, cataloguePanelShown, catalogueProducts, catalogueSearchEmpty, compatibilityWarning, dialogBox, dialogButton, dialogText, downloadEnabled, frontTabWidth, LINE_11,
-  isCatalogueProgress, keepScreen, moveScreen, oneRowSelected, pickCatalogueRow, projectTabs, projectTabShown, propertiesTab, propertiesTable, propertyValue, SCREEN_FORMAT, searchGrid, selectionPattern, sidecarOf, step, treeRowBelow, treeRowIn,
+  catalogueDownloadDialog, catalogueGroups, catalogueHeader, cataloguePanelShown, catalogueProducts, catalogueSearchEmpty, compatibilityRefusalWhy, compatibilityWarning, dialogBox, dialogButton, dialogText, downloadEnabled, frontTabWidth, LINE_11,
+  isCatalogueProgress, keepCompatibilityDialog, keepScreen, moveScreen, oneRowSelected, pickCatalogueRow, projectTabs, projectTabShown, propertiesTab, propertiesTable, propertyValue, SCREEN_FORMAT, searchGrid, selectionPattern, sidecarOf, step, treeRowBelow, treeRowIn,
 } from "./ets-driver.ts";
 import { tempDir } from "./test-temp.ts";
 
@@ -42,6 +42,9 @@ corpusTest("the tab bar: the project's tabs, and which one stands in front with 
   // A second tab of the project, as ETS restores one after it crashed: behind the first, then brought to the front.
   expect(closeMarks(screen("tabs-extra-tab-behind"))).toEqual([382, null]);
   expect(closeMarks(screen("tabs-extra-tab-in-front"))).toEqual([null, 582]);
+  // Another project whose name begins the same ("Busforge Sweep (2)") beside it: projectTabs reads both, so
+  // closeExtraProjectTabs clicks the second and checks ETS's window title before closing it.
+  expect(closeMarks(screen("tabs-other-project-same-prefix"))).toEqual([382, null]);
   // The project's tab on the green, the overview in front: its title (with the views it shows under it) read too.
   const overviewInFront = screen("tabs-overview-in-front");
   expect(projectTabShown(overviewInFront)).toBe(true);
@@ -104,6 +107,13 @@ corpusTest("the catalogue's search: manufacturers' groups by their arrow, open o
   const two = read(screen("properties-fingerprint-misread-2"));
   expect(two.closed).toEqual([]);
   expectNear([...two.headers, ...two.products.map((p) => p.y)], [710, 731, 751]);
+  // A search with more hits than the grid shows at once: rows reach past grid.y + grid.h - 30 (refused in insertProduct).
+  const overflowPng = screen("catalogue-search-overflow");
+  const overflow = read(overflowPng), overflowGrid = searchGrid(catalogueHeader(overflowPng)!);
+  expect(catalogueSearchEmpty(overflowPng)).toBe(false);
+  expect(overflow.closed).toEqual([]);
+  expect(overflow.headers.length).toBe(2);
+  expect(Math.max(...overflow.products.map((p) => p.y))).toBeGreaterThan(overflowGrid.y + overflowGrid.h - 30);
 }, OCR_TIMEOUT);
 
 corpusTest("the properties panel of a catalogue row: its tabs, the order number, and the application's manufacturer, device type, version and fingerprint", () => {
@@ -139,8 +149,24 @@ corpusTest("the properties panel of a catalogue row: its tabs, the order number,
 }, OCR_TIMEOUT);
 
 corpusTest("ETS's dialogs: its compatibility warning, after the insert and at the download, and none where it shows none", () => {
-  expect(compatibilityWarning(screen("compatibility-warning-insert"))).toBe(true);
-  expect(compatibilityWarning(screen("compatibility-warning-download"))).toBe(true);
+  for (const [name, moment] of [["compatibility-warning-insert", "after the insert"], ["compatibility-warning-download", "at the download"]] as const) {
+    const png = screen(name);
+    step(moment === "after the insert" ? "insert" : "download");
+    const box = dialogBox(png)!;
+    expect(box).not.toBeNull();
+    expect(compatibilityWarning(png, box)).toBe(true);
+    const dir = tempDir("ets-driver-compat-");
+    const why = keepCompatibilityDialog(dir, png, box, moment);
+    expect(why).toBe(compatibilityRefusalWhy(moment));
+    const kept = join(dir, "dialog.png");
+    expect(readFileSync(kept)).toEqual(readFileSync(png));
+    const sidecar = JSON.parse(readFileSync(sidecarOf(kept), "utf8"));
+    expect(sidecar).toMatchObject({ format: SCREEN_FORMAT, step: moment === "after the insert" ? "insert" : "download", why: `driver-refused: ${why}`, from: `${name}.png` });
+    expect(sidecar.readings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ reader: "compatibilityWarning", screen: `${name}.png`, read: true }),
+      expect.objectContaining({ reader: "dialogText", screen: `${name}.png`, read: expect.stringMatching(/Kompatibilit/) }),
+    ]));
+  }
   const connection = screen("dialog-connection-not-available");
   expect(compatibilityWarning(connection)).toBe(false);
   expect(catalogueDownloadDialog(connection)).toMatchObject({ kind: "other", text: expect.stringMatching(/^Verbindung ausw/) });
@@ -148,6 +174,13 @@ corpusTest("ETS's dialogs: its compatibility warning, after the insert and at th
   expect(dialogText(connection)).toMatch(/^Verbindung ausw\S+ Die Verbindung Sim-MeanWell .* nicht verf/);
   // The question before ETS compresses the project (compressProject goes on only where it says the project closes).
   expect(dialogText(screen("dialog-compress-question"))).toMatch(/Projektdaten komprimieren .*geschlossen werden/);
+  // ETS's project password prompt at the insert of a Data Secure product: not a compatibility warning, cancelled via Abbrechen.
+  const pw = screen("dialog-project-password"), pwBox = dialogBox(pw)!;
+  expect(pwBox).not.toBeNull();
+  expect(compatibilityWarning(pw, pwBox)).toBe(false);
+  expect(dialogText(pw, pwBox)).toMatch(/Projektpasswort setzen.*Busforge Sweep/);
+  const cancel = dialogButton(pw, pwBox, "Abbrechen");
+  expect(cancel && cancel.cx >= 1210 && cancel.cx <= 1285 && cancel.cy >= 795 && cancel.cy <= 815).toBe(true);
   for (const name of ["tabs-one-project-line-collapsed", "overview-no-project", "catalogue-two-groups-katalog-tab"] as const) {
     expect(dialogBox(screen(name))).toBeNull();
     expect(dialogText(screen(name))).toBeNull();

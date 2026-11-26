@@ -93,11 +93,11 @@ export const BUSSARD_LOAD_STEP_PRODUCTS: readonly (readonly [product: string, ap
 // tools/ets-driver-screens.test.ts reads with the driver's screen readers (what each shows: README.md beside them).
 export const DRIVER_SCREENS_DIR = "internal/ets-sweep/driver-screens";
 export const DRIVER_SCREENS = [
-  "overview-no-project", "tabs-overview-in-front", "tabs-one-project-line-collapsed", "tabs-extra-tab-behind", "tabs-extra-tab-in-front",
+  "overview-no-project", "tabs-overview-in-front", "tabs-one-project-line-collapsed", "tabs-extra-tab-behind", "tabs-extra-tab-in-front", "tabs-other-project-same-prefix",
   "tree-main-line-collapsed", "tree-line-selected-device-below", "tree-line-selected-empty",
-  "catalogue-two-groups-katalog-tab", "catalogue-two-groups-applikation-tab", "catalogue-group-closed", "catalogue-application-name-digits", "catalogue-rows-not-loaded",
+  "catalogue-two-groups-katalog-tab", "catalogue-two-groups-applikation-tab", "catalogue-group-closed", "catalogue-application-name-digits", "catalogue-rows-not-loaded", "catalogue-search-overflow",
   "properties-fingerprint-misread-1", "properties-fingerprint-misread-2", "properties-fingerprint-leading-zero", "properties-hex-values",
-  "compatibility-warning-insert", "compatibility-warning-download", "dialog-connection-not-available", "dialog-compress-question",
+  "compatibility-warning-insert", "compatibility-warning-download", "dialog-connection-not-available", "dialog-compress-question", "dialog-project-password",
   "catalogue-download-refused", "catalogue-download-progress",
   "catalogue-one-row-selected", "catalogue-one-row-loaded", "catalogue-rows-selected", "catalogue-selection-bottom-edge",
 ] as const;
