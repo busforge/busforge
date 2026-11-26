@@ -20,6 +20,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
+import { XMLValidator } from "fast-xml-parser";
 import { declaredPropMatches, MM_STATUS_BASE, PID } from "../packages/knx/src/index.ts";
 import { extractAppPrograms } from "../packages/project/src/index.ts";
 import { closingSteps, declaredPropChecks, lsmIdx, maskInfo, parseAppConfig, programIdStamp, resolveModuleInstances, stepSize, type DynNode, type ModuleInstance } from "../packages/product/src/index.ts";
@@ -279,6 +280,84 @@ function unshown(u: SimUnitSpec): number {
 const collectedInAnotherState = (u: SimUnitSpec) => "stateInCaptures" in u.behaviour && u.behaviour.stateInCaptures !== undefined;
 
 export type DonorChoice = { donor: SimUnitSpec; rule: string } | { refused: string };
+
+// ETS's local ProductStore (ProductStore/M-*/M-*_A-*/A) keeps application programs as UTF-8 XML with shortened
+// element names (<AP>, <St>, <Opt>, <COT>, <CO>, <P>, ...) and the same attributes as an exported .knxproj;
+// <LoadProcedures>, <LdCtrl*>, <Dynamic>, <ModuleDefs>, <Allocators>, and <Arguments> are stored unshortened by ETS 6
+// (verified across all 5,520 ProductStore files). None of these keys is a standard KNX XML element name, so expanding
+// them is idempotent on standard XML. Stored in a Map so Object.prototype keys never match.
+export const PRODUCT_STORE_TAGS: ReadonlyMap<string, string> = new Map(Object.entries({
+  APS: "ApplicationPrograms", AP: "ApplicationProgram", St: "Static",
+  AS: "AbsoluteSegment", RS: "RelativeSegment",
+  ADRT: "AddressTable", ASSOT: "AssociationTable",
+  COT: "ComObjectTable", COs: "ComObjects", CO: "ComObject",
+  CORS: "ComObjectRefs", COR: "ComObjectRef",
+  PTS: "ParameterTypes", PT: "ParameterType",
+  TR: "TypeRestriction", TNr: "TypeNumber", TFl: "TypeFloat", TTxt: "TypeText",
+  TColor: "TypeColor", TTime: "TypeTime", TIP: "TypeIPAddress",
+  TNone: "TypeNone", TPic: "TypePicture", TDate: "TypeDate", TRaw: "TypeRawData",
+  PS: "Parameters", P: "Parameter", U: "Union", M: "Memory", Prop: "Property",
+  PRS: "ParameterRefs", PR: "ParameterRef",
+  Opt: "Options", Ext: "Extension",
+  PCs: "ParameterCalculations", PC: "ParameterCalculation",
+  LPars: "LParameters", RPars: "RParameters", LRT: "LRTransformation", RLT: "RLTransformation",
+  LS: "Languages", L: "Language", TU: "TranslationUnit", TE: "TranslationElement", T: "Translation",
+  Ms: "Message",
+}));
+
+const UTF8_STRICT = new TextDecoder("utf-8", { fatal: true });
+
+// ETS ProductStore application XML (plain UTF-8 or gzipped) normalized to standard KNX XML element names so
+// parseAppConfig and chooseDonor read it identically to an exported .knxproj application program.
+export function normalizeProductStoreXml(raw: string | Buffer): string {
+  const bytes = typeof raw === "string"
+    ? null
+    : (raw.length >= 2 && raw[0] === 0x1f && raw[1] === 0x8b ? gunzipSync(raw) : raw);
+  const text = bytes === null ? raw as string : UTF8_STRICT.decode(bytes);
+  const stripped = text.startsWith("\uFEFF") ? text.slice(1) : text;
+  return stripped.replace(
+    /<!\[CDATA\[[\s\S]*?\]\]>|<!--[\s\S]*?-->|<(\/?)([A-Za-z_][A-Za-z0-9_:-]*)(?=[\s/>])/g,
+    (m, slash: string | undefined, tag: string | undefined) => {
+      if (!tag) return m;
+      const mapped = PRODUCT_STORE_TAGS.get(tag);
+      return mapped ? `<${slash ?? ""}${mapped}` : m;
+    },
+  );
+}
+
+export type PrecheckOutcome =
+  | { kind: "donor"; donor: SimUnitSpec; rule: string }
+  | { kind: "refused"; why: string }
+  | { kind: "fallback"; why: string };
+
+// Offline donor pre-check for `application` against an ETS ProductStore application file (`raw`, plain or gzipped
+// XML). Returns the exact chooseDonor() verdict when the file decodes strictly as UTF-8, validates as well-formed
+// XML, parses cleanly and matches `application` (and `mask`, when given, as "07B0" or "MV-07B0"), or `fallback` when
+// the file is truncated, corrupt, unparseable, or disagrees on identity so the batch runner falls back to ETS's export
+// instead of refusing on broken local data.
+export function precheckDonor(
+  application: string,
+  raw: string | Buffer,
+  opts: { mask?: string; units?: readonly SimUnitSpec[] } = {},
+): PrecheckOutcome {
+  let xml: string;
+  try { xml = normalizeProductStoreXml(raw); } catch (e) {
+    return { kind: "fallback", why: `could not decode ProductStore XML: ${e instanceof Error ? e.message : String(e)}` };
+  }
+  const valid = XMLValidator.validate(xml);
+  if (valid !== true) return { kind: "fallback", why: `ProductStore XML is malformed: ${valid.err.msg} (line ${valid.err.line})` };
+  let cfg: AppConfig;
+  try { cfg = parseAppConfig(xml); } catch (e) {
+    return { kind: "fallback", why: `could not parse ProductStore XML: ${e instanceof Error ? e.message : String(e)}` };
+  }
+  if (cfg.id !== application) return { kind: "fallback", why: `ProductStore XML holds ${cfg.id || "no application id"}, expected ${application}` };
+  if (opts.mask !== undefined) {
+    const wantMask = opts.mask.startsWith("MV-") ? opts.mask : `MV-${opts.mask}`;
+    if (cfg.mask !== wantMask) return { kind: "fallback", why: `ProductStore XML mask ${cfg.mask || "missing"} disagrees with ${wantMask}` };
+  }
+  const choice = chooseDonorFor(cfg, opts.units ?? SIM_UNITS);
+  return "refused" in choice ? { kind: "refused", why: choice.refused } : { kind: "donor", donor: choice.donor, rule: choice.rule };
+}
 
 // The donor of `appXml` by the rule of its mask, among `units`.
 export function chooseDonor(appXml: string, units: readonly SimUnitSpec[] = SIM_UNITS): DonorChoice {
