@@ -301,7 +301,7 @@ and none for what a device does; **reported** means another tool describes it an
 here. It is the lead for the next step, not a description of what Busforge sends. Nothing of it is
 implemented.
 
-| Step | In the 19 applications | Shown so far | What settles it |
+| Step | In the 17 applications | Shown so far | What settles it |
 | --- | --- | --- | --- |
 | A step on LSM 5 other than its task segment, System 7 (`FULL_DOWNLOAD_STEP_UNSUPPORTED`) | 0 | none | an ETS download of an application declaring one |
 | The PEI program (LSM 5) on System B: a segment of the application or a full-download step on it (`PEI_PROGRAM_UNSUPPORTED`), or hardware whose Hardware2Program names one (`HARDWARE_PEI_PROGRAM_UNSUPPORTED`, any full download) | 0; the private corpus holds real two-program hardware exports | reported, on a two-application Busch-Jaeger unit (MV-07B0): the mask's form that loads every program, unload 5 to 1, LSM 5 loaded and allocated (34 bytes, filled), device-object property writes in the middle of the load, the PEI segment written by memory write, the application id in object 5 PID 13, then the tables | an ETS download of a two-application System B unit |
