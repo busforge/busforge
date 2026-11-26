@@ -28,6 +28,13 @@ const TIMEOUT = 300_000;
 // internal/ets-download-record-deviations.md; a difference not listed here fails, and so does a listed
 // one that is gone.
 const KNOWN_DEVIATIONS = [
+  // Busforge isMerker() only checks Access="None", missing unplaced memoryless Access="Read" Merker P-68 (mission #692 ticket 21).
+  "theben-0103-unplaced-read-merker: M-0048_A-0103-11-72A2 object 3 at 10: Busforge 4b, ETS 00 (1 project)",
+  "theben-0103-unplaced-read-merker: M-0048_A-0103-11-72A2 object 3 at 11: Busforge 07, ETS 00 (1 project)",
+  "theben-0103-unplaced-read-merker: M-0048_A-0103-11-72A2 object 3 at 12: Busforge 13, ETS 00 (1 project)",
+  "theben-0103-unplaced-read-merker: M-0048_A-0103-11-72A2 object 3 at 13: Busforge 07, ETS 00 (1 project)",
+  "theben-0103-unplaced-read-merker: M-0048_A-0103-11-72A2 object 3 at 14: Busforge d3, ETS 00 (1 project)",
+  "theben-0103-unplaced-read-merker: M-0048_A-0103-11-72A2 object 3 at 15: Busforge 07, ETS 00 (1 project)",
   // ETS's record of the com-object table dates from a download when object 3 had no link, and was not
   // written again after the project linked it; ETS's own later download writes 0x4f for the linked object.
   "gvs-amma-object-3-record-older-than-its-link: M-0085_A-0072-30-69AA object 3 at 6: Busforge 4f, ETS 4b (1 project)",
@@ -39,6 +46,10 @@ const KNOWN_DEVIATIONS = [
 const NOT_COMPARED = [
   "M-0004_A-7072-21-99A7-O000A not loaded: links (1 project)",
   "M-0004_A-7072-21-99A7-O000A not loaded: parameters (2 projects)",
+  "M-0006_A-C016-10-A81B-O00C5 refused: PARAM_HIDDEN_UNSUPPORTED (1 project)",
+  "M-0073_A-204C-14-8903 refused: PARAM_HIDDEN_UNSUPPORTED (1 project)",
+  "M-0083_A-0004-32-A137 refused: PARAM_HIDDEN_UNSUPPORTED (1 project)",
+  "M-0085_A-002B-21-4744 refused: PARAM_HIDDEN_UNSUPPORTED (1 project)",
   "M-0085_A-0072-30-69AA not loaded: links (13 projects)",
 ];
 
@@ -114,7 +125,7 @@ corpusDescribe("ETS's download record in the corpus projects", () => {
   test("a device carries a record exactly where its application names LdCtrlLoadImageProp and ETS downloaded it", () => {
     const off = all.filter(({ d }) => !!d.loadedImage !== (d.declaresLoadImageProp === true && d.etsLoaded.application));
     expect(off.map(({ project, d }) => `${project} ${d.ia}`)).toEqual([]);
-    expectNoMismatch(countMismatches([{ what: "devices with ETS's download record", found: withRecord.length, pinned: 518, byProject: tally(withRecord.map((w) => w.project)) }]));
+    expectNoMismatch(countMismatches([{ what: "devices with ETS's download record", found: withRecord.length, pinned: 524, byProject: tally(withRecord.map((w) => w.project)) }]));
     expect(all.filter(({ d }) => !d.loadedImage && d.etsLoaded.application).length).toBeGreaterThan(100);
   });
 
@@ -143,9 +154,14 @@ corpusDescribe("ETS's download record in the corpus projects", () => {
     }
     expect(Object.fromEntries([...conventions].map(([app, by]) => [app, [...by]]))).toEqual({
       "M-0004_A-7072-21-99A7-O000A": ["CCITT"],
+      "M-0048_A-0103-11-72A2": ["CCITT-FALSE"],
       "M-0048_A-493B-21-B471": ["CCITT"],
+      "M-0073_A-204C-14-8903": ["CCITT"],
+      "M-0083_A-0004-32-A137": ["CCITT"],
       "M-0083_A-0137-20-7EB2": ["CCITT"],
+      "M-0085_A-002B-21-4744": ["CCITT"],
       "M-0085_A-0072-30-69AA": ["CCITT-FALSE"],
+      "M-00B6_A-0001-01-9BAE-O0184": ["CCITT"],
       "M-0162_A-0004-11-F245": ["CCITT"],
     });
     expect(regions).toBeGreaterThan(50);
@@ -190,13 +206,15 @@ corpusDescribe("ETS's download record in the corpus projects", () => {
     // The named lists are held to the canonical form too: sorted, one line per entry, the plural right.
     expect(counted(found.map((f) => f.what))).toEqual(pinnedDeviations);
     expect(counted(notCompared.map((f) => f.what))).toEqual(NOT_COMPARED);
-    // 502 compared records of 39 distinct device states (59994 bytes) across 518 records in all corpus projects
+    // 504 compared records of 41 distinct device states (62237 bytes) across 524 records in all corpus projects
     // (including the sweep rows' exports: each configured house export adds 16 records; JMG 4 T and RMG 8 T full
-    // downloads add 2 distinct states of 2513 bytes each; MV-0705 defaults exports declare no LdCtrlLoadImageProp).
+    // downloads add 2 distinct states of 2513 bytes each; the ticket 07 pilot adds 6 MV-07B0 records: 4 refused
+    // PARAM_HIDDEN_UNSUPPORTED and 2 compared distinct states: M-00B6_A-0001-01-9BAE-O0184 146 bytes and
+    // M-0048_A-0103-11-72A2 2097 bytes; MV-0705 defaults exports declare no LdCtrlLoadImageProp).
     const pinned: PinnedCount[] = [
-      { what: "compared records", found: comparedIn.length, pinned: 502, byProject: tally(comparedIn) },
-      { what: "distinct device states, each counted for the first project that shows it", found: distinctIn.length, pinned: 39, byProject: tally(distinctIn) },
-      { what: "bytes ETS marks as its own, over the distinct device states", found: [...bytesIn.values()].reduce((n, b) => n + b, 0), pinned: 59994, byProject: bytesIn },
+      { what: "compared records", found: comparedIn.length, pinned: 504, byProject: tally(comparedIn) },
+      { what: "distinct device states, each counted for the first project that shows it", found: distinctIn.length, pinned: 41, byProject: tally(distinctIn) },
+      { what: "bytes ETS marks as its own, over the distinct device states", found: [...bytesIn.values()].reduce((n, b) => n + b, 0), pinned: 62237, byProject: bytesIn },
     ];
     expectNoMismatch(countMismatches(pinned));
   }, TIMEOUT);
