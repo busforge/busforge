@@ -50,6 +50,10 @@ test("a batch resumes at the first row without a result and passes the finished 
   expect(ids(planBatch(out, rows, { kinds: ["driver-failed"] }).run)).toEqual(["M-0003", "M-0005"]);
   expect(ids(planBatch(out, rows, { kinds: ["driver-refused"] }).run)).toEqual(["M-0002", "M-0003", "M-0005"]);
   expect(ids(planBatch(out, rows, { kinds: ["driver-failed"], applications: ["M-0002_A-0002-11-BBBB"] }).run)).toEqual(["M-0002", "M-0003", "M-0005"]);
+  // An older batch result that recorded a refusal as driver-failed with `why` "refused: …" stays skipped by --rerun-failed too.
+  writeFileSync(join(rowDirOf(out, "M-0002_A-0002-11-BBBB"), RESULT_FILE), JSON.stringify({ ...result("M-0002_A-0002-11-BBBB", "driver-failed"), why: "refused: the product's plug-ins need ETS's compatibility mode" }));
+  expect(ids(planBatch(out, rows, { kinds: ["driver-failed"] }).run)).toEqual(["M-0003", "M-0005"]);
+  expect(ids(planBatch(out, rows, { kinds: ["driver-failed"], applications: ["M-0002_A-0002-11-BBBB"] }).run)).toEqual(["M-0002", "M-0003", "M-0005"]);
   expect(ids(planBatch(out, rows, { applications: ["M-0001_A-0001-11-AAAA"] }).run)).toEqual(["M-0001", "M-0003", "M-0005"]);
   // The stopped row's directory moved aside before it runs again, never deleted; an empty or missing one stays.
   const aside = clearRowDir(out, "M-0003_A-0003-11-CCCC", "t1");

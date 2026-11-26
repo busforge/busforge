@@ -1108,7 +1108,7 @@ HA_TOKEN=... BUSFORGE_CORPUS=... bun run tools/ets-driver.ts batch <catalogue-li
     screenshot; the dialog is closed (cancelled where it offers it, else Escape) or ETS restarted.
   - A bench host that does not answer over ssh (or drops a connection in the middle of a command), a
     KNX-ID login ETS asks for, an online catalogue that does not answer, an ETS that cannot be started
-    or brought back after a failure: the batch pauses, writes why, and ends with exit code 3; the row
+    or brought back after a failure, or an ETS running in compatibility mode (`ETS6C.exe`): the batch pauses, writes why, and ends with exit code 3; the row
     has no result and runs again on resume. The login is never worked around.
   - Anything else is the row's own failure: `driver-failed`.
 - **Second programs.** ETS downloads a hardware's PEI program with its application; such a row is driven

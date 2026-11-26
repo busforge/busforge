@@ -41,7 +41,7 @@ export interface RowResult {
   attempts: Attempt[];
   // The unit: an own unit's id, or the catalogue unit's donor.
   unit?: string;
-  // A full-resolution screenshot of the failure, a file of the row's directory.
+  // A full-resolution screenshot of the refusal or failure, a file of the row's directory.
   screenshot?: string;
 }
 
@@ -81,14 +81,15 @@ export function readResult(dir: string): RowResult | null {
 }
 
 // What the batch does with each row: run it (no result yet, or a rerun asked for its kind or its application), or
-// pass it with the result it has. driver-refused is its own kind, so a rerun of driver-failed passes it; naming the
-// row or its kind reruns it.
+// pass it with the result it has. driver-refused is its own kind, so a rerun of driver-failed passes it (and older
+// results that recorded a refusal as driver-failed with `why` "refused: …" too); naming the row or its kind reruns it.
 export interface Plan { run: ListRow[]; finished: { row: ListRow; result: RowResult }[] }
 export function planBatch(out: string, rows: ListRow[], rerun: { kinds?: RowKind[]; applications?: string[] } = {}): Plan {
   const plan: Plan = { run: [], finished: [] };
   for (const row of rows) {
     const result = readResult(rowDirOf(out, row.application));
-    const again = result && (rerun.kinds?.includes(result.kind) || rerun.applications?.includes(row.application));
+    const legacyRefused = result?.kind === "driver-failed" && result.why?.startsWith("refused:");
+    const again = result && ((rerun.kinds?.includes(result.kind) && !legacyRefused) || rerun.applications?.includes(row.application));
     if (result && !again) plan.finished.push({ row, result });
     else plan.run.push(row);
   }
@@ -152,7 +153,7 @@ const CATALOGUE = /Online-Katalog|Produktdownload|WebException|Katalog.{0,40}(?:
 // modified"), or ETS's own error report.
 const ETS_INTERNAL = /Sammlung wurde ge|Collection was modified|Exception|unerwartete[nr]? Fehler|Ein Fehler ist aufgetreten|Fehlerbericht|Unhandled/i;
 const ETS_GONE = /^ETS's window is gone/;
-// ETS that cannot be started or is not this driver's: nothing a row can change.
+// ETS that cannot be started, is not this driver's, or runs in compatibility mode (ETS6C.exe): nothing a row can change.
 const ETS_UNAVAILABLE = /ETS did not start:|ETS needs a restart|an ETS this driver did not start|another Xvfb serves|ETS not recovered|compatibility mode \(ETS6C\.exe\)/;
 
 // What a failure of a row means for the batch, from the driver's message.
