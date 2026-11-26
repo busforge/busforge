@@ -227,8 +227,8 @@ function words(png: string, region?: Region, opts: { scale?: number; psm?: numbe
 }
 
 // The text of a region read as one block, line by line.
-function textLines(png: string, region: Region, scale = OCR_SCALE): string[] {
-  return tesseract(png, region, scale, 6, false).split("\n").map((l) => l.trim()).filter(Boolean);
+function textLines(png: string, region: Region, scale = OCR_SCALE, prep?: Prep): string[] {
+  return tesseract(png, region, scale, 6, false, prep).split("\n").map((l) => l.trim()).filter(Boolean);
 }
 
 // OCR reads umlauts unreliably ("hinzufiigen"); words are compared without them.
@@ -745,9 +745,11 @@ export const propertiesTab = reader("propertiesTab", (png: string, name: string)
 });
 
 // The label/value table under the properties panel's tab `tab`, line by line: read as one block (word by word, OCR
-// drops the dot in "1.1"), at three times its size: at two OCR reads "$493B" as "3493B" and "B471" as "B4a71".
+// drops the dot in "1.1"), at three times its size and thresholded to black and white ("binary"): at two OCR reads
+// "$493B" as "3493B" and "B471" as "B4a71"; on antialiased grey text at three it still misreads "$A0AA" as "SAOAA,",
+// "$B00D" as "$BO00D" and "$134A" as "$1344".
 export const propertiesTable = reader("propertiesTable", (png: string, tab: Box): string[] => {
-  return textLines(png, { x: AT.properties.x, y: tab.y + 20, w: AT.properties.w, h: 200 }, 3);
+  return textLines(png, { x: AT.properties.x, y: tab.y + 20, w: AT.properties.w, h: 200 }, 3, "binary");
 });
 
 // The value of a properties table's line that begins with `label`, or null.

@@ -132,7 +132,7 @@ corpusTest("the properties panel of a catalogue row: its tabs, the order number,
   expect(app(screen("tree-line-selected-device-below"))).toEqual(["ABB AG - STOTZ-KONTAKT", "$0806", "3.0", "CC72"]);
   expect(app(screen("properties-fingerprint-leading-zero"))).toEqual(["GIRA Giersiepen", "$5014", "1.1", "0883"]);
   expect(app(screen("properties-hex-values"))).toEqual(["GEWISS", "$5222", "1.2", "B809"]);
-  // Two fingerprints OCR misreads at every scale and preparation tried ("1634" for 163A, "DCc3s0" for DC90): the
+  // Two fingerprints OCR has misread ("1634" for 163A without binary thresholding, "DCc90" for DC90): the
   // manufacturer, device type and version read exactly, and the fingerprint read stays closer to the application's
   // than to another application's at the same type and version ("EEEE", 4 edits from either), so pickCatalogueRow
   // takes the row (what was inserted is then checked on the project's export). A fingerprint read as nothing would
