@@ -16,10 +16,11 @@ import { tempDir } from "../../../tools/test-temp.ts";
 // Two-application hardware: a Hardware2Program that names a PEI program next to the application (the
 // schema allows two ApplicationProgramRefs). No full download of Busforge loads a PEI program, the System B
 // one unloads it first (rule R9), so the import records the hardware's PEI program and the full download
-// is refused before anything is queued. No product of the private corpus has one: the hardware here is
-// synthetic, laid over the public sample project. Its Hardware2Program id takes the form such hardware has,
-// carrying both programs' parts, so it names neither: the application is found from the
-// ApplicationProgramRef whose program declares ProgramType="ApplicationProgram".
+// is refused before anything is queued. The hardware here is synthetic, laid over the public sample project
+// (real two-program exports of the private corpus are verified for application resolution in
+// tools/hardware-applications.test.ts). Its Hardware2Program id takes the form such hardware has, carrying
+// both programs' parts, so it names neither: the application is found from the ApplicationProgramRef whose
+// program declares ProgramType="ApplicationProgram".
 
 const sample = readFileSync(join(import.meta.dir, "..", "..", "..", "packages", "project", "test", "fixtures", "sample-config.knxproj"));
 const PASSWORD = "tester12";

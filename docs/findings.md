@@ -104,7 +104,7 @@ Key relations in `0.xml`:
   allows a second one, the PEI program of two-application hardware; the programs tell the two apart
   by their required `ProgramType` (`ApplicationProgram`, `PeiProgram`), their order does not. The
   Hardware2Program id (`…_HP-<application>`) repeats the application's id on one-program hardware
-  only: two-program hardware is reported to carry both programs' parts in it.
+  only: two-program hardware carries both programs' parts in it.
 
 **What ETS last downloaded, per device.** A `DeviceInstance` carries five load flags:
 `IndividualAddressLoaded`, `MediumConfigLoaded`, `ApplicationProgramLoaded`, `ParametersLoaded` and
