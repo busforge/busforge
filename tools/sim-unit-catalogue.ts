@@ -10,8 +10,9 @@
 // its captures show it (its serial, order info, hardware type where nothing above names one, descriptions, segment
 // places, load states, restart, link timing). What neither gives is refused, never filled in: a property the product
 // gives only some bits of and the donor never showed, a value longer than the donor's element with bits set past it, a
-// value given whole and shorter than the donor's element, a segment the donor places nowhere (the simulator refuses it
-// when it comes). Every answer carries its source in the simulator's log (tools/sim-unit.ts AnswerSources).
+// value given whole and shorter than the donor's element, a segment the donor places nowhere or cannot fit (checked
+// up front by the MV-07B0 donor rule, and by the simulator for anything else when it comes). Every answer carries its
+// source in the simulator's log (tools/sim-unit.ts AnswerSources).
 //
 // The donor is chosen by one rule per mask (DONOR_RULES), never per product, from the own units there are: one that
 // cannot show what a download of the application needs of its unit does not qualify, and of those that do the one
@@ -21,9 +22,9 @@ import { readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { declaredPropMatches, MM_STATUS_BASE, PID } from "../packages/knx/src/index.ts";
 import { extractAppPrograms } from "../packages/project/src/index.ts";
-import { closingSteps, declaredPropChecks, flattenSteps, lsmIdx, maskInfo, parseAppConfig, programIdStamp, stepSize } from "../packages/product/src/index.ts";
+import { buildDeviceConfig, closingSteps, declaredPropChecks, initialValues, lsmIdx, maskInfo, parseAppConfig, programIdStamp, resolveModuleInstances, stepSize } from "../packages/product/src/index.ts";
 import { catalogueXml, corpusPath } from "./corpus.ts";
-import { MEMORY_END, type AnswerSources, type SimProperty, type SimUnit, type SimUnitCoreModel } from "./sim-unit.ts";
+import { MEMORY_END, MEMORY_EXT_END, segmentAllocationRefusal, type AnswerSources, type SimProperty, type SimUnit, type SimUnitCoreModel } from "./sim-unit.ts";
 import type { AdditionalControl } from "./sim-unit-0701.ts";
 import { APPLICATION_LSM as PROPERTY_MAPPED_APPLICATION_LSM, declaredSegments, declaredTaskForms, declaredTasks, fullSteps, PLACE_TEXT, type DeclaredTaskForms, type DeclaredTasks } from "./sim-unit-0705.ts";
 import { productUnit, rerunIdentity, type IdentityValue, type Mismatch, type ProductUnit } from "./sim-unit-product.ts";
@@ -82,27 +83,37 @@ export const DONOR_RULES: Record<Mask, string> = {
 };
 
 const ADDITIONAL_VERBS: Record<string, AdditionalControl> = { LdCtrlAbsSegment: "absolute-segment", LdCtrlTaskSegment: "task-segment", LdCtrlTaskCtrl1: "task-control-1" };
-const MEMORY_EXT_END = 0x1000000;
 
 type AppConfig = ReturnType<typeof parseAppConfig>;
 type Needs = { basic: boolean; confirmed: boolean; extendedWrite: boolean; controlAfterUnload: boolean; loadImage: { obj: number; pid: number }[]; additional: AdditionalControl[]; relSegments: { lsm: number; size: number }[] } & DeclaredTaskForms;
 const NO_TASKS: DeclaredTaskForms = { taskPlaces: [], taskControls1: [] };
 
-// The System B relative segment sizes a full download allocates: each declared LdCtrlRelSegment with a positive size,
-// and the com-object table on object 3 (2 + 2 * max com-object number, buildComObjectTable).
-function systemBSegments(cfg: AppConfig): { lsm: number; size: number }[] | string {
+// The System B relative segment sizes a full download allocates: every declared LdCtrlRelSegment (including Size="0",
+// which allocate() also refuses) and the com-object table on object 3 (2 + 2 * maxComObjectNumber, including module
+// instances via buildDeviceConfig when the application has modules).
+function systemBSegments(cfg: AppConfig, steps: ReturnType<typeof fullSteps>): { lsm: number; size: number }[] | string {
   const sizes = new Map<number, number>();
-  for (const s of flattenSteps(cfg.loadProcedures, "full")) {
+  for (const s of steps) {
     if (s.verb !== "LdCtrlRelSegment") continue;
-    const lsm = s.attrs.LsmIdx === undefined ? 4 : lsmIdx(s);
-    const size = stepSize(s);
-    if (lsm === undefined) return `the load procedure declares LdCtrlRelSegment LsmIdx="${s.attrs.LsmIdx}", which is not an unsigned decimal number; refusing to read a value from it`;
-    if (size === undefined) return `the load procedure declares LdCtrlRelSegment Size="${s.attrs.Size ?? ""}", which is not an unsigned decimal number; refusing to read a value from it`;
-    if (size > 0) sizes.set(lsm, Math.max(sizes.get(lsm) ?? 0, size));
+    let lsm: number, size: number | undefined;
+    try {
+      lsm = s.attrs.LsmIdx === undefined ? 4 : lsmIdx(s)!;
+      size = stepSize(s);
+    } catch (e) { return (e as Error).message; }
+    if (size === undefined) return "the load procedure declares LdCtrlRelSegment without Size";
+    sizes.set(lsm, Math.max(sizes.get(lsm) ?? -1, size));
   }
   let maxCo = 0;
-  for (const co of cfg.comObjects.values()) if (co.number > maxCo) maxCo = co.number;
-  if (maxCo > 0) sizes.set(3, Math.max(sizes.get(3) ?? 0, 2 + 2 * maxCo));
+  if (cfg.hasModules) {
+    try {
+      const base = initialValues(cfg);
+      const built = buildDeviceConfig(cfg, base, undefined, resolveModuleInstances(cfg, base));
+      maxCo = Math.max(built.maxComObjectNumber, ...built.imageComObjects.keys());
+    } catch (e) { return (e as Error).message; }
+  } else {
+    for (const co of cfg.comObjects.values()) if (!co.baseNumber && co.number > maxCo) maxCo = co.number;
+  }
+  if (maxCo > 0) sizes.set(3, Math.max(sizes.get(3) ?? -1, 2 + 2 * maxCo));
   return [...sizes].sort(([a], [b]) => a - b).map(([lsm, size]) => ({ lsm, size }));
 }
 
@@ -122,9 +133,9 @@ function needs(cfg: AppConfig): Needs | string {
   const systemB = cfg.mask === "MV-07B0";
   let loadImage: Needs["loadImage"];
   try { loadImage = closingSteps(proc, "full").flatMap((c) => (c.kind === "read" ? [{ obj: c.obj, pid: c.pid }] : [])); } catch (e) { return (e as Error).message; }
-  const relSegments = systemB ? systemBSegments(cfg) : [];
-  if (typeof relSegments === "string") return relSegments;
   const steps = fullSteps(proc);
+  const relSegments = systemB ? systemBSegments(cfg, steps) : [];
+  if (typeof relSegments === "string") return relSegments;
   const forms = cfg.mask === "MV-0705" ? taskForms(steps) : NO_TASKS;
   if (typeof forms === "string") return forms;
   const unloadsApplication = steps.some((s) => s.verb === "LdCtrlUnload" && s.attrs.LsmIdx === String(PROPERTY_MAPPED_APPLICATION_LSM));
@@ -170,25 +181,16 @@ function collectedProperty(u: SimUnitSpec, key: string): Shown {
   return shown.get(key) ?? "not read";
 }
 
-// How many bytes each System B segment of `u` can grow to before it reaches another segment or the end of `u`'s
-// memory services (tools/sim-unit.ts allocate).
-const donorRooms = new WeakMap<SimUnitSpec, Map<number, { at: number; room: number }>>();
-function segmentRooms(u: SimUnitSpec): Map<number, { at: number; room: number }> {
-  let rooms = donorRooms.get(u);
-  if (!rooms) {
-    rooms = new Map();
+// A System B donor's segment map from its model, cached per spec for segmentAllocationRefusal.
+const donorSegments = new WeakMap<SimUnitSpec, ReadonlyMap<number, { at: number; size: number }>>();
+function systemBDonorSegments(u: SimUnitSpec): ReadonlyMap<number, { at: number; size: number }> {
+  let segs = donorSegments.get(u);
+  if (!segs) {
     const m = unitModel(u);
-    if (m.kind === "system-b") {
-      const limit = u.behaviour.memoryExtendedWrite ? MEMORY_EXT_END : MEMORY_END;
-      const segs = [...m.model.segments.entries()];
-      for (const [lsm, seg] of segs) {
-        const next = Math.min(limit, ...segs.filter(([o, s]) => o !== lsm && s.at >= seg.at).map(([, s]) => s.at));
-        rooms.set(lsm, { at: seg.at, room: Math.max(0, next - seg.at) });
-      }
-    }
-    donorRooms.set(u, rooms);
+    segs = m.kind === "system-b" ? m.model.segments : new Map();
+    donorSegments.set(u, segs);
   }
-  return rooms;
+  return segs;
 }
 
 // Why `u` cannot be the donor of a download with these needs, or null.
@@ -202,11 +204,12 @@ function unfit(u: SimUnitSpec, need: Needs): string | null {
   const stops = u.propertyMapped ? u.propertyMapped.unloadStopsApplication : "unloadStopsApplication" in b ? b.unloadStopsApplication : undefined;
   if (need.controlAfterUnload && stops === null) return "its captures show no device control after its application's unload, which decides whether its A_Memory_Write is echoed";
   if (need.relSegments.length) {
-    const rooms = segmentRooms(u);
+    const segs = systemBDonorSegments(u);
+    // Without extended memory services ETS writes with 16-bit A_Memory_Write, capped at MEMORY_END regardless of donor.
+    const memoryLimit = need.extendedWrite && b.memoryExtendedWrite ? MEMORY_EXT_END : MEMORY_END;
     for (const { lsm, size } of need.relSegments) {
-      const r = rooms.get(lsm);
-      if (!r) return `its model places no segment of object ${lsm}`;
-      if (size > r.room) return `its segment of object ${lsm} at 0x${r.at.toString(16)} has room for ${r.room} bytes, the application needs ${size}`;
+      const refused = segmentAllocationRefusal(segs, lsm, size, memoryLimit, true);
+      if (refused) return `segment of object ${lsm}: ${refused}`;
     }
   }
   // Whether it answers the property, not how many elements: those the simulator computes from the download's

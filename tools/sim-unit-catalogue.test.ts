@@ -8,7 +8,7 @@ import { corpusDescribe } from "./corpus-test.ts";
 import { captureLData } from "./etsdiff.ts";
 import { etsBranches, rowUnit, ROW_FORMAT, SWEEP_DIR, type RowSpec } from "./ets-sweep.ts";
 import { tempDir } from "./test-temp.ts";
-import type { SimUnit } from "./sim-unit.ts";
+import { segmentAllocationRefusal, type SimUnit } from "./sim-unit.ts";
 import type { SystemBBehaviour, UnitBehaviour } from "./sim-unit-model.ts";
 import { catalogueUnit, catalogueUnitRecord, catalogueUnitSpec, chooseDonor, donorDigest, donorUnfit, DONOR_RULES, learnIdentity, unitMask, type CatalogueUnitSpec } from "./sim-unit-catalogue.ts";
 import { mismatchLines } from "./sim-unit-product.ts";
@@ -60,7 +60,7 @@ corpusDescribe("a catalogue unit's donor", () => {
       // A System B download with Data Secure ends with the confirmed restart: of the units that show it, the MIX 2's and
       // the Jung's applications change their memory after a restart, and the GVS AMMA's object 3 has room for 2130 bytes
       // while the Jung 400021SE's com-object table needs 2656.
-      ["M-0004_A-7072-21-99A7-O000A", "no donor for MV-07B0: meanwell-knx40e: its captures show no confirmed restart; theben-dali-gateway: its captures show no confirmed restart; openknx-raumcontroller: its captures show no confirmed restart; theben-mix2-hmg6t: its application changes its memory after a restart; jung-400021se: its application changes its memory after a restart; gvs-amma: its segment of object 3 at 0x3774 has room for 2130 bytes, the application needs 2656; theben-mix2-jmg4t: its application changes its memory after a restart; theben-mix2-rmg8t: its application changes its memory after a restart"],
+      ["M-0004_A-7072-21-99A7-O000A", "no donor for MV-07B0: meanwell-knx40e: its captures show no confirmed restart; theben-dali-gateway: its captures show no confirmed restart; openknx-raumcontroller: its captures show no confirmed restart; theben-mix2-hmg6t: its application changes its memory after a restart; jung-400021se: its application changes its memory after a restart; gvs-amma: segment of object 3: 2656 bytes at 0x3774 reach into the segment of object 4; where the unit places them then is not known; theben-mix2-jmg4t: its application changes its memory after a restart; theben-mix2-rmg8t: its application changes its memory after a restart"],
       // An MV-0705 application declaring a task control 1 and a task segment that starts no segment: the Auro shows
       // the task segment at the end of a segment and a task control 1 of count 0 at address 0, the theLuxa P300 the
       // task segment inside a segment and a task control 1 of count 1 at an address inside a segment; the Gira's
@@ -91,7 +91,20 @@ corpusDescribe("a catalogue unit's donor", () => {
   test("takes a new own unit without a change of the rule, and refuses a mask none fits", () => {
     const app = catalogueXml("M-0048_A-9071-20-F258-O00EF.xml.gz");
     // The MEAN WELL's object 3 has room for 74 bytes only, so the rule rejects it for the 2688-byte DALI-Gateway table.
-    expect(donorUnfit(MEANWELL_KNX40E, app)).toBe("its segment of object 3 at 0x1c06 has room for 74 bytes, the application needs 2688");
+    expect(donorUnfit(MEANWELL_KNX40E, app)).toBe("segment of object 3: 2688 bytes at 0x1c06 reach into the segment of object 4; where the unit places them then is not known");
+    // Declared Size="0" on LdCtrlRelSegment is refused up front just as allocate() refuses it.
+    const mwZero = catalogueXml("M-0162_A-0004-11-F245.xml.gz").replaceAll('Size="212"', 'Size="0"');
+    expect(donorUnfit(MEANWELL_KNX40E, mwZero)).toBe("segment of object 4: 0 bytes at 0x1c50 do not fit the unit's memory services");
+    // A modular System B application sizes object 3 from its resolved module instances (BaseNumber + local Number),
+    // not raw declaration numbers: BaseNumber 38 gives com-object 38 -> 78 bytes, past MEAN WELL's 74-byte room.
+    const modular = `<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0001"><ApplicationPrograms><ApplicationProgram Id="M-0001_A-0001-10-0001" ApplicationNumber="1" ApplicationVersion="16" ProgramType="ApplicationProgram" MaskVersion="MV-07B0" Name="Mod" LoadProcedureStyle="MergedProcedure" DefaultLanguage="en-US"><Static><Code><RelativeSegment Id="M-0001_A-0001-10-0001_RS-04-00000" Name="P" Size="16" LoadStateMachine="4"/></Code><LoadProcedures><LoadProcedure MergeId="2"><LdCtrlRelSegment LsmIdx="4" Size="16" Mode="1" Fill="0" AppliesTo="full"/></LoadProcedure></LoadProcedures></Static><ModuleDefs><ModuleDef Id="M-0001_A-0001-10-0001_MD-1" Name="M"><Arguments><Argument Id="M-0001_A-0001-10-0001_MD-1_A-1" Name="Base" Allocates="1"/></Arguments><Static><ComObjectTable><ComObject Id="M-0001_A-0001-10-0001_MD-1_O-1" Name="O" Number="0" BaseNumber="M-0001_A-0001-10-0001_MD-1_A-1" Text="O" FunctionText="O" ObjectSize="1 Bit" ReadFlag="Disabled" WriteFlag="Enabled" CommunicationFlag="Enabled" TransmitFlag="Disabled" UpdateFlag="Disabled"/></ComObjectTable><ComObjectRefs><ComObjectRef Id="M-0001_A-0001-10-0001_MD-1_O-1_R-1" RefId="M-0001_A-0001-10-0001_MD-1_O-1"/></ComObjectRefs></Static><Dynamic><ChannelIndependentBlock><ParameterBlock Id="M-0001_A-0001-10-0001_MD-1_PB-1" Name="B"><ComObjectRefRef RefId="M-0001_A-0001-10-0001_MD-1_O-1_R-1"/></ParameterBlock></ChannelIndependentBlock></Dynamic></ModuleDef></ModuleDefs><Dynamic><Module Id="M-0001_A-0001-10-0001_M-1" RefId="M-0001_A-0001-10-0001_MD-1"><NumericArg RefId="M-0001_A-0001-10-0001_MD-1_A-1" Value="38"/></Module></Dynamic></ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+    expect(donorUnfit(MEANWELL_KNX40E, modular)).toBe("segment of object 3: 78 bytes at 0x1c06 reach into the segment of object 4; where the unit places them then is not known");
+    expect(donorUnfit(THEBEN_DALI_GATEWAY, modular)).toBeNull();
+    // Shared segmentAllocationRefusal handles both lower overlapping segments and zero-size neighbours at the same start.
+    const sameStart = new Map([[1, { at: 0x1000, size: 0 }], [2, { at: 0x1000, size: 0 }]]);
+    expect(segmentAllocationRefusal(sameStart, 1, 16, 0x10000, true)).toBeNull();
+    const lowerOverlap = new Map([[1, { at: 0x1000, size: 64 }], [2, { at: 0x1010, size: 16 }]]);
+    expect(segmentAllocationRefusal(lowerOverlap, 2, 16, 0x10000, true)).toContain("reach into the segment of object 1");
     // A further MV-07B0 unit whose captures show its programming mode and its serial-number answer: fewer unshown.
     const dali = THEBEN_DALI_GATEWAY.behaviour as SystemBBehaviour;
     const shown: SimUnitSpec = { ...THEBEN_DALI_GATEWAY, id: "a-unit-showing-more", behaviour: { ...dali, programmingMode: false, serialNumberResponseTail: Buffer.alloc(4) } };

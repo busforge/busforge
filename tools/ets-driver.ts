@@ -722,22 +722,26 @@ export interface CatalogueEntry { orderNumber?: string; version: string; deviceT
 async function readCatalogueEntry(s: Screen): Promise<CatalogueEntry> {
   await showProperties(s);
   let t = propertiesTab(s.snap(), "Applikation");
-  if (!t) {
-    xdo("mousemove", "1750", "400", "click", "--repeat", "15", "4");
+  const scrollX = String(AT.properties.x + Math.round(AT.properties.w / 2)), scrollY = String(AT.properties.y + 300);
+  for (let i = 0; !t && i < 4; i++) {
+    xdo("mousemove", "--sync", scrollX, scrollY, "click", "--repeat", "15", "4");
     await sleep(500);
-    t = propertiesTab(s.snap(), "Applikation") ?? fail("the properties panel shows no Applikation tab for the catalogue row");
+    t = propertiesTab(s.snap(), "Applikation");
   }
-  click(t.cx, t.cy);
+  const tab = t ?? fail("the properties panel shows no Applikation tab for the catalogue row");
+  click(tab.cx, tab.cy);
   await sleep(1500);
-  const app = propertiesTable(s.snap(), t);
+  const app = propertiesTable(s.snap(), tab);
   const value = (lines: string[], label: string) => propertyValue(lines, label) ?? fail(`the properties panel shows no ${label} for the catalogue row`);
   return { manufacturer: value(app, "Hersteller"), deviceType: value(app, "Gerätetyp"), version: value(app, "Programmversion"), fingerprint: value(app, "Fingerprint") };
 }
 
 // The properties panel's tab `name` (Katalog, Applikation). A product picture beside the tabs cuts OCR's reading of
-// their names short ("Katal"): found by their start.
+// their names short ("Katal"): found as a prefix of `name` at least 5 characters long, so longer description words
+// ("Applikationsprogramm") scrolled into the top of the panel never match.
 export const propertiesTab = reader("propertiesTab", (png: string, name: string): Box | null => {
-  return findText(words(png, AT.properties), name.slice(0, 5)).find((b) => b.y < 165) ?? null;
+  const want = norm(name);
+  return findText(words(png, AT.properties), name.slice(0, 5)).find((b) => b.y < 165 && want.startsWith(norm(b.text))) ?? null;
 });
 
 // The label/value table under the properties panel's tab `tab`, line by line: read as one block (word by word, OCR
@@ -1009,7 +1013,7 @@ async function insertProduct(s: Screen, dir: string, orderNumber: string, applic
   }
   const picked = pickCatalogueRow(entries, orderNumber, applicationId, manufacturer);
   if ("refused" in picked) return fail(`${picked.refused}${unread}`);
-  console.log(`inserting the catalogue row read as ${picked.hit.manufacturer ?? "?"} ${picked.hit.orderNumber ?? orderNumber} ${picked.hit.deviceType} ${picked.hit.version} ${picked.hit.fingerprint}`);
+  console.log(`inserting the catalogue row read as ${picked.hit.manufacturer ?? "?"}${picked.hit.orderNumber ? ` ${picked.hit.orderNumber}` : ""} ${picked.hit.deviceType} ${picked.hit.version} ${picked.hit.fingerprint}`);
   if (picked.rows > 1) console.log(`${picked.rows} catalogue rows under order number ${orderNumber} run ${applicationId}: the first inserted`);
   if (!picked.exact) console.log(`the catalogue row inserted reads its fingerprint as ${picked.hit.fingerprint}, not ${catalogueIdentity(applicationId).fingerprint}: what it runs is checked after the insert`);
   const hit = picked.hit;

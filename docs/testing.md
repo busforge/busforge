@@ -717,7 +717,7 @@ A value is put over the donor's element bit by bit, at the donor's length; bits 
 shorter answer with a zero tail). What neither source gives is refused, never filled in: a property the product
 gives only some bits of and the donor never showed, a value longer than the donor's element with bits set past it,
 a value given whole and shorter than the donor's element (what the unit answers after it nobody gave), a segment
-the donor places nowhere, a task segment for another application than the product's. The unit answers
+the donor places nowhere or cannot fit, a task segment for another application than the product's. The unit answers
 the product's program id as the application it holds, as each donor answered its own when it was collected; its
 memory and segments at the start are the donor's application's (what an MV-0701 download reads before it writes).
 
@@ -731,7 +731,9 @@ count alone where the unit's captures show what the block reports after a load; 
 simulator computes from the download's segments, and a read past them it refuses. On MV-07B0 its captures
 must also show `A_MemoryExtended_Write` where the application declares extended memory services (ETS writes its
 memory so), and where it declares none, its device control after its application's unload (the memory is then
-written with `A_Memory_Write`, which the unit echoes in the verify mode that octet holds); on MV-0701 it must take
+written with `A_Memory_Write`, which the unit echoes in the verify mode that octet holds), and its segment layout
+and memory reach must hold the application's declared relative segments and com-object table without overlapping
+another segment; on MV-0701 it must take
 every additional load control the application declares; on MV-0705 its captures must show its device control after
 its application's unload where the full download unloads it (the memory is always written with `A_Memory_Write`),
 each task control 1 the application declares (of its machine and count, its address 0 or at the same place against the segments) and each
@@ -744,9 +746,10 @@ A mask without a qualifying unit refuses the row, naming each unit and why. With
 
 | Mask | Donor | Why the others do not qualify, or rank lower |
 |---|---|---|
-| MV-07B0 without Data Secure or extended memory services | MEAN WELL KNX-40E-1280D | the Theben DALI-Gateway leaves more unshown; the OpenKNX RaumController shows no device control after its application's unload; the Theben MIX 2, the Jung 400021SE and the GVS AMMA show no basic restart |
-| MV-07B0 with extended memory services, without Data Secure | OpenKNX RaumController | the MEAN WELL and the Theben DALI-Gateway show no `A_MemoryExtended_Write`; the Theben MIX 2, the Jung 400021SE and the GVS AMMA show no basic restart |
-| MV-07B0 with Data Secure and extended memory services | GVS AMMA-04/06.S | the Theben MIX 2 and the Jung 400021SE change their memory after a restart; the others show no confirmed restart |
+| MV-07B0 without Data Secure or extended memory services (com-object table ≤ 74 B) | MEAN WELL KNX-40E-1280D | the Theben DALI-Gateway leaves more unshown; the OpenKNX RaumController shows no device control after its application's unload; the Theben MIX 2, the Jung 400021SE and the GVS AMMA show no basic restart |
+| MV-07B0 without Data Secure or extended memory services (com-object table > 74 B, ≤ 4,096 B; parameter segment ≤ 45,056 B) | Theben DALI-Gateway | the MEAN WELL's object 3 has room for 74 B only; the OpenKNX RaumController shows no device control after its application's unload; the others show no basic restart |
+| MV-07B0 with extended memory services, without Data Secure (com-object table ≤ 2,720 B, parameter segment ≤ 21,604 B) | OpenKNX RaumController | the MEAN WELL and the Theben DALI-Gateway show no `A_MemoryExtended_Write`; the Theben MIX 2, the Jung 400021SE and the GVS AMMA show no basic restart |
+| MV-07B0 with Data Secure and extended memory services (com-object table ≤ 2,130 B) | GVS AMMA-04/06.S | the Theben MIX 2 and the Jung 400021SE change their memory after a restart; the others show no confirmed restart |
 | MV-07B0 with Data Secure, without extended memory services | none | the GVS AMMA shows no device control after its application's unload; the Theben MIX 2 and the Jung 400021SE change their memory after a restart; the others show no confirmed restart |
 | MV-0701 | ABB US/U 4.2 | the Theben Meteodata 140 S clears a download marker at its restart; an application that declares task control 1 has no donor |
 | MV-0705 without a task control 1 or a closing read of the memory-control blocks, every task segment at the start of a declared segment | MDT BE-02001.02 | the Auro presence detector, the Theben theLuxa P300 and the MDT BE-06001 leave more unshown (four answers to its three); the Gira Tastsensor 3 shows no device control after its application's unload |

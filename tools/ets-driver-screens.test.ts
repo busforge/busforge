@@ -147,8 +147,9 @@ corpusTest("the properties panel of a catalogue row: its tabs, the order number,
     const other = { ...entry, fingerprint: "EEEE" };
     expect(pickCatalogueRow([other, entry], "?", application)).toMatchObject({ hit: entry, rows: 1 });
   }
-  // The panel still on line 1.1 (a click that did not select the catalogue row): no Katalog tab.
+  // The panel still on line 1.1 (a click that did not select the catalogue row): no Katalog or Applikation tab.
   expect(propertiesTab(screen("tabs-one-project-line-collapsed"), "Katalog")).toBeNull();
+  expect(propertiesTab(screen("tabs-one-project-line-collapsed"), "Applikation")).toBeNull();
 }, OCR_TIMEOUT);
 
 corpusTest("ETS's dialogs: its compatibility warning, after the insert and at the download, and none where it shows none", () => {

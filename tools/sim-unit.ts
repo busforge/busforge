@@ -49,7 +49,19 @@ const A_RESTART_RESPONSE = 0x3a0;
 const PRIORITY_BITS = 0x0c, STANDARD_FRAME = 0x80, STANDARD_TPDU_MAX = 16, GROUP_ADDRESS = 0x80;
 // The reach of the memory services: A_Memory_Read/Write a 16-bit address, A_MemoryExtended_Read/Write a 24-bit one.
 export const MEMORY_END = 0x10000;
-const MEMORY_EXT_END = 0x1000000;
+export const MEMORY_EXT_END = 0x1000000;
+
+// Why allocating `size` octets for relative segment `obj` in `segments` under `memoryLimit` is refused, or null.
+// `emptyOccupiesStart`: for pre-download donor eligibility (tools/sim-unit-catalogue.ts), a zero-sized initial segment
+// of another object still reserves its start address once that object is allocated.
+export function segmentAllocationRefusal(segments: ReadonlyMap<number, { at: number; size: number }>, obj: number, size: number, memoryLimit: number, emptyOccupiesStart = false): string | null {
+  const seg = segments.get(obj);
+  if (!seg) return `where the unit places a segment of object ${obj} is not known`;
+  const other = [...segments].find(([lsm, s]) => lsm !== obj && (s.size > 0 ? seg.at < s.at + s.size && s.at < seg.at + size : emptyOccupiesStart && s.at > seg.at && s.at < seg.at + size));
+  if (other) return `${size} bytes at 0x${seg.at.toString(16)} reach into the segment of object ${other[0]}; where the unit places them then is not known`;
+  if (size === 0 || seg.at + size > memoryLimit) return `${size} bytes at 0x${seg.at.toString(16)} do not fit the unit's memory services`;
+  return null;
+}
 // KNX 3/3/4: a transport connection that carries nothing for 6 s is closed by the device.
 const CONNECTION_TIMEOUT_MS = 6_000;
 // KNX 3/3/4: a numbered frame is acknowledged within 3 s.
@@ -772,12 +784,15 @@ export class SimUnit implements KnxTransport {
   // would reach into another segment is not shown and refused. Mode 1 fills the segment with the fill byte;
   // mode 0 keeps the bytes it held, and a grown segment's new octets are unknown until written.
   private allocate(obj: number, size: number, mode: number, fill: number, what: string): boolean {
-    const seg = this.segments.get(obj);
-    if (!seg) { this.refuse(`${what}: where the unit places a segment of object ${obj} is not known`); return false; }
-    const other = [...this.segments].find(([lsm, s]) => lsm !== obj && seg.at < s.at + s.size && s.at < seg.at + size);
-    if (other) { this.refuse(`${what}: ${size} bytes at 0x${seg.at.toString(16)} reach into the segment of object ${other[0]}; where the unit places them then is not known`); return false; }
-    if (mode !== 0 && mode !== 1) { this.refuse(`${what}: allocation mode ${mode}`); return false; }
-    if (size === 0 || seg.at + size > (this.model.memoryExtendedWrite ? MEMORY_EXT_END : MEMORY_END)) { this.refuse(`${what}: ${size} bytes at 0x${seg.at.toString(16)} do not fit the unit's memory services`); return false; }
+    if (mode !== 0 && mode !== 1) {
+      const pre = segmentAllocationRefusal(this.segments, obj, size, MEMORY_EXT_END);
+      if (pre && !pre.endsWith("do not fit the unit's memory services")) { this.refuse(`${what}: ${pre}`); return false; }
+      this.refuse(`${what}: allocation mode ${mode}`);
+      return false;
+    }
+    const refused = segmentAllocationRefusal(this.segments, obj, size, this.model.memoryExtendedWrite ? MEMORY_EXT_END : MEMORY_END);
+    if (refused) { this.refuse(`${what}: ${refused}`); return false; }
+    const seg = this.segments.get(obj)!;
     const bytes = Buffer.alloc(size, fill), known = new Uint8Array(size).fill(mode);
     if (mode === 0) { seg.bytes.copy(bytes, 0, 0, Math.min(size, seg.size)); known.set(seg.known.subarray(0, Math.min(size, seg.size))); }
     Object.assign(seg, { size, bytes, known });
