@@ -319,12 +319,18 @@ export interface AbsStructuralFlashPlan { plan: LoadPlan; changedBytes: number; 
 // B's short/long settings). Only bits a baseline parameter owned and verifies are taken
 // this way, so a byte no parameter derives (a text, a value the codec cannot encode) and an
 // Access="None" parameter the device stamps are never reset, and every bit taken is verified.
+export interface Mv0705ComObjectTable {
+  active: Map<number, CfgComObjImage>;
+  linked: ReadonlySet<number>;
+  maxDeclared: number | null;
+}
+
 export function absoluteStructuralImages(
   app: AppConfig,
   values: Map<string, string>,
   links: ComObjectLink[],
   ownIa: number,
-  opts: { baseValues: Map<string, string>; baseInstances?: ModuleInstance[]; moduleInstances?: ModuleInstance[]; comObjectTable: { active: Map<number, CfgComObjImage>; linked: ReadonlySet<number>; maxDeclared: number | null } },
+  opts: { baseValues: Map<string, string>; baseInstances?: ModuleInstance[]; moduleInstances?: ModuleInstance[]; comObjectTable: Mv0705ComObjectTable },
 ): AbsStructuralImage[] {
   const segment = (segId: string | undefined, which: string): CfgAbsSegment => {
     const seg = segId === undefined ? undefined : app.absoluteSegments.find((s) => s.id === segId);
@@ -1027,12 +1033,14 @@ export function planAbsoluteFullDownload(
   links: ComObjectLink[],
   ownIa: number,
   procedure: LoadProcedures,
-  // `comObjectTable`: the active com-objects (visibility-gated) and the linked object numbers, so the
-  // planner AUTHORS L3 into the <ComObjectTable> segment from its template, as ETS does on both LSM
-  // styles (MDT BE-02001.02 and ABB US/U 4.2 captures). Absent => L3 is written as its static <Data>.
+  // `comObjectTable`: the active com-objects (visibility-gated), the linked object numbers, and
+  // `maxDeclared` (the highest declared <ComObject> number, or null when none are declared, bounding
+  // unconfigured 0x04 clearing so tail slots past it keep their template byte), so the planner
+  // AUTHORS L3 into the <ComObjectTable> segment from its template, as ETS does on both LSM styles
+  // (MDT BE-02001.02 and ABB US/U 4.2 captures). Absent => L3 is written as its static <Data>.
   // `propertyMapped`: a declared segment without <Data> is the device's own (declared, not written).
   // `form`: which form of the procedure (absoluteFullForm), from the unit's state.
-  opts: { lang?: string; moduleInstances?: ModuleInstance[]; requireReboot?: boolean; propertyMapped: boolean; form: AbsFullForm; comObjectTable?: { active: Map<number, CfgComObjImage>; linked: ReadonlySet<number>; maxDeclared: number | null } },
+  opts: { lang?: string; moduleInstances?: ModuleInstance[]; requireReboot?: boolean; propertyMapped: boolean; form: AbsFullForm; comObjectTable?: Mv0705ComObjectTable },
 ): AbsFullDownloadPlan {
   // A declared step we cannot execute, or whose attributes we cannot read, is a recipe we cannot
   // run; refuse before building anything rather than emit a plan that silently omits it.

@@ -195,18 +195,42 @@ export function refuseObjectZeroOverride(active: ReadonlyMap<number, CfgComObjIm
 //     size. `linked` = the object carries a group-address link; its 0x04 bit is set only where its
 //     communication flag is on too (captures/mdt-be02001-ets-partial-flag-comm-{off,on}.log: ETS keeps
 //     the association of a linked object with communication off and clears the bit).
-//   - Unconfigured objects up through `maxDeclared` (the highest declared <ComObject> number,
-//     including undeclared gap slots below it; null when no <ComObject> is declared): keep the
-//     template entry verbatim, clearing only any stale linked bit (`0x04`). Tail slots past
-//     `maxDeclared` stay at their template byte untouched, as ETS writes them (ETS 6.4.1 capture
-//     of M-0048_A-4949-10-C52A: header count 254, max declared #252; gap #249 and inactive #252
-//     have 0x04 cleared to 0xdb, while undeclared tail slot #253 stays at template 0xdf).
+function validateMv0705ObjectNumbers(nums: Iterable<number>, count: number, what: string): void {
+  for (const n of nums) {
+    if (!Number.isInteger(n) || n < 0) {
+      throw new ProductError("COM_OBJECT_NUMBER_INVALID",
+        `communication object #${n} is not a valid non-negative integer; refusing to ${what}`);
+    }
+  }
+  const beyond = [...nums].filter((n) => n >= count);
+  if (beyond.length) {
+    throw new ProductError("COM_OBJECT_TABLE_TEMPLATE_INVALID",
+      `communication object #${Math.max(...beyond)} is beyond the ${count}-entry MV-0705 com-object table; refusing to ${what}`);
+  }
+}
+
+function validateMaxDeclared(maxDeclared: number | null): void {
+  if (maxDeclared !== null && (!Number.isInteger(maxDeclared) || maxDeclared < 0)) {
+    throw new ProductError("COM_OBJECT_NUMBER_INVALID",
+      `highest declared communication object #${maxDeclared} is not a valid non-negative integer; refusing to author the MV-0705 com-object table`);
+  }
+}
+
+//   - Unconfigured objects up through `maxSlot = Math.max(maxDeclared ?? -1, ...active.keys())`
+//     (in valid configurations `active` is a subset of declared objects, so `maxSlot === maxDeclared`,
+//     covering every declared object and undeclared gap below it; null when no <ComObject> is
+//     declared): keep the template entry verbatim, clearing only any stale linked bit (`0x04`).
+//     Tail slots past `maxSlot` stay at their template byte untouched, as ETS writes them
+//     (captures/ets-sweep/M-0048_A-4949-10-C52A/defaults/ets.log: header count 254, max declared
+//     #252; gap #249 and inactive #252 have 0x04 cleared to 0xdb, while undeclared tail slot #253
+//     stays at template 0xdf).
 export function buildComObjectTableMv0705(template: Buffer, active: Map<number, CfgComObjImage>, linked: ReadonlySet<number>, maxDeclared: number | null): Buffer {
   if (template.length < 3) {
     throw new ProductError("COM_OBJECT_TABLE_TEMPLATE_INVALID",
       `the MV-0705 com-object table template is ${template.length} B; too short to hold even the 3-byte header, refusing to author L3 from it`);
   }
-  const out = Buffer.from(template); // preserve header, data pointers, and inactive entries verbatim
+  validateMaxDeclared(maxDeclared);
+  const out = Buffer.from(template); // preserve header, data pointers, and tail entries verbatim
   const count = out[0];
   if (3 + count * 4 > out.length) {
     throw new ProductError("COM_OBJECT_TABLE_TEMPLATE_INVALID",
@@ -220,18 +244,13 @@ export function buildComObjectTableMv0705(template: Buffer, active: Map<number, 
   // is com-object n, reverse-engineered and byte-verified on the MDT BE-02001.02. A manufacturer that
   // numbered its MV-0705 objects from 1 would trip this guard or shift the whole table by one slot, so
   // any non-MDT MV-0705 product is UNPROVEN until byte-checked on it (docs/commissioning.md).
-  const beyond = [...active.keys(), ...linked].filter((n) => n < 0 || n >= count);
-  if (beyond.length) {
-    const bad = beyond.find((n) => n < 0) ?? Math.max(...beyond);
-    throw new ProductError("COM_OBJECT_TABLE_TEMPLATE_INVALID",
-      `communication object #${bad} is beyond the ${count}-entry MV-0705 template; refusing to author an L3 that omits it while its association would still be written`);
-  }
+  validateMv0705ObjectNumbers([...active.keys(), ...linked], count, "author an L3 that omits it while its association would still be written");
   const maxSlot = Math.max(maxDeclared ?? -1, ...active.keys());
   for (let n = 0; n < count; n++) {
     const cfgOff = 3 + n * 4 + 2; // header 3 B, entry 4 B, config is the 3rd byte, type the 4th
     const obj = active.get(n);
     if (!obj) {
-      if (n <= maxSlot) out[cfgOff] &= ~0x04; // unconfigured within 0..maxDeclared: clear any stale linked bit
+      if (n <= maxSlot) out[cfgOff] &= ~0x04; // unconfigured within 0..maxSlot: clear any stale linked bit
       continue;
     }
     const bits = objectSizeInBits(obj.objectSize);
@@ -263,23 +282,25 @@ export function programIdStamp(app: AppConfig): Buffer {
 }
 
 // Group-address flash on System 7: the com-object table the device holds, with only the linked bit
-// (config 0x04) following `linked` (linkedBitObjects), set on those objects and cleared on the rest. ETS rewrites L3
-// on a group-address download on both LSM styles (partial-download captures: the whole table on
-// the MDT BE-02001.02, only the two changed config bytes on the ABB US/U 4.2); on a device holding a
-// correct table both equal this. `authored`: the objects whose flags or priority the project changed
-// since the device was last written, with the flags it gives them; their read, write, transmit and
-// update bits and their priority are written as the project gives them, as ETS's group-address
+// (config 0x04) following `linked` (linkedBitObjects), set on those objects and cleared on the rest
+// up through `maxSlot = Math.max(maxDeclared ?? -1, ...linked, ...(authored?.keys() ?? []))` so
+// undeclared tail slots past `maxDeclared` stay as the device holds them (matching buildComObjectTableMv0705).
+// ETS rewrites L3 on a group-address download on both LSM styles (partial-download captures: the whole
+// table on the MDT BE-02001.02, only the two changed config bytes on the ABB US/U 4.2); on a device
+// holding a correct table both equal this. `authored`: the objects whose flags or priority the project
+// changed since the device was last written, with the flags it gives them; their read, write, transmit
+// and update bits and their priority are written as the project gives them, as ETS's group-address
 // download writes a flag change (captures/mdt-be02001-ets-partial-flag-{read,update}-{off,on}.log).
 // Every other byte stays as the device holds it. Layout as in buildComObjectTableMv0705.
-export function withLinkedCommFlags(deviceTable: Buffer, linked: ReadonlySet<number>, authored?: ReadonlyMap<number, CfgComObjImage>): Buffer {
+export function withLinkedCommFlags(deviceTable: Buffer, linked: ReadonlySet<number>, maxDeclared: number | null, authored?: ReadonlyMap<number, CfgComObjImage>): Buffer {
   if (deviceTable.length < 3) throw new ProductError("COM_OBJECT_TABLE_TEMPLATE_INVALID", `the com-object table is ${deviceTable.length} B; too short to hold its 3-byte header`);
+  validateMaxDeclared(maxDeclared);
   const out = Buffer.from(deviceTable);
   const count = out[0];
   if (3 + count * 4 > out.length) throw new ProductError("COM_OBJECT_TABLE_TEMPLATE_INVALID", `the com-object table declares ${count} entries but is only ${out.length} B`);
-  const beyond = [...linked].filter((n) => n >= count);
-  if (beyond.length) throw new ProductError("COM_OBJECT_TABLE_TEMPLATE_INVALID", `communication object #${Math.max(...beyond)} is beyond the ${count}-entry com-object table; refusing to link it`);
-  const beyondAuthored = [...(authored?.keys() ?? [])].filter((n) => n >= count);
-  if (beyondAuthored.length) throw new ProductError("COM_OBJECT_TABLE_TEMPLATE_INVALID", `communication object #${Math.max(...beyondAuthored)} is beyond the ${count}-entry com-object table; refusing to write its flags`);
+  validateMv0705ObjectNumbers(linked, count, "link it");
+  validateMv0705ObjectNumbers(authored?.keys() ?? [], count, "write its flags");
+  const maxSlot = Math.max(maxDeclared ?? -1, ...linked, ...(authored?.keys() ?? []));
   for (let n = 0; n < count; n++) {
     const at = 3 + n * 4 + 2;
     const obj = authored?.get(n);
@@ -288,7 +309,7 @@ export function withLinkedCommFlags(deviceTable: Buffer, linked: ReadonlySet<num
       out[at] = (out[at] & ~(0x03 | 0x08 | 0x10 | 0x40 | 0x80)) | PRIORITY_BITS[obj.priority] | (f.read ? 0x08 : 0) | (f.write ? 0x10 : 0) | (f.transmit ? 0x40 : 0) | (f.update ? 0x80 : 0);
     }
     if (linked.has(n)) out[at] |= 0x04;
-    else out[at] &= ~0x04;
+    else if (n <= maxSlot) out[at] &= ~0x04;
   }
   return out;
 }

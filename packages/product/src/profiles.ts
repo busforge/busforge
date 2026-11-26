@@ -2234,7 +2234,7 @@ export class System7Profile extends DeviceProfile {
     const { addr, assoc } = buildGroupTablesMv0705(ctx.links, iaToNum(ctx.ia));
     const flagBaseline = builtBefore(() => baselineComObjects(cfg, ctx));
     const brackets = builtBefore(() => planSystem7TableBrackets(cfg, cfg.loadProcedures, { addr, assoc }));
-    const l3Active = builtBefore(() => buildDeviceConfig(cfg, ctx.params, undefined, moduleAwareModel(cfg, ctx.params, ctx.moduleInstances ?? []).instances).imageComObjects);
+    const l3View = builtBefore(() => buildDeviceConfig(cfg, ctx.params, undefined, moduleAwareModel(cfg, ctx.params, ctx.moduleInstances ?? []).instances));
     const cur = await readGroupTablesMv0705(dev);
     // CAPACITY: a System 7 device's address/association tables sit in PRE-RESERVED absolute
     // segments (no reallocation, unlike System B's allocSegment). The app program declares how
@@ -2267,18 +2267,30 @@ export class System7Profile extends DeviceProfile {
     }
     let authored: Map<number, CfgComObjImage> | undefined;
     let linkedBits = new Set<number>();
+    let maxDeclared: number | null = null;
+    const allLinkedNums = new Set(ctx.links.map((l) => l.comObjNum));
     if (scope.l3) {
-      const active = l3Active();
+      const view = l3View();
+      const active = view.imageComObjects;
+      maxDeclared = view.maxDeclaredComObject;
       const changed = new Map([...(ctx.comObjectOverrides ?? [])].filter(([n]) => flagChanges.has(n)));
       refuseUnwritableOverrides(active, changed, MV0705_OVERRIDABLE, "the group-address flash's System 7 com-object table");
-      refuseAppCommOffLinks(active, new Set(ctx.links.map((l) => l.comObjNum)));
+      refuseAppCommOffLinks(active, allLinkedNums);
       const withProject = withInstanceOverrides(active, ctx.comObjectOverrides);
-      linkedBits = linkedBitObjects(new Set(ctx.links.map((l) => l.comObjNum)), withProject);
+      linkedBits = linkedBitObjects(allLinkedNums, withProject);
       if (flagChanges.size) authored = new Map([...flagChanges].flatMap((n) => { const o = withProject.get(n); return o ? [[n, o] as const] : []; }));
     }
     const l3Seg = scope.l3;
     const curL3 = l3Seg ? await dev.memRead(l3Seg.address, l3Seg.size) : null;
-    const l3 = l3Seg && curL3 ? { address: l3Seg.address, bytes: withLinkedCommFlags(curL3, linkedBits, authored) } : null;
+    // Also refuse any linked object beyond the device's L3 count even when a project CommunicationFlag="Disabled"
+    // override drops it from `linkedBits` (its association is still written in `assoc`).
+    if (l3Seg && curL3 && curL3.length >= 3) {
+      const beyond = [...allLinkedNums].filter((n) => n >= curL3[0]);
+      if (beyond.length) {
+        throw new ProductError("COM_OBJECT_TABLE_TEMPLATE_INVALID", `communication object #${Math.max(...beyond)} is beyond the ${curL3[0]}-entry MV-0705 com-object table; refusing to link it`);
+      }
+    }
+    const l3 = l3Seg && curL3 ? { address: l3Seg.address, bytes: withLinkedCommFlags(curL3, linkedBits, maxDeclared, authored) } : null;
     const ga = planSystem7GaFlash(cfg, cfg.loadProcedures, { addr, assoc }, l3, true, brackets());
     // The change is counted over exactly the runs the plan writes, read where it writes them (the address
     // table's own individual address is neither written nor counted); a table the plan moves whose

@@ -98,7 +98,7 @@ export type ComObjPriority = "Low" | "High" | "Alert";
 export interface CfgComObject {
   id: string; number: number; name: string; text: string; functionText: string;
   objectSize: string; dpt: string; flags: ComObjFlags; priority: ComObjPriority;
-  textParamRefId?: string; baseNumber?: string;
+  textParamRefId?: string; baseNumber?: string; moduleDefId?: string;
 }
 export interface CfgComObjectRef {
   id: string; refId: string; text?: string; functionText?: string; objectSize?: string;
@@ -389,7 +389,7 @@ export function parseAppConfig(xml: string): AppConfig {
     merge(types, tagMod(parseTypes(mdStaticKids), mdId));
     merge(params, tagMod(parseParams(mdStaticKids, mdId).params, mdId));
     merge(refs, tagMod(parseRefs(mdStaticKids), mdId));
-    merge(comObjects, parseComObjects(mdStaticKids));
+    merge(comObjects, tagMod(parseComObjects(mdStaticKids), mdId));
     merge(comObjectRefs, parseComObjectRefs(mdStaticKids));
     const args: ModuleArg[] = childrenByTag(firstByTag(mdKids, "Arguments") ? kidsOf(firstByTag(mdKids, "Arguments")!) : [], "Argument")
       .map((a) => { const aa = attrsOf(a); return { id: aa.Id, name: aa.Name ?? "", type: aa.Type ?? "Numeric", allocates: aa.Allocates !== undefined ? Number(aa.Allocates) : undefined }; });
@@ -655,8 +655,14 @@ function parseComObjects(staticKids: ONode[]): Map<string, CfgComObject> {
   const container = firstByTag(staticKids, "ComObjectTable") ?? firstByTag(staticKids, "ComObjects");
   for (const c of container ? childrenByTag(kidsOf(container), "ComObject") : []) {
     const a = attrsOf(c);
+    const rawNum = a.Number;
+    const numVal = rawNum === undefined ? 0 : (/^\d+$/.test(rawNum) ? Number(rawNum) : NaN);
+    if (!Number.isInteger(numVal) || numVal < 0) {
+      throw new ProductError("COM_OBJECT_NUMBER_INVALID",
+        `communication object ${a.Id ?? ""} declares invalid Number="${rawNum}"; refusing to guess its table slot`);
+    }
     out.set(a.Id, {
-      id: a.Id, number: Number(a.Number ?? 0), name: a.Name ?? "", text: a.Text ?? "",
+      id: a.Id, number: numVal, name: a.Name ?? "", text: a.Text ?? "",
       functionText: a.FunctionText ?? "", objectSize: a.ObjectSize ?? "", dpt: a.DatapointType ?? "",
       flags: { read: bool(a.ReadFlag), write: bool(a.WriteFlag), comm: bool(a.CommunicationFlag), transmit: bool(a.TransmitFlag), update: bool(a.UpdateFlag), readOnInit: bool(a.ReadOnInitFlag) },
       priority: priorityOf(a.Priority),

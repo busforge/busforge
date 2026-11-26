@@ -1127,7 +1127,16 @@ function buildDeviceConfigReading(
   // the table, because the firmware indexes by number regardless of the active configuration.
   let maxDeclaredComObject: number | null = null;
   const noteDeclared = (n: number) => { maxDeclaredComObject = maxDeclaredComObject === null ? n : Math.max(maxDeclaredComObject, n); };
-  for (const o of app.comObjects.values()) if (!o.baseNumber) noteDeclared(o.number);
+  const comObjsByMod = new Map<string, typeof app.comObjects extends Map<string, infer V> ? V[] : never>();
+  for (const o of app.comObjects.values()) {
+    if (o.moduleDefId) {
+      const list = comObjsByMod.get(o.moduleDefId);
+      if (list) list.push(o);
+      else comObjsByMod.set(o.moduleDefId, [o]);
+    } else if (!o.baseNumber) {
+      noteDeclared(o.number);
+    }
+  }
   const scanModuleComObjNums = (nodes: DynNode[], scope: Scope, inModule: boolean) => {
     for (const n of nodes) {
       switch (n.kind) {
@@ -1136,7 +1145,17 @@ function buildDeviceConfigReading(
         case "comObjRef": { if (inModule) { const c = resolveComObjImage(n.refId, scope); if (c) noteDeclared(c.number); } break; }
         case "choose": for (const w of n.whens) scanModuleComObjNums(w.children, scope, inModule); break; // every branch, not selectWhens
         case "container": case "block": scanModuleComObjNums(n.children, scope, inModule); break;
-        case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) scanModuleComObjNums(def.dynamic, makeScope(n.refId, def, inst), true); break; }
+        case "module": {
+          const def = app.moduleDefs.get(n.refId);
+          if (def) {
+            for (const inst of instancesFor(n.id)) {
+              const modScope = makeScope(n.refId, def, inst);
+              for (const o of comObjsByMod.get(n.refId) ?? []) noteDeclared(o.number + (o.baseNumber ? modScope.argValue(o.baseNumber) : 0));
+              scanModuleComObjNums(def.dynamic, modScope, true);
+            }
+          }
+          break;
+        }
         // Own no com-object number. Listed, not defaulted, so a new node kind is a compile error here.
         case "paramRef": case "separator": case "button": case "assign": case "unsupported": break;
       }

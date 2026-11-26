@@ -1,6 +1,6 @@
 import { test, expect, describe } from "bun:test";
 import {
-  buildComObjectTable, buildComObjectTableMv0705, comObjectEntry, objectSizeInBits, programIdStamp, refuseObjectZeroOverride,
+  buildComObjectTable, buildComObjectTableMv0705, buildGroupTablesMv0705, comObjectEntry, objectSizeInBits, programIdStamp, refuseObjectZeroOverride, withLinkedCommFlags,
   parseAppConfig, buildDeviceConfig, ProductError,
   type CfgComObjImage,
 } from "@busforge/product";
@@ -284,14 +284,14 @@ ${moduleDefs}
     const flatView = buildDeviceConfig(flatCfg, new Map());
     expect(flatView.maxDeclaredComObject).toBe(2);
     const flatOut = buildComObjectTableMv0705(flatCfg.absoluteSegments[0].data, flatView.imageComObjects, new Set(), flatView.maxDeclaredComObject);
-    expect([0, 1, 2, 3, 4].map((n) => flatOut[3 + n * 4 + 2])).toEqual([0x4b, 0xdb, 0xdb, 0xdf, 0xdf]);
+    expect([0, 1, 2, 3, 4].map((n) => flatOut[cfgAt(n)])).toEqual([0x4b, 0xdb, 0xdb, 0xdf, 0xdf]);
 
     // Empty: no <ComObject> declared -> maxDeclaredComObject is null, every template slot stays 0xdf.
     const emptyCfg = parseAppConfig(appXml(`<ComObjectTable CodeSegment="M-0048_A-1-1-0000_AS-43FE" Offset="0"/>`, ``));
     const emptyView = buildDeviceConfig(emptyCfg, new Map());
     expect([emptyView.maxDeclaredComObject, emptyView.maxComObjectNumber]).toEqual([null, 0]);
     const emptyOut = buildComObjectTableMv0705(emptyCfg.absoluteSegments[0].data, emptyView.imageComObjects, new Set(), emptyView.maxDeclaredComObject);
-    expect([0, 1, 2, 3, 4].map((n) => emptyOut[3 + n * 4 + 2])).toEqual([0xdf, 0xdf, 0xdf, 0xdf, 0xdf]);
+    expect([0, 1, 2, 3, 4].map((n) => emptyOut[cfgAt(n)])).toEqual([0xdf, 0xdf, 0xdf, 0xdf, 0xdf]);
 
     // Zero-only: declares only <ComObject Number="0"> (inactive) -> clears slot #0, leaves #1..#4 at 0xdf.
     const zeroCfg = parseAppConfig(appXml(
@@ -303,7 +303,7 @@ ${moduleDefs}
     const zeroView = buildDeviceConfig(zeroCfg, new Map());
     expect([zeroView.maxDeclaredComObject, zeroView.maxComObjectNumber]).toEqual([0, 0]);
     const zeroOut = buildComObjectTableMv0705(zeroCfg.absoluteSegments[0].data, zeroView.imageComObjects, new Set(), zeroView.maxDeclaredComObject);
-    expect([0, 1, 2, 3, 4].map((n) => zeroOut[3 + n * 4 + 2])).toEqual([0xdb, 0xdf, 0xdf, 0xdf, 0xdf]);
+    expect([0, 1, 2, 3, 4].map((n) => zeroOut[cfgAt(n)])).toEqual([0xdb, 0xdf, 0xdf, 0xdf, 0xdf]);
 
     // Modular: highest declared object (#3 = base 1 + Number 2) comes from a module instance in an inactive choose.
     const modCfg = parseAppConfig(appXml(
@@ -325,7 +325,59 @@ ${moduleDefs}
     const modView = buildDeviceConfig(modCfg, new Map());
     expect(modView.maxDeclaredComObject).toBe(3);
     const modOut = buildComObjectTableMv0705(modCfg.absoluteSegments[0].data, modView.imageComObjects, new Set(), modView.maxDeclaredComObject);
-    expect([0, 1, 2, 3, 4].map((n) => modOut[3 + n * 4 + 2])).toEqual([0xdb, 0xdb, 0xdb, 0xdb, 0xdf]);
+    expect([0, 1, 2, 3, 4].map((n) => modOut[cfgAt(n)])).toEqual([0xdb, 0xdb, 0xdb, 0xdb, 0xdf]);
+
+    // Static modular <ComObject> without any dynamic <ComObjectRefRef> still bounds maxDeclaredComObject.
+    const staticModCfg = parseAppConfig(appXml(
+      `<ComObjectTable CodeSegment="M-0048_A-1-1-0000_AS-43FE" Offset="0"/>`,
+      `<Module Id="M-0048_A-1-1-0000_MD-1_M-1" RefId="M-0048_A-1-1-0000_MD-1"><NumericArg RefId="M-0048_A-1-1-0000_MD-1_A-1" Value="1"/></Module>`,
+      `<ModuleDefs><ModuleDef Id="M-0048_A-1-1-0000_MD-1" Name="m">
+         <Arguments><Argument Id="M-0048_A-1-1-0000_MD-1_A-1" Name="Base"/></Arguments>
+         <Static>
+           <ComObjects><ComObject Id="M-0048_A-1-1-0000_MD-1_O-2" Number="2" BaseNumber="M-0048_A-1-1-0000_MD-1_A-1" Name="mo" Text="mo" ObjectSize="1 Bit" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled"/></ComObjects>
+         </Static>
+         <Dynamic/>
+       </ModuleDef></ModuleDefs>`,
+    ));
+    const staticModView = buildDeviceConfig(staticModCfg, new Map());
+    expect(staticModView.maxDeclaredComObject).toBe(3);
+    const staticModOut = buildComObjectTableMv0705(staticModCfg.absoluteSegments[0].data, staticModView.imageComObjects, new Set(), staticModView.maxDeclaredComObject);
+    expect([0, 1, 2, 3, 4].map((n) => staticModOut[cfgAt(n)])).toEqual([0xdb, 0xdb, 0xdb, 0xdb, 0xdf]);
+
+    // Invalid XML ComObject/@Number is refused at parse time rather than producing NaN.
+    expect(() => parseAppConfig(appXml(
+      `<ComObjectTable CodeSegment="M-0048_A-1-1-0000_AS-43FE" Offset="0">
+         <ComObject Id="M-0048_A-1-1-0000_O-bad" Number="invalid" Name="b" Text="b" ObjectSize="1 Bit"/>
+       </ComObjectTable>`,
+      ``,
+    ))).toThrow(expect.objectContaining({ code: "COM_OBJECT_NUMBER_INVALID" }));
+  });
+
+  test("withLinkedCommFlags preserves tail slots past maxDeclared and matches buildComObjectTableMv0705", () => {
+    const table = Buffer.from([
+      0x04, 0x20, 0x20,
+      0x10, 0x00, 0x4b, 0x00, // #0: declared, will be linked -> 0x4f
+      0x10, 0x01, 0xdf, 0x00, // #1: gap <= 2 -> cleared to 0xdb
+      0x10, 0x02, 0xdf, 0x00, // #2: declared (maxDeclared=2), unlinked -> cleared to 0xdb
+      0x10, 0x03, 0xdf, 0x00, // #3: tail > 2 -> untouched at 0xdf
+    ]);
+    const out = withLinkedCommFlags(table, new Set([0]), 2);
+    expect([0, 1, 2, 3].map((n) => out[cfgAt(n)])).toEqual([0x4f, 0xdb, 0xdb, 0xdf]);
+    const none = withLinkedCommFlags(table, new Set(), null);
+    expect([0, 1, 2, 3].map((n) => none[cfgAt(n)])).toEqual([0x4b, 0xdf, 0xdf, 0xdf]);
+  });
+
+  test("negative or non-integer object numbers and maxDeclared are REFUSED in L3 and MV-0705 group tables", () => {
+    const activeNeg = new Map([[-1, obj({ number: -1, objectSize: "1 Bit" })]]);
+    expect(() => buildComObjectTableMv0705(template, activeNeg, new Set(), 1)).toThrow(expect.objectContaining({ code: "COM_OBJECT_NUMBER_INVALID" }));
+    expect(() => buildComObjectTableMv0705(template, new Map(), new Set([Number.NaN]), 1)).toThrow(expect.objectContaining({ code: "COM_OBJECT_NUMBER_INVALID" }));
+    expect(() => buildComObjectTableMv0705(template, new Map(), new Set(), Number.NaN)).toThrow(expect.objectContaining({ code: "COM_OBJECT_NUMBER_INVALID" }));
+    expect(() => buildComObjectTableMv0705(template, new Map(), new Set(), -1)).toThrow(expect.objectContaining({ code: "COM_OBJECT_NUMBER_INVALID" }));
+    expect(() => withLinkedCommFlags(template, new Set([-1]), 1)).toThrow(expect.objectContaining({ code: "COM_OBJECT_NUMBER_INVALID" }));
+    expect(() => withLinkedCommFlags(template, new Set([Number.NaN]), 1)).toThrow(expect.objectContaining({ code: "COM_OBJECT_NUMBER_INVALID" }));
+    expect(() => withLinkedCommFlags(template, new Set(), Number.NaN)).toThrow(expect.objectContaining({ code: "COM_OBJECT_NUMBER_INVALID" }));
+    expect(() => buildGroupTablesMv0705([{ comObjNum: -1, gaRaws: [0x0801] }], 0x1101)).toThrow(expect.objectContaining({ code: "COM_OBJECT_NUMBER_INVALID" }));
+    expect(() => buildGroupTablesMv0705([{ comObjNum: Number.NaN, gaRaws: [0x0801] }], 0x1101)).toThrow(expect.objectContaining({ code: "COM_OBJECT_NUMBER_INVALID" }));
   });
 
   test("a template too short even for the header is REFUSED, never authored blind", () => {

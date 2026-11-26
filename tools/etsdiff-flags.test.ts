@@ -36,11 +36,11 @@ corpusDescribe("System 7 flag change against ETS's group-address download", () =
     const held = tableOf("mdt-be02001-ets-partial-flag-read-off.log");
     // The project's flags for object 0 back to the application's: the change since the last write.
     const authored = withInstanceOverrides(view.imageComObjects, placeComObjOverrides(cfg, view, []));
-    const ours = withLinkedCommFlags(held, new Set(), new Map([[0, authored.get(0)!]]));
+    const ours = withLinkedCommFlags(held, new Set(), view.maxDeclaredComObject, new Map([[0, authored.get(0)!]]));
     expect(ours.toString("hex")).toBe(tableOf("mdt-be02001-ets-partial-flag-read-on.log").toString("hex"));
     // and the read flag off again, as the project's own override
     const off = withInstanceOverrides(view.imageComObjects, placeComObjOverrides(cfg, view, [{ comObjRefId: ref0, attrs: { ReadFlag: "Disabled" } }]));
-    expect(withLinkedCommFlags(ours, new Set(), new Map([[0, off.get(0)!]])).toString("hex")).toBe(held.toString("hex"));
+    expect(withLinkedCommFlags(ours, new Set(), view.maxDeclaredComObject, new Map([[0, off.get(0)!]])).toString("hex")).toBe(held.toString("hex"));
   });
 });
 
@@ -64,7 +64,7 @@ corpusDescribe("System 7 communication and update flags against ETS's group-addr
   // gives them where they changed since the last write.
   const gaFlash = (held: Buffer, attrs: Record<string, string> | undefined, changed: boolean) => {
     const objs = withProject(attrs);
-    return withLinkedCommFlags(held, linkedBitObjects(new Set([0]), objs), changed ? new Map([[0, objs.get(0)!]]) : undefined).toString("hex");
+    return withLinkedCommFlags(held, linkedBitObjects(new Set([0]), objs), view.maxDeclaredComObject, changed ? new Map([[0, objs.get(0)!]]) : undefined).toString("hex");
   };
   const COMM_OFF = { CommunicationFlag: "Disabled" }, UPDATE_ON = { UpdateFlag: "Enabled" };
   const f = (s: string) => `mdt-be02001-ets-partial-flag-${s}.log`;

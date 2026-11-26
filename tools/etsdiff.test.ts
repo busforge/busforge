@@ -1386,8 +1386,9 @@ corpusDescribe("Gira Tastsensor 3 Komfort (M-0008) against ETS", () => {
   // the bytes ETS wrote in a download (its last 8 bytes, which no ETS image holds, from the template).
   const comObjSeg = cfg.absoluteSegments.find((x) => x.id === cfg.groupTables.comObjectSegment)!;
   const heldComObj = (written: Map<number, number>) => Buffer.from(comObjSeg.data.map((b, i) => written.get(comObjSeg.address + i) ?? b));
+  const maxDeclared = buildDeviceConfig(cfg, baseline.params).maxDeclaredComObject;
   const gaFlash = (links: { comObjNum: number; gaRaws: number[] }[], held: Buffer) => planSystem7GaFlash(cfg, proc, buildGroupTablesMv0705(links, ia),
-    { address: comObjSeg.address, bytes: withLinkedCommFlags(held, new Set(links.map((l) => l.comObjNum))) });
+    { address: comObjSeg.address, bytes: withLinkedCommFlags(held, new Set(links.map((l) => l.comObjNum)), maxDeclared) });
   // The test group address the links download added: the one address of its table no baseline link uses.
   const TEST_GA = addedGa(tableGas(fromMemory(memoryImage(parseCapture(captureText("gira-m0008-ets-partial-links.log"), ia).writes), 0x4000), "system7"), baseline.links);
   const withTestLink = [...baseline.links, { comObjNum: 4, gaRaws: [TEST_GA] }].sort((a, b) => a.comObjNum - b.comObjNum);
@@ -1631,8 +1632,9 @@ corpusDescribe("Auro presence detector (M-0081_A-FE01-11-75D9) against ETS", () 
   // the group-address flash builds it from a read of the device (System7Profile.flashGroupTables).
   const comObjSeg = cfg.absoluteSegments.find((x) => x.id === cfg.groupTables.comObjectSegment)!;
   const heldComObj = Buffer.from(comObjSeg.data.map((b, i) => written.get(comObjSeg.address + i) ?? b));
+  const maxDeclared = buildDeviceConfig(cfg, baseline.params).maxDeclaredComObject;
   const gaFlash = (links: { comObjNum: number; gaRaws: number[] }[], deviceComObj: Buffer = heldComObj) =>
-    planSystem7GaFlash(cfg, proc, buildGroupTablesMv0705(links, ia), { address: comObjSeg.address, bytes: withLinkedCommFlags(deviceComObj, new Set(links.map((l) => l.comObjNum))) });
+    planSystem7GaFlash(cfg, proc, buildGroupTablesMv0705(links, ia), { address: comObjSeg.address, bytes: withLinkedCommFlags(deviceComObj, new Set(links.map((l) => l.comObjNum)), maxDeclared) });
   // The test group address the links download added: the one address of its table no baseline link uses.
   const TEST_GA = addedGa(tableOf(memoryImage(parseCapture(captureText(LINKS), ia).writes)), baseline.links);
   const second = baseline.links.map((l) => (l.comObjNum === 10 ? { ...l, gaRaws: [...l.gaRaws, TEST_GA] } : l));
@@ -1655,7 +1657,7 @@ corpusDescribe("Auro presence detector (M-0081_A-FE01-11-75D9) against ETS", () 
     // The associations by object, then group index: (2, 9), (1, 10), (3, 10).
     expect(Buffer.from([...ours].filter(([a]) => a >= 0x402f && a <= 0x4035).map(([, b]) => b)).toString("hex")).toBe("030209010a030a");
     // The com-object table ETS writes is the one the device held: object 10 was linked already.
-    expect(withLinkedCommFlags(heldComObj, new Set(second.map((l) => l.comObjNum))).equals(heldComObj)).toBe(true);
+    expect(withLinkedCommFlags(heldComObj, new Set(second.map((l) => l.comObjNum)), maxDeclared).equals(heldComObj)).toBe(true);
     expect(span([...writes, ...comObjWrites].flatMap((w) => Array.from(w.image, (_, i) => w.address + i)))).toEqual(span(ours));
   });
 
@@ -1941,8 +1943,9 @@ corpusDescribe("Theben TheLuxa P300 (M-0048_A-107E-12-5B58) against ETS", () => 
     expect(constantsDiffer.map((c) => c.paramRefId)).toEqual([expect.stringMatching(/^M-0048_A-107E-12-5B58_P-2228_R-/)]);
   });
 
+  const maxDeclared = buildDeviceConfig(cfg, baseline.params).maxDeclaredComObject;
   const gaFlash = (links: { comObjNum: number; gaRaws: number[] }[], deviceComObj: Buffer) => planSystem7GaFlash(cfg, proc, buildGroupTablesMv0705(links, ia),
-    { address: comObjSeg.address, bytes: withLinkedCommFlags(deviceComObj, new Set(links.map((l) => l.comObjNum))) });
+    { address: comObjSeg.address, bytes: withLinkedCommFlags(deviceComObj, new Set(links.map((l) => l.comObjNum)), maxDeclared) });
   // The test group address the links download added: the one address of its table no baseline link uses.
   const TEST_GA = addedGa(tableOf(memoryImage(parseCapture(captureText(LINKS), ia).writes)), baseline.links);
   const withTestLink = [...baseline.links, { comObjNum: 16, gaRaws: [TEST_GA] }];
@@ -2174,8 +2177,9 @@ corpusDescribe("Theben Meteodata 140 S (M-0048_A-140C-14-EB70) against ETS", () 
     expect(constantsDiffer.map((c) => c.paramRefId)).toEqual([expect.stringMatching(/^M-0048_A-140C-14-EB70_P-2228_R-/)]);
   });
 
+  const maxDeclared = buildDeviceConfig(cfg, baseline.params).maxDeclaredComObject;
   const gaFlash = (links: { comObjNum: number; gaRaws: number[] }[], deviceComObj: Buffer) => planSystem7GaFlash(cfg, proc, buildGroupTablesMv0705(links, ia),
-    { address: comObjSeg.address, bytes: withLinkedCommFlags(deviceComObj, new Set(links.map((l) => l.comObjNum))) });
+    { address: comObjSeg.address, bytes: withLinkedCommFlags(deviceComObj, new Set(links.map((l) => l.comObjNum)), maxDeclared) });
   // The test group address the links download added: the one address of its image's table no baseline link uses.
   const TEST_GA = addedGa(tableGas(fromMemory(etsLog("meteodata-140s-ets6log-partial-links.txt").image, 0x4000), "system7"), baseline.links);
   const withTestLink = [...baseline.links, { comObjNum: 23, gaRaws: [TEST_GA] }];
@@ -3521,8 +3525,9 @@ corpusDescribe("MDT BE-06001.02 (M-0083_A-00B4-32-3919) against ETS", () => {
   };
   const comObj = segmentHeld(0x4400);
   const configAt = (n: number) => comObj.seg.address + 3 + n * 4 + 2;
+  const maxDeclared = buildDeviceConfig(cfg, params, undefined, fx.instances).maxDeclaredComObject;
   const gaFlash = (links: typeof fx.links) =>
-    planSystem7GaFlash(cfg, proc, buildGroupTablesMv0705(links, ia), { address: comObj.seg.address, bytes: withLinkedCommFlags(comObj.bytes, new Set(links.map((l) => l.comObjNum))) });
+    planSystem7GaFlash(cfg, proc, buildGroupTablesMv0705(links, ia), { address: comObj.seg.address, bytes: withLinkedCommFlags(comObj.bytes, new Set(links.map((l) => l.comObjNum)), maxDeclared) });
   // The group addresses of the address table a download wrote, ascending, and the test group address the links download
   // added: the one address of its table no project link uses.
   const tableOf = (img: Map<number, number>) => tableGas(fromMemory(img, 0x4000), "system7");

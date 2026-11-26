@@ -68,6 +68,8 @@ export function buildGroupTablesMv0705(links: ComObjectLink[], ownIa: number): G
   const idx = new Map(gas.map((g, i) => [g, i + 1])); // 1-based group index
   const entries = associations(links, idx);
   if (gas.length + 1 > 255 || entries.length > 255) throw new ProductError("GA_TABLE_TOO_LARGE", "MV-0705 group tables exceed the 1-byte count (too many group addresses/associations)");
+  const invalid = entries.find((e) => !Number.isInteger(e.co) || e.co < 0);
+  if (invalid) throw new ProductError("COM_OBJECT_NUMBER_INVALID", `communication object #${invalid.co} is not a valid non-negative integer; refusing to write an invalid association`);
   const wide = entries.find((e) => e.co > 0xff);
   if (wide) throw new ProductError("ASSOC_SHORT_FORM_OVERFLOW", `the unit's association table holds one byte per object number, and object ${wide.co} does not fit`);
 
