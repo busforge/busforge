@@ -696,7 +696,8 @@ corpusDescribe("the declared-order M-0048_A-107E-12-5B58 (TheLuxa P300) full dow
 
 // The update bit (config 0x80) of the MV-0705 com-object table follows each configured object's update
 // flag, as ETS writes it (TheLuxa P300, Meteodata 140 S and MDT BE-06001.02 captures); an unconfigured
-// entry is the template's minus the linked bit. Built through the structural flash's path, with each
+// entry up through the highest declared <ComObject> is the template's minus the linked bit, and tail
+// slots past it keep the template byte untouched. Built through the structural flash's path, with each
 // application's default configuration.
 corpusDescribe("the update bit of the MV-0705 com-object table is the configured object's update flag", () => {
   let updating = 0;
@@ -704,13 +705,14 @@ corpusDescribe("the update bit of the MV-0705 com-object table is the configured
     const cfg = parseAppConfig(catalogueXml(file));
     if (cfg.mask !== "MV-0705" || cfg.groupTables.comObjectSegment === undefined) continue;
     test(`${file}: 0x80 on a configured object exactly where it declares the update flag`, () => {
-      const active = buildDeviceConfig(cfg, new Map()).imageComObjects;
+      const view = buildDeviceConfig(cfg, new Map());
+      const active = view.imageComObjects;
       const seg = cfg.absoluteSegments.find((s) => s.id === cfg.groupTables.comObjectSegment)!;
-      const table = absoluteStructuralImages(cfg, new Map(), [], 0x110a, { baseValues: new Map(), comObjectTable: { active, linked: new Set() } })
+      const table = absoluteStructuralImages(cfg, new Map(), [], 0x110a, { baseValues: new Map(), comObjectTable: { active, linked: new Set(), maxDeclared: view.maxDeclaredComObject } })
         .find((i) => i.id === seg.id)!.image;
       for (let n = 0; n < seg.data[0]; n++) {
         const at = 3 + n * 4 + 2, o = active.get(n);
-        if (!o) expect(table[at]).toBe(seg.data[at] & ~0x04);
+        if (!o) expect(table[at]).toBe(view.maxDeclaredComObject !== null && n <= view.maxDeclaredComObject ? seg.data[at] & ~0x04 : seg.data[at]);
         else expect(table[at] & 0x80).toBe(o.flags.update ? 0x80 : 0);
         if (o?.flags.update) updating++;
       }

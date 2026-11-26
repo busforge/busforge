@@ -95,7 +95,7 @@ corpusDescribe("System 7 communication and update flags against ETS's group-addr
   test("the full download's table carries both flags as ETS's group-address download wrote them", () => {
     for (const [s, attrs] of [["comm-off", COMM_OFF], ["comm-on", undefined], ["update-on", UPDATE_ON], ["update-off", undefined]] as const) {
       const ets = tableOf(f(s));
-      expect(buildComObjectTableMv0705(l3.data, withProject(attrs), new Set([0])).subarray(0, ets.length).toString("hex")).toBe(ets.toString("hex"));
+      expect(buildComObjectTableMv0705(l3.data, withProject(attrs), new Set([0]), view.maxDeclaredComObject).subarray(0, ets.length).toString("hex")).toBe(ets.toString("hex"));
     }
   });
 });

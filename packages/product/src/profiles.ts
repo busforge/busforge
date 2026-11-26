@@ -2351,7 +2351,7 @@ export class System7Profile extends DeviceProfile {
         `${orphans.length} group-address link(s) target communication objects this configuration does not activate (e.g. #${orphans[0].comObjNum}); the device would ignore them, so refusing to report them as programmed`);
     }
     refuseUnwritableOverrides(view.imageComObjects, ctx.comObjectOverrides, MV0705_OVERRIDABLE, "the System 7 com-object table");
-    const comObjectTable = { active: withInstanceOverrides(view.imageComObjects, ctx.comObjectOverrides), linked: new Set(ctx.links.map((l) => l.comObjNum)) };
+    const comObjectTable = { active: withInstanceOverrides(view.imageComObjects, ctx.comObjectOverrides), linked: new Set(ctx.links.map((l) => l.comObjNum)), maxDeclared: view.maxDeclaredComObject };
     refuseAppCommOffLinks(view.imageComObjects, comObjectTable.linked);
     const baseInstances = cfg.hasModules ? (ctx.moduleInstances?.length ? ctx.moduleInstances : resolveModuleInstances(cfg, ctx.baseParams)) : [];
     const images = absoluteStructuralImages(cfg, ctx.params, ctx.links, iaToNum(ctx.ia), { baseValues: ctx.baseParams, baseInstances, moduleInstances: instances, comObjectTable });
@@ -2439,7 +2439,7 @@ export class System7Profile extends DeviceProfile {
     // with the linked set from the group-address links (comobjbuild.ts buildComObjectTableMv0705;
     // MDT BE-02001.02 and ABB US/U 4.2 ETS captures).
     const comObjectTable = cfg.groupTables.comObjectSegment !== undefined
-      ? { active: withInstanceOverrides(view.imageComObjects, ctx.comObjectOverrides), linked: new Set(ctx.links.map((l) => l.comObjNum)) }
+      ? { active: withInstanceOverrides(view.imageComObjects, ctx.comObjectOverrides), linked: new Set(ctx.links.map((l) => l.comObjNum)), maxDeclared: view.maxDeclaredComObject }
       : undefined;
     if (comObjectTable) refuseAppCommOffLinks(view.imageComObjects, comObjectTable.linked);
     refuseUnwritableOverrides(view.imageComObjects, ctx.comObjectOverrides, comObjectTable ? MV0705_OVERRIDABLE : [],

@@ -162,7 +162,7 @@ corpusDescribe("the structural flash against real applications", () => {
     test("only bytes a parameter of the baseline or the new configuration owns are ever taken", () => {
       const inst = resolveModuleInstances(cfg, contact);
       const view = buildDeviceConfig(cfg, contact, undefined, inst);
-      const images = absoluteStructuralImages(cfg, contact, [], 0x1207, { baseValues: shortLong, moduleInstances: inst, comObjectTable: { active: view.imageComObjects, linked: new Set() } });
+      const images = absoluteStructuralImages(cfg, contact, [], 0x1207, { baseValues: shortLong, moduleInstances: inst, comObjectTable: { active: view.imageComObjects, linked: new Set(), maxDeclared: view.maxDeclaredComObject } });
       const now = new Map(buildAbsoluteSegmentTargets(cfg, contact, { moduleInstances: inst }).map((t) => [t.address, t]));
       const was = new Map(buildAbsoluteSegmentTargets(cfg, shortLong, { moduleInstances: inst }).map((t) => [t.address, t]));
       for (const img of images) {

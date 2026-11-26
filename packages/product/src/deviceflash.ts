@@ -324,7 +324,7 @@ export function absoluteStructuralImages(
   values: Map<string, string>,
   links: ComObjectLink[],
   ownIa: number,
-  opts: { baseValues: Map<string, string>; baseInstances?: ModuleInstance[]; moduleInstances?: ModuleInstance[]; comObjectTable: { active: Map<number, CfgComObjImage>; linked: ReadonlySet<number> } },
+  opts: { baseValues: Map<string, string>; baseInstances?: ModuleInstance[]; moduleInstances?: ModuleInstance[]; comObjectTable: { active: Map<number, CfgComObjImage>; linked: ReadonlySet<number>; maxDeclared: number | null } },
 ): AbsStructuralImage[] {
   const segment = (segId: string | undefined, which: string): CfgAbsSegment => {
     const seg = segId === undefined ? undefined : app.absoluteSegments.find((s) => s.id === segId);
@@ -338,7 +338,7 @@ export function absoluteStructuralImages(
   const { addr, assoc } = buildGroupTablesMv0705(links, ownIa);
   if (addr.length > addrSeg.size) throw new ProductError("GA_TABLE_TOO_LARGE", `the address table needs ${addr.length} B but its segment reserves only ${addrSeg.size} B; assign fewer group addresses`);
   if (assoc.length > assocSeg.size) throw new ProductError("GA_TABLE_TOO_LARGE", `the association table needs ${assoc.length} B but its segment reserves only ${assocSeg.size} B; remove links`);
-  const comObj = buildComObjectTableMv0705(comObjSeg.data, opts.comObjectTable.active, opts.comObjectTable.linked);
+  const comObj = buildComObjectTableMv0705(comObjSeg.data, opts.comObjectTable.active, opts.comObjectTable.linked, opts.comObjectTable.maxDeclared);
   if (comObj.length > comObjSeg.size) throw new ProductError("COM_OBJECT_TABLE_TOO_LARGE", `the com-object table needs ${comObj.length} B but its segment reserves only ${comObjSeg.size} B`);
   const all = (n: number) => new Array<number>(n).fill(0xff);
   const images: AbsStructuralImage[] = [
@@ -1032,7 +1032,7 @@ export function planAbsoluteFullDownload(
   // styles (MDT BE-02001.02 and ABB US/U 4.2 captures). Absent => L3 is written as its static <Data>.
   // `propertyMapped`: a declared segment without <Data> is the device's own (declared, not written).
   // `form`: which form of the procedure (absoluteFullForm), from the unit's state.
-  opts: { lang?: string; moduleInstances?: ModuleInstance[]; requireReboot?: boolean; propertyMapped: boolean; form: AbsFullForm; comObjectTable?: { active: Map<number, CfgComObjImage>; linked: ReadonlySet<number> } },
+  opts: { lang?: string; moduleInstances?: ModuleInstance[]; requireReboot?: boolean; propertyMapped: boolean; form: AbsFullForm; comObjectTable?: { active: Map<number, CfgComObjImage>; linked: ReadonlySet<number>; maxDeclared: number | null } },
 ): AbsFullDownloadPlan {
   // A declared step we cannot execute, or whose attributes we cannot read, is a recipe we cannot
   // run; refuse before building anything rather than emit a plan that silently omits it.
@@ -1061,7 +1061,7 @@ export function planAbsoluteFullDownload(
     if (comObjTableAddr !== undefined && address === comObjTableAddr) {
       const seg = segByAddr.get(address);
       if (!seg || seg.data.length === 0) throw new ProductError("FULL_DOWNLOAD_TABLE_SEGMENT_MISSING", `the com-object table segment at ${address} carries no <Data> template; refusing to author L3 blind`);
-      const image = buildComObjectTableMv0705(seg.data, opts.comObjectTable!.active, opts.comObjectTable!.linked);
+      const image = buildComObjectTableMv0705(seg.data, opts.comObjectTable!.active, opts.comObjectTable!.linked, opts.comObjectTable!.maxDeclared);
       if (image.length > size) throw new ProductError("COM_OBJECT_TABLE_TOO_LARGE", `the com-object table needs ${image.length} B but its segment reserves only ${size} B`);
       return { image, verify: new Array<boolean>(image.length).fill(true), source: "comObjTable" };
     }

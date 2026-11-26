@@ -195,15 +195,23 @@ export function refuseObjectZeroOverride(active: ReadonlyMap<number, CfgComObjIm
 //     size. `linked` = the object carries a group-address link; its 0x04 bit is set only where its
 //     communication flag is on too (captures/mdt-be02001-ets-partial-flag-comm-{off,on}.log: ETS keeps
 //     the association of a linked object with communication off and clears the bit).
-//   - Unconfigured objects (every other entry): keep the template entry verbatim, only clear the
-//     linked bit (a stale linked bit in the manufacturer template must not survive).
-export function buildComObjectTableMv0705(template: Buffer, active: Map<number, CfgComObjImage>, linked: ReadonlySet<number>): Buffer {
+//   - Unconfigured objects up through `maxDeclared` (the highest declared <ComObject> number,
+//     including undeclared gap slots below it; null when no <ComObject> is declared): keep the
+//     template entry verbatim, clearing only any stale linked bit (`0x04`). Tail slots past
+//     `maxDeclared` stay at their template byte untouched, as ETS writes them (ETS 6.4.1 capture
+//     of M-0048_A-4949-10-C52A: header count 254, max declared #252; gap #249 and inactive #252
+//     have 0x04 cleared to 0xdb, while undeclared tail slot #253 stays at template 0xdf).
+export function buildComObjectTableMv0705(template: Buffer, active: Map<number, CfgComObjImage>, linked: ReadonlySet<number>, maxDeclared: number | null): Buffer {
   if (template.length < 3) {
     throw new ProductError("COM_OBJECT_TABLE_TEMPLATE_INVALID",
       `the MV-0705 com-object table template is ${template.length} B; too short to hold even the 3-byte header, refusing to author L3 from it`);
   }
   const out = Buffer.from(template); // preserve header, data pointers, and inactive entries verbatim
   const count = out[0];
+  if (3 + count * 4 > out.length) {
+    throw new ProductError("COM_OBJECT_TABLE_TEMPLATE_INVALID",
+      `the MV-0705 com-object table template declares ${count} entries but is only ${out.length} B; refusing to author a truncated L3`);
+  }
   // Every configured or linked object must fall inside the template's declared entry count. An object
   // numbered >= count gets no L3 entry here, yet buildGroupTablesMv0705 would still emit its
   // association, pointing a group address past the device's L3 array (the death-loop class System B's
@@ -212,19 +220,20 @@ export function buildComObjectTableMv0705(template: Buffer, active: Map<number, 
   // is com-object n, reverse-engineered and byte-verified on the MDT BE-02001.02. A manufacturer that
   // numbered its MV-0705 objects from 1 would trip this guard or shift the whole table by one slot, so
   // any non-MDT MV-0705 product is UNPROVEN until byte-checked on it (docs/commissioning.md).
-  const beyond = [...active.keys(), ...linked].filter((n) => n >= count);
+  const beyond = [...active.keys(), ...linked].filter((n) => n < 0 || n >= count);
   if (beyond.length) {
+    const bad = beyond.find((n) => n < 0) ?? Math.max(...beyond);
     throw new ProductError("COM_OBJECT_TABLE_TEMPLATE_INVALID",
-      `communication object #${Math.max(...beyond)} is beyond the ${count}-entry MV-0705 template; refusing to author an L3 that omits it while its association would still be written`);
+      `communication object #${bad} is beyond the ${count}-entry MV-0705 template; refusing to author an L3 that omits it while its association would still be written`);
   }
+  const maxSlot = Math.max(maxDeclared ?? -1, ...active.keys());
   for (let n = 0; n < count; n++) {
     const cfgOff = 3 + n * 4 + 2; // header 3 B, entry 4 B, config is the 3rd byte, type the 4th
-    if (cfgOff + 1 >= out.length) {
-      throw new ProductError("COM_OBJECT_TABLE_TEMPLATE_INVALID",
-        `the MV-0705 com-object table template declares ${count} entries but is only ${out.length} B; refusing to author a truncated L3`);
-    }
     const obj = active.get(n);
-    if (!obj) { out[cfgOff] &= ~0x04; continue; } // unconfigured: template, minus any stale linked bit
+    if (!obj) {
+      if (n <= maxSlot) out[cfgOff] &= ~0x04; // unconfigured within 0..maxDeclared: clear any stale linked bit
+      continue;
+    }
     const bits = objectSizeInBits(obj.objectSize);
     const code = bits === undefined ? undefined : sizeCodeForBits(bits);
     if (code === undefined) {

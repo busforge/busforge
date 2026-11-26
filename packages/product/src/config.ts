@@ -260,6 +260,11 @@ export interface DeviceConfigBuild extends DeviceConfigView {
   // the firmware off the end of its array on boot (hardware-proven: the RaumController reverts).
   // The com-object-table build (comobjbuild.ts) sizes the table to this. See buildDeviceConfig.
   maxComObjectNumber: number;
+  // The highest declared com-object number across flat declarations and every module instance/branch,
+  // or null when the application declares no com-objects at all. Unlike maxComObjectNumber (clamped
+  // at 0 for 1-based System B), null distinguishes "none declared" from "only object #0 declared"
+  // for 0-based MV-0705 com-object tables.
+  maxDeclaredComObject: number | null;
   // The value a top-level ParameterRef holds in this configuration, resolved like the view does
   // (device value, a placed sibling ref's value, ref or parameter default) against the final
   // working values after the walk. An unknown ref yields only a value stored under that id.
@@ -1120,14 +1125,15 @@ function buildDeviceConfigReading(
   // walking each module instance, in a scope where every argument is present (no unresolved-arg abort).
   // Every branch is walked, not selectWhens: an object placed only under an inactive choose still sizes
   // the table, because the firmware indexes by number regardless of the active configuration.
-  let maxComObjectNumber = 0;
-  for (const o of app.comObjects.values()) if (!o.baseNumber) maxComObjectNumber = Math.max(maxComObjectNumber, o.number);
+  let maxDeclaredComObject: number | null = null;
+  const noteDeclared = (n: number) => { maxDeclaredComObject = maxDeclaredComObject === null ? n : Math.max(maxDeclaredComObject, n); };
+  for (const o of app.comObjects.values()) if (!o.baseNumber) noteDeclared(o.number);
   const scanModuleComObjNums = (nodes: DynNode[], scope: Scope, inModule: boolean) => {
     for (const n of nodes) {
       switch (n.kind) {
         // Only record inside a module instance: top-level (flat) numbers are covered by the declaration
         // scan above, and resolving them here would risk a BaseNumber that only makes sense per instance.
-        case "comObjRef": { if (inModule) { const c = resolveComObjImage(n.refId, scope); if (c) maxComObjectNumber = Math.max(maxComObjectNumber, c.number); } break; }
+        case "comObjRef": { if (inModule) { const c = resolveComObjImage(n.refId, scope); if (c) noteDeclared(c.number); } break; }
         case "choose": for (const w of n.whens) scanModuleComObjNums(w.children, scope, inModule); break; // every branch, not selectWhens
         case "container": case "block": scanModuleComObjNums(n.children, scope, inModule); break;
         case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) scanModuleComObjNums(def.dynamic, makeScope(n.refId, def, inst), true); break; }
@@ -1137,6 +1143,7 @@ function buildDeviceConfigReading(
     }
   };
   scanModuleComObjNums(app.dynamic, TOP, false);
+  const maxComObjectNumber = Math.max(0, maxDeclaredComObject ?? 0);
 
   // Stable sort each sibling list by DisplayOrder (equal/missing keeps document order).
   const blocks: CfgBlock[] = [];
@@ -1162,7 +1169,7 @@ function buildDeviceConfigReading(
     throw new ProductError("CONFIG_VIEW_INCOMPLETE", `the configuration view does not match the active communication objects (not listed: ${unlisted.slice(0, 10).join(", ") || "none"}; listed but inactive: ${inactive.slice(0, 10).join(", ") || "none"}); their links would be lost`);
   }
 
-  const build: DeviceConfigBuild = { blocks, hasModules: app.hasModules, dca: app.dca, imageValues, rejectedRefs, imageComObjects, maxComObjectNumber, modulesReached, moduleInstances: instances, paramValue: (refId) => resolve(refId, TOP) };
+  const build: DeviceConfigBuild = { blocks, hasModules: app.hasModules, dca: app.dca, imageValues, rejectedRefs, imageComObjects, maxComObjectNumber, maxDeclaredComObject, modulesReached, moduleInstances: instances, paramValue: (refId) => resolve(refId, TOP) };
   if (!moduleInstances.length) refuseUnreachedInstances(app, build, instances);
   return { build, unsettled };
 }

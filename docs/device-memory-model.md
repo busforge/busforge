@@ -640,8 +640,10 @@ then overlays only the dynamic state. So the build is:
 2. **Configured objects** (those the active configuration reaches):
    `config = priority | linked | read | write | transmit | update` from the resolved flags,
    `type` rewritten from the resolved size.
-3. **Unconfigured objects**: keep the template entry verbatim, clearing only a stale linked
-   bit.
+3. **Unconfigured objects**: keep the template entry verbatim, clearing any stale linked
+   bit (`0x04`) on slots up through the highest declared `<ComObject>` number (including
+   gaps below it). Tail slots past the highest declared `<ComObject>` keep their template
+   byte untouched.
 
 This is robust by construction (the manufacturer image is the base, only what ETS changes is
 changed) rather than rebuilding every byte from first principles. The bit layout is a

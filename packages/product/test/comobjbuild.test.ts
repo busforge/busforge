@@ -186,7 +186,7 @@ describe("the property-mapped (MV-0705) com-object table", () => {
   test("a configured object gets its dynamic config + type; the data pointer is left untouched", () => {
     const active = new Map([[1, obj({ number: 1, objectSize: "1 Byte", priority: "Low",
       flags: { read: true, write: false, comm: true, transmit: true, update: false, readOnInit: false } })]]);
-    const out = buildComObjectTableMv0705(template, active, new Set([1]));
+    const out = buildComObjectTableMv0705(template, active, new Set([1]), 1);
     expect(out.subarray(0, 3)).toEqual(Buffer.from([0x02, 0x12, 0x34])); // header preserved
     expect(out.subarray(7, 9)).toEqual(Buffer.from([0xcc, 0xdd]));        // data pointer untouched
     // config = Low(0b11) | linked(0x04) | read(0x08) | transmit(0x40) = 0x4F; the template's 0x80 dropped
@@ -198,7 +198,7 @@ describe("the property-mapped (MV-0705) com-object table", () => {
   const updating = () => new Map([[1, obj({ number: 1, objectSize: "14 Bytes", priority: "Low",
     flags: { read: true, write: false, comm: true, transmit: true, update: true, readOnInit: false } })]]);
   test("a configured object with the update flag gets 0x80, as ETS writes the TheLuxa P300's object 116", () => {
-    const out = buildComObjectTableMv0705(template, updating(), new Set());
+    const out = buildComObjectTableMv0705(template, updating(), new Set(), 1);
     expect(out[9]).toBe(0xcb);
     expect(out[10]).toBe(0x0e);
   });
@@ -206,25 +206,142 @@ describe("the property-mapped (MV-0705) com-object table", () => {
   test("an unconfigured object keeps its template entry verbatim, minus any stale linked bit", () => {
     // obj0 is not in `active`: its data pointer, type and the 0x80 bit stay, but the 0x04 it must
     // never keep (the template's stale link) is cleared. obj1 here is unconfigured too (config 0x84 -> 0x80).
-    const out = buildComObjectTableMv0705(template, new Map(), new Set());
+    const out = buildComObjectTableMv0705(template, new Map(), new Set(), 1);
     expect(out.subarray(3, 7)).toEqual(Buffer.from([0xaa, 0xbb, 0x80, 0x00]));  // obj0: already unlinked
     expect(out.subarray(7, 11)).toEqual(Buffer.from([0xcc, 0xdd, 0x80, 0x00])); // obj1: stale 0x04 cleared
   });
 
+  const cfgAt = (n: number) => 3 + n * 4 + 2;
+
+  test("tail slots past the highest declared com-object keep their template byte, while gaps and inactive slots up through it clear 0x04", () => {
+    // Header declares 5 slots (0..4) with 0xdf (bit 0x04 set), while the highest declared <ComObject>
+    // is #2 (slot #0 active, #1 undeclared gap, #2 declared inactive, #3 and #4 undeclared tail slots).
+    const wide = Buffer.from([
+      0x05, 0x20, 0x20,
+      0x10, 0x00, 0xdf, 0x0e, // #0: active
+      0x10, 0x04, 0xdf, 0x0a, // #1: gap below maxDeclared -> 0x04 cleared
+      0x10, 0x08, 0xdf, 0x0e, // #2: declared inactive (maxDeclared) -> 0x04 cleared
+      0x10, 0x0c, 0xdf, 0x0e, // #3: tail past maxDeclared -> untouched
+      0x10, 0x10, 0xdf, 0x0e, // #4: tail past maxDeclared -> untouched
+    ]);
+    const active = new Map([[0, obj({ number: 0, objectSize: "14 Bytes", priority: "Low",
+      flags: { read: true, write: false, comm: true, transmit: true, update: true, readOnInit: false } })]]);
+    const out = buildComObjectTableMv0705(wide, active, new Set(), 2);
+    expect([0, 1, 2, 3, 4].map((n) => out[cfgAt(n)])).toEqual([0xcb, 0xdb, 0xdb, 0xdf, 0xdf]);
+  });
+
+  test("maxDeclared = 0 clears slot 0 while null leaves every slot at its template byte", () => {
+    const two = Buffer.from([
+      0x02, 0x20, 0x20,
+      0x10, 0x00, 0xdf, 0x00,
+      0x10, 0x01, 0xdf, 0x00,
+    ]);
+    const onlyZero = buildComObjectTableMv0705(two, new Map(), new Set(), 0);
+    expect([onlyZero[cfgAt(0)], onlyZero[cfgAt(1)]]).toEqual([0xdb, 0xdf]);
+    const none = buildComObjectTableMv0705(two, new Map(), new Set(), null);
+    expect([none[cfgAt(0)], none[cfgAt(1)]]).toEqual([0xdf, 0xdf]);
+  });
+
+  test("buildDeviceConfig.maxDeclaredComObject bounds MV-0705 clearing for flat, empty, zero-only, and modular apps", () => {
+    const seg = Buffer.from([
+      0x05, 0x20, 0x20,
+      0x10, 0x00, 0xdf, 0x00,
+      0x10, 0x01, 0xdf, 0x00,
+      0x10, 0x02, 0xdf, 0x00,
+      0x10, 0x03, 0xdf, 0x00,
+      0x10, 0x04, 0xdf, 0x00,
+    ]).toString("base64");
+    const appXml = (staticExtra: string, dynamicBody: string, moduleDefs = "") => `<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0048"><ApplicationPrograms>
+<ApplicationProgram Id="M-0048_A-1-1-0000" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-0705" Name="x">
+<Static>
+<Code><AbsoluteSegment Id="M-0048_A-1-1-0000_AS-43FE" Address="17406" Size="23"><Data>${seg}</Data></AbsoluteSegment></Code>
+${staticExtra}
+</Static>
+${moduleDefs}
+<Dynamic>${dynamicBody}</Dynamic>
+</ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+
+    // Flat: declares O-0 (active) and O-2 (inactive in untaken choose); gap #1 and #2 cleared, #3..#4 untouched.
+    const flatCfg = parseAppConfig(appXml(
+      `<ParameterTypes><ParameterType Id="M-0048_A-1-1-0000_PT-1"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="1"/></ParameterType></ParameterTypes>
+       <Parameters><Parameter Id="M-0048_A-1-1-0000_P-1" ParameterType="M-0048_A-1-1-0000_PT-1" Text="p" Value="0"/></Parameters>
+       <ParameterRefs><ParameterRef Id="M-0048_A-1-1-0000_P-1_R-1" RefId="M-0048_A-1-1-0000_P-1"/></ParameterRefs>
+       <ComObjectTable CodeSegment="M-0048_A-1-1-0000_AS-43FE" Offset="0">
+         <ComObject Id="M-0048_A-1-1-0000_O-0" Number="0" Name="a" Text="a" ObjectSize="1 Bit" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled"/>
+         <ComObject Id="M-0048_A-1-1-0000_O-2" Number="2" Name="c" Text="c" ObjectSize="1 Bit" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled"/>
+       </ComObjectTable>
+       <ComObjectRefs>
+         <ComObjectRef Id="M-0048_A-1-1-0000_O-0_R-0" RefId="M-0048_A-1-1-0000_O-0"/>
+         <ComObjectRef Id="M-0048_A-1-1-0000_O-2_R-2" RefId="M-0048_A-1-1-0000_O-2"/>
+       </ComObjectRefs>`,
+      `<ParameterBlock Id="M-0048_A-1-1-0000_PB-1" Name="b" Text="b">
+         <ParameterRefRef RefId="M-0048_A-1-1-0000_P-1_R-1"/>
+         <ComObjectRefRef RefId="M-0048_A-1-1-0000_O-0_R-0"/>
+         <choose ParamRefId="M-0048_A-1-1-0000_P-1_R-1"><when test="1"><ComObjectRefRef RefId="M-0048_A-1-1-0000_O-2_R-2"/></when></choose>
+       </ParameterBlock>`,
+    ));
+    const flatView = buildDeviceConfig(flatCfg, new Map());
+    expect(flatView.maxDeclaredComObject).toBe(2);
+    const flatOut = buildComObjectTableMv0705(flatCfg.absoluteSegments[0].data, flatView.imageComObjects, new Set(), flatView.maxDeclaredComObject);
+    expect([0, 1, 2, 3, 4].map((n) => flatOut[3 + n * 4 + 2])).toEqual([0x4b, 0xdb, 0xdb, 0xdf, 0xdf]);
+
+    // Empty: no <ComObject> declared -> maxDeclaredComObject is null, every template slot stays 0xdf.
+    const emptyCfg = parseAppConfig(appXml(`<ComObjectTable CodeSegment="M-0048_A-1-1-0000_AS-43FE" Offset="0"/>`, ``));
+    const emptyView = buildDeviceConfig(emptyCfg, new Map());
+    expect([emptyView.maxDeclaredComObject, emptyView.maxComObjectNumber]).toEqual([null, 0]);
+    const emptyOut = buildComObjectTableMv0705(emptyCfg.absoluteSegments[0].data, emptyView.imageComObjects, new Set(), emptyView.maxDeclaredComObject);
+    expect([0, 1, 2, 3, 4].map((n) => emptyOut[3 + n * 4 + 2])).toEqual([0xdf, 0xdf, 0xdf, 0xdf, 0xdf]);
+
+    // Zero-only: declares only <ComObject Number="0"> (inactive) -> clears slot #0, leaves #1..#4 at 0xdf.
+    const zeroCfg = parseAppConfig(appXml(
+      `<ComObjectTable CodeSegment="M-0048_A-1-1-0000_AS-43FE" Offset="0">
+         <ComObject Id="M-0048_A-1-1-0000_O-0" Number="0" Name="a" Text="a" ObjectSize="1 Bit" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled"/>
+       </ComObjectTable>`,
+      ``,
+    ));
+    const zeroView = buildDeviceConfig(zeroCfg, new Map());
+    expect([zeroView.maxDeclaredComObject, zeroView.maxComObjectNumber]).toEqual([0, 0]);
+    const zeroOut = buildComObjectTableMv0705(zeroCfg.absoluteSegments[0].data, zeroView.imageComObjects, new Set(), zeroView.maxDeclaredComObject);
+    expect([0, 1, 2, 3, 4].map((n) => zeroOut[3 + n * 4 + 2])).toEqual([0xdb, 0xdf, 0xdf, 0xdf, 0xdf]);
+
+    // Modular: highest declared object (#3 = base 1 + Number 2) comes from a module instance in an inactive choose.
+    const modCfg = parseAppConfig(appXml(
+      `<ParameterTypes><ParameterType Id="M-0048_A-1-1-0000_PT-1"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="1"/></ParameterType></ParameterTypes>
+       <Parameters><Parameter Id="M-0048_A-1-1-0000_P-1" ParameterType="M-0048_A-1-1-0000_PT-1" Text="p" Value="0"/></Parameters>
+       <ParameterRefs><ParameterRef Id="M-0048_A-1-1-0000_P-1_R-1" RefId="M-0048_A-1-1-0000_P-1"/></ParameterRefs>
+       <ComObjectTable CodeSegment="M-0048_A-1-1-0000_AS-43FE" Offset="0"/>`,
+      `<ParameterBlock Id="M-0048_A-1-1-0000_PB-1" Name="b" Text="b"><ParameterRefRef RefId="M-0048_A-1-1-0000_P-1_R-1"/></ParameterBlock>
+       <Module Id="M-0048_A-1-1-0000_MD-1_M-1" RefId="M-0048_A-1-1-0000_MD-1"><NumericArg RefId="M-0048_A-1-1-0000_MD-1_A-1" Value="1"/></Module>`,
+      `<ModuleDefs><ModuleDef Id="M-0048_A-1-1-0000_MD-1" Name="m">
+         <Arguments><Argument Id="M-0048_A-1-1-0000_MD-1_A-1" Name="Base"/></Arguments>
+         <Static>
+           <ComObjects><ComObject Id="M-0048_A-1-1-0000_MD-1_O-2" Number="2" BaseNumber="M-0048_A-1-1-0000_MD-1_A-1" Name="mo" Text="mo" ObjectSize="1 Bit" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled"/></ComObjects>
+           <ComObjectRefs><ComObjectRef Id="M-0048_A-1-1-0000_MD-1_O-2_R-2" RefId="M-0048_A-1-1-0000_MD-1_O-2"/></ComObjectRefs>
+         </Static>
+         <Dynamic><choose ParamRefId="M-0048_A-1-1-0000_P-1_R-1"><when test="1"><ComObjectRefRef RefId="M-0048_A-1-1-0000_MD-1_O-2_R-2"/></when></choose></Dynamic>
+       </ModuleDef></ModuleDefs>`,
+    ));
+    const modView = buildDeviceConfig(modCfg, new Map());
+    expect(modView.maxDeclaredComObject).toBe(3);
+    const modOut = buildComObjectTableMv0705(modCfg.absoluteSegments[0].data, modView.imageComObjects, new Set(), modView.maxDeclaredComObject);
+    expect([0, 1, 2, 3, 4].map((n) => modOut[3 + n * 4 + 2])).toEqual([0xdb, 0xdb, 0xdb, 0xdb, 0xdf]);
+  });
+
   test("a template too short even for the header is REFUSED, never authored blind", () => {
-    expect(() => buildComObjectTableMv0705(Buffer.from([0x01, 0x00]), new Map(), new Set()))
+    expect(() => buildComObjectTableMv0705(Buffer.from([0x01, 0x00]), new Map(), new Set(), 0))
       .toThrow(/template.*too short|COM_OBJECT_TABLE_TEMPLATE_INVALID/i);
   });
 
   test("a template whose declared count overruns the buffer is REFUSED, not truncated", () => {
-    // count=5 but only the 3-byte header is present: the first entry already runs off the end.
-    expect(() => buildComObjectTableMv0705(Buffer.from([0x05, 0x00, 0x00]), new Map(), new Set()))
+    // count=5 but only the 3-byte header is present: refused even when no com-object is declared.
+    expect(() => buildComObjectTableMv0705(Buffer.from([0x05, 0x00, 0x00]), new Map(), new Set(), null))
       .toThrow(ProductError);
   });
 
   test("a configured object whose size Busforge cannot express is REFUSED, never guessed", () => {
     const active = new Map([[0, obj({ number: 0, objectSize: "3 Cubits" })]]);
-    expect(() => buildComObjectTableMv0705(template, active, new Set()))
+    expect(() => buildComObjectTableMv0705(template, active, new Set(), 1))
       .toThrow(/cannot express|COM_OBJECT_SIZE_UNKNOWN/i);
   });
 
@@ -233,10 +350,10 @@ describe("the property-mapped (MV-0705) com-object table", () => {
     // has no slot in this L3, yet the association table would still reference it -> the device reads past
     // its L3 array. Refuse, like System B's declared-count guard, instead of dropping it silently.
     const active = new Map([[2, obj({ number: 2, objectSize: "1 Bit" })]]);
-    expect(() => buildComObjectTableMv0705(template, active, new Set()))
+    expect(() => buildComObjectTableMv0705(template, active, new Set(), 2))
       .toThrow(/beyond the 2-entry|COM_OBJECT_TABLE_TEMPLATE_INVALID/i);
     // and the same for a link (linked set) that points past the template
-    expect(() => buildComObjectTableMv0705(template, new Map(), new Set([2])))
+    expect(() => buildComObjectTableMv0705(template, new Map(), new Set([2]), 2))
       .toThrow(/beyond the 2-entry|COM_OBJECT_TABLE_TEMPLATE_INVALID/i);
   });
 });

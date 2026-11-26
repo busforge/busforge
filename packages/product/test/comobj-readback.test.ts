@@ -60,7 +60,7 @@ describe("a System 7 com-object table read off a device", () => {
   test("is the inverse of the table the downloads author", () => {
     const template = Buffer.from([0x03, 0x00, 0x40, 0, 0x50, 0x43, 0, 0, 0x51, 0x43, 0, 0, 0x52, 0x43, 0]);
     const active = new Map([[0, obj(0, { read: true }, "High")], [2, obj(2, { update: true, transmit: false })]]);
-    const read = decodeComObjectTableMv0705(buildComObjectTableMv0705(template, active, new Set([0])), new Set([0]));
+    const read = decodeComObjectTableMv0705(buildComObjectTableMv0705(template, active, new Set([0]), 2), new Set([0]));
     expect(read.get(0)).toEqual({ flags: { read: true, write: true, transmit: true, update: false, comm: true }, priority: "High" });
     expect(read.get(2)).toEqual({ flags: { read: false, write: true, transmit: false, update: true }, priority: "Low" });
   });

@@ -564,7 +564,7 @@ corpusDescribe("structural flash against ETS's partial download", () => {
     const view = buildDeviceConfig(cfg, params, undefined, instances);
     // The device's programmed baseline is the configuration ETS downloaded in full: input B short/long.
     const baseValues = new Map([["M-0083_A-00B6-32-9642_MD-2_M-3_MI-1_P-24_R-2", "7"]]);
-    const images = absoluteStructuralImages(cfg, params, [], ia, { baseValues, moduleInstances: instances, comObjectTable: { active: view.imageComObjects, linked: new Set() } });
+    const images = absoluteStructuralImages(cfg, params, [], ia, { baseValues, moduleInstances: instances, comObjectTable: { active: view.imageComObjects, linked: new Set(), maxDeclared: view.maxDeclaredComObject } });
     // ETS's full download leaves the address table's own individual address to the device (it holds it
     // already), so those two bytes are the only ones the capture does not show; the device holds its own address there.
     const unseen = images.flatMap((w) => Array.from({ length: w.image.length }, (_, i) => w.address + i)).filter((a) => !before.has(a));
@@ -1079,7 +1079,7 @@ function system7StructuralFlash(o: {
 }) {
   const instances = o.moduleInstances ?? [];
   const view = buildDeviceConfig(o.cfg, o.params, undefined, instances);
-  const comObjectTable = { active: withInstanceOverrides(view.imageComObjects, o.overrides), linked: new Set(o.links.map((l) => l.comObjNum)) };
+  const comObjectTable = { active: withInstanceOverrides(view.imageComObjects, o.overrides), linked: new Set(o.links.map((l) => l.comObjNum)), maxDeclared: view.maxDeclaredComObject };
   const images = absoluteStructuralImages(o.cfg, o.params, o.links, o.ia, { baseValues: o.baseParams, baseInstances: instances, moduleInstances: instances, comObjectTable });
   const current = new Map(images.map((w) => [w.address, Buffer.from(Array.from({ length: w.image.length }, (_, i) => {
     const b = o.device.get(w.address + i);
