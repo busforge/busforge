@@ -736,13 +736,14 @@ async function readCatalogueEntry(s: Screen): Promise<CatalogueEntry> {
   return { manufacturer: value(app, "Hersteller"), deviceType: value(app, "Gerätetyp"), version: value(app, "Programmversion"), fingerprint: value(app, "Fingerprint") };
 }
 
-// The properties panel's tab `name` (Katalog, Applikation). A product picture beside the tabs cuts OCR's reading of
-// their names short ("Katal"): found as a prefix of `name` at least 5 characters long, so longer description words
-// ("Applikationsprogramm") scrolled into the top of the panel never match.
-export const propertiesTab = reader("propertiesTab", (png: string, name: string): Box | null => {
+// The properties panel's tab `name` (Katalog, Applikation) among OCR words `ws`. A product picture beside the tabs cuts
+// OCR's reading of their names short ("Katal"): found as a prefix of `name` at least 5 characters long, so longer
+// description words ("Applikationsprogramm") scrolled into the top of the panel never match.
+export function propertiesTabIn(ws: Word[], name: string): Box | null {
   const want = norm(name);
-  return findText(words(png, AT.properties), name.slice(0, 5)).find((b) => b.y < 165 && want.startsWith(norm(b.text))) ?? null;
-});
+  return findText(ws, name.slice(0, 5)).find((b) => b.y < 165 && want.startsWith(norm(b.text))) ?? null;
+}
+export const propertiesTab = reader("propertiesTab", (png: string, name: string): Box | null => propertiesTabIn(words(png, AT.properties), name));
 
 // The label/value table under the properties panel's tab `tab`, line by line: read as one block (word by word, OCR
 // drops the dot in "1.1"), at three times its size and thresholded to black and white ("binary"): at two OCR reads

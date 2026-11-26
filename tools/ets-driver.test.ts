@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { benchSimArgs, compatibilityRefusalWhy, editDistance, expanderOpen, isCatalogueProgress, isCompatibilityWarningText, LINE_11, nextBatchSize, notLoadedMark, oneRowSelected, pcapOf, pickCatalogueRow, selectedSamples, simRowFiles, simStartScript, writtenRowKind } from "./ets-driver.ts";
+import { benchSimArgs, compatibilityRefusalWhy, editDistance, expanderOpen, isCatalogueProgress, isCompatibilityWarningText, LINE_11, nextBatchSize, notLoadedMark, oneRowSelected, pcapOf, pickCatalogueRow, propertiesTabIn, selectedSamples, simRowFiles, simStartScript, writtenRowKind } from "./ets-driver.ts";
 
 test("a catalogue batch halves after a refusal and grows from the last size that loaded", () => {
   const walk = (outcomes: ("loaded" | "refused" | "skipped")[], max = 150) => {
@@ -185,4 +185,12 @@ test("ETS's compatibility warning: recognized from OCR text with or without umla
   expect(isCompatibilityWarningText("Projektpasswort setzen")).toBe(false);
   expect(compatibilityRefusalWhy("after the insert")).toBe("the product's plug-ins need ETS's compatibility mode (ETS asks to restart in it after the insert); the driver runs ETS in its normal mode");
   expect(compatibilityRefusalWhy("at the download")).toBe("the product's plug-ins need ETS's compatibility mode (ETS asks to restart in it at the download); the driver runs ETS in its normal mode");
+});
+
+test("propertiesTabIn matches the tab prefix above y=165 and rejects longer description words", () => {
+  const w = (text: string, y: number, line = "1.1.1") => ({ text, x: 1650, y, w: 60, h: 11, line });
+  expect(propertiesTabIn([w("Applikationsprogramm", 140)], "Applikation")).toBeNull();
+  expect(propertiesTabIn([w("Applikation", 180)], "Applikation")).toBeNull();
+  expect(propertiesTabIn([w("Applikationsprogramm", 140, "1.1.1"), w("Appli", 144, "1.1.2")], "Applikation")?.text).toBe("Appli");
+  expect(propertiesTabIn([w("Katal", 144)], "Katalog")?.text).toBe("Katal");
 });

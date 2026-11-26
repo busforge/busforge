@@ -22,7 +22,7 @@ import { readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { declaredPropMatches, MM_STATUS_BASE, PID } from "../packages/knx/src/index.ts";
 import { extractAppPrograms } from "../packages/project/src/index.ts";
-import { buildDeviceConfig, closingSteps, declaredPropChecks, initialValues, lsmIdx, maskInfo, parseAppConfig, programIdStamp, resolveModuleInstances, stepSize } from "../packages/product/src/index.ts";
+import { closingSteps, declaredPropChecks, lsmIdx, maskInfo, parseAppConfig, programIdStamp, resolveModuleInstances, stepSize, type DynNode, type ModuleInstance } from "../packages/product/src/index.ts";
 import { catalogueXml, corpusPath } from "./corpus.ts";
 import { MEMORY_END, MEMORY_EXT_END, segmentAllocationRefusal, type AnswerSources, type SimProperty, type SimUnit, type SimUnitCoreModel } from "./sim-unit.ts";
 import type { AdditionalControl } from "./sim-unit-0701.ts";
@@ -88,11 +88,52 @@ type AppConfig = ReturnType<typeof parseAppConfig>;
 type Needs = { basic: boolean; confirmed: boolean; extendedWrite: boolean; controlAfterUnload: boolean; loadImage: { obj: number; pid: number }[]; additional: AdditionalControl[]; relSegments: { lsm: number; size: number }[] } & DeclaredTaskForms;
 const NO_TASKS: DeclaredTaskForms = { taskPlaces: [], taskControls1: [] };
 
-// The System B relative segment sizes a full download allocates: every declared LdCtrlRelSegment (including Size="0",
-// which allocate() also refuses) and the com-object table on object 3 (2 + 2 * maxComObjectNumber, including module
-// instances via buildDeviceConfig when the application has modules).
+// Highest com-object number declared by `cfg`, including modular com-objects resolved from `instances` without running
+// buildDeviceConfig (which can refuse unrelated UI/InitialValue constructs that ETS captures are meant to settle).
+function maxDeclaredComObjectNumber(cfg: AppConfig, instances: readonly ModuleInstance[]): number {
+  let maxCo = 0;
+  for (const co of cfg.comObjects.values()) if (!co.baseNumber && co.number > maxCo) maxCo = co.number;
+  if (!instances.length) return maxCo;
+  const byNode = new Map<string, ModuleInstance[]>();
+  const strip = (id: string) => (id.startsWith(`${cfg.id}_`) ? id.slice(cfg.id.length + 1) : id);
+  for (const inst of instances) (byNode.get(inst.refId) ?? byNode.set(inst.refId, []).get(inst.refId)!).push(inst);
+  const walk = (nodes: DynNode[], args: Map<string, number> | null) => {
+    for (const n of nodes) {
+      if (n.kind === "comObjRef" && args) {
+        const ref = cfg.comObjectRefs.get(n.refId), co = ref ? cfg.comObjects.get(ref.refId) : undefined;
+        if (co) {
+          const base = co.baseNumber ? args.get(co.baseNumber) : 0;
+          if (base !== undefined && Number.isFinite(base)) maxCo = Math.max(maxCo, co.number + base);
+        }
+      } else if (n.kind === "choose") {
+        for (const w of n.whens) walk(w.children, args);
+      } else if (n.kind === "container" || n.kind === "block") {
+        walk(n.children, args);
+      } else if (n.kind === "module") {
+        const def = cfg.moduleDefs.get(n.refId);
+        if (!def) continue;
+        for (const inst of byNode.get(strip(n.id)) ?? []) {
+          const next = new Map(args ?? []);
+          for (const a of inst.args) if (/^-?\d+$/.test(a.value)) next.set(`${cfg.id}_${a.refId}`, Number(a.value));
+          walk(def.dynamic, next);
+        }
+      }
+    }
+  };
+  walk(cfg.dynamic, null);
+  return maxCo;
+}
+
+// The System B relative segment sizes a full download allocates: every declared LdCtrlRelSegment (each distinct size
+// kept so a Size="0" step is never masked by a positive size on the same object) and the com-object table on object 3
+// (2 + 2 * maxComObjectNumber).
 function systemBSegments(cfg: AppConfig, steps: ReturnType<typeof fullSteps>): { lsm: number; size: number }[] | string {
-  const sizes = new Map<number, number>();
+  const seen = new Set<string>();
+  const out: { lsm: number; size: number }[] = [];
+  const add = (lsm: number, size: number) => {
+    const k = `${lsm}:${size}`;
+    if (!seen.has(k)) { seen.add(k); out.push({ lsm, size }); }
+  };
   for (const s of steps) {
     if (s.verb !== "LdCtrlRelSegment") continue;
     let lsm: number, size: number | undefined;
@@ -101,20 +142,15 @@ function systemBSegments(cfg: AppConfig, steps: ReturnType<typeof fullSteps>): {
       size = stepSize(s);
     } catch (e) { return (e as Error).message; }
     if (size === undefined) return "the load procedure declares LdCtrlRelSegment without Size";
-    sizes.set(lsm, Math.max(sizes.get(lsm) ?? -1, size));
+    add(lsm, size);
   }
-  let maxCo = 0;
+  let instances: ModuleInstance[] = [];
   if (cfg.hasModules) {
-    try {
-      const base = initialValues(cfg);
-      const built = buildDeviceConfig(cfg, base, undefined, resolveModuleInstances(cfg, base));
-      maxCo = Math.max(built.maxComObjectNumber, ...built.imageComObjects.keys());
-    } catch (e) { return (e as Error).message; }
-  } else {
-    for (const co of cfg.comObjects.values()) if (!co.baseNumber && co.number > maxCo) maxCo = co.number;
+    try { instances = resolveModuleInstances(cfg, new Map()); } catch { instances = []; }
   }
-  if (maxCo > 0) sizes.set(3, Math.max(sizes.get(3) ?? -1, 2 + 2 * maxCo));
-  return [...sizes].sort(([a], [b]) => a - b).map(([lsm, size]) => ({ lsm, size }));
+  const maxCo = maxDeclaredComObjectNumber(cfg, instances);
+  if (maxCo > 0) add(3, 2 + 2 * maxCo);
+  return out.sort((a, b) => a.lsm - b.lsm || a.size - b.size);
 }
 
 // What a download of the application needs of its unit beyond the mask: a basic restart at its end (System 7's
@@ -208,7 +244,7 @@ function unfit(u: SimUnitSpec, need: Needs): string | null {
     // Without extended memory services ETS writes with 16-bit A_Memory_Write, capped at MEMORY_END regardless of donor.
     const memoryLimit = need.extendedWrite && b.memoryExtendedWrite ? MEMORY_EXT_END : MEMORY_END;
     for (const { lsm, size } of need.relSegments) {
-      const refused = segmentAllocationRefusal(segs, lsm, size, memoryLimit, true);
+      const refused = segmentAllocationRefusal(segs, lsm, size, memoryLimit);
       if (refused) return `segment of object ${lsm}: ${refused}`;
     }
   }

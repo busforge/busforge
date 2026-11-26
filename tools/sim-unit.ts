@@ -51,15 +51,14 @@ const PRIORITY_BITS = 0x0c, STANDARD_FRAME = 0x80, STANDARD_TPDU_MAX = 16, GROUP
 export const MEMORY_END = 0x10000;
 export const MEMORY_EXT_END = 0x1000000;
 
-// Why allocating `size` octets for relative segment `obj` in `segments` under `memoryLimit` is refused, or null.
-// `emptyOccupiesStart`: for pre-download donor eligibility (tools/sim-unit-catalogue.ts), a zero-sized initial segment
-// of another object still reserves its start address once that object is allocated.
-export function segmentAllocationRefusal(segments: ReadonlyMap<number, { at: number; size: number }>, obj: number, size: number, memoryLimit: number, emptyOccupiesStart = false): string | null {
+// Why allocating `size` octets for relative segment `obj` in `segments` under `memoryLimit` (or null to skip the size
+// and memory-limit check) is refused, or null.
+export function segmentAllocationRefusal(segments: ReadonlyMap<number, { at: number; size: number }>, obj: number, size: number, memoryLimit: number | null): string | null {
   const seg = segments.get(obj);
   if (!seg) return `where the unit places a segment of object ${obj} is not known`;
-  const other = [...segments].find(([lsm, s]) => lsm !== obj && (s.size > 0 ? seg.at < s.at + s.size && s.at < seg.at + size : emptyOccupiesStart && s.at > seg.at && s.at < seg.at + size));
+  const other = [...segments].find(([lsm, s]) => lsm !== obj && seg.at < s.at + s.size && s.at < seg.at + size);
   if (other) return `${size} bytes at 0x${seg.at.toString(16)} reach into the segment of object ${other[0]}; where the unit places them then is not known`;
-  if (size === 0 || seg.at + size > memoryLimit) return `${size} bytes at 0x${seg.at.toString(16)} do not fit the unit's memory services`;
+  if (memoryLimit !== null && (size === 0 || seg.at + size > memoryLimit)) return `${size} bytes at 0x${seg.at.toString(16)} do not fit the unit's memory services`;
   return null;
 }
 // KNX 3/3/4: a transport connection that carries nothing for 6 s is closed by the device.
@@ -785,8 +784,8 @@ export class SimUnit implements KnxTransport {
   // mode 0 keeps the bytes it held, and a grown segment's new octets are unknown until written.
   private allocate(obj: number, size: number, mode: number, fill: number, what: string): boolean {
     if (mode !== 0 && mode !== 1) {
-      const pre = segmentAllocationRefusal(this.segments, obj, size, MEMORY_EXT_END);
-      if (pre && !pre.endsWith("do not fit the unit's memory services")) { this.refuse(`${what}: ${pre}`); return false; }
+      const pre = segmentAllocationRefusal(this.segments, obj, size, null);
+      if (pre) { this.refuse(`${what}: ${pre}`); return false; }
       this.refuse(`${what}: allocation mode ${mode}`);
       return false;
     }

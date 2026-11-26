@@ -746,7 +746,7 @@ A mask without a qualifying unit refuses the row, naming each unit and why. With
 
 | Mask | Donor | Why the others do not qualify, or rank lower |
 |---|---|---|
-| MV-07B0 without Data Secure or extended memory services (com-object table ≤ 74 B) | MEAN WELL KNX-40E-1280D | the Theben DALI-Gateway leaves more unshown; the OpenKNX RaumController shows no device control after its application's unload; the Theben MIX 2, the Jung 400021SE and the GVS AMMA show no basic restart |
+| MV-07B0 without Data Secure or extended memory services (com-object table ≤ 74 B, parameter segment ≤ 58,288 B) | MEAN WELL KNX-40E-1280D | the Theben DALI-Gateway leaves more unshown; the OpenKNX RaumController shows no device control after its application's unload; the Theben MIX 2, the Jung 400021SE and the GVS AMMA show no basic restart |
 | MV-07B0 without Data Secure or extended memory services (com-object table > 74 B, ≤ 4,096 B; parameter segment ≤ 45,056 B) | Theben DALI-Gateway | the MEAN WELL's object 3 has room for 74 B only; the OpenKNX RaumController shows no device control after its application's unload; the others show no basic restart |
 | MV-07B0 with extended memory services, without Data Secure (com-object table ≤ 2,720 B, parameter segment ≤ 21,604 B) | OpenKNX RaumController | the MEAN WELL and the Theben DALI-Gateway show no `A_MemoryExtended_Write`; the Theben MIX 2, the Jung 400021SE and the GVS AMMA show no basic restart |
 | MV-07B0 with Data Secure and extended memory services (com-object table ≤ 2,130 B) | GVS AMMA-04/06.S | the Theben MIX 2 and the Jung 400021SE change their memory after a restart; the others show no confirmed restart |

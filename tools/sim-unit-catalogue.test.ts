@@ -92,19 +92,24 @@ corpusDescribe("a catalogue unit's donor", () => {
     const app = catalogueXml("M-0048_A-9071-20-F258-O00EF.xml.gz");
     // The MEAN WELL's object 3 has room for 74 bytes only, so the rule rejects it for the 2688-byte DALI-Gateway table.
     expect(donorUnfit(MEANWELL_KNX40E, app)).toBe("segment of object 3: 2688 bytes at 0x1c06 reach into the segment of object 4; where the unit places them then is not known");
-    // Declared Size="0" on LdCtrlRelSegment is refused up front just as allocate() refuses it.
-    const mwZero = catalogueXml("M-0162_A-0004-11-F245.xml.gz").replaceAll('Size="212"', 'Size="0"');
-    expect(donorUnfit(MEANWELL_KNX40E, mwZero)).toBe("segment of object 4: 0 bytes at 0x1c50 do not fit the unit's memory services");
+    // Declared Size="0" on LdCtrlRelSegment is refused up front even when another step or the com-object table also sizes the same object.
+    const mw = catalogueXml("M-0162_A-0004-11-F245.xml.gz");
+    expect(donorUnfit(MEANWELL_KNX40E, mw.replaceAll('Size="212"', 'Size="0"'))).toBe("segment of object 4: 0 bytes at 0x1c50 do not fit the unit's memory services");
+    expect(donorUnfit(MEANWELL_KNX40E, mw.replace('Size="212"', 'Size="0" Mode="1" Fill="0" AppliesTo="full" /><LdCtrlRelSegment LsmIdx="4" Size="212"'))).toBe("segment of object 4: 0 bytes at 0x1c50 do not fit the unit's memory services");
+    expect(donorUnfit(MEANWELL_KNX40E, mw.replace('<LdCtrlRelSegment LsmIdx="4"', '<LdCtrlRelSegment LsmIdx="3" Size="0" Mode="1" Fill="0" AppliesTo="full" /><LdCtrlRelSegment LsmIdx="4"'))).toBe("segment of object 3: 0 bytes at 0x1c06 do not fit the unit's memory services");
     // A modular System B application sizes object 3 from its resolved module instances (BaseNumber + local Number),
     // not raw declaration numbers: BaseNumber 38 gives com-object 38 -> 78 bytes, past MEAN WELL's 74-byte room.
     const modular = `<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0001"><ApplicationPrograms><ApplicationProgram Id="M-0001_A-0001-10-0001" ApplicationNumber="1" ApplicationVersion="16" ProgramType="ApplicationProgram" MaskVersion="MV-07B0" Name="Mod" LoadProcedureStyle="MergedProcedure" DefaultLanguage="en-US"><Static><Code><RelativeSegment Id="M-0001_A-0001-10-0001_RS-04-00000" Name="P" Size="16" LoadStateMachine="4"/></Code><LoadProcedures><LoadProcedure MergeId="2"><LdCtrlRelSegment LsmIdx="4" Size="16" Mode="1" Fill="0" AppliesTo="full"/></LoadProcedure></LoadProcedures></Static><ModuleDefs><ModuleDef Id="M-0001_A-0001-10-0001_MD-1" Name="M"><Arguments><Argument Id="M-0001_A-0001-10-0001_MD-1_A-1" Name="Base" Allocates="1"/></Arguments><Static><ComObjectTable><ComObject Id="M-0001_A-0001-10-0001_MD-1_O-1" Name="O" Number="0" BaseNumber="M-0001_A-0001-10-0001_MD-1_A-1" Text="O" FunctionText="O" ObjectSize="1 Bit" ReadFlag="Disabled" WriteFlag="Enabled" CommunicationFlag="Enabled" TransmitFlag="Disabled" UpdateFlag="Disabled"/></ComObjectTable><ComObjectRefs><ComObjectRef Id="M-0001_A-0001-10-0001_MD-1_O-1_R-1" RefId="M-0001_A-0001-10-0001_MD-1_O-1"/></ComObjectRefs></Static><Dynamic><ChannelIndependentBlock><ParameterBlock Id="M-0001_A-0001-10-0001_MD-1_PB-1" Name="B"><ComObjectRefRef RefId="M-0001_A-0001-10-0001_MD-1_O-1_R-1"/></ParameterBlock></ChannelIndependentBlock></Dynamic></ModuleDef></ModuleDefs><Dynamic><Module Id="M-0001_A-0001-10-0001_M-1" RefId="M-0001_A-0001-10-0001_MD-1"><NumericArg RefId="M-0001_A-0001-10-0001_MD-1_A-1" Value="38"/></Module></Dynamic></ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
     expect(donorUnfit(MEANWELL_KNX40E, modular)).toBe("segment of object 3: 78 bytes at 0x1c06 reach into the segment of object 4; where the unit places them then is not known");
     expect(donorUnfit(THEBEN_DALI_GATEWAY, modular)).toBeNull();
-    // Shared segmentAllocationRefusal handles both lower overlapping segments and zero-size neighbours at the same start.
+    // Shared segmentAllocationRefusal handles lower overlaps, zero-sized neighbours at the same start, and zero-sized neighbours ahead (e.g. OpenKNX obj 4 reaching obj 3).
     const sameStart = new Map([[1, { at: 0x1000, size: 0 }], [2, { at: 0x1000, size: 0 }]]);
-    expect(segmentAllocationRefusal(sameStart, 1, 16, 0x10000, true)).toBeNull();
+    expect(segmentAllocationRefusal(sameStart, 1, 16, 0x10000)).toBeNull();
+    const emptyAhead = new Map([[4, { at: 0x54, size: 0 }], [3, { at: 0x54b8, size: 0 }]]);
+    expect(segmentAllocationRefusal(emptyAhead, 4, 21604, 0x1000000)).toBeNull();
+    expect(segmentAllocationRefusal(emptyAhead, 4, 21605, 0x1000000)).toContain("reach into the segment of object 3");
     const lowerOverlap = new Map([[1, { at: 0x1000, size: 64 }], [2, { at: 0x1010, size: 16 }]]);
-    expect(segmentAllocationRefusal(lowerOverlap, 2, 16, 0x10000, true)).toContain("reach into the segment of object 1");
+    expect(segmentAllocationRefusal(lowerOverlap, 2, 16, 0x10000)).toContain("reach into the segment of object 1");
     // A further MV-07B0 unit whose captures show its programming mode and its serial-number answer: fewer unshown.
     const dali = THEBEN_DALI_GATEWAY.behaviour as SystemBBehaviour;
     const shown: SimUnitSpec = { ...THEBEN_DALI_GATEWAY, id: "a-unit-showing-more", behaviour: { ...dali, programmingMode: false, serialNumberResponseTail: Buffer.alloc(4) } };
