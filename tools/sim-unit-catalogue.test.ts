@@ -58,8 +58,9 @@ corpusDescribe("a catalogue unit's donor", () => {
     expect(chosen).toEqual([
       ["M-0002_A-A001-13-63C2", "abb-usu-4.2"],
       // A System B download with Data Secure ends with the confirmed restart: of the units that show it, the MIX 2's and
-      // the Jung's applications change their memory after a restart.
-      ["M-0004_A-7072-21-99A7-O000A", "gvs-amma"],
+      // the Jung's applications change their memory after a restart, and the GVS AMMA's object 3 has room for 2130 bytes
+      // while the Jung 400021SE's com-object table needs 2656.
+      ["M-0004_A-7072-21-99A7-O000A", "no donor for MV-07B0: meanwell-knx40e: its captures show no confirmed restart; theben-dali-gateway: its captures show no confirmed restart; openknx-raumcontroller: its captures show no confirmed restart; theben-mix2-hmg6t: its application changes its memory after a restart; jung-400021se: its application changes its memory after a restart; gvs-amma: its segment of object 3 at 0x3774 has room for 2130 bytes, the application needs 2656; theben-mix2-jmg4t: its application changes its memory after a restart; theben-mix2-rmg8t: its application changes its memory after a restart"],
       // An MV-0705 application declaring a task control 1 and a task segment that starts no segment: the Auro shows
       // the task segment at the end of a segment and a task control 1 of count 0 at address 0, the theLuxa P300 the
       // task segment inside a segment and a task control 1 of count 1 at an address inside a segment; the Gira's
@@ -70,7 +71,9 @@ corpusDescribe("a catalogue unit's donor", () => {
       ["M-0048_A-107E-12-5B58", "theben-theluxa-p300"],
       ["M-0048_A-140C-14-EB70", "no donor for MV-0701: abb-usu-4.2: its captures show no task-control-1; theben-meteodata-140s: its application changes its memory after a restart"],
       ["M-0048_A-493B-21-B471", "gvs-amma"],
-      ["M-0048_A-9071-20-F258-O00EF", "meanwell-knx40e"],
+      // The DALI-Gateway's com-object table needs 2688 bytes: the MEAN WELL's object 3 has room for 74 bytes only,
+      // while the DALI-Gateway's own layout has 4096.
+      ["M-0048_A-9071-20-F258-O00EF", "theben-dali-gateway"],
       ["M-0081_A-FE01-11-75D9", "auro-m0081"],
       ["M-0081_A-FF31-31-D6FF", "auro-m0081"],
       ["M-0083_A-00B4-32-3919", "mdt-be02001"],
@@ -87,9 +90,11 @@ corpusDescribe("a catalogue unit's donor", () => {
 
   test("takes a new own unit without a change of the rule, and refuses a mask none fits", () => {
     const app = catalogueXml("M-0048_A-9071-20-F258-O00EF.xml.gz");
+    // The MEAN WELL's object 3 has room for 74 bytes only, so the rule rejects it for the 2688-byte DALI-Gateway table.
+    expect(donorUnfit(MEANWELL_KNX40E, app)).toBe("its segment of object 3 at 0x1c06 has room for 74 bytes, the application needs 2688");
     // A further MV-07B0 unit whose captures show its programming mode and its serial-number answer: fewer unshown.
-    const meanwell = MEANWELL_KNX40E.behaviour as SystemBBehaviour;
-    const shown: SimUnitSpec = { ...MEANWELL_KNX40E, id: "a-unit-showing-more", behaviour: { ...meanwell, programmingMode: false, serialNumberResponseTail: Buffer.alloc(4) } };
+    const dali = THEBEN_DALI_GATEWAY.behaviour as SystemBBehaviour;
+    const shown: SimUnitSpec = { ...THEBEN_DALI_GATEWAY, id: "a-unit-showing-more", behaviour: { ...dali, programmingMode: false, serialNumberResponseTail: Buffer.alloc(4) } };
     const c = chooseDonor(app, [...SIM_UNITS, shown]);
     expect("donor" in c && [c.donor.id, c.rule]).toEqual([shown.id, DONOR_RULES["MV-07B0"]]);
     expect(chooseDonor(app, SIM_UNITS.filter((u) => u.id === "theben-mix2-hmg6t"))).toEqual({ refused: "no donor for MV-07B0: theben-mix2-hmg6t: its application changes its memory after a restart" });

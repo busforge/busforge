@@ -21,9 +21,9 @@ import { readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { declaredPropMatches, MM_STATUS_BASE, PID } from "../packages/knx/src/index.ts";
 import { extractAppPrograms } from "../packages/project/src/index.ts";
-import { closingSteps, declaredPropChecks, maskInfo, parseAppConfig, programIdStamp } from "../packages/product/src/index.ts";
+import { closingSteps, declaredPropChecks, flattenSteps, lsmIdx, maskInfo, parseAppConfig, programIdStamp, stepSize } from "../packages/product/src/index.ts";
 import { catalogueXml, corpusPath } from "./corpus.ts";
-import { type AnswerSources, type SimProperty, type SimUnit, type SimUnitCoreModel } from "./sim-unit.ts";
+import { MEMORY_END, type AnswerSources, type SimProperty, type SimUnit, type SimUnitCoreModel } from "./sim-unit.ts";
 import type { AdditionalControl } from "./sim-unit-0701.ts";
 import { APPLICATION_LSM as PROPERTY_MAPPED_APPLICATION_LSM, declaredSegments, declaredTaskForms, declaredTasks, fullSteps, PLACE_TEXT, type DeclaredTaskForms, type DeclaredTasks } from "./sim-unit-0705.ts";
 import { productUnit, rerunIdentity, type IdentityValue, type Mismatch, type ProductUnit } from "./sim-unit-product.ts";
@@ -68,30 +68,51 @@ export const unitMask = (u: SimUnitSpec): Mask => (u.memoryMapped ? "MV-0701" : 
 
 const COMMON_RULE = "an own unit of the mask whose application leaves its memory as written after a restart (another application's would not), whose captures show its answer to each restart a download of the application ends with, and whose collection shows its answer to each property the application's LdCtrlLoadImageProp reads; of those, the one whose captures leave the fewest of its answers unshown, then one collected in the state its captures show, then by id";
 // The rule per mask. MV-07B0 asks besides for A_MemoryExtended_Write where the application declares extended memory
-// services, and for the device control after the application's unload where it declares none (ETS and Busforge then
-// write its memory with A_Memory_Write, echoed in verify mode, which that octet holds); MV-0701 for the additional load
-// controls the application declares; MV-0705 for the device control after the application's unload where its full
-// download unloads it (its memory is always written with A_Memory_Write), its task controls 1 (by machine, count and
-// where the address lies) and its task segments at an address that starts no declared segment (by machine and where
-// the address lies), which its units take or refuse as their captures show.
+// services, for the device control after the application's unload where it declares none (ETS and Busforge then
+// write its memory with A_Memory_Write, echoed in verify mode, which that octet holds), and for enough room in the
+// donor's segment layout and memory reach for the application's relative segments and com-object table; MV-0701 for
+// the additional load controls the application declares; MV-0705 for the device control after the application's unload
+// where its full download unloads it (its memory is always written with A_Memory_Write), its task controls 1 (by
+// machine, count and where the address lies) and its task segments at an address that starts no declared segment (by
+// machine and where the address lies), which its units take or refuse as their captures show.
 export const DONOR_RULES: Record<Mask, string> = {
-  "MV-07B0": `MV-07B0: ${COMMON_RULE}; and whose captures show A_MemoryExtended_Write where the application declares extended memory services, and its device control after its application's unload where the application declares none`,
+  "MV-07B0": `MV-07B0: ${COMMON_RULE}; and whose captures show A_MemoryExtended_Write where the application declares extended memory services, whose captures show its device control after its application's unload where the application declares none, and whose segment layout holds the application's relative segments and com-object table`,
   "MV-0701": `MV-0701: ${COMMON_RULE}; and that takes every additional load control the application declares`,
   "MV-0705": `MV-0705: ${COMMON_RULE}; and whose captures show its device control after its application's unload where the application's full download unloads it, each task control 1 the application declares, of its machine and count with its address 0 or at the same place, and each task segment it declares at an address that starts no declared segment, of its machine and at the same place (the end of a segment, or inside one)`,
 };
 
 const ADDITIONAL_VERBS: Record<string, AdditionalControl> = { LdCtrlAbsSegment: "absolute-segment", LdCtrlTaskSegment: "task-segment", LdCtrlTaskCtrl1: "task-control-1" };
+const MEMORY_EXT_END = 0x1000000;
 
 type AppConfig = ReturnType<typeof parseAppConfig>;
-type Needs = { basic: boolean; confirmed: boolean; extendedWrite: boolean; controlAfterUnload: boolean; loadImage: { obj: number; pid: number }[]; additional: AdditionalControl[] } & DeclaredTaskForms;
+type Needs = { basic: boolean; confirmed: boolean; extendedWrite: boolean; controlAfterUnload: boolean; loadImage: { obj: number; pid: number }[]; additional: AdditionalControl[]; relSegments: { lsm: number; size: number }[] } & DeclaredTaskForms;
 const NO_TASKS: DeclaredTaskForms = { taskPlaces: [], taskControls1: [] };
+
+// The System B relative segment sizes a full download allocates: each declared LdCtrlRelSegment with a positive size,
+// and the com-object table on object 3 (2 + 2 * max com-object number, buildComObjectTable).
+function systemBSegments(cfg: AppConfig): { lsm: number; size: number }[] | string {
+  const sizes = new Map<number, number>();
+  for (const s of flattenSteps(cfg.loadProcedures, "full")) {
+    if (s.verb !== "LdCtrlRelSegment") continue;
+    const lsm = s.attrs.LsmIdx === undefined ? 4 : lsmIdx(s);
+    const size = stepSize(s);
+    if (lsm === undefined) return `the load procedure declares LdCtrlRelSegment LsmIdx="${s.attrs.LsmIdx}", which is not an unsigned decimal number; refusing to read a value from it`;
+    if (size === undefined) return `the load procedure declares LdCtrlRelSegment Size="${s.attrs.Size ?? ""}", which is not an unsigned decimal number; refusing to read a value from it`;
+    if (size > 0) sizes.set(lsm, Math.max(sizes.get(lsm) ?? 0, size));
+  }
+  let maxCo = 0;
+  for (const co of cfg.comObjects.values()) if (co.number > maxCo) maxCo = co.number;
+  if (maxCo > 0) sizes.set(3, Math.max(sizes.get(3) ?? 0, 2 + 2 * maxCo));
+  return [...sizes].sort(([a], [b]) => a - b).map(([lsm, size]) => ({ lsm, size }));
+}
 
 // What a download of the application needs of its unit beyond the mask: a basic restart at its end (System 7's
 // LdCtrlRestart; a System B download without Data Secure, whose closing ETS takes from the mask), a confirmed restart
 // (a System B download with Data Secure, as ETS's downloads of the Theben MIX 2, the Jung 400021SE and the GVS AMMA
 // show; a declared LdCtrlMasterReset), on System B A_MemoryExtended_Write (an application with extended memory services,
 // whose memory ETS writes so: packages/product/src/loadproc.ts) or else the device control after the application's
-// unload (its memory written with A_Memory_Write, echoed where the octet holds verify mode), the same on MV-0705 where
+// unload (its memory written with A_Memory_Write, echoed where the octet holds verify mode), and room in the donor's
+// segment layout for its declared relative segments and com-object table; the same unload control on MV-0705 where
 // its full download unloads the application (object 3), an answer to each
 // property its LdCtrlLoadImageProp reads at the download's end, the additional load controls it declares on MV-0701,
 // on MV-0705 the task controls 1 and the task segments at an address that starts none of the machine's declared
@@ -101,6 +122,8 @@ function needs(cfg: AppConfig): Needs | string {
   const systemB = cfg.mask === "MV-07B0";
   let loadImage: Needs["loadImage"];
   try { loadImage = closingSteps(proc, "full").flatMap((c) => (c.kind === "read" ? [{ obj: c.obj, pid: c.pid }] : [])); } catch (e) { return (e as Error).message; }
+  const relSegments = systemB ? systemBSegments(cfg) : [];
+  if (typeof relSegments === "string") return relSegments;
   const steps = fullSteps(proc);
   const forms = cfg.mask === "MV-0705" ? taskForms(steps) : NO_TASKS;
   if (typeof forms === "string") return forms;
@@ -112,6 +135,7 @@ function needs(cfg: AppConfig): Needs | string {
     controlAfterUnload: (systemB && !proc.extendedMemoryServices) || (cfg.mask === "MV-0705" && unloadsApplication),
     loadImage,
     additional: cfg.mask === "MV-0701" ? [...new Set(proc.verbs.flatMap((v) => (ADDITIONAL_VERBS[v] ? [ADDITIONAL_VERBS[v]] : [])))] : [],
+    relSegments,
     ...forms,
   };
 }
@@ -146,6 +170,27 @@ function collectedProperty(u: SimUnitSpec, key: string): Shown {
   return shown.get(key) ?? "not read";
 }
 
+// How many bytes each System B segment of `u` can grow to before it reaches another segment or the end of `u`'s
+// memory services (tools/sim-unit.ts allocate).
+const donorRooms = new WeakMap<SimUnitSpec, Map<number, { at: number; room: number }>>();
+function segmentRooms(u: SimUnitSpec): Map<number, { at: number; room: number }> {
+  let rooms = donorRooms.get(u);
+  if (!rooms) {
+    rooms = new Map();
+    const m = unitModel(u);
+    if (m.kind === "system-b") {
+      const limit = u.behaviour.memoryExtendedWrite ? MEMORY_EXT_END : MEMORY_END;
+      const segs = [...m.model.segments.entries()];
+      for (const [lsm, seg] of segs) {
+        const next = Math.min(limit, ...segs.filter(([o, s]) => o !== lsm && s.at >= seg.at).map(([, s]) => s.at));
+        rooms.set(lsm, { at: seg.at, room: Math.max(0, next - seg.at) });
+      }
+    }
+    donorRooms.set(u, rooms);
+  }
+  return rooms;
+}
+
 // Why `u` cannot be the donor of a download with these needs, or null.
 function unfit(u: SimUnitSpec, need: Needs): string | null {
   const b = u.behaviour;
@@ -156,6 +201,14 @@ function unfit(u: SimUnitSpec, need: Needs): string | null {
   if (need.extendedWrite && !b.memoryExtendedWrite) return "its captures show no A_MemoryExtended_Write";
   const stops = u.propertyMapped ? u.propertyMapped.unloadStopsApplication : "unloadStopsApplication" in b ? b.unloadStopsApplication : undefined;
   if (need.controlAfterUnload && stops === null) return "its captures show no device control after its application's unload, which decides whether its A_Memory_Write is echoed";
+  if (need.relSegments.length) {
+    const rooms = segmentRooms(u);
+    for (const { lsm, size } of need.relSegments) {
+      const r = rooms.get(lsm);
+      if (!r) return `its model places no segment of object ${lsm}`;
+      if (size > r.room) return `its segment of object ${lsm} at 0x${r.at.toString(16)} has room for ${r.room} bytes, the application needs ${size}`;
+    }
+  }
   // Whether it answers the property, not how many elements: those the simulator computes from the download's
   // segments at its load completed (the collection read the donor's own), and a read past them it refuses. A count
   // alone is an answer only where its captures show what the block reports after a load (System B's `mcb`).
