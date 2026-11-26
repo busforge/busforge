@@ -28,13 +28,6 @@ const TIMEOUT = 300_000;
 // internal/ets-download-record-deviations.md; a difference not listed here fails, and so does a listed
 // one that is gone.
 const KNOWN_DEVIATIONS = [
-  // Busforge isMerker() only checks Access="None", missing unplaced memoryless Access="Read" Merker P-68 (mission #692 ticket 21).
-  "theben-0103-unplaced-read-merker: M-0048_A-0103-11-72A2 object 3 at 10: Busforge 4b, ETS 00 (1 project)",
-  "theben-0103-unplaced-read-merker: M-0048_A-0103-11-72A2 object 3 at 11: Busforge 07, ETS 00 (1 project)",
-  "theben-0103-unplaced-read-merker: M-0048_A-0103-11-72A2 object 3 at 12: Busforge 13, ETS 00 (1 project)",
-  "theben-0103-unplaced-read-merker: M-0048_A-0103-11-72A2 object 3 at 13: Busforge 07, ETS 00 (1 project)",
-  "theben-0103-unplaced-read-merker: M-0048_A-0103-11-72A2 object 3 at 14: Busforge d3, ETS 00 (1 project)",
-  "theben-0103-unplaced-read-merker: M-0048_A-0103-11-72A2 object 3 at 15: Busforge 07, ETS 00 (1 project)",
   // ETS's record of the com-object table dates from a download when object 3 had no link, and was not
   // written again after the project linked it; ETS's own later download writes 0x4f for the linked object.
   "gvs-amma-object-3-record-older-than-its-link: M-0085_A-0072-30-69AA object 3 at 6: Busforge 4f, ETS 4b (1 project)",

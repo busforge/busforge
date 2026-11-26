@@ -77,8 +77,9 @@ describe("extractCatalogProducts (catalog metadata ingest)", () => {
   });
 
   test("a Hardware2Program naming a second program is two-application hardware: it carries a PEI program", () => {
-    // Synthetic: the schema allows two ApplicationProgramRefs per Hardware2Program, the application
-    // and the PEI program. No product of the private corpus has one.
+    // Synthetic: the schema allows two ApplicationProgramRefs per Hardware2Program, the application and
+    // the PEI program (real two-program exports of the private corpus are verified in
+    // tools/hardware-applications.test.ts).
     const twoPrograms = hardwareXml.replace(
       '<ApplicationProgramRef RefId="M-0083_A-AAAA-1-0001"/>',
       '<ApplicationProgramRef RefId="M-0083_A-AAAA-1-0001"/><ApplicationProgramRef RefId="M-0083_A-BBBB-1-0002"/>',

@@ -406,6 +406,133 @@ describe("a Merker computed in a hidden (Access=None) block still gates visible 
   });
 });
 
+describe("unplaced memoryless Access=Read Merker in <choose>", () => {
+  // Theben M-0048_A-0103-11-72A2 pattern: P-68 is declared Access="Read" with Value="1" and no
+  // <Memory>, placed only when a controlling switch is active. When unplaced and unstored, ETS
+  // treats it as unset so neither <when test="1"> nor <when test="0"> fires; once placed (or
+  // assigned), it evaluates to its value and activates its gated com-object while displaying as
+  // read-only. Stored values, sibling ParameterRefs (both mixed-access and multi-ref Access="Read"),
+  // and property-backed Access="Read" parameters keep their normal resolution.
+  const readMerkerXml = `<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-TEST"><ApplicationPrograms>
+<ApplicationProgram Id="M-TEST_A-31" ApplicationNumber="31" ApplicationVersion="1" MaskVersion="MV-07B0" Name="Read Merker" DefaultLanguage="en-US">
+  <Static>
+    <ParameterTypes>
+      <ParameterType Id="M-TEST_A-31_PT-N" Name="N"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="10" /></ParameterType>
+    </ParameterTypes>
+    <Parameters>
+      <Parameter Id="M-TEST_A-31_P-1" Name="Switch" ParameterType="M-TEST_A-31_PT-N" Text="Switch" Value="0"><Memory CodeSegment="M-TEST_A-31_RS-4" Offset="0" BitOffset="0" /></Parameter>
+      <Parameter Id="M-TEST_A-31_P-M" Name="ReadMerker" ParameterType="M-TEST_A-31_PT-N" Text="Dimmable" Value="1" Access="Read" />
+      <Parameter Id="M-TEST_A-31_P-PROP" Name="PropRead" ParameterType="M-TEST_A-31_PT-N" Text="Prop" Value="1" Access="Read"><Property ObjectIndex="0" PropertyId="1" Offset="0" BitOffset="0" /></Parameter>
+      <Parameter Id="M-TEST_A-31_P-MIX" Name="Mixed" ParameterType="M-TEST_A-31_PT-N" Text="Mixed" Value="0" />
+    </Parameters>
+    <ParameterRefs>
+      <ParameterRef Id="M-TEST_A-31_P-1_R-1" RefId="M-TEST_A-31_P-1" />
+      <ParameterRef Id="M-TEST_A-31_P-M_R-2" RefId="M-TEST_A-31_P-M" />
+      <ParameterRef Id="M-TEST_A-31_P-M_R-3" RefId="M-TEST_A-31_P-M" />
+      <ParameterRef Id="M-TEST_A-31_P-PROP_R-1" RefId="M-TEST_A-31_P-PROP" />
+      <ParameterRef Id="M-TEST_A-31_P-MIX_R-1" RefId="M-TEST_A-31_P-MIX" />
+      <ParameterRef Id="M-TEST_A-31_P-MIX_R-2" RefId="M-TEST_A-31_P-MIX" Access="Read" />
+    </ParameterRefs>
+    <ComObjectTable>
+      <ComObject Id="M-TEST_A-31_O-1" Name="Dim" Number="5" Text="Dimming" FunctionText="dim" ObjectSize="4 Bit" DatapointType="DPST-3-7" ReadFlag="Disabled" WriteFlag="Enabled" CommunicationFlag="Enabled" TransmitFlag="Disabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled" />
+      <ComObject Id="M-TEST_A-31_O-2" Name="Zero" Number="6" Text="Zero" FunctionText="zero" ObjectSize="1 Bit" DatapointType="DPST-1-1" ReadFlag="Disabled" WriteFlag="Enabled" CommunicationFlag="Enabled" TransmitFlag="Disabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled" />
+      <ComObject Id="M-TEST_A-31_O-3" Name="PropObj" Number="7" Text="Prop" FunctionText="prop" ObjectSize="1 Bit" DatapointType="DPST-1-1" ReadFlag="Disabled" WriteFlag="Enabled" CommunicationFlag="Enabled" TransmitFlag="Disabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled" />
+      <ComObject Id="M-TEST_A-31_O-4" Name="MixedObj" Number="8" Text="Mixed" FunctionText="mix" ObjectSize="1 Bit" DatapointType="DPST-1-1" ReadFlag="Disabled" WriteFlag="Enabled" CommunicationFlag="Enabled" TransmitFlag="Disabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled" />
+      <ComObject Id="M-TEST_A-31_O-5" Name="SiblingObj" Number="9" Text="Sib" FunctionText="sib" ObjectSize="1 Bit" DatapointType="DPST-1-1" ReadFlag="Disabled" WriteFlag="Enabled" CommunicationFlag="Enabled" TransmitFlag="Disabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled" />
+    </ComObjectTable>
+    <ComObjectRefs>
+      <ComObjectRef Id="M-TEST_A-31_O-1_R-1" RefId="M-TEST_A-31_O-1" />
+      <ComObjectRef Id="M-TEST_A-31_O-2_R-1" RefId="M-TEST_A-31_O-2" />
+      <ComObjectRef Id="M-TEST_A-31_O-3_R-1" RefId="M-TEST_A-31_O-3" />
+      <ComObjectRef Id="M-TEST_A-31_O-4_R-1" RefId="M-TEST_A-31_O-4" />
+      <ComObjectRef Id="M-TEST_A-31_O-5_R-1" RefId="M-TEST_A-31_O-5" />
+    </ComObjectRefs>
+  </Static>
+  <Dynamic>
+    <ChannelIndependentBlock>
+      <ParameterBlock Id="M-TEST_A-31_PB-1" Name="main" Text="Main">
+        <ParameterRefRef RefId="M-TEST_A-31_P-1_R-1" />
+        <ParameterRefRef RefId="M-TEST_A-31_P-MIX_R-1" />
+        <choose ParamRefId="M-TEST_A-31_P-1_R-1">
+          <when test="1">
+            <ParameterBlock Id="M-TEST_A-31_PB-INL" Name="inl" Inline="true">
+              <ParameterRefRef RefId="M-TEST_A-31_P-M_R-2" />
+            </ParameterBlock>
+          </when>
+          <when test="2">
+            <Assign TargetParamRefRef="M-TEST_A-31_P-M_R-2" Value="1" />
+          </when>
+        </choose>
+        <choose ParamRefId="M-TEST_A-31_P-M_R-2">
+          <when test="1">
+            <ComObjectRefRef RefId="M-TEST_A-31_O-1_R-1" />
+          </when>
+          <when test="0">
+            <ComObjectRefRef RefId="M-TEST_A-31_O-2_R-1" />
+          </when>
+        </choose>
+        <choose ParamRefId="M-TEST_A-31_P-M_R-3">
+          <when test="1">
+            <ComObjectRefRef RefId="M-TEST_A-31_O-5_R-1" />
+          </when>
+        </choose>
+        <choose ParamRefId="M-TEST_A-31_P-PROP_R-1">
+          <when test="1">
+            <ComObjectRefRef RefId="M-TEST_A-31_O-3_R-1" />
+          </when>
+        </choose>
+        <choose ParamRefId="M-TEST_A-31_P-MIX_R-2">
+          <when test="3">
+            <ComObjectRefRef RefId="M-TEST_A-31_O-4_R-1" />
+          </when>
+        </choose>
+      </ParameterBlock>
+    </ChannelIndependentBlock>
+  </Dynamic>
+</ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+  const readMerkerApp = parseAppConfig(readMerkerXml);
+
+  test("unplaced memoryless Access=Read parameter reads as unset and matches neither test=1 nor test=0; property-backed Access=Read keeps its default", () => {
+    const v = buildDeviceConfig(readMerkerApp, new Map());
+    // Neither O-1 (test=1), O-2 (test=0), nor O-5 (sibling test=1) activates; O-3 (property-backed) still does.
+    expect([...v.imageComObjects.keys()]).toEqual([7]);
+    expect(comObjs(v)).toHaveLength(1);
+    expect(v.paramValue("M-TEST_A-31_P-M_R-2")).toBeUndefined();
+    expect(v.paramValue("M-TEST_A-31_P-PROP_R-1")).toBe("1");
+  });
+
+  test("once placed (even in an Inline block), memoryless Access=Read activates its chooses and sibling refs, and renders read-only", () => {
+    const v = buildDeviceConfig(readMerkerApp, new Map([["M-TEST_A-31_P-1_R-1", "1"]]));
+    expect([...v.imageComObjects.keys()].sort((a, b) => a - b)).toEqual([5, 7, 9]);
+    const merkerParam = params(v).find((p) => p.param.refId === "M-TEST_A-31_P-M_R-2");
+    expect(merkerParam?.param.value).toBe("1");
+    expect(merkerParam?.param.readOnly).toBe(true);
+    expect(merkerParam?.param.memoryless).toBe(true);
+  });
+
+  test("an Assign targeting an unplaced memoryless Access=Read parameter sets it for choose evaluation", () => {
+    const v = buildDeviceConfig(readMerkerApp, new Map([["M-TEST_A-31_P-1_R-1", "2"]]));
+    expect([...v.imageComObjects.keys()].sort((a, b) => a - b)).toEqual([5, 7, 9]);
+  });
+
+  test("a stored value on a placed memoryless Access=Read ref is preserved, and a placed sibling overrides a stale value on an unplaced sibling", () => {
+    const v = buildDeviceConfig(readMerkerApp, new Map([
+      ["M-TEST_A-31_P-1_R-1", "1"],
+      ["M-TEST_A-31_P-M_R-2", "2"],
+      ["M-TEST_A-31_P-M_R-3", "1"], // stale value on unplaced sibling must not override placed R-2=2
+    ]));
+    expect([...v.imageComObjects.keys()]).toEqual([7]);
+    const merkerParam = params(v).find((p) => p.param.refId === "M-TEST_A-31_P-M_R-2");
+    expect(merkerParam?.param.value).toBe("2");
+  });
+
+  test("an editable memoryless parameter's Access=Read ref still reads its placed editable sibling's value", () => {
+    const v = buildDeviceConfig(readMerkerApp, new Map([["M-TEST_A-31_P-MIX_R-1", "3"]]));
+    expect([...v.imageComObjects.keys()].sort((a, b) => a - b)).toEqual([7, 8]);
+  });
+});
+
 describe("localization", () => {
   test("German overrides param and enum text, falls back to base otherwise", () => {
     const v = buildDeviceConfig(app, new Map(), "de-DE");
