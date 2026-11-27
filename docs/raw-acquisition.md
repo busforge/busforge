@@ -435,7 +435,7 @@ BCU2, System 300, a coupler or an interface.
 | Session, provenance, the package's lifetime in memory | `apps/server/src/collect.ts` |
 | Cleaning into a diagnostic package | `packages/product/src/diagnostic.ts` |
 | Consent, progress, review and saving | `apps/web/src/views/DiagnosticDialog.tsx` |
-| The same collector from the command line, over a TCP tunnel, optionally without the free-key authorize. It writes the uncleaned package with the tool's own provenance (commit, target), writes nothing when interrupted, and stores no device sequence after a secured session: it prints it. | `tools/collect.ts` |
+| The same collector from the command line, over a TCP tunnel, optionally without the free-key authorize or with extra classic memory ranges (`--range=<start>:<length>`, read at the end of the memory plan on masks whose plan declares fixed segments, skipping already-read octets; refused ranges are recorded in `limits` and exit 3). It writes the uncleaned package with the tool's own provenance (commit, target), writes nothing when interrupted, and stores no device sequence after a secured session: it prints it. | `tools/collect.ts` |
 | One memory read outside any plan, plain, and the device's answer | `tools/memread.ts` |
 
 **API.** `POST /api/projects/:id/devices/:deviceId/collect` queues a task of kind `collect`

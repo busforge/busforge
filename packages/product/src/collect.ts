@@ -93,6 +93,10 @@ export interface CollectOptions {
   // false: no free-key authorize even where the mask declares one, to compare what a device answers
   // without it (tools/collect.ts). The package records the step as not attempted.
   authorize?: boolean;
+  // Additional classic memory ranges to read at the end of the memory plan, skipping already-read
+  // octets (tools/collect.ts --range). Only masks whose plan declares fixed segments take them;
+  // refused ranges are recorded as not-attempted and added to pkg.limits.
+  extraRanges?: MemoryRange[];
   onProgress?: (phase: string, done?: number, total?: number) => void;
   // Called before each request with the number of requests issued so far, this one included.
   onRequest?: (requests: number) => void;
@@ -401,6 +405,11 @@ export async function collectDevice(dev: CollectDevice, opts: CollectOptions): P
     const chunks = chunksOrWhy();
     if (typeof chunks === "string") {
       rec({ step: "memory", space: "memory", target: {}, source: "master-data", outcome: "not-attempted", detail: chunks });
+      for (const r of opts.extraRanges ?? []) {
+        const step = `extra range 0x${r.address.toString(16)}+${r.length}`;
+        rec({ step, space: "memory", target: { address: r.address, length: r.length }, source: "master-data", outcome: "not-attempted", detail: chunks });
+        pkg.limits.push(`${step}: ${chunks}`);
+      }
       return;
     }
     const range = async (step: string, r: MemoryRange, source: RangeSource): Promise<Buffer | null> => {
@@ -413,6 +422,41 @@ export async function collectDevice(dev: CollectDevice, opts: CollectOptions): P
     };
     for (const m of plan.memory) await range(m.name, m, m.source);
     for (const t of plan.tables) await table(t, loadStates, range);
+    if (!opts.extraRanges?.length) return;
+    const seen = new Set<number>();
+    let seenUpTo = 0;
+    const syncSeen = () => {
+      for (; seenUpTo < pkg.records.length; seenUpTo++) {
+        const r = pkg.records[seenUpTo];
+        const at = (r.target as { address?: number }).address;
+        if (r.space === "memory" && r.outcome === "bytes" && at !== undefined && r.bytes) {
+          for (let i = 0; i < r.bytes.length / 2; i++) seen.add(at + i);
+        }
+      }
+    };
+    for (const r of opts.extraRanges) {
+      const step = `extra range 0x${r.address.toString(16)}+${r.length}`;
+      const why = !Number.isSafeInteger(r.address) || !Number.isSafeInteger(r.length) || r.address < 0 || r.length <= 0 || r.address + r.length > 0x10000
+        ? `0x${r.address.toString(16)}+${r.length} is not a classic memory range within 0x0000..0xFFFF`
+        : plan.segments === null
+          ? `mask ${plan.mask} declares no fixed memory segments; extra ranges are refused`
+          : unreadableReason(plan.mask, r, plan.segments);
+      if (why) {
+        rec({ step, space: "memory", target: { address: r.address, length: r.length }, source: "master-data", outcome: "not-attempted", detail: why });
+        pkg.limits.push(`${step}: ${why}`);
+        continue;
+      }
+      syncSeen();
+      const gaps: MemoryRange[] = [];
+      for (let a = r.address; a < r.address + r.length;) {
+        if (seen.has(a)) { a++; continue; }
+        let end = a + 1;
+        while (end < r.address + r.length && !seen.has(end)) end++;
+        gaps.push({ address: a, length: end - a });
+        a = end;
+      }
+      for (const gap of gaps) await readMemory(step, gap, "master-data", chunks);
+    }
   }
 
   async function table(t: TableStep, loadStates: Map<number, number>, range: (step: string, r: MemoryRange, source: RangeSource) => Promise<Buffer | null>): Promise<void> {

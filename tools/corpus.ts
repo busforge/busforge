@@ -336,6 +336,7 @@ export const CORPUS_FILES: readonly string[] = [
     "abb-counter-2026-11-20/e2-abb-restore-download.log",
     "abb-fresh-2026-11-20/collect-1.1.201-before.json",
     "abb-fresh-2026-11-20/e1-abb-fresh-app-download.log",
+    "abb-usu42-2026-11-27/collect-1.1.201.json",
     "cap-1004/abb-plain.json",
   ].map((f) => `internal/captures/${f}`),
   "collections/meteodata-140s-hc04-2026-10-07/1.1.24-meteodata-collect-vor.json",

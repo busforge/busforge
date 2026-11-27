@@ -26,6 +26,26 @@ const taskSegment = (lsm: number, at: number, pei = 0, program = PROGRAM) => con
 const read = (n: number, at: number) => `02${hex(n, 1)}${hex(at, 2)}`;
 const write = (at: number, data: string) => `02${hex(0x80 | (data.length / 2), 1)}${hex(at, 2)}${data}`;
 
+// A numbered transport session to `sim` (`dev` from `tool`): `req` sends one numbered APDU, acknowledges each
+// answer, and returns the answers' TPDUs without their first octet.
+function session(sim: SimUnit0701, dev: number, tool: number) {
+  const frames: string[] = [];
+  sim.onRawCemi = (c) => frames.push(parseCemiLData(c).tpdu.toString("hex"));
+  const send = (tpdu: Buffer) => sim.sendCemi(withSource(cemiLData(0, dev, tpdu), tool));
+  let seq = 0;
+  const req = async (apdu: string) => {
+    const t = Buffer.from(apdu, "hex"); t[0] |= 0x40 | (seq << 2);
+    const before = frames.length;
+    await send(t);
+    await new Promise((r) => setTimeout(r, 5));
+    const answers = frames.slice(before).filter((f) => f.length > 2);
+    for (const a of answers) await send(Buffer.from([0xc2 | (Buffer.from(a, "hex")[0] & 0x3c)]));
+    seq = (seq + 1) & 0x0f;
+    return answers.map((f) => f.slice(2));
+  };
+  return { send, req, connect: () => send(Buffer.from([0x80])) };
+}
+
 // A unit whose load-state machines 1 and 3 are loaded: machine 1 with the 4-octet segment 0x4000 the
 // collection read, machine 3 with 0x4800 and a RAM segment 0x1c00; the octet 0x4800 a download marker it clears.
 function unit(over: { mm?: Partial<SimUnit0701Model["memoryMapped"]>; deviceControl?: string; restart?: SimUnit0701Model["restart"] } = {}) {
@@ -43,22 +63,7 @@ function unit(over: { mm?: Partial<SimUnit0701Model["memoryMapped"]>; deviceCont
     functionStates: new Map(), memoryExtendedRead: false, memoryExtendedWrite: false, descriptionIndex: null, shownWrites: new Map(),
   };
   const sim = new SimUnit0701(model, TOOL, { now: () => clock });
-  const frames: string[] = [];
-  sim.onRawCemi = (c) => frames.push(parseCemiLData(c).tpdu.toString("hex"));
-  const send = (tpdu: Buffer) => sim.sendCemi(withSource(cemiLData(0, DEV, tpdu), TOOL));
-  let seq = 0;
-  // One numbered request: the unit's answers but its T_Ack, without their first octet, each acknowledged in turn.
-  const req = async (apdu: string) => {
-    const t = Buffer.from(apdu, "hex"); t[0] |= 0x40 | (seq << 2);
-    const before = frames.length;
-    await send(t);
-    await new Promise((r) => setTimeout(r, 5));
-    const answers = frames.slice(before).filter((f) => f.length > 2);
-    for (const a of answers) await send(Buffer.from([0xc2 | (Buffer.from(a, "hex")[0] & 0x3c)]));
-    seq = (seq + 1) & 0x0f;
-    return answers.map((f) => f.slice(2));
-  };
-  return { sim, req, send, connect: () => send(Buffer.from([0x80])), at: (ms: number) => { clock = ms; } };
+  return { sim, ...session(sim, DEV, TOOL), at: (ms: number) => { clock = ms; } };
 }
 
 describe("a simulated memory-mapped System 7 unit", () => {
@@ -236,7 +241,7 @@ const COUNTER = "internal/captures/abb-counter-2026-11-20", FRESH = "internal/ca
 
 corpusDescribe("the simulated ABB US/U 4.2", () => {
   // ETS 6's counter download and the download that undid it, in the order they ran on the bench unit, into one
-  // simulated unit from its collection before them; the collection after them is what the unit then held.
+  // simulated unit from its collection in the same restored state; the collection after them is what the unit then held.
   test("answers every request of ETS's counter download and its undo as the unit did, and holds after them what the unit's collection read", async () => {
     const { sim, runs } = await replay(ABB_USU42, ABB_USU42.collection, ["captures/abb-usu-4.2-ets-counter-download.log", `${COUNTER}/e2-abb-restore-download.log`], ABB);
     for (const r of runs) expect([r.capture, r.steps.length > 100, replayDifferences(r.steps)]).toEqual([r.capture, true, []]);
@@ -266,19 +271,40 @@ corpusDescribe("the simulated ABB US/U 4.2", () => {
     }
   });
 
+  // The unit's collection covers its entire readable memory 0x4000-0x6fff without gaps, matching the earlier
+  // collection before ETS's counter download on every octet it read, and answers A_Memory_Read into the former
+  // inter-segment gaps (0x41ff, 0x43fd) from real unit data.
+  test("answers A_Memory_Read into the former inter-segment gaps (0x41ff, 0x43fd) from real collection data", async () => {
+    const own = collectedMemory(collectionOf(ABB_USU42.collection));
+    const earlier = collectedMemory(collectionOf(`${COUNTER}/collect-1.1.201-before.json`));
+    expect([...earlier].filter(([a, b]) => own.get(a) !== b)).toEqual([]);
+    expect(own.size).toBe(0x3000);
+    for (let a = 0x4000; a <= 0x6fff; a++) expect(own.has(a)).toBe(true);
+    const sim = newSimUnit0701(ABB_USU42, { now: () => 0 }, { link: { ackMs: 0, nakMs: 0 } });
+    const { req, connect } = session(sim, ABB, ABB_USU42.interfaceIa);
+    await connect();
+    expect(await req(read(1, 0x41ff))).toEqual(["4141ff00"]);
+    expect(await req(read(1, 0x43fd))).toEqual(["4143fd00"]);
+    expect(await req(read(1, 0x646e))).toEqual(["41646ee6"]);
+    expect(sim.refusals).toEqual([]);
+  });
+
   // Busforge's full download of the configuration of ETS's fresh application download (the project at its
-  // defaults, no link), into the unit as its collection shows it, which holds the memory the collection before
+  // defaults, no link), into the unit as its collection shows it, which holds every octet the collection before
   // ETS's download read: the partial form, read and compared, verified; on the wire exactly ETS's memory writes,
   // and the unit left as ETS's download left it.
   test("takes Busforge's full download of the defaults through the KNXnet/IP server: ETS's writes, ETS's end state", async () => {
     const before = `${FRESH}/collect-1.1.201-before.json`, ets = `${FRESH}/e1-abb-fresh-app-download.log`;
-    expect([...collectedMemory(collectionOf(before))]).toEqual([...collectedMemory(collectionOf(ABB_USU42.collection))]);
+    const own = collectedMemory(collectionOf(ABB_USU42.collection));
+    expect([...collectedMemory(collectionOf(before))].filter(([a, b]) => own.get(a) !== b)).toEqual([]);
     const { sim, result, capture, refusals } = await busforgeIntoSim(ABB_USU42, { ia: "1.1.201", params: [], links: [] });
     expect(refusals).toEqual([]);
     expect(result).toMatchObject({ kind: "flashed", verified: true, imageBytes: 229, diffBytes: 19 });
     expect(memoryWrites(capture, "Busforge", ABB)).toEqual(["4000:01", "4200:00", "4407:db", "440f:db", "6d01:0114030a031e0001020000", "6d0c:00000000"]);
     expect(memoryWrites(capture, "Busforge", ABB)).toEqual(memoryWrites(corpusText(ets), "ETS", ABB));
-    expect(differingOctets(as0701(sim), (await replay(ABB_USU42, before, [ets], ABB)).sim)).toEqual([]);
+    const replayed = await replay(ABB_USU42, ABB_USU42.collection, [ets], ABB);
+    expect([replayDifferences(replayed.runs[0].steps), replayed.sim.refusals]).toEqual([[], []]);
+    expect(differingOctets(as0701(sim), replayed.sim)).toEqual([]);
   });
 });
 

@@ -259,7 +259,12 @@ export const GVS_AMMA: SimUnitSpec = {
 };
 
 // The ABB US/U 4.2 universal interface (M-0002_A-A001-13-63C2, MV-0701, memory-mapped load control), from the
-// bench unit's collection before ETS's counter download (internal/captures/abb-counter-2026-11-20/). Its
+// bench unit's read-only collection covering its full readable memory 0x4000-0x6fff
+// (internal/captures/abb-usu42-2026-11-27/collect-1.1.201.json), in the same state as the earlier collection before
+// ETS's counter download (internal/captures/abb-counter-2026-11-20/collect-1.1.201-before.json, every earlier octet
+// and property equal, plus the gaps 0x41ff, 0x43fd, 0x4479-0x45ff, 0x646e-0x6cff, 0x6da0-0x6eff, 0x6f08-0x6f0f and
+// 0x6f66-0x6fff; spot probes at 0x3fff, 0x7000, 0x7fff, 0x8000, 0xb5ff, 0xb800, 0xbfff, 0xc000 and 0xfbff were
+// refused, while the load statuses at 0xb6ea-0xb6ed are read separately). Its
 // behaviour from ETS's downloads (captures/abb-usu-4.2-ets-*.log, internal/captures/abb-counter-2026-11-20/,
 // abb-fresh-2026-11-20/) and Busforge's full download and address assignments
 // (internal/captures/progmode-end-2026-11-19/e3-abb-busforge-fulldownload.log,
@@ -278,7 +283,7 @@ export const GVS_AMMA: SimUnitSpec = {
 export const ABB_USU42: SimUnitSpec = {
   id: "abb-usu-4.2",
   name: "ABB US/U 4.2",
-  collection: "internal/captures/abb-counter-2026-11-20/collect-1.1.201-before.json",
+  collection: "internal/captures/abb-usu42-2026-11-27/collect-1.1.201.json",
   catalogue: "M-0002_A-A001-13-63C2.xml.gz",
   interfaceIa: BENCH_BRIDGE.ia,
   interfaceMaxApdu: BENCH_BRIDGE.maxApdu,

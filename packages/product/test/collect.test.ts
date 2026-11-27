@@ -445,3 +445,85 @@ describe("raw acquisition plans", () => {
     expect(unreadableReason("MV-0701", { address: 0xb500, length: 0x400 }, m112)).toContain("outside");
   });
 });
+
+describe("raw acquisition extraRanges", () => {
+  function mv0701(opts: { failOnceAt?: number; onRead?: (addr: number, len: number) => void } = {}) {
+    const reads: string[] = [];
+    let reopened = 0;
+    let failedOnce = false;
+    const dev: CollectDevice = {
+      secured: false,
+      descriptorType0: async () => "MV-0701",
+      authorizeFreeKey: async () => 0,
+      propertyDescription: async (obj, _pid, idx) => ({ objectIndex: obj, pid: 0, propertyIndex: idx, writable: false, pdt: 0, maxElements: 0, readLevel: 0, writeLevel: 0 }),
+      propReadCounted: async (obj, pid, start) => ({ objectIndex: obj, pid, start, count: 0, value: Buffer.alloc(0) }),
+      setExtendedMemoryServices: () => {},
+      funcPropExtStateRead: async () => { throw new Error("unexpected function-property read on MV-0701"); },
+      memReadPartial: async (addr, len, o) => {
+        const pieces: ({ address: number; length: number; bytes: Buffer } | { address: number; length: number; refused: string })[] = [];
+        for (let pos = addr; pos < addr + len; pos += o.chunk) {
+          if (o.signal?.aborted) return { pieces, stopped: { address: pos, error: new KnxError("READ_ABORTED", "aborted") } };
+          o.beforeRequest?.();
+          const n = Math.min(o.chunk, addr + len - pos);
+          reads.push(`0x${pos.toString(16)}+${n}`);
+          opts.onRead?.(pos, n);
+          if (opts.failOnceAt === pos && !failedOnce) {
+            failedOnce = true;
+            return { pieces, stopped: { address: pos, error: new KnxError("DEVICE_NOT_ANSWERING", "timeout") } };
+          }
+          pieces.push({ address: pos, length: n, bytes: Buffer.alloc(n, pos & 0xff) });
+        }
+        return { pieces, stopped: null };
+      },
+    };
+    const reopen = async () => { reopened++; };
+    return { dev, reads, reopen, reopened: () => reopened };
+  }
+
+  test("MV-0701: skips already-read octets, deduplicates overlapping ranges, and refuses ranges outside declared segments", async () => {
+    const { dev, reads, reopen } = mv0701();
+    const app = { mask: "MV-0701", absoluteSegments: [{ id: "S1", address: 0x4000, size: 4, data: Buffer.alloc(0) }], extendedMemory: false };
+    const p = await collectDevice(dev, {
+      ia: "1.2.3", signal: ctl().signal, reopen, app,
+      extraRanges: [{ address: 0x4000, length: 10 }, { address: 0x4006, length: 6 }, { address: 0x3fff, length: 1 }],
+    });
+    expect(p.stop).toBeNull();
+    // 0x4000..0x4003 read by S1 (and 0x4000 by GA table); extraRanges read only 0x4004..0x4009 and 0x400a..0x400b.
+    expect(reads).toEqual(["0xb6ea+4", "0x4000+4", "0x4000+1", "0x4004+6", "0x400a+2"]);
+    expect(p.records.find((r) => r.step === "extra range 0x3fff+1")).toMatchObject({ outcome: "not-attempted", detail: expect.stringContaining("outside") });
+    expect(p.limits).toEqual([expect.stringContaining("extra range 0x3fff+1")]);
+  });
+
+  test("System B (no fixed segments): refuses extraRanges and keeps security-mode as the session's last request", async () => {
+    const { sim, dev, reopen } = setup();
+    await dev.connect();
+    const p = await collectDevice(dev, { ia: "1.2.3", signal: ctl().signal, reopen, extraRanges: [{ address: 0x0000, length: 0x10000 }] });
+    expect(p.stop).toBeNull();
+    expect(sim.apcis[sim.apcis.length - 1]).toBe(APCI.FUNCTION_PROPERTY_EXT_STATE_READ);
+    expect(p.records.find((r) => r.step === "extra range 0x0+65536")).toMatchObject({ outcome: "not-attempted", detail: expect.stringContaining("declares no fixed memory segments") });
+    expect(p.limits).toEqual([expect.stringContaining("extra range 0x0+65536")]);
+  });
+
+  test("extraRanges reconnects on a single timeout, enforces durationMs, and drops the package on late cancel", async () => {
+    const r1 = mv0701({ failOnceAt: 0x4100 });
+    const p1 = await collectDevice(r1.dev, { ia: "1.2.3", signal: ctl().signal, reopen: r1.reopen, extraRanges: [{ address: 0x4100, length: 24 }] });
+    expect(p1.stop).toBeNull();
+    expect(p1.limits).toEqual([]);
+    expect(r1.reopened()).toBe(1);
+    const stepRecs = p1.records.filter((r) => r.step === "extra range 0x4100+24");
+    expect(stepRecs.map((r) => [r.target.address, r.target.length, r.outcome])).toEqual([[0x4100, 12, "timeout"], [0x410c, 12, "bytes"]]);
+
+    let t = 0;
+    const r2 = mv0701();
+    const p2 = await collectDevice(r2.dev, {
+      ia: "1.2.3", signal: ctl().signal, reopen: r2.reopen, now: () => (t += 1000), limits: { durationMs: 30_000 },
+      extraRanges: [{ address: 0x4100, length: 1200 }],
+    });
+    expect(p2.stop?.reason).toBe("duration");
+
+    const c = ctl();
+    const r3 = mv0701({ onRead: (addr) => { if (addr === 0x4100) c.abort(); } });
+    const run = collectDevice(r3.dev, { ia: "1.2.3", signal: c.signal, reopen: r3.reopen, extraRanges: [{ address: 0x4100, length: 4 }] });
+    expect(await run.then(() => null, (e: unknown) => e)).toBeInstanceOf(CollectCancelled);
+  });
+});
