@@ -980,8 +980,10 @@ One row, step by step:
    application, and the first is taken. OCR reads a fingerprint unreliably, so where none reads exactly,
    the rows at the application's device type and version are taken whose fingerprint reads closest, if
    no other reading is as close; what was inserted is then checked exactly: a catalogue unit's on the
-   project exported right after the insert, an own unit's when the row is written. A search that lists
-   more rows than the grid shows at once is refused. ETS's
+   project exported right after the insert, an own unit's when the row is written. When searching by order number
+   alone lists more rows than the grid shows at once (or leaves closed groups after ten opens), the driver retries
+   once with a narrower query combining up to two ASCII manufacturer words, the order number and the application
+   version, and refuses if that search still overflows. ETS's
    question for a project password, which it asks for a product that can run Data Secure,
    is cancelled (the device stays plain). A product whose plug-ins need ETS's compatibility mode (ETS asks
    to restart in it right after the insert, or for a download plug-in at the download) ends `driver-refused`: the

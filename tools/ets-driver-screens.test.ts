@@ -110,7 +110,8 @@ corpusTest("the catalogue's search: manufacturers' groups by their arrow, open o
   const two = read(screen("properties-fingerprint-misread-2"));
   expect(two.closed).toEqual([]);
   expectNear([...two.headers, ...two.products.map((p) => p.y)], [710, 731, 751]);
-  // A search with more hits than the grid shows at once: rows reach past grid.y + grid.h - 30 (refused in insertProduct).
+  // A search with more hits than the grid shows at once: rows reach past grid.y + grid.h - 30 (triggers a narrower
+  // search in insertProduct before refusing).
   const overflowPng = screen("catalogue-search-overflow");
   const overflow = read(overflowPng), overflowGrid = searchGrid(catalogueHeader(overflowPng)!);
   expect(catalogueSearchEmpty(overflowPng)).toBe(false);
@@ -151,6 +152,11 @@ corpusTest("the properties panel of a catalogue row: its tabs, the order number,
     const entry = { orderNumber: "AKK-1610.01", manufacturer: manufacturer!, deviceType: deviceType!, version: version!, fingerprint: fingerprint! };
     expect(pickCatalogueRow([entry], "AKK-1610.01", "M-0083_A-000A-11-F01F", manufacturer!)).toMatchObject({ hit: entry, rows: 1, exact: true });
   }
+  // A dark product photo on the Katalog tab drags full-panel Otsu thresholding down and breaks "Applikation" into
+  // fragments; cropping propertiesTab to the tab strip keeps both tabs readable.
+  const darkPhoto = screen("properties-dark-product-photo");
+  expect(propertiesTab(darkPhoto, "Katalog")).not.toBeNull();
+  expect(propertiesTab(darkPhoto, "Applikation")).not.toBeNull();
   // The panel still on line 1.1 (a click that did not select the catalogue row): no Katalog or Applikation tab.
   expect(propertiesTab(screen("tabs-one-project-line-collapsed"), "Katalog")).toBeNull();
   expect(propertiesTab(screen("tabs-one-project-line-collapsed"), "Applikation")).toBeNull();

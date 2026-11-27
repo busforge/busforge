@@ -282,9 +282,10 @@ const fail = (why: string): never => { throw new DriverFailure(why); };
 
 class Screen {
   private n = 0;
+  last: string | null = null;
   constructor(private readonly dir: string) { mkdirSync(dir, { recursive: true }); }
   // A fresh screenshot.
-  snap(): string { return shot(join(this.dir, `.screen-${this.n++ % 2}.png`)); }
+  snap(): string { return (this.last = shot(join(this.dir, `.screen-${this.n++ % 2}.png`))); }
   // A fresh screenshot and its words.
   look(region?: Region, prep?: Prep): { png: string; ws: Word[] } {
     const png = this.snap();
@@ -334,7 +335,7 @@ const AT = {
   panelSelector: [262, 93], toolbarInterface: [1716, 57], gridSearch: [1460, 92],
   leftTree: { x: 0, y: 105, w: 315, h: 525 }, mainTabs: { x: 315, y: 80, w: 500, h: 28 },
   mainGrid: { x: 315, y: 108, w: 1255, h: 515 }, catalogueGrid: { x: 315, y: 695, w: 1255, h: 465 },
-  properties: { x: 1575, y: 80, w: 345, h: 600 }, menuRight: { x: 1500, y: 70, w: 420, h: 300 },
+  properties: { x: 1575, y: 80, w: 345, h: 600 }, propertiesTabs: { x: 1575, y: 80, w: 345, h: 95 }, menuRight: { x: 1500, y: 70, w: 420, h: 300 },
   bottomBar: { x: 0, y: 1165, w: 1570, h: 35 },
   // The project toolbar's info button: the project's details dialog (its size, "Jetzt komprimieren").
   projectInfo: [1747, 57],
@@ -345,18 +346,21 @@ const AT = {
 // The bench host's clock in ETS6.log's format, to cut the log at.
 function etsClock(): string { return remote(`date '+%Y-%m-%d %H:%M:%S'`).trim(); }
 
-// A shell pipeline that prints ETS6.log (`files`, in order) from `since` on, byte for byte (Latin-1).
-const etsLogCut = (since: string, files: string) =>
-  `cd ${q(host().etsLog)} && cat ${files} | LC_ALL=C awk -v s=${q(since)} '/^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] / { p = (substr($0, 1, 19) >= s) } p'`;
+// ETS6.log and the rotated file before it, in chronological order: ETS can rotate mid-row or right as a download starts.
+const ETS_LOG_FILES = "$(ls -r ETS6.log.1 ETS6.log 2>/dev/null)";
+
+// A shell pipeline that prints ETS6.log (and the rotated ETS6.log.1 before it) from `since` on, byte for byte (Latin-1).
+const etsLogCut = (since: string) =>
+  `cd ${q(host().etsLog)} && cat ${ETS_LOG_FILES} | LC_ALL=C awk -v s=${q(since)} '/^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] / { p = (substr($0, 1, 19) >= s) } p'`;
 
 // ETS6.log from `since` on (the rotated file before it too), copied to `to`.
 function etsLogSince(since: string, to: string): void {
-  writeFileSync(to, ssh("bash -s", etsLogCut(since, "$(ls -r ETS6.log.1 ETS6.log 2>/dev/null)")));
+  writeFileSync(to, ssh("bash -s", etsLogCut(since)));
 }
 
-// Whether ETS6.log holds a line with `needle` from `since` on (and, where given, matching `pattern` too).
+// Whether ETS6.log (or its just-rotated ETS6.log.1) holds a line with `needle` from `since` on (and, where given, matching `pattern` too).
 function etsLogHas(since: string, needle: string, pattern?: RegExp): boolean {
-  const lines = ssh("bash -s", `${etsLogCut(since, "ETS6.log")} | grep -a -F ${q(needle)} || true`).toString("latin1");
+  const lines = ssh("bash -s", `${etsLogCut(since)} | grep -a -F ${q(needle)} || true`).toString("latin1");
   return lines.split("\n").some((l) => l.includes(needle) && (!pattern || pattern.test(l)));
 }
 
@@ -758,7 +762,9 @@ export function propertiesTabIn(ws: Word[], name: string): Box | null {
   const want = norm(name);
   return findText(ws, name.slice(0, 5)).find((b) => b.y < 165 && want.startsWith(norm(b.text))) ?? null;
 }
-export const propertiesTab = reader("propertiesTab", (png: string, name: string): Box | null => propertiesTabIn(words(png, AT.properties), name));
+// Crop to the properties tab strip above the product picture: a dark product photo below y 175 drags Tesseract's
+// full-panel Otsu threshold down and breaks "Katalog" / "Applikation" into fragments.
+export const propertiesTab = reader("propertiesTab", (png: string, name: string): Box | null => propertiesTabIn(words(png, AT.propertiesTabs), name));
 
 // The label/value table under the properties panel's tab `tab`, line by line: read as one block (word by word, OCR
 // drops the dot in "1.1"), at four times its size and thresholded to black and white ("binary"): at two OCR reads
@@ -869,8 +875,9 @@ export const catalogueGroups = reader("catalogueGroups", (png: string, grid: Reg
 // it parses as the unit's.
 export function pickCatalogueRow<E extends CatalogueEntry>(entries: E[], orderNumber: string, applicationId: string, manufacturer?: string): { hit: E; rows: number; exact: boolean } | { refused: string } {
   const want = catalogueIdentity(applicationId);
-  // A device type reads with its "$" as "S", "3" or doubled "S$", an O for a 0 and a T for a 7 ("SOOB6" for $00B6, "S$FEO1" for $FE01, "SAOAT" for $A0A7, "ATD6" for A7D6); a fingerprint the same.
-  const hexKey = (v: string) => v.toUpperCase().replace(/^(?:[$S3]|S\$)(?=[0-9A-FOT]{4}$)/, "").replace(/O/g, "0").replace(/T/g, "7");
+  // A device type reads with its "$" as "S", "3" or doubled "S$", an O for a 0, a T for a 7 and an S for a 5
+  // ("SOOB6" for $00B6, "S$FEO1" for $FE01, "SAOAT" for $A0A7, "ATD6" for A7D6, "SOSE2" for $05E2); a fingerprint the same.
+  const hexKey = (v: string) => v.toUpperCase().replace(/^(?:[$S3]|S\$)(?=[0-9A-FOST]{4}$)/, "").replace(/O/g, "0").replace(/T/g, "7").replace(/S/g, "5");
   const atTypeAndVersion = entries.filter((e) => e.version === want.version && hexKey(e.deviceType) === hexKey(want.deviceType));
   const madeBy = (e: CatalogueEntry) => manufacturer !== undefined && e.manufacturer !== undefined && editDistance(nameKey(e.manufacturer), nameKey(manufacturer)) <= Math.max(2, Math.floor(nameKey(manufacturer).length / 5));
   const candidates = atTypeAndVersion.some(madeBy) ? atTypeAndVersion.filter(madeBy) : atTypeAndVersion;
@@ -973,6 +980,18 @@ export function bottomBarInsertIn(ws: Word[]): { line11: boolean; text: string; 
 }
 export const bottomBarInsert = reader("bottomBarInsert", (png: string) => bottomBarInsertIn(words(png, AT.bottomBar)));
 
+// A narrower ETS catalogue search query when searching `orderNumber` alone overflows the visible grid: adds up to two
+// ASCII words from `manufacturer` (not already in `orderNumber`) and the application's version, which ETS matches
+// across the Manufacturer, OrderNumber and Version columns.
+export function narrowedCatalogueQuery(orderNumber: string, applicationId: string, manufacturer?: string): string | null {
+  const { version } = catalogueIdentity(applicationId);
+  const seen = new Set(orderNumber.toLowerCase().split(/\s+/).filter(Boolean));
+  const mfr = (manufacturer ?? "").split(/\s+/).filter((w) => /^[A-Za-z0-9._-]{2,}$/.test(w) && !seen.has(w.toLowerCase())).slice(0, 2);
+  const parts = [...mfr, orderNumber, ...(seen.has(version.toLowerCase()) ? [] : [version])];
+  const query = parts.join(" ").trim();
+  return query === orderNumber.trim() ? null : query;
+}
+
 // The product inserted into line 1.1 from the catalogue: a catalogue row listed for the order number whose
 // application is `applicationId`, by its device type, version and fingerprint as ETS's properties panel shows them
 // (the fingerprint of the id ETS's product store holds, which tools/ets-catalogue.ts gives a row as its
@@ -992,44 +1011,69 @@ async function insertProduct(s: Screen, dir: string, orderNumber: string, applic
     click(add.cx, add.cy);
     header = await s.waitText("Katalog", CATALOGUE_PANEL, 20_000, "the catalogue panel");
   }
-  click(1460, header.cy);
-  key("ctrl+a");
-  typeText(orderNumber);
-  key("Return");
-  await sleep(6000);
-  // A dialog now (a KNX-ID login, the online catalogue failing) is read before Escape, which closes the search's
-  // suggestions, could close it unread.
-  { const text = dialogText(s.snap()); if (text !== null) fail(`${UNKNOWN_DIALOG} (after the catalogue search): ${text.slice(0, 300)}`); }
-  key("Escape");
-  await sleep(1000);
+  const searchY = header.cy;
   const grid = searchGrid(header);
   const products = () => catalogueProducts(s.snap(), grid);
-  let items = products();
-  // Every manufacturer's group the search lists is opened where it stands closed (ETS keeps a group closed from one
-  // search to the next): its expander's arrow is read, never toggled blind, one group at a time (opening one moves
-  // the groups below it). The online catalogue lists the rows late. A group still closed after that is refused.
   const closedGroups = () => catalogueGroups(s.snap(), grid);
-  let groups = closedGroups();
-  if (groups.headers.length === 0 && items.length === 0) fail(`the catalogue lists nothing for order number ${orderNumber}`);
-  for (let opened = 0; groups.closed.length; opened++) {
-    if (opened === 10) fail(`the catalogue's groups for order number ${orderNumber} stay closed: ${groups.closed.map((h) => h.text).join(", ")}`);
-    click(326, Math.round(groups.closed[0].y));
-    await sleep(3000);
-    groups = closedGroups();
+  const overflows = (rows: { y: number }[]) => rows.length > 0 && Math.max(...rows.map((r) => r.y)) > grid.y + grid.h - 30;
+  const queryLabel = (query: string) => (query === orderNumber ? `order number ${orderNumber}` : `query "${query}" (order number ${orderNumber})`);
+  const searchFor = async (query: string, allowClosedOverflow: boolean) => {
+    const label = queryLabel(query);
+    click(1460, searchY);
+    key("ctrl+a");
+    typeText(query);
+    key("Return");
+    await sleep(6000);
+    // A dialog now (a KNX-ID login, the online catalogue failing) is read before Escape, which closes the search's
+    // suggestions, could close it unread.
+    { const text = dialogText(s.snap()); if (text !== null) fail(`${UNKNOWN_DIALOG} (after the catalogue search): ${text.slice(0, 300)}`); }
+    key("Escape");
+    await sleep(1000);
+    let items = products();
+    // Every manufacturer's group the search lists is opened where it stands closed (ETS keeps a group closed from one
+    // search to the next): its expander's arrow is read, never toggled blind, one group at a time (opening one moves
+    // the groups below it). The online catalogue lists the rows late. A group still closed after that is refused.
+    let groups = closedGroups();
+    if (groups.headers.length === 0 && items.length === 0) fail(`the catalogue lists nothing for ${label}`);
+    for (let opened = 0; groups.closed.length; opened++) {
+      if (opened === 10) {
+        if (allowClosedOverflow) return { items, closedOverflow: groups.closed.map((h) => h.text).join(", ") };
+        fail(`the catalogue's groups for ${label} stay closed: ${groups.closed.map((h) => h.text).join(", ")}`);
+      }
+      click(326, Math.round(groups.closed[0].y));
+      await sleep(3000);
+      groups = closedGroups();
+    }
+    // The rows of a group just opened may still come in: read until two readings agree (at most 5).
+    for (let i = 0, before = -1; i < 5 && (items = products()).length !== before; i++) { before = items.length; await sleep(2000); }
+    if (items.length === 0) fail(`the catalogue holds no product for ${label}`);
+    return { items };
+  };
+  let searched = orderNumber;
+  const first = await searchFor(orderNumber, true);
+  let items = first.items;
+  // A list that reaches the grid's last row (or still has closed groups after 10 opens) may go on below the visible
+  // grid, where the driver does not scroll: retry once narrowed by manufacturer and application version before refusing.
+  if (first.closedOverflow || overflows(items)) {
+    const narrowed = narrowedCatalogueQuery(orderNumber, applicationId, manufacturer);
+    if (narrowed) {
+      console.log(`catalogue search for ${orderNumber} overflowed the grid; narrowing to "${narrowed}"`);
+      searched = narrowed;
+      items = (await searchFor(narrowed, false)).items;
+    } else if (first.closedOverflow) {
+      fail(`the catalogue's groups for order number ${orderNumber} stay closed: ${first.closedOverflow}`);
+    }
   }
-  // The rows of a group just opened may still come in: read until two readings agree (at most 5).
-  for (let i = 0, before = -1; i < 5 && (items = products()).length !== before; i++) { before = items.length; await sleep(2000); }
-  if (items.length === 0) fail(`the catalogue holds no product for order number ${orderNumber}`);
-  // A list that reaches the grid's last row may go on below it, where the driver does not scroll.
+  const searchedLabel = queryLabel(searched);
   // A row whose product data ETS has not loaded is named, not read: what ETS's properties panel shows for it is not
   // known. The sweep's rows run applications whose product data ETS loaded (tools/ets-catalogue.ts), so a row it inserts
   // is a loaded one; rows not loaded stand in the search as other products holding the order number. They are named
   // before anything else ends the row.
   const notLoaded = items.filter((r) => !r.loaded).map((r) => r.text).join(" | ");
   const unread = notLoaded ? `; not read, their product data not loaded in ETS: ${notLoaded}` : "";
-  if (notLoaded) console.log(`catalogue rows under order number ${orderNumber} not loaded in ETS, not read: ${notLoaded}`);
-  if (Math.max(...items.map((r) => r.y)) > grid.y + grid.h - 30) fail(`the catalogue lists more rows for order number ${orderNumber} than its grid shows at once${unread}`);
-  if (items.every((r) => !r.loaded)) fail(`the catalogue lists for order number ${orderNumber} only rows whose product data ETS has not loaded: ${notLoaded}`);
+  if (notLoaded) console.log(`catalogue rows under ${searchedLabel} not loaded in ETS, not read: ${notLoaded}`);
+  if (overflows(items)) fail(`the catalogue lists more rows for ${searchedLabel} than its grid shows at once${unread}`);
+  if (items.every((r) => !r.loaded)) fail(`the catalogue lists for ${searchedLabel} only rows whose product data ETS has not loaded: ${notLoaded}`);
   const entries: (CatalogueEntry & { y: number })[] = [];
   for (const r of items.filter((x) => x.loaded)) {
     // A click that did not select the row leaves the properties panel on line 1.1 (no Applikation tab): clicked once more.
@@ -1075,7 +1119,16 @@ async function insertProduct(s: Screen, dir: string, orderNumber: string, applic
       continue;
     }
     importing = false;
-    const devices = await lineDevices(s);
+    // A late-arriving dialog (e.g. "Projektpasswort setzen" on Data Secure products, or "Importiere Daten...") can
+    // appear while lineDevices clicks and reads the topology pane: either dimming out the header or painting its own
+    // text lines inside AT.mainGrid. Check the exact screenshot lineDevices read (s.last) to avoid a TOCTOU miss when
+    // a transient progress dialog closes before a second screenshot.
+    let devices: { y: number; text: string }[];
+    try { devices = await lineDevices(s); } catch (e) {
+      if (e instanceof DriverFailure && ((s.last && dialogBox(s.last)) || dialogBox(s.snap()))) continue;
+      throw e;
+    }
+    if (s.last && dialogBox(s.last)) continue;
     if (devices.length > 1) fail(`line 1.1 holds ${devices.length} devices after the insert`);
     if (devices.length === 1) return;
   }

@@ -28,22 +28,38 @@ const TIMEOUT = 300_000;
 // internal/ets-download-record-deviations.md; a difference not listed here fails, and so does a listed
 // one that is gone.
 const KNOWN_DEVIATIONS = [
+  // Open Busforge bug (fix pending; documented in internal/ets-download-record-deviations.md): zero active com-objects
+  // at defaults, yet Busforge sizes System B object 3 from maxDeclaredComObject (11 -> 24 B) while ETS allocates 2 B (00 00).
+  "vimar-05e2-empty-comobj-table-size: M-002C_A-05E2-10-FC64 object 3 at 1: Busforge 0b, ETS 00 (1 project)",
   // ETS's record of the com-object table dates from a download when object 3 had no link, and was not
   // written again after the project linked it; ETS's own later download writes 0x4f for the linked object.
   "gvs-amma-object-3-record-older-than-its-link: M-0085_A-0072-30-69AA object 3 at 6: Busforge 4f, ETS 4b (1 project)",
+  // Open Busforge bug (fix pending; documented in internal/ets-download-record-deviations.md): ComObjects #164 and #220
+  // are gated by <choose> on unplaced memory-backed parameters (P-37_R-37, P-184_R-240); ETS leaves both disabled (0x00)
+  // while Busforge evaluates their static default 1 and writes 0x43.
+  "itrust-0081-unplaced-memory-param-choose: M-02AA_A-0081-10-72A7-O0085 object 3 at 328: Busforge 43, ETS 00 (1 project)",
+  "itrust-0081-unplaced-memory-param-choose: M-02AA_A-0081-10-72A7-O0085 object 3 at 440: Busforge 43, ETS 00 (1 project)",
 ];
 
 // The devices with a record that are not compared, each with why: ETS marks a part of the device as
 // changed since that download, so the record no longer shows the project's configuration, or Busforge
 // refuses the device's full download.
 const NOT_COMPARED = [
+  "M-0004_A-1111-12-8CCD-O000A refused: PARAM_HIDDEN_UNSUPPORTED (1 project)",
   "M-0004_A-7072-21-99A7-O000A not loaded: links (1 project)",
   "M-0004_A-7072-21-99A7-O000A not loaded: parameters (2 projects)",
   "M-0006_A-C016-10-A81B-O00C5 refused: PARAM_HIDDEN_UNSUPPORTED (1 project)",
+  "M-0022_A-20D3-11-4134-O000A refused: PARAM_HIDDEN_UNSUPPORTED (1 project)",
+  "M-0072_A-F150-10-FA59 refused: COM_OBJECT_TABLE_EMPTY (1 project)",
   "M-0073_A-204C-14-8903 refused: PARAM_HIDDEN_UNSUPPORTED (1 project)",
   "M-0083_A-0004-32-A137 refused: PARAM_HIDDEN_UNSUPPORTED (1 project)",
   "M-0085_A-002B-21-4744 refused: PARAM_HIDDEN_UNSUPPORTED (1 project)",
   "M-0085_A-0072-30-69AA not loaded: links (13 projects)",
+  "M-00A7_A-2101-10-A85C refused: PARAM_HIDDEN_UNSUPPORTED (1 project)",
+  "M-011E_A-2151-10-2E64-O0072 refused: COM_OBJECT_TABLE_EMPTY (1 project)",
+  "M-0196_A-0094-10-C108 refused: PARAM_BYTE_ORDER_UNSUPPORTED (1 project)",
+  "M-0216_A-0001-01-9381 refused: PARAM_HIDDEN_UNSUPPORTED (1 project)",
+  "M-02D2_A-0001-11-F9F9 refused: FULL_DOWNLOAD_SEGMENT_UNKNOWN (1 project)",
 ];
 
 // A moved count fails naming the corpus projects whose devices make it up (tools/ets-records.ts).
@@ -118,7 +134,7 @@ corpusDescribe("ETS's download record in the corpus projects", () => {
   test("a device carries a record exactly where its application names LdCtrlLoadImageProp and ETS downloaded it", () => {
     const off = all.filter(({ d }) => !!d.loadedImage !== (d.declaresLoadImageProp === true && d.etsLoaded.application));
     expect(off.map(({ project, d }) => `${project} ${d.ia}`)).toEqual([]);
-    expectNoMismatch(countMismatches([{ what: "devices with ETS's download record", found: withRecord.length, pinned: 524, byProject: tally(withRecord.map((w) => w.project)) }]));
+    expectNoMismatch(countMismatches([{ what: "devices with ETS's download record", found: withRecord.length, pinned: 547, byProject: tally(withRecord.map((w) => w.project)) }]));
     expect(all.filter(({ d }) => !d.loadedImage && d.etsLoaded.application).length).toBeGreaterThan(100);
   });
 
@@ -147,15 +163,28 @@ corpusDescribe("ETS's download record in the corpus projects", () => {
     }
     expect(Object.fromEntries([...conventions].map(([app, by]) => [app, [...by]]))).toEqual({
       "M-0004_A-7072-21-99A7-O000A": ["CCITT"],
+      "M-002C_A-05E2-10-FC64": ["CCITT-FALSE"],
       "M-0048_A-0103-11-72A2": ["CCITT-FALSE"],
       "M-0048_A-493B-21-B471": ["CCITT"],
+      "M-0059_A-7010-10-C902": ["CCITT-FALSE"],
+      "M-0072_A-F150-10-FA59": ["CCITT"],
       "M-0073_A-204C-14-8903": ["CCITT"],
       "M-0083_A-0004-32-A137": ["CCITT"],
       "M-0083_A-0137-20-7EB2": ["CCITT"],
+      "M-0085_A-001E-31-59BB": ["CCITT"],
       "M-0085_A-002B-21-4744": ["CCITT"],
       "M-0085_A-0072-30-69AA": ["CCITT-FALSE"],
+      "M-008B_A-010A-10-BA9A": ["CCITT"],
+      "M-00A7_A-2101-10-A85C": ["CCITT"],
       "M-00B6_A-0001-01-9BAE-O0184": ["CCITT"],
+      "M-010B_A-0101-10-D3C0": ["CCITT"],
+      "M-011E_A-2151-10-2E64-O0072": ["CCITT"],
       "M-0162_A-0004-11-F245": ["CCITT"],
+      "M-01DF_A-0101-20-61B4": ["CCITT"],
+      "M-0260_A-0005-11-2154": ["CCITT"],
+      "M-02AA_A-0081-10-72A7-O0085": ["CCITT-FALSE"],
+      "M-02CF_A-0101-10-3D4E": ["CCITT"],
+      "M-02D2_A-0001-11-F9F9": ["CCITT-FALSE"],
     });
     expect(regions).toBeGreaterThan(50);
   });
@@ -199,15 +228,13 @@ corpusDescribe("ETS's download record in the corpus projects", () => {
     // The named lists are held to the canonical form too: sorted, one line per entry, the plural right.
     expect(counted(found.map((f) => f.what))).toEqual(pinnedDeviations);
     expect(counted(notCompared.map((f) => f.what))).toEqual(NOT_COMPARED);
-    // 504 compared records of 41 distinct device states (62237 bytes) across 524 records in all corpus projects
-    // (including the sweep rows' exports: each configured house export adds 16 records; JMG 4 T and RMG 8 T full
-    // downloads add 2 distinct states of 2513 bytes each; the ticket 07 pilot adds 6 MV-07B0 records: 4 refused
-    // PARAM_HIDDEN_UNSUPPORTED and 2 compared distinct states: M-00B6_A-0001-01-9BAE-O0184 146 bytes and
-    // M-0048_A-0103-11-72A2 2097 bytes; MV-0705 defaults exports declare no LdCtrlLoadImageProp).
+    // 519 compared records of 56 distinct device states (84916 bytes) across 547 records in all corpus projects
+    // (547 = 519 compared + 28 not compared: 16 not loaded, 12 refused; full-run batch 1 adds 23 MV-07B0 records:
+    // 8 refused and 15 compared distinct states totalling 22679 bytes, with 2 open deviations listed above).
     const pinned: PinnedCount[] = [
-      { what: "compared records", found: comparedIn.length, pinned: 504, byProject: tally(comparedIn) },
-      { what: "distinct device states, each counted for the first project that shows it", found: distinctIn.length, pinned: 41, byProject: tally(distinctIn) },
-      { what: "bytes ETS marks as its own, over the distinct device states", found: [...bytesIn.values()].reduce((n, b) => n + b, 0), pinned: 62237, byProject: bytesIn },
+      { what: "compared records", found: comparedIn.length, pinned: 519, byProject: tally(comparedIn) },
+      { what: "distinct device states, each counted for the first project that shows it", found: distinctIn.length, pinned: 56, byProject: tally(distinctIn) },
+      { what: "bytes ETS marks as its own, over the distinct device states", found: [...bytesIn.values()].reduce((n, b) => n + b, 0), pinned: 84916, byProject: bytesIn },
     ];
     expectNoMismatch(countMismatches(pinned));
   }, TIMEOUT);

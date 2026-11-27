@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { catalogueXml } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
-import { batchOptions, batchRowPrecheck, benchSimArgs, BOTTOM_BAR_LINE_11, bottomBarInsertIn, compatibilityRefusalWhy, editDistance, expanderOpen, isCatalogueProgress, isCompatibilityWarningText, LINE_11, nextBatchSize, notLoadedMark, oneRowSelected, pcapOf, pickCatalogueRow, productStoreAppPath, propertiesTabIn, readProductStoreApp, selectedSamples, simRowFiles, simStartScript, waitDialogButton, writtenRowKind } from "./ets-driver.ts";
+import { batchOptions, batchRowPrecheck, benchSimArgs, BOTTOM_BAR_LINE_11, bottomBarInsertIn, compatibilityRefusalWhy, editDistance, expanderOpen, isCatalogueProgress, isCompatibilityWarningText, LINE_11, narrowedCatalogueQuery, nextBatchSize, notLoadedMark, oneRowSelected, pcapOf, pickCatalogueRow, productStoreAppPath, propertiesTabIn, readProductStoreApp, selectedSamples, simRowFiles, simStartScript, waitDialogButton, writtenRowKind } from "./ets-driver.ts";
 import { tempDir } from "./test-temp.ts";
 
 test("a catalogue batch halves after a refusal and grows from the last size that loaded", () => {
@@ -74,10 +74,25 @@ test("the catalogue row inserted: the one whose read application is the row's, w
   expect(pick([e("180-02", "S$FEO1", "1.1", "75D9", 731), e("77024-180-02", "SAC12", "1.2", "C529", 751)], "180-02", "M-0081_A-FE01-11-75D9")).toEqual({ row: 0, rows: 1, exact: true });
   expect(pickCatalogueRow([{ deviceType: "SAOAT", version: "1.0", fingerprint: "33B9" }], "2CDG 110 192 R0011", "M-0002_A-A0A7-10-33B9")).toMatchObject({ rows: 1, exact: true });
   expect(pickCatalogueRow([{ deviceType: "S10BA", version: "1.0", fingerprint: "ATD6" }], "70251", "M-00C9_A-10BA-10-A7D6-O00A2")).toMatchObject({ rows: 1, exact: true });
+  // OCR also reads 5 as S inside a device type or fingerprint ("SOSE2" for $05E2, "S5E2" for 55E2).
+  expect(pickCatalogueRow([{ deviceType: "SOSE2", version: "1.0", fingerprint: "FC64" }], "01506", "M-002C_A-05E2-10-FC64")).toMatchObject({ rows: 1, exact: true });
+  expect(pickCatalogueRow([{ deviceType: "$05E2", version: "1.0", fingerprint: "S5E2" }], "01506", "M-002C_A-05E2-10-55E2")).toMatchObject({ rows: 1, exact: true });
   // A version or device type that differs is never taken.
   expect("refused" in pickCatalogueRow([e("X1", "$A0B1", "1.2", "1234", 700), e("X1", "$A0B2", "1.1", "1234", 720)], "X1", "M-00FA_A-A0B1-11-1234")).toBe(true);
   expect(editDistance("DC390", "DC90")).toBe(1);
   expect(editDistance("", "6B9E")).toBe(4);
+});
+
+test("narrowedCatalogueQuery narrows an overflowing order-number search by ASCII manufacturer tokens and version", () => {
+  expect(narrowedCatalogueQuery("2089 00", "M-0008_A-0004-62-8649-O007C", "GIRA Giersiepen")).toBe("GIRA Giersiepen 2089 00 6.2");
+  expect(narrowedCatalogueQuery("push button", "M-0310_A-0001-10-64AA", "prado europe bv")).toBe("prado europe push button 1.0");
+  // Non-ASCII tokens (en-dash) and single-character words are dropped; words already in the order number are not repeated.
+  expect(narrowedCatalogueQuery("GW612110", "M-009E_A-1051-01-D32F", "Bes – Ingenium")).toBe("Bes Ingenium GW612110 0.1");
+  expect(narrowedCatalogueQuery("GIRA 2089", "M-0008_A-0004-62-8649-O007C", "GIRA Giersiepen")).toBe("Giersiepen GIRA 2089 6.2");
+  expect(narrowedCatalogueQuery("2089 00", "M-0008_A-0004-62-8649-O007C")).toBe("2089 00 6.2");
+  // When both manufacturer words and version are already present (or no manufacturer and version is already present), returns null.
+  expect(narrowedCatalogueQuery("2089 6.2", "M-0008_A-0004-62-8649-O007C")).toBeNull();
+  expect(narrowedCatalogueQuery("GIRA 6.2", "M-0008_A-0004-62-8649-O007C", "GIRA")).toBeNull();
 });
 
 test("line 1.1's row of the topology tree, as OCR reads the tree's rows", () => {
