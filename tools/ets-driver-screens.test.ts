@@ -8,7 +8,7 @@ import { dirname, join } from "node:path";
 import { corpusPath, driverScreenFile, type DriverScreen } from "./corpus.ts";
 import { corpusTest } from "./corpus-test.ts";
 import {
-  catalogueDownloadDialog, catalogueGroups, catalogueHeader, cataloguePanelShown, catalogueProducts, catalogueSearchEmpty, compatibilityRefusalWhy, compatibilityWarning, dialogBox, dialogButton, dialogText, downloadEnabled, frontTabWidth, LINE_11,
+  bottomBarInsert, catalogueDownloadDialog, catalogueGroups, catalogueHeader, cataloguePanelShown, catalogueProducts, catalogueSearchEmpty, compatibilityRefusalWhy, compatibilityWarning, dialogBox, dialogButton, dialogText, downloadEnabled, frontTabWidth, LINE_11,
   isCatalogueProgress, keepCompatibilityDialog, keepScreen, moveScreen, oneRowSelected, pickCatalogueRow, projectTabs, projectTabShown, propertiesTab, propertiesTable, propertyValue, SCREEN_FORMAT, searchGrid, selectionPattern, sidecarOf, step, treeRowBelow, treeRowIn,
 } from "./ets-driver.ts";
 import { tempDir } from "./test-temp.ts";
@@ -132,20 +132,24 @@ corpusTest("the properties panel of a catalogue row: its tabs, the order number,
   expect(app(screen("tree-line-selected-device-below"))).toEqual(["ABB AG - STOTZ-KONTAKT", "$0806", "3.0", "CC72"]);
   expect(app(screen("properties-fingerprint-leading-zero"))).toEqual(["GIRA Giersiepen", "$5014", "1.1", "0883"]);
   expect(app(screen("properties-hex-values"))).toEqual(["GEWISS", "$5222", "1.2", "B809"]);
-  // Two fingerprints OCR has misread ("1634" for 163A without binary thresholding, "DCc90" for DC90): the
-  // manufacturer, device type and version read exactly, and the fingerprint read stays closer to the application's
-  // than to another application's at the same type and version ("EEEE", 4 edits from either), so pickCatalogueRow
-  // takes the row (what was inserted is then checked on the project's export). A fingerprint read as nothing would
-  // stand as far from both, and be refused.
+  // Three panels OCR misread before 4x binary thresholding ("1634" for 163A without binary thresholding, "DCc90" for
+  // DC90 at 3x binary, "SOO0OA" for $000A at 3x binary): at 4x binary every row matches its application exactly in
+  // pickCatalogueRow (after its S/$ and O/0 folding), and the fuzzy fingerprint path stays covered in ets-driver.test.ts.
   for (const [name, application, want] of [
-    ["properties-fingerprint-misread-1", "M-0004_A-1471-12-163A-O00F4", ["Albrecht Jung", "$1471", "1.2"]],
-    ["properties-fingerprint-misread-2", "M-0006_A-20B3-11-DC90-O000A", ["Berker", "$20B3", "1.1"]],
+    ["properties-fingerprint-misread-1", "M-0004_A-1471-12-163A-O00F4", ["Albrecht Jung", "$1471", "1.2", "163A"]],
+    ["properties-fingerprint-misread-2", "M-0006_A-20B3-11-DC90-O000A", ["Berker", "$20B3", "1.1", "DC90"]],
   ] as const) {
     const [manufacturer, deviceType, version, fingerprint] = app(screen(name)) ?? [];
-    expect([manufacturer, deviceType, version]).toEqual([...want]);
+    expect([manufacturer, deviceType, version, fingerprint]).toEqual([...want]);
     const entry = { orderNumber: "?", manufacturer: manufacturer!, deviceType: deviceType!, version: version!, fingerprint: fingerprint! };
     const other = { ...entry, fingerprint: "EEEE" };
-    expect(pickCatalogueRow([other, entry], "?", application)).toMatchObject({ hit: entry, rows: 1 });
+    expect(pickCatalogueRow([other, entry], "?", application)).toMatchObject({ hit: entry, rows: 1, exact: true });
+  }
+  {
+    const [manufacturer, deviceType, version, fingerprint] = app(screen("properties-device-type-000a")) ?? [];
+    expect([manufacturer, version]).toEqual(["MDT technologies GmbH", "1.1"]);
+    const entry = { orderNumber: "AKK-1610.01", manufacturer: manufacturer!, deviceType: deviceType!, version: version!, fingerprint: fingerprint! };
+    expect(pickCatalogueRow([entry], "AKK-1610.01", "M-0083_A-000A-11-F01F", manufacturer!)).toMatchObject({ hit: entry, rows: 1, exact: true });
   }
   // The panel still on line 1.1 (a click that did not select the catalogue row): no Katalog or Applikation tab.
   expect(propertiesTab(screen("tabs-one-project-line-collapsed"), "Katalog")).toBeNull();
@@ -278,3 +282,24 @@ corpusTest("the catalogue grid's selection: one row, rows, a row at the grid's b
   expect(edge).toMatch(/^0+1{1,5}$/);
   expect(oneRowSelected(edge)).toBe(false);
 });
+
+corpusTest("the catalogue's bottom bar: line 1.1 insert target and Hinzufügen button", () => {
+  const ready = bottomBarInsert(screen("catalogue-two-groups-katalog-tab"));
+  expect(ready.line11).toBe(true);
+  expect(ready.text).toMatch(/1\.1\s*TP\s*Linie/);
+  expect(ready.add).not.toBeNull();
+  expectNear([ready.add?.cx, ready.add?.cy], [679, 1182]);
+  // Line 1.1 targeted with no Hinzufügen button in the bar.
+  const noAdd = bottomBarInsert(screen("tree-line-selected-device-below"));
+  expect(noAdd.line11).toBe(true);
+  expect(noAdd.text).toMatch(/1\.1\s*TP\s*Linie/);
+  expect(noAdd.add).toBeNull();
+  const other = bottomBarInsert(screen("tabs-other-project-same-prefix"));
+  expect(other.line11).toBe(false);
+  expect(other.text.length).toBeGreaterThan(0);
+  expect(other.add).toBeNull();
+  const overview = bottomBarInsert(screen("overview-no-project"));
+  expect(overview.line11).toBe(false);
+  expect(overview.text).toBe("");
+  expect(overview.add).toBeNull();
+}, OCR_TIMEOUT);

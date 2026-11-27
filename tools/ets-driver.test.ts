@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { catalogueXml } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
-import { batchOptions, batchRowPrecheck, benchSimArgs, compatibilityRefusalWhy, editDistance, expanderOpen, isCatalogueProgress, isCompatibilityWarningText, LINE_11, nextBatchSize, notLoadedMark, oneRowSelected, pcapOf, pickCatalogueRow, productStoreAppPath, propertiesTabIn, readProductStoreApp, selectedSamples, simRowFiles, simStartScript, waitDialogButton, writtenRowKind } from "./ets-driver.ts";
+import { batchOptions, batchRowPrecheck, benchSimArgs, BOTTOM_BAR_LINE_11, bottomBarInsertIn, compatibilityRefusalWhy, editDistance, expanderOpen, isCatalogueProgress, isCompatibilityWarningText, LINE_11, nextBatchSize, notLoadedMark, oneRowSelected, pcapOf, pickCatalogueRow, productStoreAppPath, propertiesTabIn, readProductStoreApp, selectedSamples, simRowFiles, simStartScript, waitDialogButton, writtenRowKind } from "./ets-driver.ts";
 import { tempDir } from "./test-temp.ts";
 
 test("a catalogue batch halves after a refusal and grows from the last size that loaded", () => {
@@ -87,6 +87,23 @@ test("line 1.1's row of the topology tree, as OCR reads the tree's rows", () => 
     "J 1.1.1 6108/06-BS-500 Tasterankopplung 2-fa", "{J 1.1.1TB/U1 Tacteo Bedienelement 1-fach"]) expect(LINE_11.test(other)).toBe(false);
   // A device whose name ends as a line's does: its address says it is a device.
   expect(LINE_11.test("{J 1.1.20 KNX Line")).toBe(false);
+});
+
+test("the catalogue's bottom bar insert target: line 1.1 with joined tokens, rejecting other lines", () => {
+  for (const ok of ["Elemente 1 in Topologie 1.1 TP Linie Hinzufügen", "Elemente 1 in opologie ¥ 1.1TP Linie ¥ Hinzufligen", "1.1TPLinie", "1.1TP Line"]) {
+    expect(BOTTOM_BAR_LINE_11.test(ok)).toBe(true);
+  }
+  for (const bad of ["1.0 IP Hauptlinie", "1.2 TP Linie", "11.1 TP Linie", "l1.1 TP Linie", "1.10 TP Linie", "2.1.1 TP Linie", "Elemente in Gebaudeteile"]) {
+    expect(BOTTOM_BAR_LINE_11.test(bad)).toBe(false);
+  }
+  const w = (text: string, x: number) => ({ text, x, y: 1177, w: 30, h: 10, line: "1.1.1" });
+  const ready = bottomBarInsertIn([w("1.1TP", 343), w("Linie", 381), w("Hinzufligen", 649)]);
+  expect(ready.line11).toBe(true);
+  expect(ready.text).toBe("1.1TP Linie Hinzufligen");
+  expect(ready.add?.x).toBe(649);
+  const wrong = bottomBarInsertIn([w("l1.1TP", 343), w("Linie", 381), w("Hinzufugen", 649)]);
+  expect(wrong.line11).toBe(false);
+  expect(wrong.text).toBe("l1.1TP Linie Hinzufugen");
 });
 
 test("a catalogue group's expander read open or closed from its arrow's pixels", () => {

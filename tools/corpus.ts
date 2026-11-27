@@ -96,7 +96,7 @@ export const DRIVER_SCREENS = [
   "overview-no-project", "tabs-overview-in-front", "tabs-one-project-line-collapsed", "tabs-extra-tab-behind", "tabs-extra-tab-in-front", "tabs-other-project-same-prefix",
   "tree-main-line-collapsed", "tree-line-selected-device-below", "tree-line-selected-empty",
   "catalogue-two-groups-katalog-tab", "catalogue-two-groups-applikation-tab", "catalogue-group-closed", "catalogue-application-name-digits", "catalogue-rows-not-loaded", "catalogue-search-overflow",
-  "properties-fingerprint-misread-1", "properties-fingerprint-misread-2", "properties-fingerprint-leading-zero", "properties-hex-values",
+  "properties-fingerprint-misread-1", "properties-fingerprint-misread-2", "properties-fingerprint-leading-zero", "properties-hex-values", "properties-device-type-000a",
   "compatibility-warning-insert", "compatibility-warning-download", "dialog-connection-not-available", "dialog-compress-question", "dialog-project-password",
   "catalogue-download-refused", "catalogue-download-progress",
   "catalogue-one-row-selected", "catalogue-one-row-loaded", "catalogue-rows-selected", "catalogue-selection-bottom-edge",

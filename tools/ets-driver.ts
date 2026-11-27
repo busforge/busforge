@@ -761,11 +761,11 @@ export function propertiesTabIn(ws: Word[], name: string): Box | null {
 export const propertiesTab = reader("propertiesTab", (png: string, name: string): Box | null => propertiesTabIn(words(png, AT.properties), name));
 
 // The label/value table under the properties panel's tab `tab`, line by line: read as one block (word by word, OCR
-// drops the dot in "1.1"), at three times its size and thresholded to black and white ("binary"): at two OCR reads
-// "$493B" as "3493B" and "B471" as "B4a71"; on antialiased grey text at three it still misreads "$A0AA" as "SAOAA,",
-// "$B00D" as "$BO00D" and "$134A" as "$1344".
+// drops the dot in "1.1"), at four times its size and thresholded to black and white ("binary"): at two OCR reads
+// "$493B" as "3493B" and "B471" as "B4a71"; at three it still misreads "$000A" as "SOO0OA" and "DC90" as "DCc90"; on
+// antialiased grey text at three it still misreads "$A0AA" as "SAOAA,", "$B00D" as "$BO00D" and "$134A" as "$1344".
 export const propertiesTable = reader("propertiesTable", (png: string, tab: Box): string[] => {
-  return textLines(png, { x: AT.properties.x, y: tab.y + 20, w: AT.properties.w, h: 200 }, 3, "binary");
+  return textLines(png, { x: AT.properties.x, y: tab.y + 20, w: AT.properties.w, h: 200 }, 4, "binary");
 });
 
 // The value of a properties table's line that begins with `label`, or null.
@@ -958,6 +958,21 @@ async function downloadDialogs(s: Screen, dir: string, before: string): Promise<
   settled(s, dir, before, { png, box, text });
 }
 
+// Line 1.1 as the catalogue's bottom bar shows it ("1.1 TP Linie", which OCR may join into "1.1TP Linie" or "1.1TPLinie").
+export const BOTTOM_BAR_LINE_11 = /(?<![A-Za-z0-9.])1\.1\s*TP\s*L[il1]n(?:[il1]e|e)\b/;
+
+// Whether the catalogue's bottom bar targets line 1.1, its OCR row text (kept in failure sidecars), and where its
+// "Hinzufügen" button stands.
+export function bottomBarInsertIn(ws: Word[]): { line11: boolean; text: string; add: Box | null } {
+  const rs = rows(ws);
+  return {
+    line11: rs.some((r) => BOTTOM_BAR_LINE_11.test(r.text)),
+    text: rs.map((r) => r.text).join(" | "),
+    add: findText(ws, "Hinzuf").at(-1) ?? null,
+  };
+}
+export const bottomBarInsert = reader("bottomBarInsert", (png: string) => bottomBarInsertIn(words(png, AT.bottomBar)));
+
 // The product inserted into line 1.1 from the catalogue: a catalogue row listed for the order number whose
 // application is `applicationId`, by its device type, version and fingerprint as ETS's properties panel shows them
 // (the fingerprint of the id ETS's product store holds, which tools/ets-catalogue.ts gives a row as its
@@ -970,7 +985,7 @@ async function insertProduct(s: Screen, dir: string, orderNumber: string, applic
   const line = await line11(s);
   click(line.cx, line.cy);
   await sleep(1500);
-  let { ws } = s.look();
+  const { ws } = s.look();
   let header = catalogueHeaderIn(ws);
   if (!header) {
     const add = findText(ws, "Hinzuf").find((b) => b.y < 70) ?? fail("no 'Hinzufügen' in the toolbar with line 1.1 selected");
@@ -1037,9 +1052,9 @@ async function insertProduct(s: Screen, dir: string, orderNumber: string, applic
   const hit = picked.hit;
   click(500, hit.y);
   await sleep(1500);
-  ({ ws } = s.look(AT.bottomBar));
-  if (!findText(ws, "1.1 TP Linie").length) fail("the catalogue's insert target is not line 1.1");
-  const add = findText(ws, "Hinzuf").at(-1) ?? fail("no 'Hinzufügen' under the catalogue");
+  const bar = bottomBarInsert(s.snap());
+  if (!bar.line11) fail("the catalogue's insert target is not line 1.1");
+  const add = bar.add ?? fail("no 'Hinzufügen' under the catalogue");
   click(add.cx, add.cy);
   let importing = false;
   for (let i = 0; i < 30; i++) {

@@ -1039,7 +1039,7 @@ which the driver takes fresh for each reading (`projectTabs`, `treeRowIn`, `cata
 feeds them full-resolution screenshots of ETS 6.4.1 that real driver runs left, kept in the private corpus (they show
 manufacturers' product names), and checks what each must read: the project's tabs and which one stands in front, line
 1.1 collapsed, open or selected and the row under it, a catalogue group's arrow and its product rows, the properties
-panel's order number and application, ETS's dialogs, the catalogue grid's selection and its Herunterladen. Where OCR
+panel's order number and application, the catalogue's bottom bar (insert target and Hinzufügen), ETS's dialogs, the catalogue grid's selection and its Herunterladen. Where OCR
 misreads a value at every size the driver could read it at (a fingerprint now and then), the test holds what the driver
 does with the reading instead: the row is still the one picked, by the closest fingerprint. A screen the driver misreads
 on a run is kept as such a screenshot, and its test is written, failing, before the reading changes. The tests run
