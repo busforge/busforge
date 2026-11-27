@@ -706,13 +706,13 @@ export function rowUnit(id: string, dir: string, application: string, spec: RowS
     if (unitApp !== application) throw new Error(`row ${id}: the simulated unit ${unit.id} runs ${unitApp}, not ${application}`);
     return unit;
   }
-  const source: unknown = named.source, donor: unknown = named.donor, identity: unknown = named.identity;
+  const source: unknown = named.source, donor: unknown = named.donor, identity: unknown = named.identity, rule: unknown = named.rule;
   if (source !== "donor") throw new Error(`row ${id}: its unit's source is ${String(source)}, not donor`);
-  if (typeof donor !== "string" || !Array.isArray(identity) || identity.some((l) => typeof l !== "string")) throw new Error(`row ${id}: its unit names no donor and identity loop lines`);
+  if (typeof donor !== "string" || typeof rule !== "string" || !Array.isArray(identity) || identity.some((l) => typeof l !== "string")) throw new Error(`row ${id}: its unit names no donor and identity loop lines`);
   if (spec.export === undefined) throw new Error(`row ${id}: a catalogue unit's application program comes from the row's export, and row.json names none`);
   const appXml = extractAppPrograms(readMaybeGzipped(join(dir, spec.export)), [application]).get(application);
   if (appXml === undefined) throw new Error(`row ${id}: its export ${spec.export} holds no application program ${application}`);
-  const unit = catalogueUnitSpec(application, appXml, { donor: named.donor, learned: named.identity });
+  const unit = catalogueUnitSpec(application, appXml, { donor: named.donor, learned: named.identity, recordedRule: rule });
   if ("refused" in unit) throw new Error(`row ${id}: no catalogue unit: ${unit.refused}`);
   if (unit.rule !== named.rule) throw new Error(`row ${id}: its unit was chosen by the rule "${named.rule}", the rule of its mask is now "${unit.rule}": the row is to run again`);
   if (donorDigest(unit.donor) !== named.donorDigest) throw new Error(`row ${id}: its donor ${donor} was collected again, run on another application program or given another behaviour since the row ran: the row is to run again`);

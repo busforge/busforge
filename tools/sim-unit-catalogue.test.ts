@@ -14,7 +14,7 @@ import { gzipSync } from "node:zlib";
 import { catalogueUnit, catalogueUnitRecord, catalogueUnitSpec, chooseDonor, donorDigest, donorUnfit, DONOR_RULES, learnIdentity, normalizeProductStoreXml, precheckDonor, PRODUCT_STORE_TAGS, unitMask, type CatalogueUnitSpec } from "./sim-unit-catalogue.ts";
 import { mismatchLines } from "./sim-unit-product.ts";
 import { framePairs, replayCapture } from "./sim-unit-replay.ts";
-import { AURO_M0081, GIRA_TS3, MDT_BE02001, MEANWELL_KNX40E, newSimUnit, OPENKNX_RAUMCONTROLLER, SIM_UNITS, THEBEN_DALI_GATEWAY, type SimUnitSpec } from "./sim-units.ts";
+import { ABB_USU42, AURO_M0081, GIRA_TS3, MDT_BE02001, MEANWELL_KNX40E, newSimUnit, OPENKNX_RAUMCONTROLLER, SIM_UNITS, THEBEN_DALI_GATEWAY, type SimUnitSpec } from "./sim-units.ts";
 
 // Parsing an application takes up to 6.7 s alone (the OpenKNX RaumController's); the replays below run every unit's
 // sweep row on its capture's clock. Twenty times that under a loaded full check (docs/testing.md, "Timeouts of heavy
@@ -157,6 +157,69 @@ corpusDescribe("a catalogue unit's donor", () => {
     expect(refused(be06001.replace("<LdCtrlRestart />", '<LdCtrlTaskSegment LsmIdx="4" Address="17408" /><LdCtrlRestart />'))).toBe("no donor for MV-0705: the application declares a segment or task on object 4, whose load-state machine no unit of the mask shows");
     // ETS never sends a task segment on machine 5 (the Gira Tastsensor 3's application declares one).
     expect(refused(be06001.replace("<LdCtrlRestart />", '<LdCtrlRestart /><LdCtrlTaskSegment LsmIdx="5" Address="17408" />'))).toBe("mdt-be02001");
+  });
+
+  test("refuses MV-0701 applications with SegType=1, unload/complete without AbsSegment+TaskSegment, or EEPROM outside collected memory, while keeping clean MV-0701 apps on abb-usu-4.2", () => {
+    const mv0701App = (steps: string) =>
+      `<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0002"><ApplicationPrograms><ApplicationProgram Id="M-0002_A-9999-10-0001" ApplicationNumber="39321" ApplicationVersion="16" ProgramType="ApplicationProgram" MaskVersion="MV-0701" Name="Test0701" LoadProcedureStyle="ProductProcedure" PeiType="128" DefaultLanguage="en-US"><Static><LoadProcedures><LoadProcedure>${steps}</LoadProcedure></LoadProcedures></Static></ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+    const cleanSteps = [
+      "<LdCtrlConnect />",
+      '<LdCtrlUnload LsmIdx="1" /><LdCtrlUnload LsmIdx="2" /><LdCtrlUnload LsmIdx="3" />',
+      '<LdCtrlLoad LsmIdx="1" /><LdCtrlAbsSegment LsmIdx="1" SegType="0" Address="16384" Size="511" Access="255" MemType="3" SegFlags="0" /><LdCtrlTaskSegment LsmIdx="1" Address="16384" /><LdCtrlLoadCompleted LsmIdx="1" />',
+      '<LdCtrlLoad LsmIdx="2" /><LdCtrlAbsSegment LsmIdx="2" SegType="0" Address="16896" Size="509" Access="255" MemType="3" SegFlags="0" /><LdCtrlTaskSegment LsmIdx="2" Address="16896" /><LdCtrlLoadCompleted LsmIdx="2" />',
+      '<LdCtrlLoad LsmIdx="3" /><LdCtrlAbsSegment LsmIdx="3" SegType="0" Address="1792" Size="100" Access="0" MemType="2" SegFlags="0" /><LdCtrlAbsSegment LsmIdx="3" SegType="0" Address="28656" Size="16" Access="255" MemType="3" SegFlags="128" /><LdCtrlTaskSegment LsmIdx="3" Address="28656" /><LdCtrlTaskSegment LsmIdx="5" Address="28656" /><LdCtrlLoadCompleted LsmIdx="3" />',
+      "<LdCtrlRestart /><LdCtrlDisconnect />",
+    ].join("");
+
+    // Clean MV-0701 app (RAM SegType=0 MemType=2 outside 0x4000-0x6fff, EEPROM at exact upper boundary 0x6ff0-0x6fff, plus LSM 5 task segment) picks abb-usu-4.2.
+    const clean = chooseDonor(mv0701App(cleanSteps));
+    expect("donor" in clean && clean.donor.id).toBe("abb-usu-4.2");
+    expect(donorUnfit(ABB_USU42, catalogueXml("M-0002_A-A001-13-63C2.xml.gz"))).toBeNull();
+
+    // 1. LdCtrlAbsSegment SegType="1" (RAM/stack segment = additional load control 1) is refused on abb-usu-4.2.
+    const withSeg1 = mv0701App(cleanSteps.replace(
+      '<LdCtrlAbsSegment LsmIdx="3" SegType="0" Address="1792" Size="100" Access="0" MemType="2" SegFlags="0" />',
+      '<LdCtrlAbsSegment LsmIdx="3" SegType="0" Address="1792" Size="100" Access="0" MemType="2" SegFlags="0" /><LdCtrlAbsSegment LsmIdx="3" SegType="1" Address="1892" Size="1" Access="0" MemType="2" SegFlags="0" />',
+    ));
+    expect(donorUnfit(ABB_USU42, withSeg1)).toBe("its captures show no additional load control 1 (SegType=1)");
+    expect(chooseDonor(withSeg1)).toEqual({
+      refused: "no donor for MV-0701: abb-usu-4.2: its captures show no additional load control 1 (SegType=1); theben-meteodata-140s: its application changes its memory after a restart",
+    });
+
+    // 2. LdCtrlUnload -> LdCtrlLoadCompleted without LdCtrlTaskSegment (or without an absolute segment, or with only LSM 5 TaskSegment, or declared before unload) is refused.
+    const noTask = mv0701App(cleanSteps.replace('<LdCtrlTaskSegment LsmIdx="1" Address="16384" />', ""));
+    expect(chooseDonor(noTask)).toEqual({
+      refused: "no donor for MV-0701: the load procedure completes unloaded load-state machine 1 without LdCtrlTaskSegment",
+    });
+    const noAbs = mv0701App(cleanSteps.replace('<LdCtrlAbsSegment LsmIdx="1" SegType="0" Address="16384" Size="511" Access="255" MemType="3" SegFlags="0" />', ""));
+    expect(chooseDonor(noAbs)).toEqual({
+      refused: "no donor for MV-0701: the load procedure completes unloaded load-state machine 1 without an absolute segment",
+    });
+    const onlyLsm5Task = mv0701App(cleanSteps.replace('<LdCtrlTaskSegment LsmIdx="3" Address="28656" />', ""));
+    expect(chooseDonor(onlyLsm5Task)).toEqual({
+      refused: "no donor for MV-0701: the load procedure completes unloaded load-state machine 3 without LdCtrlTaskSegment",
+    });
+    const beforeUnload = mv0701App(
+      '<LdCtrlConnect /><LdCtrlAbsSegment LsmIdx="1" SegType="0" Address="16384" Size="16" Access="255" MemType="3" SegFlags="0" /><LdCtrlTaskSegment LsmIdx="1" Address="16384" /><LdCtrlUnload LsmIdx="1" /><LdCtrlLoad LsmIdx="1" /><LdCtrlLoadCompleted LsmIdx="1" /><LdCtrlRestart /><LdCtrlDisconnect />',
+    );
+    expect(chooseDonor(beforeUnload)).toEqual({
+      refused: "no donor for MV-0701: the load procedure completes unloaded load-state machine 1 without an absolute segment and LdCtrlTaskSegment",
+    });
+    // Completing a machine that was never unloaded (partial form) is still allowed.
+    const noUnload = mv0701App('<LdCtrlConnect /><LdCtrlLoad LsmIdx="3" /><LdCtrlLoadCompleted LsmIdx="3" /><LdCtrlRestart /><LdCtrlDisconnect />');
+    expect("donor" in chooseDonor(noUnload)).toBe(true);
+
+    // 3. EEPROM LdCtrlAbsSegment (SegType="0", MemType="3") outside abb-usu-4.2's collected 0x4000-0x6fff window is refused.
+    const above = mv0701App(cleanSteps.replace('Address="28656" Size="16"', 'Address="28672" Size="16"'));
+    expect(donorUnfit(ABB_USU42, above)).toBe("its collected memory does not cover EEPROM segment of object 3 (0x7000-0x700f, 16 bytes)");
+    const spanning = mv0701App(cleanSteps.replace('Address="28656" Size="16"', 'Address="28656" Size="32"'));
+    expect(donorUnfit(ABB_USU42, spanning)).toBe("its collected memory does not cover EEPROM segment of object 3 (0x6ff0-0x700f, 32 bytes)");
+    const below = mv0701App(cleanSteps.replace('Address="16384" Size="511"', 'Address="16368" Size="32"'));
+    expect(donorUnfit(ABB_USU42, below)).toBe("its collected memory does not cover EEPROM segment of object 1 (0x3ff0-0x400f, 32 bytes)");
+    const zeroSize = mv0701App(cleanSteps.replace('Address="28656" Size="16"', 'Address="28656" Size="0"'));
+    expect(chooseDonor(zeroSize)).toEqual({
+      refused: "no donor for MV-0701: the application declares an absolute segment of 0 octets at 0x6ff0, which the memory services do not reach whole",
+    });
   });
 
   test("precheckDonor normalizes ETS ProductStore XML (plain or gzipped) to the same chooseDonor verdict and falls back on broken or mismatched files", () => {
@@ -328,6 +391,18 @@ corpusDescribe("a catalogue row's unit", () => {
     expect(() => rowUnit("r", dir, application, row({ ...record, donor: "meanwell-knx40e" }, "export.xml"))).toThrow("the donor meanwell-knx40e does not fit the rule: its captures show no confirmed restart");
     // An own unit is named by its id, and runs the row's application.
     expect(() => rowUnit("r", dir, application, row("gvs-amma"))).toThrow("the simulated unit gvs-amma runs M-0085_A-0072-30-69AA, not M-0083_A-0137-20-7EB2");
+    // A stored row recorded under an earlier rule whose application now has no qualifying donor stays replayable on
+    // its recorded donor (with retiredRule set) while a wrong mask prefix or current-rule mismatch still throws.
+    const retiredApp = "M-0002_A-9998-10-0001";
+    const retiredXml = `<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0002"><ApplicationPrograms><ApplicationProgram Id="${retiredApp}" ApplicationNumber="39320" ApplicationVersion="16" ProgramType="ApplicationProgram" MaskVersion="MV-0701" Name="Retired0701" LoadProcedureStyle="ProductProcedure" PeiType="128" DefaultLanguage="en-US"><Static><LoadProcedures><LoadProcedure><LdCtrlConnect /><LdCtrlUnload LsmIdx="3" /><LdCtrlLoad LsmIdx="3" /><LdCtrlAbsSegment LsmIdx="3" SegType="0" Address="1792" Size="100" Access="0" MemType="2" SegFlags="0" /><LdCtrlAbsSegment LsmIdx="3" SegType="1" Address="1892" Size="1" Access="0" MemType="2" SegFlags="0" /><LdCtrlTaskSegment LsmIdx="3" Address="1792" /><LdCtrlLoadCompleted LsmIdx="3" /><LdCtrlRestart /><LdCtrlDisconnect /></LoadProcedure></LoadProcedures></Static></ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+    writeFileSync(join(dir, "retired.xml"), retiredXml);
+    const oldRule = "MV-0701: an older rule";
+    const retiredRecord = { source: "donor" as const, donor: "abb-usu-4.2", donorDigest: donorDigest(ABB_USU42), rule: oldRule, identity: [], properties: {} };
+    const retiredUnit = rowUnit("r-old", dir, retiredApp, row(retiredRecord, "retired.xml"));
+    expect("donor" in retiredUnit && [retiredUnit.donor.id, retiredUnit.rule, retiredUnit.retiredRule]).toEqual(["abb-usu-4.2", oldRule, true]);
+    expect(catalogueUnit(retiredUnit as CatalogueUnitSpec).spec.rule).toBe(oldRule);
+    expect(() => rowUnit("r-cur", dir, retiredApp, row({ ...retiredRecord, rule: DONOR_RULES["MV-0701"] }, "retired.xml"))).toThrow("the donor abb-usu-4.2 does not fit the rule");
+    expect(() => rowUnit("r-bad", dir, retiredApp, row({ ...retiredRecord, rule: "MV-07B0: wrong mask" }, "retired.xml"))).toThrow("the donor abb-usu-4.2 does not fit the rule");
   });
 });
 

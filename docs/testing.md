@@ -733,8 +733,11 @@ must also show `A_MemoryExtended_Write` where the application declares extended 
 memory so), and where it declares none, its device control after its application's unload (the memory is then
 written with `A_Memory_Write`, which the unit echoes in the verify mode that octet holds), and its segment layout
 and memory reach must hold the application's declared relative segments and com-object table without overlapping
-another segment; on MV-0701 it must take
-every additional load control the application declares; on MV-0705 its captures must show its device control after
+another segment; on MV-0701 it must take every additional load control the application declares (distinguishing
+`LdCtrlAbsSegment` by `SegType`, since `SegType="1"` sends additional load control `1`), its collected memory must
+cover every declared EEPROM segment (`SegType="0"`, `MemType="3"`), and the application's full download must declare
+both an absolute segment and `LdCtrlTaskSegment` before `LdCtrlLoadCompleted` on every unloaded machine (matching
+`SimUnit0701`); on MV-0705 its captures must show its device control after
 its application's unload where the full download unloads it (the memory is always written with `A_Memory_Write`),
 each task control 1 the application declares (of its machine and count, its address 0 or at the same place against the segments) and each
 task segment it declares at an address that starts no declared segment (of its machine, at the end of a segment or
@@ -751,7 +754,7 @@ A mask without a qualifying unit refuses the row, naming each unit and why. With
 | MV-07B0 with extended memory services, without Data Secure (com-object table ≤ 2,720 B, parameter segment ≤ 21,604 B) | OpenKNX RaumController | the MEAN WELL and the Theben DALI-Gateway show no `A_MemoryExtended_Write`; the Theben MIX 2, the Jung 400021SE and the GVS AMMA show no basic restart |
 | MV-07B0 with Data Secure and extended memory services (com-object table ≤ 2,130 B) | GVS AMMA-04/06.S | the Theben MIX 2 and the Jung 400021SE change their memory after a restart; the others show no confirmed restart |
 | MV-07B0 with Data Secure, without extended memory services | none | the GVS AMMA shows no device control after its application's unload; the Theben MIX 2 and the Jung 400021SE change their memory after a restart; the others show no confirmed restart |
-| MV-0701 | ABB US/U 4.2 | the Theben Meteodata 140 S clears a download marker at its restart; an application that declares task control 1 has no donor |
+| MV-0701 | ABB US/U 4.2 | the Theben Meteodata 140 S clears a download marker at its restart; an application that declares task control 1, an `LdCtrlAbsSegment` with `SegType="1"` (additional load control 1), an unloaded machine completing without both an absolute segment and `LdCtrlTaskSegment`, or an EEPROM segment outside the donor's collected memory (`0x4000-0x6fff`) has no donor |
 | MV-0705 without a task control 1 or a closing read of the memory-control blocks, every task segment at the start of a declared segment | MDT BE-02001.02 | the Auro presence detector, the Theben theLuxa P300 and the MDT BE-06001 leave more unshown (four answers to its three); the Gira Tastsensor 3 shows no device control after its application's unload |
 | the same with a closing read of the memory-control blocks | Auro presence detector | both MDT units refuse the blocks; the Theben theLuxa P300 ranks after it by id |
 | MV-0705 with a task control 1 of count 0 at address 0 and the application's task segment at the end of a segment | Auro presence detector | the others show no task control 1 of count 0 at address 0 or no task segment at the end of a segment |
@@ -835,7 +838,9 @@ runs over the corpus projects; its result stands beside the verdict.
 **A row in the corpus** is a directory `captures/ets-sweep/<application id>/<variant>/` holding
 `row.json` (the simulated unit: an own unit's id, or for a catalogue unit its donor with a digest of its collection,
 its application program and its behaviour, the rule that chose it, the identity loop's lines and the source of each property it answers
-otherwise than its donor, each held against the unit built today, so a row whose unit moved runs again; ETS's build, the simulator's endpoint ETS was set to, the export
+otherwise than its donor, each held against the unit built today, so a row whose unit moved runs again (except a
+stored row recorded under an earlier rule whose application now has no qualifying donor, which stays replayable on
+its recorded donor while `donorDigest` and its property sources hold and carries `rulePicksNow` in the manifest); ETS's build, the simulator's endpoint ETS was set to, the export
 where there is one, the calibration where there is one), `configuration.json` (the device's
 configuration ETS downloaded, which Busforge downloads), ETS's capture `ets.log` with the simulator's
 lines `ets.log.sim.txt`, `ets6.log.txt`, and `explained.json` (the row's verdict today and every
