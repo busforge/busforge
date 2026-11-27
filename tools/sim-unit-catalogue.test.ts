@@ -11,7 +11,7 @@ import { tempDir } from "./test-temp.ts";
 import { segmentAllocationRefusal, type SimUnit } from "./sim-unit.ts";
 import type { SystemBBehaviour, UnitBehaviour } from "./sim-unit-model.ts";
 import { gzipSync } from "node:zlib";
-import { catalogueUnit, catalogueUnitRecord, catalogueUnitSpec, chooseDonor, donorDigest, donorUnfit, DONOR_RULES, learnIdentity, normalizeProductStoreXml, precheckDonor, PRODUCT_STORE_TAGS, unitMask, type CatalogueUnitSpec } from "./sim-unit-catalogue.ts";
+import { catalogueUnit, catalogueUnitRecord, catalogueUnitSpec, chooseDonor, donorDigest, donorUnfit, DONOR_RULES, learnIdentity, normalizeProductStoreXml, precheckDonor, PRODUCT_STORE_TAGS, RETIRED_DONOR_RULES, unitMask, type CatalogueUnitSpec } from "./sim-unit-catalogue.ts";
 import { mismatchLines } from "./sim-unit-product.ts";
 import { framePairs, replayCapture } from "./sim-unit-replay.ts";
 import { ABB_USU42, AURO_M0081, GIRA_TS3, MDT_BE02001, MEANWELL_KNX40E, newSimUnit, OPENKNX_RAUMCONTROLLER, SIM_UNITS, THEBEN_DALI_GATEWAY, type SimUnitSpec } from "./sim-units.ts";
@@ -193,7 +193,7 @@ corpusDescribe("a catalogue unit's donor", () => {
     });
     const noAbs = mv0701App(cleanSteps.replace('<LdCtrlAbsSegment LsmIdx="1" SegType="0" Address="16384" Size="511" Access="255" MemType="3" SegFlags="0" />', ""));
     expect(chooseDonor(noAbs)).toEqual({
-      refused: "no donor for MV-0701: the load procedure completes unloaded load-state machine 1 without an absolute segment",
+      refused: "no donor for MV-0701: the load procedure declares LdCtrlTaskSegment for load-state machine 1 at 0x4000, outside its declared segments",
     });
     const onlyLsm5Task = mv0701App(cleanSteps.replace('<LdCtrlTaskSegment LsmIdx="3" Address="28656" />', ""));
     expect(chooseDonor(onlyLsm5Task)).toEqual({
@@ -210,7 +210,7 @@ corpusDescribe("a catalogue unit's donor", () => {
     expect("donor" in chooseDonor(noUnload)).toBe(true);
 
     // 3. EEPROM LdCtrlAbsSegment (SegType="0", MemType="3") outside abb-usu-4.2's collected 0x4000-0x6fff window is refused.
-    const above = mv0701App(cleanSteps.replace('Address="28656" Size="16"', 'Address="28672" Size="16"'));
+    const above = mv0701App(cleanSteps.replaceAll('Address="28656"', 'Address="28672"'));
     expect(donorUnfit(ABB_USU42, above)).toBe("its collected memory does not cover EEPROM segment of object 3 (0x7000-0x700f, 16 bytes)");
     const spanning = mv0701App(cleanSteps.replace('Address="28656" Size="16"', 'Address="28656" Size="32"'));
     expect(donorUnfit(ABB_USU42, spanning)).toBe("its collected memory does not cover EEPROM segment of object 3 (0x6ff0-0x700f, 32 bytes)");
@@ -219,6 +219,36 @@ corpusDescribe("a catalogue unit's donor", () => {
     const zeroSize = mv0701App(cleanSteps.replace('Address="28656" Size="16"', 'Address="28656" Size="0"'));
     expect(chooseDonor(zeroSize)).toEqual({
       refused: "no donor for MV-0701: the application declares an absolute segment of 0 octets at 0x6ff0, which the memory services do not reach whole",
+    });
+    const full16BitSize = mv0701App(cleanSteps.replace('Address="1792" Size="100"', 'Address="0" Size="65536"'));
+    expect(chooseDonor(full16BitSize)).toEqual({
+      refused: "no donor for MV-0701: the application declares an absolute segment of 65536 octets at 0x0, which the memory services do not reach whole",
+    });
+    // Task segment outside the machine's declared segments (at segment end or declared before LdCtrlAbsSegment),
+    // additional control before LdCtrlLoad, cross-machine segment overlap, and LSM outside 1-4 are refused.
+    const taskAtEnd = mv0701App(cleanSteps.replace('<LdCtrlTaskSegment LsmIdx="3" Address="28656" />', '<LdCtrlTaskSegment LsmIdx="3" Address="28672" />'));
+    expect(chooseDonor(taskAtEnd)).toEqual({
+      refused: "no donor for MV-0701: the load procedure declares LdCtrlTaskSegment for load-state machine 3 at 0x7000, outside its declared segments",
+    });
+    const taskBeforeAbs = mv0701App(
+      '<LdCtrlConnect /><LdCtrlUnload LsmIdx="1" /><LdCtrlLoad LsmIdx="1" /><LdCtrlTaskSegment LsmIdx="1" Address="16384" /><LdCtrlAbsSegment LsmIdx="1" SegType="0" Address="16384" Size="16" Access="255" MemType="3" SegFlags="0" /><LdCtrlLoadCompleted LsmIdx="1" /><LdCtrlRestart /><LdCtrlDisconnect />',
+    );
+    expect(chooseDonor(taskBeforeAbs)).toEqual({
+      refused: "no donor for MV-0701: the load procedure declares LdCtrlTaskSegment for load-state machine 1 at 0x4000, outside its declared segments",
+    });
+    const absBeforeLoad = mv0701App(
+      '<LdCtrlConnect /><LdCtrlUnload LsmIdx="1" /><LdCtrlAbsSegment LsmIdx="1" SegType="0" Address="16384" Size="16" Access="255" MemType="3" SegFlags="0" /><LdCtrlTaskSegment LsmIdx="1" Address="16384" /><LdCtrlLoad LsmIdx="1" /><LdCtrlLoadCompleted LsmIdx="1" /><LdCtrlRestart /><LdCtrlDisconnect />',
+    );
+    expect(chooseDonor(absBeforeLoad)).toEqual({
+      refused: "no donor for MV-0701: the load procedure declares LdCtrlAbsSegment for unloaded load-state machine 1 before LdCtrlLoad",
+    });
+    const overlap = mv0701App(cleanSteps.replace('Address="16896" Size="509"', 'Address="16894" Size="509"'));
+    expect(chooseDonor(overlap)).toEqual({
+      refused: "no donor for MV-0701: the application declares an absolute segment for load-state machine 2 at 0x41fe (509 octets) reaching into one of load-state machine 1",
+    });
+    const badLsm = mv0701App(cleanSteps.replace("<LdCtrlRestart />", '<LdCtrlUnload LsmIdx="6" /><LdCtrlRestart />'));
+    expect(chooseDonor(badLsm)).toEqual({
+      refused: "no donor for MV-0701: the load procedure declares LdCtrlUnload for load-state machine 6, which no MV-0701 unit models",
     });
   });
 
@@ -387,22 +417,29 @@ corpusDescribe("a catalogue row's unit", () => {
     expect(() => rowUnit("r", dir, "M-0083_A-0137-20-7EB3", row(record, "export.xml"))).toThrow("holds no application program M-0083_A-0137-20-7EB3");
     expect(() => rowUnit("r", dir, application, row({ ...record, rule: "MV-07B0: an older rule" }, "export.xml"))).toThrow("the row is to run again");
     expect(() => rowUnit("r", dir, application, row({ ...record, donorDigest: "0".repeat(64) }, "export.xml"))).toThrow("its donor gvs-amma was collected again, run on another application program or given another behaviour since the row ran");
-    expect(() => rowUnit("r", dir, application, row({ ...record, donor: undefined as unknown as string }, "export.xml"))).toThrow("its unit names no donor and identity loop lines");
+    expect(() => rowUnit("r", dir, application, row({ ...record, donor: undefined as unknown as string }, "export.xml"))).toThrow("its unit names no donor, rule and identity loop lines");
+    expect(() => rowUnit("r", dir, application, row({ ...record, rule: undefined as unknown as string }, "export.xml"))).toThrow("its unit names no donor, rule and identity loop lines");
     expect(() => rowUnit("r", dir, application, row({ ...record, donor: "meanwell-knx40e" }, "export.xml"))).toThrow("the donor meanwell-knx40e does not fit the rule: its captures show no confirmed restart");
     // An own unit is named by its id, and runs the row's application.
     expect(() => rowUnit("r", dir, application, row("gvs-amma"))).toThrow("the simulated unit gvs-amma runs M-0085_A-0072-30-69AA, not M-0083_A-0137-20-7EB2");
-    // A stored row recorded under an earlier rule whose application now has no qualifying donor stays replayable on
-    // its recorded donor (with retiredRule set) while a wrong mask prefix or current-rule mismatch still throws.
+    // A stored row recorded under a known retired rule whose application now has no qualifying donor stays replayable on
+    // its recorded donor (with retiredRule set); an invented rule string, a current-rule mismatch, or a retired-rule row
+    // whose application still qualifies under the current rule is rejected.
     const retiredApp = "M-0002_A-9998-10-0001";
     const retiredXml = `<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0002"><ApplicationPrograms><ApplicationProgram Id="${retiredApp}" ApplicationNumber="39320" ApplicationVersion="16" ProgramType="ApplicationProgram" MaskVersion="MV-0701" Name="Retired0701" LoadProcedureStyle="ProductProcedure" PeiType="128" DefaultLanguage="en-US"><Static><LoadProcedures><LoadProcedure><LdCtrlConnect /><LdCtrlUnload LsmIdx="3" /><LdCtrlLoad LsmIdx="3" /><LdCtrlAbsSegment LsmIdx="3" SegType="0" Address="1792" Size="100" Access="0" MemType="2" SegFlags="0" /><LdCtrlAbsSegment LsmIdx="3" SegType="1" Address="1892" Size="1" Access="0" MemType="2" SegFlags="0" /><LdCtrlTaskSegment LsmIdx="3" Address="1792" /><LdCtrlLoadCompleted LsmIdx="3" /><LdCtrlRestart /><LdCtrlDisconnect /></LoadProcedure></LoadProcedures></Static></ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
     writeFileSync(join(dir, "retired.xml"), retiredXml);
-    const oldRule = "MV-0701: an older rule";
+    const oldRule = RETIRED_DONOR_RULES["MV-0701"][0];
     const retiredRecord = { source: "donor" as const, donor: "abb-usu-4.2", donorDigest: donorDigest(ABB_USU42), rule: oldRule, identity: [], properties: {} };
     const retiredUnit = rowUnit("r-old", dir, retiredApp, row(retiredRecord, "retired.xml"));
     expect("donor" in retiredUnit && [retiredUnit.donor.id, retiredUnit.rule, retiredUnit.retiredRule]).toEqual(["abb-usu-4.2", oldRule, true]);
     expect(catalogueUnit(retiredUnit as CatalogueUnitSpec).spec.rule).toBe(oldRule);
+    expect(() => rowUnit("r-invented", dir, retiredApp, row({ ...retiredRecord, rule: "MV-0701: invented" }, "retired.xml"))).toThrow("the donor abb-usu-4.2 does not fit the rule");
     expect(() => rowUnit("r-cur", dir, retiredApp, row({ ...retiredRecord, rule: DONOR_RULES["MV-0701"] }, "retired.xml"))).toThrow("the donor abb-usu-4.2 does not fit the rule");
     expect(() => rowUnit("r-bad", dir, retiredApp, row({ ...retiredRecord, rule: "MV-07B0: wrong mask" }, "retired.xml"))).toThrow("the donor abb-usu-4.2 does not fit the rule");
+    const qualifyingApp = "M-0002_A-9997-10-0001";
+    const qualifyingXml = retiredXml.replaceAll(retiredApp, qualifyingApp).replace('<LdCtrlAbsSegment LsmIdx="3" SegType="1" Address="1892" Size="1" Access="0" MemType="2" SegFlags="0" />', "");
+    writeFileSync(join(dir, "qualifying.xml"), qualifyingXml);
+    expect(() => rowUnit("r-qual", dir, qualifyingApp, row(retiredRecord, "qualifying.xml"))).toThrow("the row is to run again");
   });
 });
 

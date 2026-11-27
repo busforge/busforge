@@ -708,7 +708,7 @@ export function rowUnit(id: string, dir: string, application: string, spec: RowS
   }
   const source: unknown = named.source, donor: unknown = named.donor, identity: unknown = named.identity, rule: unknown = named.rule;
   if (source !== "donor") throw new Error(`row ${id}: its unit's source is ${String(source)}, not donor`);
-  if (typeof donor !== "string" || typeof rule !== "string" || !Array.isArray(identity) || identity.some((l) => typeof l !== "string")) throw new Error(`row ${id}: its unit names no donor and identity loop lines`);
+  if (typeof donor !== "string" || typeof rule !== "string" || !Array.isArray(identity) || identity.some((l) => typeof l !== "string")) throw new Error(`row ${id}: its unit names no donor, rule and identity loop lines`);
   if (spec.export === undefined) throw new Error(`row ${id}: a catalogue unit's application program comes from the row's export, and row.json names none`);
   const appXml = extractAppPrograms(readMaybeGzipped(join(dir, spec.export)), [application]).get(application);
   if (appXml === undefined) throw new Error(`row ${id}: its export ${spec.export} holds no application program ${application}`);

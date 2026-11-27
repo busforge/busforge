@@ -26,6 +26,7 @@ import { extractAppPrograms } from "../packages/project/src/index.ts";
 import { closingSteps, declaredPropChecks, lsmIdx, maskInfo, memType, parseAppConfig, PEI_LSM, programIdStamp, resolveModuleInstances, segType, stepAddress, stepSize, type DynNode, type ModuleInstance } from "../packages/product/src/index.ts";
 import { catalogueXml, corpusPath } from "./corpus.ts";
 import { MEMORY_END, MEMORY_EXT_END, segmentAllocationRefusal, type AnswerSources, type SimProperty, type SimUnit, type SimUnitCoreModel } from "./sim-unit.ts";
+import { LSMS as MV0701_LSMS, WRITTEN_MEMORY_TYPE, type AdditionalControl } from "./sim-unit-0701.ts";
 import { APPLICATION_LSM as PROPERTY_MAPPED_APPLICATION_LSM, declaredSegments, declaredTaskForms, declaredTasks, fullSteps, PLACE_TEXT, type DeclaredTaskForms, type DeclaredTasks } from "./sim-unit-0705.ts";
 import { productUnit, rerunIdentity, type IdentityValue, type Mismatch, type ProductUnit } from "./sim-unit-product.ts";
 import { collectionOf, newSimUnit, SIM_UNITS, simUnitOf, unitModel, type SimUnitSpec, type UnitModel } from "./sim-units.ts";
@@ -75,10 +76,11 @@ const COMMON_RULE = "an own unit of the mask whose application leaves its memory
 // services, for the device control after the application's unload where it declares none (ETS and Busforge then
 // write its memory with A_Memory_Write, echoed in verify mode, which that octet holds), and for enough room in the
 // donor's segment layout and memory reach for the application's relative segments and com-object table; MV-0701 for
-// every additional load control the application declares (distinguishing LdCtrlAbsSegment by SegType, since SegType=1
-// sends additional load control 1), for collected memory covering every declared EEPROM segment (MV-0701 downloads
-// read memory before writing), and for both an absolute segment and LdCtrlTaskSegment before LdCtrlLoadCompleted on
-// every unloaded machine (matching SimUnit0701); MV-0705 for the device control after the application's unload where
+// every additional load control the full download declares (distinguishing LdCtrlAbsSegment by SegType, since
+// SegType=1 sends additional load control 1, and skipping LdCtrlTaskSegment on LSM 5 which ETS never sends), for
+// collected memory covering every declared EEPROM segment (MV-0701 downloads read memory before writing), for valid
+// 16-bit non-overlapping segments on machines 1-4, and for LdCtrlLoad plus both an absolute segment and
+// LdCtrlTaskSegment inside a declared segment before LdCtrlLoadCompleted on every unloaded machine; MV-0705 for the device control after the application's unload where
 // its full download unloads it (its memory is always written with A_Memory_Write), its task controls 1 (by machine,
 // count and where the address lies) and its task segments at an address that starts no declared segment (by machine
 // and where the address lies), which its units take or refuse as their captures show.
@@ -88,10 +90,18 @@ export const DONOR_RULES: Record<Mask, string> = {
   "MV-0705": `MV-0705: ${COMMON_RULE}; and whose captures show its device control after its application's unload where the application's full download unloads it, each task control 1 the application declares, of its machine and count with its address 0 or at the same place, and each task segment it declares at an address that starts no declared segment, of its machine and at the same place (the end of a segment, or inside one)`,
 };
 
-const MV0701_EEPROM_MEM_TYPE = 3;
+// Exact historical rule strings recorded on stored sweep rows whose mask rule later tightened so no donor qualifies
+// any more. Only these exact strings (never arbitrary mask-prefixed text) may take the retired-rule replay path.
+export const RETIRED_DONOR_RULES: Readonly<Record<Mask, readonly string[]>> = {
+  "MV-07B0": [],
+  "MV-0701": [`MV-0701: ${COMMON_RULE}; and that takes every additional load control the application declares`],
+  "MV-0705": [],
+};
+
+type AdditionalNeed = AdditionalControl | `additional load control ${number} (SegType=${number})`;
 
 type AppConfig = ReturnType<typeof parseAppConfig>;
-type Needs = { basic: boolean; confirmed: boolean; extendedWrite: boolean; controlAfterUnload: boolean; loadImage: { obj: number; pid: number }[]; additional: string[]; eepromSegments: { lsm: number; at: number; size: number }[]; relSegments: { lsm: number; size: number }[] } & DeclaredTaskForms;
+type Needs = { basic: boolean; confirmed: boolean; extendedWrite: boolean; controlAfterUnload: boolean; loadImage: { obj: number; pid: number }[]; additional: AdditionalNeed[]; eepromSegments: { lsm: number; at: number; size: number }[]; relSegments: { lsm: number; size: number }[] } & DeclaredTaskForms;
 const NO_TASKS: DeclaredTaskForms = { taskPlaces: [], taskControls1: [] };
 
 // Highest com-object number declared by `cfg`, including modular com-objects resolved from `instances` without running
@@ -159,52 +169,90 @@ function systemBSegments(cfg: AppConfig, steps: ReturnType<typeof fullSteps>): {
   return out.sort((a, b) => a.lsm - b.lsm || a.size - b.size);
 }
 
-// What an MV-0701 application's full download requires of its donor and SimUnit0701: every additional load control
-// it declares (distinguishing LdCtrlAbsSegment by SegType), every EEPROM segment (SegType=0, MemType=3, Size > 0)
-// that must lie within the donor's collected memory, and both an absolute segment and LdCtrlTaskSegment before
-// LdCtrlLoadCompleted on every unloaded machine. Or why SimUnit0701 will always refuse the load procedure.
-function memoryMappedNeeds(steps: ReturnType<typeof fullSteps>): { additional: string[]; eepromSegments: { lsm: number; at: number; size: number }[] } | string {
-  const additional = new Set<string>();
+const hexAddr = (a: number) => `0x${a.toString(16).padStart(4, "0")}`;
+
+// What an MV-0701 application's full download requires of its donor and SimUnit0701:
+// - every additional load control it declares (distinguishing LdCtrlAbsSegment by SegType, skipping LdCtrlTaskSegment
+//   on LSM 5 which ETS never sends);
+// - valid 16-bit non-overlapping absolute segments on machines 1-4, and every EEPROM segment (SegType=0, MemType=3)
+//   that must lie within the donor's collected memory;
+// - for every unloaded machine: LdCtrlLoad before its additional controls and LdCtrlLoadCompleted, and both an
+//   absolute segment and an LdCtrlTaskSegment inside one of its declared segments before LdCtrlLoadCompleted.
+// Or why SimUnit0701 will refuse the load procedure on every MV-0701 donor.
+function memoryMappedNeeds(steps: ReturnType<typeof fullSteps>): { additional: AdditionalNeed[]; eepromSegments: { lsm: number; at: number; size: number }[] } | string {
+  const additional = new Set<AdditionalNeed>();
   const eepromSegments: { lsm: number; at: number; size: number }[] = [];
-  const machines = new Map<number, { unloaded: boolean; hasAbs: boolean; hasTask: boolean }>();
-  const stateOf = (lsm: number) => machines.get(lsm) ?? machines.set(lsm, { unloaded: false, hasAbs: false, hasTask: false }).get(lsm)!;
+  const machines = new Map<number, { unloaded: boolean; loading: boolean; segments: { at: number; size: number }[]; hasTask: boolean }>();
+  const stateOf = (lsm: number) => machines.get(lsm) ?? machines.set(lsm, { unloaded: false, loading: false, segments: [], hasTask: false }).get(lsm)!;
+  const requireLsm = (s: ReturnType<typeof fullSteps>[number]): number | string => {
+    const lsm = lsmIdx(s);
+    if (lsm === undefined) return `the load procedure declares ${s.verb} without LsmIdx`;
+    if (!MV0701_LSMS.includes(lsm)) return `the load procedure declares ${s.verb} for load-state machine ${lsm}, which no MV-0701 unit models`;
+    return lsm;
+  };
   for (const s of steps) {
     if (s.verb === "LdCtrlUnload") {
-      const lsm = lsmIdx(s);
-      if (lsm === undefined) return "the load procedure declares LdCtrlUnload without LsmIdx";
-      machines.set(lsm, { unloaded: true, hasAbs: false, hasTask: false });
+      const lsm = requireLsm(s);
+      if (typeof lsm === "string") return lsm;
+      machines.set(lsm, { unloaded: true, loading: false, segments: [], hasTask: false });
+    } else if (s.verb === "LdCtrlLoad") {
+      const lsm = requireLsm(s);
+      if (typeof lsm === "string") return lsm;
+      stateOf(lsm).loading = true;
     } else if (s.verb === "LdCtrlAbsSegment") {
+      const lsm = requireLsm(s);
+      if (typeof lsm === "string") return lsm;
+      const m = stateOf(lsm);
+      if (m.unloaded && !m.loading) return `the load procedure declares LdCtrlAbsSegment for unloaded load-state machine ${lsm} before LdCtrlLoad`;
       const st = segType(s);
       if (st !== 0) {
         additional.add(`additional load control ${st} (SegType=${st})`);
         continue;
       }
-      const lsm = lsmIdx(s), at = stepAddress(s), size = stepSize(s), mt = memType(s);
-      if (lsm === undefined || at === undefined || size === undefined || mt === undefined) {
+      const at = stepAddress(s), size = stepSize(s), mt = memType(s);
+      if (at === undefined || size === undefined || mt === undefined) {
         return "the application declares an absolute segment without its machine, address, size or memory type";
       }
       additional.add("absolute-segment");
-      if (size === 0 || at + size > MEMORY_END) {
+      if (size === 0 || size >= MEMORY_END || at + size > MEMORY_END) {
         return `the application declares an absolute segment of ${size} octets at 0x${at.toString(16)}, which the memory services do not reach whole`;
       }
-      stateOf(lsm).hasAbs = true;
-      if (mt === MV0701_EEPROM_MEM_TYPE) eepromSegments.push({ lsm, at, size });
+      const other = MV0701_LSMS.find((l) => l !== lsm && (machines.get(l)?.segments.some((seg) => at < seg.at + seg.size && seg.at < at + size) ?? false));
+      if (other !== undefined) {
+        return `the application declares an absolute segment for load-state machine ${lsm} at ${hexAddr(at)} (${size} octets) reaching into one of load-state machine ${other}`;
+      }
+      m.segments.push({ at, size });
+      if (mt === WRITTEN_MEMORY_TYPE) eepromSegments.push({ lsm, at, size });
     } else if (s.verb === "LdCtrlTaskSegment") {
-      const lsm = lsmIdx(s);
-      if (lsm === undefined) return "the load procedure declares LdCtrlTaskSegment without LsmIdx";
-      if (lsm === PEI_LSM) continue;
+      const rawLsm = lsmIdx(s);
+      if (rawLsm === undefined) return "the load procedure declares LdCtrlTaskSegment without LsmIdx";
+      if (rawLsm === PEI_LSM) continue;
+      if (!MV0701_LSMS.includes(rawLsm)) return `the load procedure declares LdCtrlTaskSegment for load-state machine ${rawLsm}, which no MV-0701 unit models`;
+      const m = stateOf(rawLsm);
+      if (m.unloaded && !m.loading) return `the load procedure declares LdCtrlTaskSegment for unloaded load-state machine ${rawLsm} before LdCtrlLoad`;
+      const at = stepAddress(s);
+      if (at === undefined || at >= MEMORY_END) return `the load procedure declares LdCtrlTaskSegment for load-state machine ${rawLsm} without a 16-bit Address`;
+      if (m.unloaded && !m.segments.some((seg) => at >= seg.at && at < seg.at + seg.size)) {
+        return `the load procedure declares LdCtrlTaskSegment for load-state machine ${rawLsm} at ${hexAddr(at)}, outside its declared segments`;
+      }
       additional.add("task-segment");
-      stateOf(lsm).hasTask = true;
+      m.hasTask = true;
     } else if (s.verb === "LdCtrlTaskCtrl1") {
+      const lsm = requireLsm(s);
+      if (typeof lsm === "string") return lsm;
+      const m = stateOf(lsm);
+      if (m.unloaded && !m.loading) return `the load procedure declares LdCtrlTaskCtrl1 for unloaded load-state machine ${lsm} before LdCtrlLoad`;
       additional.add("task-control-1");
     } else if (s.verb === "LdCtrlLoadCompleted") {
-      const lsm = lsmIdx(s);
-      if (lsm === undefined) return "the load procedure declares LdCtrlLoadCompleted without LsmIdx";
+      const lsm = requireLsm(s);
+      if (typeof lsm === "string") return lsm;
       const m = machines.get(lsm);
-      if (m?.unloaded && (!m.hasAbs || !m.hasTask)) {
-        const missing = [!m.hasAbs ? "an absolute segment" : null, !m.hasTask ? "LdCtrlTaskSegment" : null].filter(Boolean).join(" and ");
+      if (m?.unloaded && !m.loading) return `the load procedure completes unloaded load-state machine ${lsm} without LdCtrlLoad`;
+      if (m?.unloaded && (m.segments.length === 0 || !m.hasTask)) {
+        const missing = [m.segments.length === 0 ? "an absolute segment" : null, !m.hasTask ? "LdCtrlTaskSegment" : null].filter(Boolean).join(" and ");
         return `the load procedure completes unloaded load-state machine ${lsm} without ${missing}`;
       }
+      if (m) m.loading = false;
     }
   }
   return { additional: [...additional], eepromSegments };
@@ -312,8 +360,6 @@ function memoryMappedDonorRanges(u: SimUnitSpec): readonly { start: number; end:
   return ranges;
 }
 
-const hexAddr = (a: number) => `0x${a.toString(16).padStart(4, "0")}`;
-
 // Why `u` cannot be the donor of a download with these needs, or null.
 function unfit(u: SimUnitSpec, need: Needs): string | null {
   const b = u.behaviour;
@@ -341,7 +387,7 @@ function unfit(u: SimUnitSpec, need: Needs): string | null {
     const answers = shown === "element" || (shown === "count" && "mcb" in b && b.mcb !== undefined);
     if (!answers) return `its collection ${shown === "refused" ? "shows it refuse" : shown === "count" ? "shows only the element count of" : "did not read"} property ${obj}/${pid}, which the application's LdCtrlLoadImageProp reads`;
   }
-  const taken: readonly string[] = u.memoryMapped?.additional ?? [];
+  const taken: readonly AdditionalNeed[] = u.memoryMapped?.additional ?? [];
   const missing = need.additional.filter((a) => !taken.includes(a));
   if (missing.length) return `its captures show no ${missing.join(", ")}`;
   if (need.eepromSegments.length) {
@@ -492,10 +538,12 @@ export function catalogueUnitSpec(
     if (!named) return { refused: `no own unit ${opts.donor} to borrow` };
     if (unitMask(named) !== cfg.mask) return { refused: `the donor ${named.id} is of ${unitMask(named)}, the application of ${cfg.mask}` };
     const currentRule = DONOR_RULES[cfg.mask as Mask];
-    const why = unfitFor(named, needs(cfg));
+    const need = needs(cfg);
+    const why = unfitFor(named, need);
     if (why) {
-      const priorRule = typeof opts.recordedRule === "string" && opts.recordedRule !== currentRule && opts.recordedRule.startsWith(`${cfg.mask}: `);
-      if (priorRule && "refused" in chooseDonorFor(cfg, units)) {
+      const retired = typeof opts.recordedRule === "string" && (RETIRED_DONOR_RULES[cfg.mask as Mask] ?? []).includes(opts.recordedRule);
+      const anyFitsNow = typeof need !== "string" && units.some((u) => unitMask(u) === cfg.mask && unfit(u, need) === null);
+      if (retired && !anyFitsNow) {
         choice = { donor: named, rule: opts.recordedRule! };
         retiredRule = true;
       } else {
@@ -606,7 +654,7 @@ export function catalogueUnit(spec: CatalogueUnitSpec): CatalogueUnit {
   const appXml = spec.appXml;
   const cfg = parseAppConfig(appXml);
   if (cfg.mask !== unitMask(spec.donor)) refuse(`the application is for ${cfg.mask}, the donor ${spec.donor.id} is ${unitMask(spec.donor)}`);
-  const retired = spec.retiredRule === true && spec.rule !== DONOR_RULES[cfg.mask as Mask];
+  const retired = spec.retiredRule === true && (RETIRED_DONOR_RULES[cfg.mask as Mask] ?? []).includes(spec.rule);
   if (!retired) {
     const why = unfitFor(spec.donor, needs(cfg));
     if (why) refuse(`the donor ${spec.donor.id} does not fit the rule: ${why}`);

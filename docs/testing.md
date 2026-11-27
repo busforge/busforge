@@ -733,11 +733,13 @@ must also show `A_MemoryExtended_Write` where the application declares extended 
 memory so), and where it declares none, its device control after its application's unload (the memory is then
 written with `A_Memory_Write`, which the unit echoes in the verify mode that octet holds), and its segment layout
 and memory reach must hold the application's declared relative segments and com-object table without overlapping
-another segment; on MV-0701 it must take every additional load control the application declares (distinguishing
+another segment; on MV-0701 it checks the full download's load procedure (skipping `LdCtrlTaskSegment` on machine 5,
+which ETS never sends): the donor must take every additional load control the full download declares (distinguishing
 `LdCtrlAbsSegment` by `SegType`, since `SegType="1"` sends additional load control `1`), its collected memory must
-cover every declared EEPROM segment (`SegType="0"`, `MemType="3"`), and the application's full download must declare
-both an absolute segment and `LdCtrlTaskSegment` before `LdCtrlLoadCompleted` on every unloaded machine (matching
-`SimUnit0701`); on MV-0705 its captures must show its device control after
+cover every declared EEPROM segment (`SegType="0"`, `MemType="3"`), all absolute segments must be valid 16-bit
+non-overlapping ranges on machines 1 to 4, and every unloaded machine must declare `LdCtrlLoad` before its additional
+controls and both an absolute segment and `LdCtrlTaskSegment` inside one of its declared segments before
+`LdCtrlLoadCompleted`; on MV-0705 its captures must show its device control after
 its application's unload where the full download unloads it (the memory is always written with `A_Memory_Write`),
 each task control 1 the application declares (of its machine and count, its address 0 or at the same place against the segments) and each
 task segment it declares at an address that starts no declared segment (of its machine, at the end of a segment or
@@ -839,8 +841,9 @@ runs over the corpus projects; its result stands beside the verdict.
 `row.json` (the simulated unit: an own unit's id, or for a catalogue unit its donor with a digest of its collection,
 its application program and its behaviour, the rule that chose it, the identity loop's lines and the source of each property it answers
 otherwise than its donor, each held against the unit built today, so a row whose unit moved runs again (except a
-stored row recorded under an earlier rule whose application now has no qualifying donor, which stays replayable on
-its recorded donor while `donorDigest` and its property sources hold and carries `rulePicksNow` in the manifest); ETS's build, the simulator's endpoint ETS was set to, the export
+stored row recorded under a known retired rule in `RETIRED_DONOR_RULES` whose application now has no qualifying donor,
+which stays replayable on its recorded donor while `donorDigest` and its property sources hold and carries
+`rulePicksNow` in the manifest); ETS's build, the simulator's endpoint ETS was set to, the export
 where there is one, the calibration where there is one), `configuration.json` (the device's
 configuration ETS downloaded, which Busforge downloads), ETS's capture `ets.log` with the simulator's
 lines `ets.log.sim.txt`, `ets6.log.txt`, and `explained.json` (the row's verdict today and every
