@@ -28,9 +28,64 @@ const TIMEOUT = 300_000;
 // internal/ets-download-record-deviations.md; a difference not listed here fails, and so does a listed
 // one that is gone.
 const KNOWN_DEVIATIONS = [
+  // ModuleDef MD-1 Parameter MD-1_P-41 declares BaseValue="..._MD-1_A-19" (NumericArg 4/5 on 20DE, 3 on 20DF);
+  // Busforge does not apply BaseValue yet and evaluates MD-1_P-41 as 0.
+  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 3 at 942: Busforge c3, ETS 00 (1 project)",
+  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 3 at 944: Busforge 93, ETS 00 (1 project)",
+  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 3 at 948: Busforge c3, ETS 00 (1 project)",
+  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 3 at 950: Busforge 93, ETS 00 (1 project)",
+  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 4 at 100: Busforge 42, ETS 44 (1 project)",
+  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 4 at 103: Busforge 42, ETS 44 (1 project)",
+  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 4 at 10578: Busforge 00, ETS 01 (1 project)",
+  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 4 at 10579: Busforge 00, ETS 90 (1 project)",
+  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 4 at 10582: Busforge 00, ETS 01 (1 project)",
+  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 4 at 10583: Busforge 00, ETS f4 (1 project)",
+  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 4 at 10590: Busforge 00, ETS 01 (1 project)",
+  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 4 at 10591: Busforge 00, ETS 90 (1 project)",
+  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 4 at 10594: Busforge 00, ETS 01 (1 project)",
+  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 4 at 10595: Busforge 00, ETS f4 (1 project)",
+  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 4 at 10597: Busforge 00, ETS 01 (1 project)",
+  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 4 at 167: Busforge 0a, ETS 1e (1 project)",
+  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 4 at 168: Busforge 0a, ETS 1e (1 project)",
+  "insta-o000a-module-param-base-value: M-0001_A-20DF-22-4073-O000A object 3 at 942: Busforge c3, ETS 00 (1 project)",
+  "insta-o000a-module-param-base-value: M-0001_A-20DF-22-4073-O000A object 3 at 944: Busforge 93, ETS 00 (1 project)",
+  "insta-o000a-module-param-base-value: M-0001_A-20DF-22-4073-O000A object 4 at 10476: Busforge 03, ETS 01 (1 project)",
+  "insta-o000a-module-param-base-value: M-0001_A-20DF-22-4073-O000A object 4 at 10477: Busforge 00, ETS 02 (1 project)",
+  "insta-o000a-module-param-base-value: M-0001_A-20DF-22-4073-O000A object 4 at 167: Busforge 0a, ETS 1e (1 project)",
+  // Forward-placed Access="None" Merker P-28_R-54 (Value="1") evaluates as 0 in Busforge.
+  "insta-20df-forward-merker-p28: M-0001_A-20DF-22-4073-O000A object 4 at 16: Busforge 00, ETS 20 (1 project)",
+  "insta-20df-forward-merker-p28: M-0001_A-20DF-22-4073-O000A object 4 at 19: Busforge 00, ETS 21 (1 project)",
+  "insta-20df-forward-merker-p28: M-0001_A-20DF-22-4073-O000A object 4 at 43: Busforge 00, ETS 31 (1 project)",
   // ETS's record of the com-object table dates from a download when object 3 had no link, and was not
   // written again after the project linked it; ETS's own later download writes 0x4f for the linked object.
   "gvs-amma-object-3-record-older-than-its-link: M-0085_A-0072-30-69AA object 3 at 6: Busforge 4f, ETS 4b (1 project)",
+  // Same ModuleDef MD-1 BaseValue omission on the Blumotix OEM variants (M-00A0, -O000A).
+  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 3 at 942: Busforge c3, ETS 00 (1 project)",
+  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 3 at 944: Busforge 93, ETS 00 (1 project)",
+  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 3 at 948: Busforge c3, ETS 00 (1 project)",
+  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 3 at 950: Busforge 93, ETS 00 (1 project)",
+  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 4 at 100: Busforge 42, ETS 44 (1 project)",
+  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 4 at 103: Busforge 42, ETS 44 (1 project)",
+  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 4 at 10578: Busforge 00, ETS 01 (1 project)",
+  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 4 at 10579: Busforge 00, ETS 90 (1 project)",
+  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 4 at 10582: Busforge 00, ETS 01 (1 project)",
+  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 4 at 10583: Busforge 00, ETS f4 (1 project)",
+  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 4 at 10590: Busforge 00, ETS 01 (1 project)",
+  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 4 at 10591: Busforge 00, ETS 90 (1 project)",
+  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 4 at 10594: Busforge 00, ETS 01 (1 project)",
+  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 4 at 10595: Busforge 00, ETS f4 (1 project)",
+  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 4 at 10597: Busforge 00, ETS 01 (1 project)",
+  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 4 at 167: Busforge 0a, ETS 1e (1 project)",
+  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 4 at 168: Busforge 0a, ETS 1e (1 project)",
+  "insta-o000a-module-param-base-value: M-00A0_A-20DF-12-AEEA-O000A object 3 at 942: Busforge c3, ETS 00 (1 project)",
+  "insta-o000a-module-param-base-value: M-00A0_A-20DF-12-AEEA-O000A object 3 at 944: Busforge 93, ETS 00 (1 project)",
+  "insta-o000a-module-param-base-value: M-00A0_A-20DF-12-AEEA-O000A object 4 at 10476: Busforge 03, ETS 01 (1 project)",
+  "insta-o000a-module-param-base-value: M-00A0_A-20DF-12-AEEA-O000A object 4 at 10477: Busforge 00, ETS 02 (1 project)",
+  "insta-o000a-module-param-base-value: M-00A0_A-20DF-12-AEEA-O000A object 4 at 167: Busforge 0a, ETS 1e (1 project)",
+  // Same forward-placed Access="None" Merker P-28_R-54 evaluation on the Blumotix 20DF OEM variant.
+  "insta-20df-forward-merker-p28: M-00A0_A-20DF-12-AEEA-O000A object 4 at 16: Busforge 00, ETS 20 (1 project)",
+  "insta-20df-forward-merker-p28: M-00A0_A-20DF-12-AEEA-O000A object 4 at 19: Busforge 00, ETS 21 (1 project)",
+  "insta-20df-forward-merker-p28: M-00A0_A-20DF-12-AEEA-O000A object 4 at 43: Busforge 00, ETS 31 (1 project)",
 ];
 
 // The devices with a record that are not compared, each with why: ETS marks a part of the device as
@@ -48,6 +103,7 @@ const NOT_COMPARED = [
   "M-0085_A-002B-21-4744 refused: PARAM_HIDDEN_UNSUPPORTED (1 project)",
   "M-0085_A-0072-30-69AA not loaded: links (13 projects)",
   "M-00A7_A-2101-10-A85C refused: PARAM_HIDDEN_UNSUPPORTED (1 project)",
+  "M-0107_A-014B-10-63A7 refused: PARAM_BYTE_ORDER_UNSUPPORTED (1 project)",
   "M-011E_A-2151-10-2E64-O0072 refused: COM_OBJECT_TABLE_EMPTY (1 project)",
   "M-0196_A-0094-10-C108 refused: PARAM_BYTE_ORDER_UNSUPPORTED (1 project)",
   "M-0216_A-0001-01-9381 refused: PARAM_HIDDEN_UNSUPPORTED (1 project)",
@@ -126,7 +182,7 @@ corpusDescribe("ETS's download record in the corpus projects", () => {
   test("a device carries a record exactly where its application names LdCtrlLoadImageProp and ETS downloaded it", () => {
     const off = all.filter(({ d }) => !!d.loadedImage !== (d.declaresLoadImageProp === true && d.etsLoaded.application));
     expect(off.map(({ project, d }) => `${project} ${d.ia}`)).toEqual([]);
-    expectNoMismatch(countMismatches([{ what: "devices with ETS's download record", found: withRecord.length, pinned: 547, byProject: tally(withRecord.map((w) => w.project)) }]));
+    expectNoMismatch(countMismatches([{ what: "devices with ETS's download record", found: withRecord.length, pinned: 554, byProject: tally(withRecord.map((w) => w.project)) }]));
     expect(all.filter(({ d }) => !d.loadedImage && d.etsLoaded.application).length).toBeGreaterThan(100);
   });
 
@@ -154,6 +210,8 @@ corpusDescribe("ETS's download record in the corpus projects", () => {
       }
     }
     expect(Object.fromEntries([...conventions].map(([app, by]) => [app, [...by]]))).toEqual({
+      "M-0001_A-20DE-22-6369-O000A": ["CCITT-FALSE"],
+      "M-0001_A-20DF-22-4073-O000A": ["CCITT-FALSE"],
       "M-0004_A-7072-21-99A7-O000A": ["CCITT"],
       "M-002C_A-05E2-10-FC64": ["CCITT-FALSE"],
       "M-0048_A-0103-11-72A2": ["CCITT-FALSE"],
@@ -166,13 +224,19 @@ corpusDescribe("ETS's download record in the corpus projects", () => {
       "M-0085_A-001E-31-59BB": ["CCITT"],
       "M-0085_A-002B-21-4744": ["CCITT"],
       "M-0085_A-0072-30-69AA": ["CCITT-FALSE"],
+      "M-0087_A-1101-10-4BCB": ["CCITT-FALSE"],
       "M-008B_A-010A-10-BA9A": ["CCITT"],
+      "M-00A0_A-20DE-12-560D-O000A": ["CCITT"],
+      "M-00A0_A-20DF-12-AEEA-O000A": ["CCITT"],
       "M-00A7_A-2101-10-A85C": ["CCITT"],
       "M-00B6_A-0001-01-9BAE-O0184": ["CCITT"],
+      "M-00C5_A-0366-11-7FCE": ["CCITT"],
+      "M-0107_A-014B-10-63A7": ["CCITT-FALSE"],
       "M-010B_A-0101-10-D3C0": ["CCITT"],
       "M-011E_A-2151-10-2E64-O0072": ["CCITT"],
       "M-0162_A-0004-11-F245": ["CCITT"],
       "M-01DF_A-0101-20-61B4": ["CCITT"],
+      "M-021E_A-0016-11-6EC4": ["CCITT"],
       "M-0260_A-0005-11-2154": ["CCITT"],
       "M-02AA_A-0081-10-72A7-O0085": ["CCITT-FALSE"],
       "M-02CF_A-0101-10-3D4E": ["CCITT"],
@@ -220,12 +284,12 @@ corpusDescribe("ETS's download record in the corpus projects", () => {
     // The named lists are held to the canonical form too: sorted, one line per entry, the plural right.
     expect(counted(found.map((f) => f.what))).toEqual(pinnedDeviations);
     expect(counted(notCompared.map((f) => f.what))).toEqual(NOT_COMPARED);
-    // 519 compared records of 56 distinct device states (84916 bytes) across 547 records in all corpus projects
-    // (547 = 519 compared + 28 not compared: 16 not loaded, 12 refused).
+    // 525 compared records of 62 distinct device states (98124 bytes) across 554 records in all corpus projects
+    // (554 = 525 compared + 29 not compared: 16 not loaded, 13 refused).
     const pinned: PinnedCount[] = [
-      { what: "compared records", found: comparedIn.length, pinned: 519, byProject: tally(comparedIn) },
-      { what: "distinct device states, each counted for the first project that shows it", found: distinctIn.length, pinned: 56, byProject: tally(distinctIn) },
-      { what: "bytes ETS marks as its own, over the distinct device states", found: [...bytesIn.values()].reduce((n, b) => n + b, 0), pinned: 84916, byProject: bytesIn },
+      { what: "compared records", found: comparedIn.length, pinned: 525, byProject: tally(comparedIn) },
+      { what: "distinct device states, each counted for the first project that shows it", found: distinctIn.length, pinned: 62, byProject: tally(distinctIn) },
+      { what: "bytes ETS marks as its own, over the distinct device states", found: [...bytesIn.values()].reduce((n, b) => n + b, 0), pinned: 98124, byProject: bytesIn },
     ];
     expectNoMismatch(countMismatches(pinned));
   }, TIMEOUT);

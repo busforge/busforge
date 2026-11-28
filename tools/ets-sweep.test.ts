@@ -102,6 +102,7 @@ describe("a sweep row's run", () => {
   test("records PreferPartialDownloadIfApplicationLoaded in etsBranches, with fallback, differential fallback, and device-window scoping", () => {
     const tried = "2026-11-27 16:45:20,206 [57] INFO  Knx.Ets.Hawk.LoadDeviceTask - Trying partial/differential download because of PreferPartialDownloadIfApplicationLoaded";
     const fallback = "2026-11-21 08:23:19,738 [38] INFO  Knx.Ets.Hawk.LoadDeviceTask - Partial download not possible because application program not loaded: load status=3";
+    const differentApp = "2026-11-28 03:02:11,635 [34] INFO  Knx.Ets.Hawk.LoadDeviceTask - Partial download not possible because different application program: 72 9071 20 instead of 197 0366 11";
     const diffFallback = "2026-11-27 16:30:29,000 [48] WARN  Knx.Ets.Hawk.LoadDeviceTask - Differential Image Stamp does not match, falling back to partial download";
     expect(etsBranches("", "", DEV, "MV-07B0")).toEqual([]);
     expect(etsBranches(tried, "", DEV, "MV-07B0")).toEqual([{
@@ -115,6 +116,14 @@ describe("a sweep row's run", () => {
       evidence: [
         "INFO  Knx.Ets.Hawk.LoadDeviceTask - Trying partial/differential download because of PreferPartialDownloadIfApplicationLoaded",
         "INFO  Knx.Ets.Hawk.LoadDeviceTask - Partial download not possible because application program not loaded: load status=3",
+      ],
+    }]);
+    expect(etsBranches(`${tried}\n${differentApp}`, "", DEV, "MV-07B0")).toEqual([{
+      on: "prefer-partial",
+      answer: "ETS tried partial/differential download because of PreferPartialDownloadIfApplicationLoaded, then fell back (Partial download not possible because different application program: 72 9071 20 instead of 197 0366 11)",
+      evidence: [
+        "INFO  Knx.Ets.Hawk.LoadDeviceTask - Trying partial/differential download because of PreferPartialDownloadIfApplicationLoaded",
+        "INFO  Knx.Ets.Hawk.LoadDeviceTask - Partial download not possible because different application program: 72 9071 20 instead of 197 0366 11",
       ],
     }]);
     expect(etsBranches(`${tried}\n${diffFallback}`, "", DEV, "MV-07B0")).toEqual([{
