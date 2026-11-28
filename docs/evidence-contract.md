@@ -93,7 +93,7 @@ levels:
 | Memory model, segment layout, fill bytes | application program (`<Static>`) |
 | Load procedure steps and their LSM transport | application program `<LoadProcedures>`, LSM transport per mask |
 | Image construction: unions, `Assign`, codecs, bit fields, float width, modules | application program |
-| Com-object table layout and sizing | memory model family, declared object count from the application |
+| Com-object table layout and sizing | memory model family, declared object count from the application (and active configuration on modular apps with empty `<ComObjectTable />`) |
 | Segment base (System B), load state, whether the device holds this application | the device at runtime |
 | Persistence and restart behaviour, application hold during a table rewrite | firmware, currently keyed by manufacturer id (`PERSIST_ON_LOAD_COMPLETED`, `HOLD_APPLICATION_ON_GA_FLASH` in `profiles.ts`) |
 | Firmware version | the unit |

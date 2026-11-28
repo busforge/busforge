@@ -28,9 +28,6 @@ const TIMEOUT = 300_000;
 // internal/ets-download-record-deviations.md; a difference not listed here fails, and so does a listed
 // one that is gone.
 const KNOWN_DEVIATIONS = [
-  // Open Busforge bug (fix pending; documented in internal/ets-download-record-deviations.md): zero active com-objects
-  // at defaults, yet Busforge sizes System B object 3 from maxDeclaredComObject (11 -> 24 B) while ETS allocates 2 B (00 00).
-  "vimar-05e2-empty-comobj-table-size: M-002C_A-05E2-10-FC64 object 3 at 1: Busforge 0b, ETS 00 (1 project)",
   // ETS's record of the com-object table dates from a download when object 3 had no link, and was not
   // written again after the project linked it; ETS's own later download writes 0x4f for the linked object.
   "gvs-amma-object-3-record-older-than-its-link: M-0085_A-0072-30-69AA object 3 at 6: Busforge 4f, ETS 4b (1 project)",
@@ -230,7 +227,7 @@ corpusDescribe("ETS's download record in the corpus projects", () => {
     expect(counted(notCompared.map((f) => f.what))).toEqual(NOT_COMPARED);
     // 519 compared records of 56 distinct device states (84916 bytes) across 547 records in all corpus projects
     // (547 = 519 compared + 28 not compared: 16 not loaded, 12 refused; full-run batch 1 adds 23 MV-07B0 records:
-    // 8 refused and 15 compared distinct states totalling 22679 bytes, with 2 open deviations listed above).
+    // 8 refused and 15 compared distinct states totalling 22679 bytes, with 1 open deviation listed above).
     const pinned: PinnedCount[] = [
       { what: "compared records", found: comparedIn.length, pinned: 519, byProject: tally(comparedIn) },
       { what: "distinct device states, each counted for the first project that shows it", found: distinctIn.length, pinned: 56, byProject: tally(distinctIn) },

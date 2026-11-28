@@ -319,3 +319,76 @@ corpusDescribe("a System B unit holding a flag the project does not record", () 
     expect(read.comObjFlags).toBeUndefined();
   });
 });
+
+test("a System B structural flash that shrinks a modular table from 11 entries to 0 refuses unknown flags on a removed object", async () => {
+  const xml = `<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-002C"><ApplicationPrograms>
+<ApplicationProgram Id="M-002C_A-1-1-0000" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-07B0" Name="mod" LoadProcedureStyle="MergedProcedure">
+<Static>
+<Code><RelativeSegment Id="M-002C_A-1-1-0000_RS-04-00000" Offset="0" Size="4" LoadStateMachine="4"><Data>AAAAAA==</Data></RelativeSegment></Code>
+<ParameterTypes><ParameterType Id="M-002C_A-1-1-0000_PT-1"><TypeRestriction Base="Value" SizeInBit="8"><Enumeration Text="off" Value="0"/><Enumeration Text="on" Value="1"/></TypeRestriction></ParameterType></ParameterTypes>
+<Parameters><Parameter Id="M-002C_A-1-1-0000_P-1" ParameterType="M-002C_A-1-1-0000_PT-1" Text="en" Value="0"><Memory CodeSegment="M-002C_A-1-1-0000_RS-04-00000" Offset="0" BitOffset="0"/></Parameter></Parameters>
+<ParameterRefs><ParameterRef Id="M-002C_A-1-1-0000_P-1_R-1" RefId="M-002C_A-1-1-0000_P-1"/></ParameterRefs>
+<ComObjectTable/>
+<ComObjectRefs/>
+<AddressTable MaxEntries="32"/>
+<AssociationTable MaxEntries="32"/>
+<LoadProcedures>
+  <LoadProcedure MergeId="2"><LdCtrlRelSegment LsmIdx="4" Size="4" Mode="0" Fill="0"/></LoadProcedure>
+  <LoadProcedure MergeId="4"><LdCtrlWriteRelMem ObjIdx="4" Offset="0" Size="4" Verify="false"/></LoadProcedure>
+</LoadProcedures>
+</Static>
+<ModuleDefs>
+<ModuleDef Id="M-002C_A-1-1-0000_MD-1" Name="m">
+  <Arguments><Argument Id="M-002C_A-1-1-0000_MD-1_A-1" Name="base"/></Arguments>
+  <Static>
+    <ComObjects><ComObject Id="M-002C_A-1-1-0000_MD-1_O-0" Number="0" BaseNumber="M-002C_A-1-1-0000_MD-1_A-1" Name="o" Text="o" ObjectSize="1 Bit" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled"/></ComObjects>
+    <ComObjectRefs><ComObjectRef Id="M-002C_A-1-1-0000_MD-1_O-0_R-1" RefId="M-002C_A-1-1-0000_MD-1_O-0"/></ComObjectRefs>
+  </Static>
+  <Dynamic><ParameterBlock Id="M-002C_A-1-1-0000_MD-1_PB-1" Name="mb" Text="mb"><choose ParamRefId="M-002C_A-1-1-0000_P-1_R-1"><when test="1"><ComObjectRefRef RefId="M-002C_A-1-1-0000_MD-1_O-0_R-1"/></when></choose></ParameterBlock></Dynamic>
+</ModuleDef>
+</ModuleDefs>
+<Dynamic>
+  <ParameterBlock Id="M-002C_A-1-1-0000_PB-1" Name="b" Text="b"><ParameterRefRef RefId="M-002C_A-1-1-0000_P-1_R-1"/></ParameterBlock>
+  <Module Id="M-002C_A-1-1-0000_MD-1_M-1" RefId="M-002C_A-1-1-0000_MD-1"><NumericArg RefId="M-002C_A-1-1-0000_MD-1_A-1" Value="11"/></Module>
+</Dynamic>
+</ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+  const cfg = parseAppConfig(xml);
+  const proc = parseLoadProcedures(xml);
+  const onParams = new Map([["M-002C_A-1-1-0000_P-1_R-1", "1"]]);
+  const offParams = new Map([["M-002C_A-1-1-0000_P-1_R-1", "0"]]);
+  const full = classify(cfg).planFullDownload(cfg.mask, { ia: "1.1.1", params: onParams, links: [], proc });
+  const addr = new Map([[1, 0x1000], [2, 0x2000], [3, 0x3000], [4, 0x4000]]);
+  const mem = new Map<number, number>();
+  for (const s of full.segments) s.image.forEach((b, i) => mem.set(addr.get(s.lsm)! + i, b));
+  // Flip UpdateFlag (0x80) on module object #11 (the last entry in the 11-entry table) so it differs from the baseline.
+  const entry11 = addr.get(3)! + 2 + (11 - 1) * 2;
+  mem.set(entry11, mem.get(entry11)! | 0x80);
+  const readProp = async (obj: number, pid: number) => {
+    if (pid === 5) return Buffer.from([STATE.LOADED]);
+    if (pid === 7) { const b = Buffer.alloc(4); b.writeUInt32BE(addr.get(obj) ?? 0); return b; }
+    return Buffer.alloc(0);
+  };
+  let writes = 0;
+  const dev = {
+    secured: false,
+    setExtendedMemoryServices() {},
+    acceptUnprovenRestart() {},
+    confirmedWrites: () => [],
+    clearConfirmedWrites() {},
+    async tableAddr(obj: number) { return addr.get(obj) ?? 0; },
+    async memRead(at: number, len: number) { return Buffer.from(Array.from({ length: len }, (_, i) => mem.get(at + i) ?? 0)); },
+    async memWrite() { writes++; },
+    async propertyDescription(obj: number) { return { objectIndex: obj, pid: 23, propertyIndex: 0, writable: false, pdt: 0x14, maxElements: 1, readLevel: 0, writeLevel: 0 }; },
+    propRead: readProp,
+    propReadIfPresent: readProp,
+    async propReadCounted(obj: number, pid: number, start: number, count = 1) { return { objectIndex: obj, pid, count, start, value: Buffer.alloc(8 * count) }; },
+    async propWrite() { writes++; return Buffer.alloc(0); },
+  } as unknown as KnxDevice;
+
+  const err = await classify(cfg).flashStructure(dev, cfg.mask, {
+    deviceId: "d", ia: "1.1.1", appXml: xml, params: offParams, baseParams: onParams, links: [], dryRun: false, persistBackups: () => "backup",
+  }).catch((e: unknown) => e);
+  expect(err).toMatchObject({ code: "COM_OBJECT_FLAGS_UNKNOWN", message: expect.stringContaining("#11") });
+  expect(writes).toBe(0);
+});

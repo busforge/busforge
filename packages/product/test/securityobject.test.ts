@@ -159,4 +159,26 @@ describe("the group key entries a load writes, compared with the device's table"
     const refused = await readSecurityObject(device(cat(entry(1, 0xaa), entry(1, 0xbb))) as never, want).then(() => null, (e: unknown) => e);
     expect(refused instanceof ProductError && refused.code).toBe("SECURE_KEY_TABLE_UNPROVEN");
   });
+
+  test("readSecurityObject reads GO_SECURITY_FLAGS by element 0 count across empty and non-empty tables", async () => {
+    const devWithFlags = (flags: Buffer) => ({
+      propExtRead: async (_t: number, _i: number, pid: number, start: number) => {
+        expect(start).toBe(0);
+        const n = pid === 61 ? flags.length : 0;
+        return Buffer.from([n >> 8, n & 0xff]);
+      },
+      propExtReadElements: async (_t: number, _i: number, pid: number, start: number, count: number) => {
+        expect(pid).toBe(61);
+        return flags.subarray(start - 1, start - 1 + count);
+      },
+    });
+    // Device holds 0 flags while want grows to 4: reads 0 without requesting out-of-range elements.
+    const wantFour = buildSecurityObject([], 4, new Map());
+    const fromEmpty = await readSecurityObject(devWithFlags(Buffer.alloc(0)) as never, wantFour);
+    expect(fromEmpty.goFlags.length).toBe(0);
+    // Device holds 4 flags while want shrinks to 0: reads all 4 so the size difference stays visible.
+    const wantZero = buildSecurityObject([], 0, new Map());
+    const fromFour = await readSecurityObject(devWithFlags(Buffer.from([0, 3, 0, 0])) as never, wantZero);
+    expect([...fromFour.goFlags]).toEqual([0, 3, 0, 0]);
+  });
 });

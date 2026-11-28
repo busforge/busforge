@@ -92,7 +92,7 @@ export function planSecurityObjectLoad(t: SecurityObjectTables): LoadStep[] {
     { op: "writeSecurityProp", pid: SECURITY_PID.SECURITY_IA_TABLE, start: 0, elementSize: 2, data: Buffer.alloc(2) },
     ...(t.senders.length ? [{ op: "writeSecurityProp", pid: SECURITY_PID.SECURITY_IA_TABLE, start: 1, elementSize: SENDER_ENTRY, data: t.senders } as LoadStep] : []),
     ...(t.groupKeys.length ? [{ op: "writeSecurityProp", pid: SECURITY_PID.GROUP_KEY_TABLE, start: 1, elementSize: GROUP_KEY_ENTRY, data: t.groupKeys } as LoadStep] : []),
-    { op: "writeSecurityProp", pid: SECURITY_PID.GO_SECURITY_FLAGS, start: 1, elementSize: 1, data: t.goFlags },
+    ...(t.goFlags.length ? [{ op: "writeSecurityProp", pid: SECURITY_PID.GO_SECURITY_FLAGS, start: 1, elementSize: 1, data: t.goFlags } as LoadStep] : []),
     { op: "securityLsm", event: LSM.LOAD_COMPLETED },
   ];
 }
@@ -332,7 +332,7 @@ export function fillAllocatedRuns(bytes: Buffer, inImage: ReadonlyArray<number>,
 // The segments' addresses are not known here: the device assigns them during the allocation, and
 // `writeSegment` resolves each one through PID_TABLE_REFERENCE at execution time.
 export function planSystemBFullDownload(tables: {
-  params: Buffer;   // LSM 4, the parameter image
+  params: Buffer;   // LSM 4, the parameter image (for a filled dataless segment, unowned bytes already hold fillByte)
   paramsInImage: ReadonlyArray<number>; // per byte of `params`: non-zero where ETS's image holds it
   comObj: Buffer;   // LSM 3, the com-object table (authored, not kept from the device)
   addr: Buffer;     // LSM 1, the group-address table

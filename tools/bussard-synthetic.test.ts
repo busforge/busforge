@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fillAllocatedRuns, iaToNum } from "../packages/knx/src/index.ts";
-import { parseAppConfig, classify, parseLoadProcedures, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, fullDownloadImageCoverage, relParamFillByte, resolveModuleInstances, refuseCalculationWrites } from "../packages/product/src/index.ts";
+import { parseAppConfig, classify, parseLoadProcedures, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, fullDownloadImageCoverage, fullDownloadParamImage, relParamFillByte, resolveModuleInstances, refuseCalculationWrites } from "../packages/product/src/index.ts";
 import { BUSSARD_SYNTHETIC_DIR, BUSSARD_SYNTHETIC_TESTED, BUSSARD_SYNTHETIC_VARIANTS, bussardApplication, bussardCapture, corpusPath } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
 import { compareSegments, etsAllocations, memoryImage, parseCapture, parseTunnelFrame, reportedTableReferences } from "./etsdiff.ts";
@@ -124,8 +124,9 @@ corpusDescribe("bussard's synthetic captures: System B parameter segments at def
       const alloc = etsAllocations(cap).get(4);
       if (base === undefined || alloc === undefined) throw new Error(`${product}: the capture holds no allocation or PID 7 answer for LSM 4`);
       expect(alloc.size).toBe(target.size);
+      const fill = relParamFillByte(parseLoadProcedures(xml));
       const ours = new Map<number, number>();
-      for (const run of fillAllocatedRuns(target.bytes, fullDownloadImageCoverage(cfg, target.owned), relParamFillByte(parseLoadProcedures(xml)))) {
+      for (const run of fillAllocatedRuns(fullDownloadParamImage(cfg, target, fill), fullDownloadImageCoverage(cfg, target.owned), fill)) {
         run.bytes.forEach((b, i) => ours.set(base + run.offset + i, b));
       }
       const ets = [...memoryImage(cap.writes)].filter(([a]) => a >= base && a < base + alloc.size);

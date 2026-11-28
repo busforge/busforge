@@ -162,8 +162,17 @@ describe("the whole table", () => {
     expect(buildComObjectTable(new Map(), 532, new Set())).toEqual(Buffer.concat([Buffer.from("0214", "hex"), Buffer.alloc(1064)]));
   });
 
-  test("an application that declares no com-object at all is refused, not written as an empty table", () => {
-    expect(() => buildComObjectTable(new Map(), 0, new Set())).toThrow(/declares no communication object numbered 1 or higher/i);
+  test("zero active objects with declaredCount 0 yields a 2-byte empty table (00 00), as ETS writes for modular apps with empty ComObjectTable", () => {
+    expect(buildComObjectTable(new Map(), 0, new Set())).toEqual(Buffer.from([0x00, 0x00]));
+  });
+
+  test("negative, non-integer, out-of-range (> 65535), or mismatched object numbers and declaredCount are refused", () => {
+    expect(() => buildComObjectTable(new Map(), -1, new Set())).toThrow(expect.objectContaining({ code: "COM_OBJECT_NUMBER_INVALID" }));
+    expect(() => buildComObjectTable(new Map(), Number.NaN, new Set())).toThrow(expect.objectContaining({ code: "COM_OBJECT_NUMBER_INVALID" }));
+    expect(() => buildComObjectTable(new Map(), 65536, new Set())).toThrow(expect.objectContaining({ code: "COM_OBJECT_NUMBER_INVALID" }));
+    expect(() => buildComObjectTable(new Map([[1.5, obj({ number: 1.5 })]]), 2, new Set())).toThrow(expect.objectContaining({ code: "COM_OBJECT_NUMBER_INVALID" }));
+    expect(() => buildComObjectTable(new Map([[65536, obj({ number: 65536 })]]), 0, new Set())).toThrow(expect.objectContaining({ code: "COM_OBJECT_NUMBER_INVALID" }));
+    expect(() => buildComObjectTable(new Map([[2, obj({ number: 1 })]]), 2, new Set())).toThrow(expect.objectContaining({ code: "COM_OBJECT_NUMBER_INVALID" }));
   });
 });
 
@@ -469,6 +478,66 @@ describe("a System B application, end to end", () => {
     expect(on.readUInt16BE(0)).toBe(5);
     expect(on.subarray(4, 10)).toEqual(Buffer.alloc(6)); // 2..4 are gaps
     expect(on.subarray(10, 12)).toEqual(Buffer.from([0b0100_0110, 0])); // O-5 active: T+C, Alert, 1 bit
+  });
+
+  test("empty ComObjectTable with zero active objects yields 00 00; non-empty static table or any active object stays at maxDeclaredComObject", () => {
+    const modularXml = (staticComObjects: string, baseArg = "11", secondModule = "") => `<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-002C"><ApplicationPrograms>
+<ApplicationProgram Id="M-002C_A-1-1-0000" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-07B0" Name="mod">
+<Static>
+<Code><RelativeSegment Id="M-002C_A-1-1-0000_RS-04-00000" Offset="0" Size="8" LoadStateMachine="4"/></Code>
+<ParameterTypes><ParameterType Id="M-002C_A-1-1-0000_PT-1"><TypeRestriction Base="Value" SizeInBit="8"><Enumeration Text="off" Value="0"/><Enumeration Text="on" Value="1"/></TypeRestriction></ParameterType></ParameterTypes>
+<Parameters><Parameter Id="M-002C_A-1-1-0000_P-1" ParameterType="M-002C_A-1-1-0000_PT-1" Text="en" Value="0"><Memory CodeSegment="M-002C_A-1-1-0000_RS-04-00000" Offset="0" BitOffset="0"/></Parameter></Parameters>
+<ParameterRefs><ParameterRef Id="M-002C_A-1-1-0000_P-1_R-1" RefId="M-002C_A-1-1-0000_P-1"/></ParameterRefs>
+<ComObjectTable>${staticComObjects}</ComObjectTable>
+<ComObjectRefs/>
+</Static>
+<ModuleDefs>
+<ModuleDef Id="M-002C_A-1-1-0000_MD-1" Name="m">
+  <Arguments><Argument Id="M-002C_A-1-1-0000_MD-1_A-1" Name="base"/></Arguments>
+  <Static>
+    <ComObjects><ComObject Id="M-002C_A-1-1-0000_MD-1_O-0" Number="0" BaseNumber="M-002C_A-1-1-0000_MD-1_A-1" Name="o" Text="o" ObjectSize="1 Bit" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled"/></ComObjects>
+    <ComObjectRefs><ComObjectRef Id="M-002C_A-1-1-0000_MD-1_O-0_R-1" RefId="M-002C_A-1-1-0000_MD-1_O-0"/></ComObjectRefs>
+  </Static>
+  <Dynamic><ParameterBlock Id="M-002C_A-1-1-0000_MD-1_PB-1" Name="mb" Text="mb"><choose ParamRefId="M-002C_A-1-1-0000_P-1_R-1"><when test="1"><ComObjectRefRef RefId="M-002C_A-1-1-0000_MD-1_O-0_R-1"/></when></choose></ParameterBlock></Dynamic>
+</ModuleDef>
+</ModuleDefs>
+<Dynamic>
+  <ParameterBlock Id="M-002C_A-1-1-0000_PB-1" Name="b" Text="b"><ParameterRefRef RefId="M-002C_A-1-1-0000_P-1_R-1"/></ParameterBlock>
+  <Module Id="M-002C_A-1-1-0000_MD-1_M-1" RefId="M-002C_A-1-1-0000_MD-1"><NumericArg RefId="M-002C_A-1-1-0000_MD-1_A-1" Value="${baseArg}"/></Module>
+  ${secondModule}
+</Dynamic>
+</ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+
+    // Empty <ComObjectTable /> + inactive module object #11: maxComObjectNumber is 0 (table 00 00),
+    // while maxDeclaredComObject remains 11.
+    const emptyStatic = parseAppConfig(modularXml(""));
+    const offView = buildDeviceConfig(emptyStatic, new Map());
+    expect([offView.imageComObjects.size, offView.maxComObjectNumber, offView.maxDeclaredComObject]).toEqual([0, 0, 11]);
+    expect(buildComObjectTable(offView.imageComObjects, offView.maxComObjectNumber, new Set()).toString("hex")).toBe("0000");
+
+    // Activating the module object #11 grows the System B table to 11 entries (24 bytes).
+    const onView = buildDeviceConfig(emptyStatic, new Map([["M-002C_A-1-1-0000_P-1_R-1", "1"]]));
+    expect([onView.imageComObjects.size, onView.maxComObjectNumber, onView.maxDeclaredComObject]).toEqual([1, 11, 11]);
+    const onTable = buildComObjectTable(onView.imageComObjects, onView.maxComObjectNumber, new Set());
+    expect(onTable.length).toBe(24);
+    expect(onTable.readUInt16BE(0)).toBe(11);
+    expect(onTable.subarray(22, 24).toString("hex")).toBe("4b00");
+
+    // Non-empty <ComObjectTable> (object #2) + inactive module object #11: without a capture showing ETS
+    // shrinks a non-empty static table, maxComObjectNumber stays at maxDeclaredComObject (11).
+    const withStatic = parseAppConfig(modularXml(
+      `<ComObject Id="M-002C_A-1-1-0000_O-2" Number="2" Name="s" Text="s" ObjectSize="1 Bit" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled"/>`,
+    ));
+    const staticOff = buildDeviceConfig(withStatic, new Map());
+    expect([staticOff.imageComObjects.size, staticOff.maxComObjectNumber, staticOff.maxDeclaredComObject]).toEqual([0, 11, 11]);
+    expect(buildComObjectTable(staticOff.imageComObjects, staticOff.maxComObjectNumber, new Set()).length).toBe(24);
+
+    // Empty <ComObjectTable /> + active module object resolving to #0 (no object >= 1): refused with COM_OBJECT_TABLE_EMPTY.
+    const modZero = parseAppConfig(modularXml("", "0"));
+    const zeroOn = buildDeviceConfig(modZero, new Map([["M-002C_A-1-1-0000_P-1_R-1", "1"]]));
+    expect([zeroOn.imageComObjects.size, zeroOn.maxComObjectNumber]).toEqual([1, 0]);
+    expect(() => buildComObjectTable(zeroOn.imageComObjects, zeroOn.maxComObjectNumber, new Set())).toThrow(expect.objectContaining({ code: "COM_OBJECT_TABLE_EMPTY" }));
   });
 });
 

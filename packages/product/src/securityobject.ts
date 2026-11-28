@@ -123,7 +123,8 @@ export async function readSecurityObject(dev: Pick<KnxDevice, "propExtRead" | "p
   const n = await count(SECURITY_PID.GROUP_KEY_TABLE);
   const all = n ? await dev.propExtReadElements(OBJECT_TYPE_SECURITY, 1, SECURITY_PID.GROUP_KEY_TABLE, 1, n, GROUP_KEY_ENTRY) : Buffer.alloc(0);
   const groupKeys = writtenGroupKeys(all, want.groupKeys);
-  const goFlags = await dev.propExtReadElements(OBJECT_TYPE_SECURITY, 1, SECURITY_PID.GO_SECURITY_FLAGS, 1, want.goFlags.length, 1);
+  const g = await count(SECURITY_PID.GO_SECURITY_FLAGS);
+  const goFlags = g ? await dev.propExtReadElements(OBJECT_TYPE_SECURITY, 1, SECURITY_PID.GO_SECURITY_FLAGS, 1, g, 1) : Buffer.alloc(0);
   const m = await count(SECURITY_PID.SECURITY_IA_TABLE);
   const senders = m ? await dev.propExtReadElements(OBJECT_TYPE_SECURITY, 1, SECURITY_PID.SECURITY_IA_TABLE, 1, m, SENDER_ENTRY) : Buffer.alloc(0);
   return { groupKeys, goFlags, senders };

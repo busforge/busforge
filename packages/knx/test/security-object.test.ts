@@ -90,6 +90,11 @@ describe("the security object load, against ETS's secured download", () => {
     expect(runs.map((r) => r.count)).toEqual([2, 2, 1]);
   });
 
+  test("an empty goFlags table omits the PID 61 write step", () => {
+    const steps = planSecurityObjectLoad({ groupKeys: Buffer.alloc(0), goFlags: Buffer.alloc(0), senders: Buffer.alloc(0) });
+    expect(steps.filter((s) => s.op === "writeSecurityProp" && s.pid === 61)).toEqual([]);
+  });
+
   test("a load event that does not reach its state stops the bracket", async () => {
     const tun = new SecurityObjectDevice({ 1: 3, 2: 1, 4: 0 }); // LOAD leaves the object in ERROR
     const err = await runLoadPlan(new KnxDevice(tun, "1.2.4"), planSecurityObjectLoad({ groupKeys: Buffer.alloc(0), goFlags: FLAGS, senders: Buffer.alloc(0) })).catch((e: unknown) => e);

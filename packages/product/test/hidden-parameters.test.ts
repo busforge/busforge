@@ -36,7 +36,8 @@ ${opts.option ? `<Options DownloadInvisibleParameters="${opts.option}"/>` : ""}
 </ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`);
 }
 
-const relative = (cfg: AppConfig, skip = false) => buildRelativeSegmentTarget(cfg, new Map(), 4, { ownIdleUnionDefaults: true, ...(skip ? { textRefusals: "skip" as const } : {}) })!;
+const relative = (cfg: AppConfig, skip = false, fullFill?: number) =>
+  buildRelativeSegmentTarget(cfg, new Map(), 4, { ownIdleUnionDefaults: true, ...(skip ? { textRefusals: "skip" as const } : {}), ...(fullFill !== undefined ? { fullFill } : {}) })!;
 const absolute = (cfg: AppConfig, skip = false) => buildAbsoluteSegmentTargets(cfg, new Map(), skip ? { textRefusals: "skip" } : {})[0];
 const hex = (t: { bytes: Buffer }) => t.bytes.toString("hex");
 const refused = (what: RegExp) => expect.objectContaining({ code: "PARAM_HIDDEN_UNSUPPORTED", message: expect.stringMatching(what) });
@@ -119,6 +120,41 @@ describe("System B: the relative segment", () => {
     const t = relative(app({ mask: "MV-07B0" }), true);
     expect(hex(t)).toBe("01000000");
     expect(t.owned).toEqual([0xff, 0, 0, 0]);
+  });
+
+  test("dataless RelativeSegment with fullFill=255 refuses an unknown hidden rule whose default differs from 0xFF on an unowned byte, without affecting partial/par builds", () => {
+    const dataless = (hiddenVal: number, opts: { shareByte?: boolean; hsvColor?: boolean } = {}) => parseAppConfig(`<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-00FA"><ApplicationPrograms>
+<ApplicationProgram Id="${A}" ApplicationNumber="1537" ApplicationVersion="1" MaskVersion="MV-07B0" MinEtsVersion="5.0" DefaultLanguage="en-US" LoadProcedureStyle="MergedProcedure" Name="DatalessHidden">
+<Static>
+<Code><RelativeSegment Id="${A}_RS-04-00000" Name="main" LoadStateMachine="4" Size="4" Offset="0"/></Code>
+<ParameterTypes>
+  <ParameterType Id="${A}_PT-1"><TypeNumber SizeInBit="1" Type="unsignedInt" minInclusive="0" maxInclusive="1"/></ParameterType>
+  <ParameterType Id="${A}_PT-8"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="255"/></ParameterType>
+  <ParameterType Id="${A}_PT-HSV"><TypeColor ColorSpace="HSV"/></ParameterType>
+</ParameterTypes>
+<Parameters>
+  <Parameter Id="${P(1)}" Name="p1" ParameterType="${opts.shareByte ? `${A}_PT-1` : `${A}_PT-8`}" Text="p1" Value="1"><Memory CodeSegment="${A}_RS-04-00000" Offset="0" BitOffset="0"/></Parameter>
+  <Parameter Id="${P(2)}" Name="p2" ParameterType="${opts.hsvColor ? `${A}_PT-HSV` : opts.shareByte ? `${A}_PT-1` : `${A}_PT-8`}" Text="p2" Value="${opts.hsvColor ? "#000000" : hiddenVal}"><Memory CodeSegment="${A}_RS-04-00000" Offset="${opts.shareByte ? 0 : 1}" BitOffset="${opts.shareByte ? 1 : 0}"/></Parameter>
+</Parameters>
+<ParameterRefs><ParameterRef Id="${R(1)}" RefId="${P(1)}"/><ParameterRef Id="${R(2)}" RefId="${P(2)}"/></ParameterRefs>
+<LoadProcedures><LoadProcedure MergeId="2"><LdCtrlRelSegment AppliesTo="full" LsmIdx="4" Size="4" Mode="1" Fill="255"/></LoadProcedure></LoadProcedures>
+<Options DownloadInvisibleParameters="None"/>
+</Static>
+<Dynamic><ChannelIndependentBlock><ParameterBlock Id="${A}_PB-1" Name="main" Text="Main"><ParameterRefRef RefId="${R(1)}"/></ParameterBlock></ChannelIndependentBlock></Dynamic>
+</ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`);
+    // Full download (fullFill=0xFF): unowned byte holds 0xFF, so hidden default 0 refuses and 255 agrees.
+    expect(() => relative(dataless(0), false, 0xff)).toThrow(refused(new RegExp(`${R(2)} at offset 1`)));
+    expect(hex(relative(dataless(255), false, 0xff))).toBe("01000000");
+    // Partial/par build (no fullFill): keeps 0x00 template comparison (0 agrees, 255 refuses).
+    expect(hex(relative(dataless(0)))).toBe("01000000");
+    expect(() => relative(dataless(255))).toThrow(refused(new RegExp(`${R(2)} at offset 1`)));
+    // Byte 0 is already owned by active p1 (bit 0 -> 0x80), so its unowned bits are 0: hidden bit 1 = 0 agrees, 1 refuses.
+    expect(hex(relative(dataless(0, { shareByte: true }), false, 0xff))).toBe("80000000");
+    expect(() => relative(dataless(1, { shareByte: true }), false, 0xff)).toThrow(refused(new RegExp(`${R(2)} at offset 0`)));
+    // A zero-width unencodable memory type (HSV TypeColor) with an unknown hidden rule is still refused, never skipped.
+    expect(() => relative(dataless(0, { hsvColor: true }), false, 0xff)).toThrow(refused(new RegExp(`${R(2)} at offset 1`)));
+    expect(() => relative(dataless(0, { hsvColor: true }))).toThrow(refused(new RegExp(`${R(2)} at offset 1`)));
   });
 });
 

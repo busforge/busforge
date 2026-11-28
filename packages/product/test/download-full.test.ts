@@ -1,8 +1,8 @@
 import { test, expect, describe, setDefaultTimeout } from "bun:test";
 import { LSM, STATE, crc16Ccitt, crc16CcittFalse, type KnxDevice } from "@busforge/knx";
 import {
-  parseAppConfig, classify, buildDeviceConfig, buildComObjectTable,
-  buildRelativeSegmentTarget, buildGroupTables, type ComObjectLink,
+  parseAppConfig, parseLoadProcedures, classify, buildDeviceConfig, buildComObjectTable,
+  buildRelativeSegmentTarget, buildGroupTables, fullDownloadParamImage, type ComObjectLink,
 } from "@busforge/product";
 import { catalogueXml } from "../../../tools/corpus.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
@@ -26,6 +26,146 @@ setDefaultTimeout(160_000);
 // Every expectation is derived INDEPENDENTLY in the test from the fixture (com-object table, group
 // tables, both CRC conventions), so the orchestration cannot pass by comparing the code to itself.
 
+// Object numbers on the bus. LSM 4 = parameter segment; 1/2/3 = addr/assoc/comObj tables.
+const OBJ = { ADDR: 1, ASSOC: 2, COMOBJ: 3, LSM: 4 } as const;
+const PID_LSM = 5, PID_MCB = 27, PID_DEVCTRL = 14;
+// Distinct, non-overlapping memory regions the mock's tableAddr hands out.
+const A = { [OBJ.LSM]: 0x4000, [OBJ.ADDR]: 0x5000, [OBJ.ASSOC]: 0x5100, [OBJ.COMOBJ]: 0x5200 } as Record<number, number>;
+
+const mcbBuf = (size: number, crc: number) => { const b = Buffer.alloc(8); b.writeUInt32BE(size, 0); b.writeUInt16BE(crc, 6); return b; };
+
+// A stateful byte-addressed mock exercising everything the full-download plan drives: LSM state via
+// PID 5, the MCB (PID 27), verify mode (PID 14), memory read/write with a fill-aware alloc, plus the
+// restart / reconnect lifecycle. `alloc` zeroes (or fills with `fillByte`) the allocated segment
+// exactly as the real device does, so the sparse writes reconstruct the image byte-for-byte and the
+// read-back is realistic.
+interface MockOpts {
+  segmentSize: number;
+  addrs?: Record<number, number>;       // per-object table pointer (0 = never loaded)
+  // PID_MCB_TABLE answer. "actual" (the default) reports the CRC of the bytes the device actually
+  // holds, exactly as a real device does, so the verify's fast path engages iff the segment is
+  // byte-correct. A fixed { size, crc } forces a specific convention (or a bogus value); null makes
+  // the device decline to report (< 8 bytes).
+  mcb?: "actual" | { size: number; crc: number } | null;
+  // With mcb "actual": the region sizes the parameter segment's MCB splits it into, one element each
+  // (Jung 400021SE: 7700 and 1). Default: one region over the whole segment.
+  mcbRegions?: number[];
+  // The group tables that report their MCB (one region over the allocated table, the CRC of what it
+  // holds): true for all three.
+  tableMcb?: boolean | number[];
+  seedTableCount?: Partial<Record<number, number>>; // count header to seed a group table's region with
+  onRestart?: (mem: Map<number, number>) => void;   // mutate memory on restart (simulate a lost write)
+  confirmedWrites?: boolean;                        // true = A_MemoryExtended_Write (no verify mode / read-back)
+  crc?: (b: Buffer) => number;                      // CRC convention for mcb "actual" (default crc16Ccitt)
+}
+class MockDevice {
+  mem = new Map<number, number>();
+  state = new Map<number, number>();
+  reads: { addr: number; len: number }[] = [];
+  writes: { addr: number; data: Buffer }[] = [];
+  events: string[] = [];
+  private addrs: Record<number, number>;
+  private mcb: "actual" | { size: number; crc: number } | null;
+  private mcbRegions: number[];
+  private tableMcb: number[];
+  private allocated = new Map<number, number>();
+  private confirmed: boolean;
+  private crcFn: (b: Buffer) => number;
+  onRestart?: (mem: Map<number, number>) => void; // settable after construction too (a test can break the device only on a LATER restart)
+  constructor(opts: MockOpts) {
+    this.addrs = opts.addrs ?? A;
+    this.mcb = opts.mcb === undefined ? "actual" : opts.mcb; // an explicit null means "device declines"
+    this.mcbRegions = opts.mcbRegions ?? [opts.segmentSize];
+    this.tableMcb = opts.tableMcb === true ? [OBJ.ADDR, OBJ.ASSOC, OBJ.COMOBJ] : opts.tableMcb || [];
+    this.confirmed = opts.confirmedWrites ?? false;
+    this.crcFn = opts.crc ?? crc16Ccitt;
+    this.onRestart = opts.onRestart;
+    // Seed the device's CURRENT (pre-download) state: an all-zero parameter segment and empty
+    // group tables, i.e. an already-programmed device. Group-table count headers seed to 0 unless
+    // a test overrides one (the implausible-count case).
+    for (let i = 0; i < opts.segmentSize; i++) this.mem.set(this.addrs[OBJ.LSM] + i, 0);
+    for (const obj of [OBJ.ADDR, OBJ.ASSOC, OBJ.COMOBJ]) {
+      const count = opts.seedTableCount?.[obj] ?? 0;
+      this.mem.set(this.addrs[obj], (count >> 8) & 0xff);
+      this.mem.set(this.addrs[obj] + 1, count & 0xff);
+    }
+  }
+  async connect() {}
+  async disconnect() {}
+  async deviceDescriptor() { return "MV-07B0"; }
+  readsAtRestart = 0;
+  async restart() { this.events.push("restart"); this.readsAtRestart = this.reads.length; this.onRestart?.(this.mem); }
+  async setVerifyMode() {}
+  async tableAddr(obj: number) { return this.addrs[obj] ?? 0; }
+  async memRead(addr: number, len: number) {
+    this.reads.push({ addr, len });
+    const b = Buffer.alloc(len);
+    for (let i = 0; i < len; i++) b[i] = this.mem.get(addr + i) ?? 0xff;
+    return b;
+  }
+  async writesConfirmed() { return this.confirmed; }
+  confirmedWrites() { return []; }
+  clearConfirmedWrites() {}
+  setExtendedMemoryServices() {}
+  acceptUnprovenRestart() {}
+  // The stamps the download's closing reads take (PID 27), on a standard-frame device.
+  async propValueDataMax() { return this.confirmed ? 50 : 10; }
+  async propReadCounted(obj: number, pid: number, start: number, count = 1) { return { objectIndex: obj, pid, count, start, value: Buffer.alloc(8 * count) }; }
+  async memWrite(addr: number, data: Buffer, opts: { verify?: boolean; echo?: boolean } = {}) {
+    this.events.push("write");
+    this.writes.push({ addr, data: Buffer.from(data) });
+    for (let i = 0; i < data.length; i++) this.mem.set(addr + i, data[i]);
+    if (!this.confirmed && (opts.verify || opts.echo)) { const back = await this.memRead(addr, data.length); if (!back.equals(data)) throw new Error("verify mismatch"); }
+  }
+  // A segment's bytes as the device currently holds them (for the "actual" MCB CRC).
+  segBytes(obj: number, from: number, size: number): Buffer {
+    const b = Buffer.alloc(size);
+    for (let i = 0; i < size; i++) b[i] = this.mem.get(this.addrs[obj] + from + i) ?? 0;
+    return b;
+  }
+  // The association table described as the long form (PDT_GENERIC_04), as the tables this unit holds.
+  async propertyDescription(obj: number, pid: number) { return { objectIndex: obj, pid, propertyIndex: 0, writable: true, pdt: 0x14, maxElements: 1, readLevel: 3, writeLevel: 3 }; }
+  // PID 27 answers element by element; an element past the last region answers with nothing.
+  async propRead(obj: number, pid: number, start = 1) { return refusedIfEmpty(await this.propertyAnswer(obj, pid, start), obj, pid, start); }
+  async propReadIfPresent(obj: number, pid: number, start = 1) { return absentIfEmpty(await this.propertyAnswer(obj, pid, start)); }
+  async propertyAnswer(obj: number, pid: number, element = 1) {
+    if (pid === PID_LSM) return Buffer.from([this.state.get(obj) ?? STATE.LOADED]);
+    if (pid === PID_MCB && obj === OBJ.LSM) {
+      if (this.mcb === null) return Buffer.alloc(0); // device declines to report its segment size
+      if (this.mcb === "actual") {
+        const size = this.mcbRegions[element - 1];
+        if (size === undefined) return Buffer.alloc(0);
+        const from = this.mcbRegions.slice(0, element - 1).reduce((n, r) => n + r, 0);
+        return mcbBuf(size, this.crcFn(this.segBytes(OBJ.LSM, from, size)));
+      }
+      return element === 1 ? mcbBuf(this.mcb.size, this.mcb.crc) : Buffer.alloc(0);
+    }
+    if (pid === PID_MCB && this.tableMcb.includes(obj) && element === 1 && this.allocated.has(obj)) {
+      const size = this.allocated.get(obj)!;
+      return mcbBuf(size, this.crcFn(this.segBytes(obj, 0, size)));
+    }
+    if (pid === PID_DEVCTRL) return Buffer.from([0]);
+    return Buffer.alloc(0);
+  }
+  async propWrite(obj: number, pid: number, data: Buffer) {
+    if (pid === PID_LSM) {
+      const ev = data[0];
+      if (ev === LSM.LOAD) this.state.set(obj, STATE.LOADING);
+      else if (ev === LSM.LOAD_COMPLETED) this.state.set(obj, STATE.LOADED);
+      else if (ev === LSM.UNLOAD) { this.state.set(obj, STATE.UNLOADED); this.events.push("unload"); }
+      else if (data[0] === 0x03 && data[1] === 0x0b) {
+        // AdditionalLoadControls: allocate relative segment. Byte 6 = fill flag, byte 7 = fill byte.
+        // Zero (or fill) the allocated region so the following sparse writes reconstruct the image.
+        const size = data.readUInt32BE(2), fill = data[6], fb = data[7];
+        this.allocated.set(obj, size);
+        if (fill) for (let i = 0; i < size; i++) this.mem.set(this.addrs[obj] + i, fb);
+      }
+    }
+    return Buffer.alloc(0);
+  }
+}
+const asDev = (m: MockDevice) => m as unknown as KnxDevice;
+
 corpusDescribe("full download against the real M-0162 application", () => {
   const xml = catalogueXml("M-0162_A-0004-11-F245.xml.gz");
   const cfg = parseAppConfig(xml);
@@ -44,135 +184,7 @@ corpusDescribe("full download against the real M-0162 application", () => {
   const CRC_PLAIN = crc16CcittFalse(target.bytes); // GVS and other CCITT-FALSE firmware
   const activeComObjNums = [...view.imageComObjects.keys()]; // [1..6]
 
-  // Object numbers on the bus. LSM 4 = parameter segment; 1/2/3 = addr/assoc/comObj tables.
-  const OBJ = { ADDR: 1, ASSOC: 2, COMOBJ: 3, LSM: 4 } as const;
-  const PID_LSM = 5, PID_MCB = 27, PID_DEVCTRL = 14;
-  // Distinct, non-overlapping memory regions the mock's tableAddr hands out.
-  const A = { [OBJ.LSM]: 0x4000, [OBJ.ADDR]: 0x5000, [OBJ.ASSOC]: 0x5100, [OBJ.COMOBJ]: 0x5200 } as Record<number, number>;
-
-  const mcbBuf = (size: number, crc: number) => { const b = Buffer.alloc(8); b.writeUInt32BE(size, 0); b.writeUInt16BE(crc, 6); return b; };
-
-  // A stateful byte-addressed mock exercising everything the full-download plan drives: LSM state via
-  // PID 5, the MCB (PID 27), verify mode (PID 14), memory read/write with a fill-aware alloc, plus the
-  // restart / reconnect lifecycle. `alloc` zeroes the allocated segment exactly as the real device
-  // does, so the sparse writes reconstruct the image byte-for-byte and the read-back is realistic.
-  interface MockOpts {
-    addrs?: Record<number, number>;       // per-object table pointer (0 = never loaded)
-    // PID_MCB_TABLE answer. "actual" (the default) reports the CRC of the bytes the device actually
-    // holds, exactly as a real device does, so the verify's fast path engages iff the segment is
-    // byte-correct. A fixed { size, crc } forces a specific convention (or a bogus value); null makes
-    // the device decline to report (< 8 bytes).
-    mcb?: "actual" | { size: number; crc: number } | null;
-    // With mcb "actual": the region sizes the parameter segment's MCB splits it into, one element each
-    // (Jung 400021SE: 7700 and 1). Default: one region over the whole segment.
-    mcbRegions?: number[];
-    // The group tables that report their MCB (one region over the allocated table, the CRC of what it
-    // holds): true for all three.
-    tableMcb?: boolean | number[];
-    seedTableCount?: Partial<Record<number, number>>; // count header to seed a group table's region with
-    onRestart?: (mem: Map<number, number>) => void;   // mutate memory on restart (simulate a lost write)
-  }
-  class MockDevice {
-    mem = new Map<number, number>();
-    state = new Map<number, number>();
-    reads: { addr: number; len: number }[] = [];
-    events: string[] = [];
-    private addrs: Record<number, number>;
-    private mcb: "actual" | { size: number; crc: number } | null;
-    private mcbRegions: number[];
-    private tableMcb: number[];
-    private allocated = new Map<number, number>();
-    onRestart?: (mem: Map<number, number>) => void; // settable after construction too (a test can break the device only on a LATER restart)
-    constructor(opts: MockOpts = {}) {
-      this.addrs = opts.addrs ?? A;
-      this.mcb = opts.mcb === undefined ? "actual" : opts.mcb; // an explicit null means "device declines"
-      this.mcbRegions = opts.mcbRegions ?? [target.size];
-      this.tableMcb = opts.tableMcb === true ? [OBJ.ADDR, OBJ.ASSOC, OBJ.COMOBJ] : opts.tableMcb || [];
-      this.onRestart = opts.onRestart;
-      // Seed the device's CURRENT (pre-download) state: an all-zero parameter segment and empty
-      // group tables, i.e. an already-programmed device. Group-table count headers seed to 0 unless
-      // a test overrides one (the implausible-count case).
-      for (let i = 0; i < target.size; i++) this.mem.set(this.addrs[OBJ.LSM] + i, 0);
-      for (const obj of [OBJ.ADDR, OBJ.ASSOC, OBJ.COMOBJ]) {
-        const count = opts.seedTableCount?.[obj] ?? 0;
-        this.mem.set(this.addrs[obj], (count >> 8) & 0xff);
-        this.mem.set(this.addrs[obj] + 1, count & 0xff);
-      }
-    }
-    async connect() {}
-    async disconnect() {}
-    async deviceDescriptor() { return "MV-07B0"; }
-    readsAtRestart = 0;
-    async restart() { this.events.push("restart"); this.readsAtRestart = this.reads.length; this.onRestart?.(this.mem); }
-    async setVerifyMode() {}
-    async tableAddr(obj: number) { return this.addrs[obj] ?? 0; }
-    async memRead(addr: number, len: number) {
-      this.reads.push({ addr, len });
-      const b = Buffer.alloc(len);
-      for (let i = 0; i < len; i++) b[i] = this.mem.get(addr + i) ?? 0xff;
-      return b;
-    }
-    async writesConfirmed() { return false; } // no PID_MAX_APDU_LENGTH: the classic write
-    confirmedWrites() { return []; }
-    clearConfirmedWrites() {}
-    setExtendedMemoryServices() {}
-    acceptUnprovenRestart() {}
-    // The stamps the download's closing reads take (PID 27), on a standard-frame device.
-    async propValueDataMax() { return 10; }
-    async propReadCounted(obj: number, pid: number, start: number, count = 1) { return { objectIndex: obj, pid, count, start, value: Buffer.alloc(8 * count) }; }
-    async memWrite(addr: number, data: Buffer, opts: { verify?: boolean; echo?: boolean } = {}) {
-      this.events.push("write");
-      for (let i = 0; i < data.length; i++) this.mem.set(addr + i, data[i]);
-      if (opts.verify || opts.echo) { const back = await this.memRead(addr, data.length); if (!back.equals(data)) throw new Error("verify mismatch"); }
-    }
-    // A segment's bytes as the device currently holds them (for the "actual" MCB CRC).
-    private segBytes(obj: number, from: number, size: number): Buffer {
-      const b = Buffer.alloc(size);
-      for (let i = 0; i < size; i++) b[i] = this.mem.get(this.addrs[obj] + from + i) ?? 0;
-      return b;
-    }
-    // The association table described as the long form (PDT_GENERIC_04), as the tables this unit holds.
-    async propertyDescription(obj: number, pid: number) { return { objectIndex: obj, pid, propertyIndex: 0, writable: true, pdt: 0x14, maxElements: 1, readLevel: 3, writeLevel: 3 }; }
-    // PID 27 answers element by element; an element past the last region answers with nothing.
-    async propRead(obj: number, pid: number, start = 1) { return refusedIfEmpty(await this.propertyAnswer(obj, pid, start), obj, pid, start); }
-    async propReadIfPresent(obj: number, pid: number, start = 1) { return absentIfEmpty(await this.propertyAnswer(obj, pid, start)); }
-    async propertyAnswer(obj: number, pid: number, element = 1) {
-      if (pid === PID_LSM) return Buffer.from([this.state.get(obj) ?? STATE.LOADED]);
-      if (pid === PID_MCB && obj === OBJ.LSM) {
-        if (this.mcb === null) return Buffer.alloc(0); // device declines to report its segment size
-        if (this.mcb === "actual") {
-          const size = this.mcbRegions[element - 1];
-          if (size === undefined) return Buffer.alloc(0);
-          const from = this.mcbRegions.slice(0, element - 1).reduce((n, r) => n + r, 0);
-          return mcbBuf(size, crc16Ccitt(this.segBytes(OBJ.LSM, from, size)));
-        }
-        return element === 1 ? mcbBuf(this.mcb.size, this.mcb.crc) : Buffer.alloc(0);
-      }
-      if (pid === PID_MCB && this.tableMcb.includes(obj) && element === 1 && this.allocated.has(obj)) {
-        const size = this.allocated.get(obj)!;
-        return mcbBuf(size, crc16Ccitt(this.segBytes(obj, 0, size)));
-      }
-      if (pid === PID_DEVCTRL) return Buffer.from([0]);
-      return Buffer.alloc(0);
-    }
-    async propWrite(obj: number, pid: number, data: Buffer) {
-      if (pid === PID_LSM) {
-        const ev = data[0];
-        if (ev === LSM.LOAD) this.state.set(obj, STATE.LOADING);
-        else if (ev === LSM.LOAD_COMPLETED) this.state.set(obj, STATE.LOADED);
-        else if (ev === LSM.UNLOAD) { this.state.set(obj, STATE.UNLOADED); this.events.push("unload"); }
-        else if (data[0] === 0x03 && data[1] === 0x0b) {
-          // AdditionalLoadControls: allocate relative segment. Byte 6 = fill flag, byte 7 = fill byte.
-          // Zero (or fill) the allocated region so the following sparse writes reconstruct the image.
-          const size = data.readUInt32BE(2), fill = data[6], fb = data[7];
-          this.allocated.set(obj, size);
-          if (fill) for (let i = 0; i < size; i++) this.mem.set(this.addrs[obj] + i, fb);
-        }
-      }
-      return Buffer.alloc(0);
-    }
-  }
-  const asDev = (m: MockDevice) => m as unknown as KnxDevice;
+  const mock = (opts: Omit<MockOpts, "segmentSize"> = {}) => new MockDevice({ segmentSize: target.size, ...opts });
 
   // The context the server hands the profile, with a recording backup hook. The hook logs
   // "backup-persisted" into the SAME event stream the mock records unloads/writes into, so the
@@ -209,14 +221,14 @@ corpusDescribe("full download against the real M-0162 application", () => {
 
     test("REFUSES a link targeting a com-object this configuration does not activate (LINK_COM_OBJECT_INACTIVE)", async () => {
       const dead = Math.max(...activeComObjNums) + 100; // a number no active object carries
-      const dev = new MockDevice();
+      const dev = mock();
       const { ctx } = ctxFor(dev, { links: [{ comObjNum: dead, gaRaws: [1] }] });
       const err = await classify(cfg).downloadFull(asDev(dev), cfg.mask, ctx).catch((e) => e);
       expect(err?.code).toBe("LINK_COM_OBJECT_INACTIVE");
     });
 
     test("REFUSES a stored value it cannot place in the image (CHANNEL_MODULES_UNSUPPORTED)", async () => {
-      const dev = new MockDevice();
+      const dev = mock();
       const { ctx } = ctxFor(dev, { params: new Map([["M-0162_A-0004-11-F245_P-not-a-real-ref", "1"]]) });
       const err = await classify(cfg).downloadFull(asDev(dev), cfg.mask, ctx).catch((e) => e);
       expect(err?.code).toBe("CHANNEL_MODULES_UNSUPPORTED");
@@ -225,7 +237,7 @@ corpusDescribe("full download against the real M-0162 application", () => {
     test("Finding 5a: an already-loaded table with an implausible count REFUSES, never silently skips (GROUP_TABLE_UNREADABLE)", async () => {
       // The com-object table region seeds a 60000-entry count header: the reader's twin refuses this
       // exact condition, and so must the backup, instead of returning size 0 and unloading it anyway.
-      const dev = new MockDevice({ seedTableCount: { [OBJ.COMOBJ]: 60000 } });
+      const dev = mock({ seedTableCount: { [OBJ.COMOBJ]: 60000 } });
       const err = await classify(cfg).downloadFull(asDev(dev), cfg.mask, ctxFor(dev, { backupBeforeUnload: true }).ctx).catch((e) => e);
       expect(err?.code).toBe("GROUP_TABLE_UNREADABLE");
       // It refused during backup: nothing was unloaded, nothing written.
@@ -234,7 +246,7 @@ corpusDescribe("full download against the real M-0162 application", () => {
     });
 
     test("Finding 5b: a device that will not report its loaded segment size REFUSES, not backs up a guess (SEGMENT_SIZE_UNKNOWN)", async () => {
-      const dev = new MockDevice({ mcb: null }); // PID_MCB_TABLE answers < 8 bytes
+      const dev = mock({ mcb: null }); // PID_MCB_TABLE answers < 8 bytes
       const err = await classify(cfg).downloadFull(asDev(dev), cfg.mask, ctxFor(dev, { backupBeforeUnload: true }).ctx).catch((e) => e);
       expect(err?.code).toBe("SEGMENT_SIZE_UNKNOWN");
       expect(dev.events).not.toContain("unload");
@@ -246,7 +258,7 @@ corpusDescribe("full download against the real M-0162 application", () => {
       // The backup must capture the device's full MCB-reported length. (dryRun still runs the whole
       // backup loop, so this asserts the sizing without the slow write/restart bracket.)
       const biggerSize = target.size + 64;
-      const dev = new MockDevice({ mcb: { size: biggerSize, crc: 0 } });
+      const dev = mock({ mcb: { size: biggerSize, crc: 0 } });
       const { ctx, backups } = ctxFor(dev, { dryRun: true, backupBeforeUnload: true });
       const res = await classify(cfg).downloadFull(asDev(dev), cfg.mask, ctx);
 
@@ -260,7 +272,7 @@ corpusDescribe("full download against the real M-0162 application", () => {
       // The device reports the CRC of the bytes it actually holds ("actual"), which after a correct
       // download equals the augmented CRC the verify computes, so the verify accepts it without
       // reading the whole segment back.
-      const dev = new MockDevice({ mcb: "actual" });
+      const dev = mock({ mcb: "actual" });
       const { ctx, backups } = ctxFor(dev, { backupBeforeUnload: true });
       const res = await classify(cfg).downloadFull(asDev(dev), cfg.mask, ctx);
 
@@ -298,7 +310,7 @@ corpusDescribe("full download against the real M-0162 application", () => {
       // segment read-back the verify must fall back to. If that fallback is removed or inverted to
       // treat a CRC mismatch as a pass, verified flips to true and this test goes red.
       const flip = target.verify.findIndex(Boolean); // an owned + verifiable byte
-      const dev = new MockDevice({
+      const dev = mock({
         mcb: { size: target.size, crc: 0xdead }, // matches neither CRC_AUG nor CRC_PLAIN
         onRestart: (mem) => { mem.set(A[OBJ.LSM] + flip, target.bytes[flip] ^ 0xff); }, // the write did not stick
       });
@@ -319,7 +331,7 @@ corpusDescribe("full download against the real M-0162 application", () => {
     // A segment past 0xFFFF on an application without the extended memory services is written with
     // A_UserMemory, which the device reads nothing back with (USER_MEMORY_UNSUPPORTED): no proof, no failure.
     test("a parameter segment its CRC does not prove and that cannot be read back leaves the download unverified", async () => {
-      const dev = new MockDevice({ mcb: { size: target.size, crc: 0xdead } });
+      const dev = mock({ mcb: { size: target.size, crc: 0xdead } });
       const read = dev.memRead.bind(dev);
       dev.memRead = async (addr: number, len: number) => {
         if (addr === A[OBJ.LSM]) throw Object.assign(new Error("the read would take A_UserMemory_Read"), { code: "USER_MEMORY_UNSUPPORTED" });
@@ -333,7 +345,7 @@ corpusDescribe("full download against the real M-0162 application", () => {
     }, 100_000);
 
     test("dryRun with backup ON: captures the backup but writes NOTHING to the device", async () => {
-      const dev = new MockDevice();
+      const dev = mock();
       const before = new Map(dev.mem);
       const { ctx, backups } = ctxFor(dev, { dryRun: true, backupBeforeUnload: true });
       const res = await classify(cfg).downloadFull(asDev(dev), cfg.mask, ctx);
@@ -351,7 +363,7 @@ corpusDescribe("full download against the real M-0162 application", () => {
       // ~1800-round-trip parameter read that dominated the wall-clock is gone; the download proceeds and
       // verifies exactly as before. persistBackups is still called (with an EMPTY list) so the ordering
       // hook stays intact.
-      const dev = new MockDevice({ mcb: "actual" });
+      const dev = mock({ mcb: "actual" });
       const { ctx, backups } = ctxFor(dev); // backupBeforeUnload defaults to false
       const res = await classify(cfg).downloadFull(asDev(dev), cfg.mask, ctx);
 
@@ -376,7 +388,7 @@ corpusDescribe("full download against the real M-0162 application", () => {
     const twoRegions = [target.size - 1, 1];
 
     test("a segment the device splits into two MCB regions is proven by both regions' CRCs, without a read-back", async () => {
-      const dev = new MockDevice({ mcb: "actual", mcbRegions: twoRegions });
+      const dev = mock({ mcb: "actual", mcbRegions: twoRegions });
       const res = await classify(cfg).downloadFull(asDev(dev), cfg.mask, ctxFor(dev).ctx);
       expect(res.kind === "flashed" && res.verified).toBe(true);
       expect(dev.reads.filter((r) => r.addr === A[OBJ.LSM] && r.len === target.size).length).toBe(0);
@@ -384,7 +396,7 @@ corpusDescribe("full download against the real M-0162 application", () => {
 
     test("TEETH: a lost write in the second MCB region fails that region's CRC, and reading that region back catches it", async () => {
       const last = target.size - 1; // the one byte of the second region
-      const dev = new MockDevice({
+      const dev = mock({
         mcb: "actual", mcbRegions: twoRegions,
         onRestart: (mem) => { mem.set(A[OBJ.LSM] + last, target.bytes[last] ^ 0xff); },
       });
@@ -400,14 +412,14 @@ corpusDescribe("full download against the real M-0162 application", () => {
     const tableReads = (dev: MockDevice) => dev.reads.slice(dev.readsAtRestart).filter((r) => [A[OBJ.ADDR], A[OBJ.ASSOC], A[OBJ.COMOBJ]].includes(r.addr)).length;
 
     test("group tables the device proves by their own CRCs are not read back", async () => {
-      const dev = new MockDevice({ mcb: "actual", tableMcb: true });
+      const dev = mock({ mcb: "actual", tableMcb: true });
       const res = await classify(cfg).downloadFull(asDev(dev), cfg.mask, ctxFor(dev).ctx);
       expect(res.kind === "flashed" && res.verified).toBe(true);
       expect(tableReads(dev)).toBe(0);
     }, 70_000);
 
     test("a table whose block proves nothing is read back, and a com-object table its CRC proves is not", async () => {
-      const dev = new MockDevice({ mcb: "actual", tableMcb: [OBJ.ASSOC, OBJ.COMOBJ] }); // no block for the address table
+      const dev = mock({ mcb: "actual", tableMcb: [OBJ.ASSOC, OBJ.COMOBJ] }); // no block for the address table
       const res = await classify(cfg).downloadFull(asDev(dev), cfg.mask, ctxFor(dev).ctx);
       expect(res.kind === "flashed" && res.verified).toBe(true);
       const after = dev.reads.slice(dev.readsAtRestart);
@@ -416,7 +428,7 @@ corpusDescribe("full download against the real M-0162 application", () => {
     }, 70_000);
 
     test("TEETH: a com-object table that lost a byte fails its CRC, is read back, and fails the verify", async () => {
-      const dev = new MockDevice({
+      const dev = mock({
         mcb: "actual", tableMcb: true,
         onRestart: (mem) => { mem.set(A[OBJ.COMOBJ] + 2, comObjTable[2] ^ 0xff); },
       });
@@ -444,7 +456,7 @@ corpusDescribe("full download against the real M-0162 application", () => {
     const commByteOf = (dev: MockDevice, n: number) => dev.mem.get(A[OBJ.COMOBJ] + 2 + (n - 1) * 2) ?? 0; // flags byte of object n
 
     test("linking a previously-unlinked object sets its Communication flag in the device's L3 (a kept-L3 flash left it a dead link)", async () => {
-      const dev = new MockDevice();
+      const dev = mock();
       // Seed an already-programmed device via a full download with NO links: every object's L3 entry
       // carries comm=0 (unlinked), exactly the state that made the GVS status link dead.
       await profile.downloadFull(asDev(dev), cfg.mask, ctxFor(dev, { links: [] }).ctx);
@@ -470,7 +482,7 @@ corpusDescribe("full download against the real M-0162 application", () => {
     // across the rewrite (planSystemBGaFlash holdApplication) AND re-checks its state afterwards, so this
     // failure can never be reported as `verified` again.
     test("an application that stops being LOADED across the flash fails loudly instead of reporting verified", async () => {
-      const dev = new MockDevice();
+      const dev = mock();
       await profile.downloadFull(asDev(dev), cfg.mask, ctxFor(dev, { links: [] }).ctx);
       // The closing restart leaves the application broken (what the unfixed path did on real hardware).
       dev.onRestart = () => { dev.state.set(OBJ.LSM, STATE.ERROR); };
@@ -479,7 +491,7 @@ corpusDescribe("full download against the real M-0162 application", () => {
     }, 160_000);
 
     test("a device whose application was ALREADY not LOADED gains no new refusal (only a degradation is an error)", async () => {
-      const dev = new MockDevice();
+      const dev = mock();
       await profile.downloadFull(asDev(dev), cfg.mask, ctxFor(dev, { links: [] }).ctx);
       dev.state.set(OBJ.LSM, STATE.UNLOADED); // e.g. a device with no application loaded at all
       const res = await profile.flashGroupTables(asDev(dev), cfg.mask, gaCtx([{ comObjNum: activeComObjNums[0], gaRaws: [2305] }]));
@@ -487,7 +499,7 @@ corpusDescribe("full download against the real M-0162 application", () => {
     }, 130_000);
 
     test("the parameter segment (L4) is left untouched: this is a surgical link flash, not a full download", async () => {
-      const dev = new MockDevice();
+      const dev = mock();
       await profile.downloadFull(asDev(dev), cfg.mask, ctxFor(dev, { links: [] }).ctx);
       const paramSegBefore = await dev.memRead(A[OBJ.LSM], target.size);
       await profile.flashGroupTables(asDev(dev), cfg.mask, gaCtx([{ comObjNum: activeComObjNums[0], gaRaws: [2305] }]));
@@ -495,4 +507,167 @@ corpusDescribe("full download against the real M-0162 application", () => {
       expect(paramSegAfter.equals(paramSegBefore)).toBe(true); // L4 (the 21601-byte image) never rewritten
     }, 130_000);
   });
+});
+
+// Dataless System B RelativeSegment with LdCtrlRelSegment Mode="1" Fill="255" (runs with and without
+// the private corpus): ETS pre-fills the segment to 0xFF via allocation and writes only parameter-covered
+// octets, keeping 0 in the unowned bits of partially-owned bytes.
+describe("System B full download on a dataless RelativeSegment with Fill=255", () => {
+  const APP_ID = "M-00A6_A-0025-30-A50D";
+  const SEG = `${APP_ID}_RS-04-00000`;
+  const SIZE = 128;
+
+  // Parameter layout exercising all cases:
+  //   - offset 4, bit 0 (1 bit, value 1): partially-owned byte -> 0x80 (unowned bits stay 0, not 0x7F)
+  //   - offset 8, bit 0 (8 bits, value 0): owned zero byte -> 0x00 (must be written over 0xFF fill)
+  //   - offset 9, bit 0 (8 bits, value 255): owned 0xFF byte (equals fill; isolated from next non-fill)
+  //   - offset 60, bit 0 (8 bits, value 0x12): distant owned byte -> separate write run
+  //   - offsets 0..3, 5..7, 10..59, 61..127: unowned -> stay at allocation fill 0xFF and are never written
+  // Notice offset 4 and offset 8 are only 3 bytes apart (< FILL_RUN_SKIPPED = 31): unowned offsets 5..7
+  // MUST NOT be bridged or written over the bus.
+  const synthXml = (opts: { data?: string; mask?: string; mode?: string; fill?: string; preferPartial?: boolean; hiddenVal?: number } = {}) => `<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-00A6"><ApplicationPrograms>
+<ApplicationProgram Id="${APP_ID}" ApplicationNumber="37" ApplicationVersion="48" MaskVersion="MV-07B0" MinEtsVersion="5.0" DefaultLanguage="en-US" LoadProcedureStyle="MergedProcedure" Name="DatalessFill">
+<Static>
+<Code><RelativeSegment Id="${SEG}" Name="Params" Size="${SIZE}" LoadStateMachine="4" Offset="0">${opts.data ? `<Data>${opts.data}</Data>` : ""}${opts.mask ? `<Mask>${opts.mask}</Mask>` : ""}</RelativeSegment></Code>
+<ParameterTypes>
+  <ParameterType Id="${APP_ID}_PT-1"><TypeNumber SizeInBit="1" Type="unsignedInt" minInclusive="0" maxInclusive="1"/></ParameterType>
+  <ParameterType Id="${APP_ID}_PT-8"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="255"/></ParameterType>
+</ParameterTypes>
+<Parameters>
+  <Parameter Id="${APP_ID}_P-1" Name="bit" ParameterType="${APP_ID}_PT-1" Text="bit" Value="1"><Memory CodeSegment="${SEG}" Offset="4" BitOffset="0"/></Parameter>
+  <Parameter Id="${APP_ID}_P-2" Name="zero" ParameterType="${APP_ID}_PT-8" Text="zero" Value="0"><Memory CodeSegment="${SEG}" Offset="8" BitOffset="0"/></Parameter>
+  <Parameter Id="${APP_ID}_P-3" Name="ff" ParameterType="${APP_ID}_PT-8" Text="ff" Value="255"><Memory CodeSegment="${SEG}" Offset="9" BitOffset="0"/></Parameter>
+  <Parameter Id="${APP_ID}_P-4" Name="far" ParameterType="${APP_ID}_PT-8" Text="far" Value="18"><Memory CodeSegment="${SEG}" Offset="60" BitOffset="0"/></Parameter>
+  ${opts.hiddenVal !== undefined ? `<Parameter Id="${APP_ID}_P-5" Name="hid" ParameterType="${APP_ID}_PT-8" Text="hid" Value="${opts.hiddenVal}"><Memory CodeSegment="${SEG}" Offset="20" BitOffset="0"/></Parameter>` : ""}
+</Parameters>
+<ParameterRefs>
+  <ParameterRef Id="${APP_ID}_P-1_R-1" RefId="${APP_ID}_P-1"/>
+  <ParameterRef Id="${APP_ID}_P-2_R-2" RefId="${APP_ID}_P-2"/>
+  <ParameterRef Id="${APP_ID}_P-3_R-3" RefId="${APP_ID}_P-3"/>
+  <ParameterRef Id="${APP_ID}_P-4_R-4" RefId="${APP_ID}_P-4"/>
+  ${opts.hiddenVal !== undefined ? `<ParameterRef Id="${APP_ID}_P-5_R-5" RefId="${APP_ID}_P-5"/>` : ""}
+</ParameterRefs>
+<ComObjectTable><ComObject Id="${APP_ID}_O-1" Name="c1" Text="c1" Number="1" FunctionText="f" ObjectSize="1 Bit" ReadFlag="Disabled" WriteFlag="Enabled" CommunicationFlag="Enabled" TransmitFlag="Disabled" UpdateFlag="Disabled"/></ComObjectTable>
+<ComObjectRefs><ComObjectRef Id="${APP_ID}_O-1_R-1" RefId="${APP_ID}_O-1"/></ComObjectRefs>
+<AddressTable MaxEntries="16"/>
+<AssociationTable MaxEntries="16"/>
+<LoadProcedures>
+  <LoadProcedure MergeId="2">
+    <LdCtrlRelSegment AppliesTo="full" LsmIdx="4" Size="${SIZE}" Mode="${opts.mode ?? "1"}" Fill="${opts.fill ?? "255"}"/>
+    <LdCtrlRelSegment AppliesTo="par" LsmIdx="4" Size="${SIZE}" Mode="0" Fill="${opts.fill ?? "255"}"/>
+  </LoadProcedure>
+  <LoadProcedure MergeId="4"><LdCtrlWriteRelMem AppliesTo="full,par" ObjIdx="4" Offset="0" Size="${SIZE}" Verify="true"/></LoadProcedure>
+</LoadProcedures>
+<Options DownloadInvisibleParameters="None" SupportsExtendedMemoryServices="true"${opts.preferPartial ? ' PreferPartialDownloadIfApplicationLoaded="true"' : ""}/>
+</Static>
+<Dynamic><ChannelIndependentBlock><ParameterBlock Id="${APP_ID}_PB-1" Name="main" Text="Main">
+  <ParameterRefRef RefId="${APP_ID}_P-1_R-1"/>
+  <ParameterRefRef RefId="${APP_ID}_P-2_R-2"/>
+  <ParameterRefRef RefId="${APP_ID}_P-3_R-3"/>
+  <ParameterRefRef RefId="${APP_ID}_P-4_R-4"/>
+  <ComObjectRefRef RefId="${APP_ID}_O-1_R-1"/>
+</ParameterBlock></ChannelIndependentBlock></Dynamic>
+</ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+
+  test("fullDownloadParamImage fills unowned bytes only on dataless segments and refuses length mismatch", () => {
+    const dataless = parseAppConfig(synthXml());
+    const bytes = Buffer.from([0x00, 0x80, 0x00, 0x00, 0x12]);
+    const owned = [0, 0x80, 0, 0xff, 0xff];
+    expect(fullDownloadParamImage(dataless, { lsm: 4, bytes, owned }, 0xff).toString("hex")).toBe("ff80ff0012");
+    expect(fullDownloadParamImage(dataless, { lsm: 4, bytes, owned }, 0x00).toString("hex")).toBe("0080000012");
+    expect(() => fullDownloadParamImage(dataless, { lsm: 4, bytes, owned: [0, 0] }, 0xff)).toThrow(/does not match ownership length/);
+    // A segment declaring <Data> (with or without <Mask>) keeps target.bytes unchanged.
+    const withData = parseAppConfig(synthXml({ data: Buffer.alloc(SIZE, 0x00).toString("base64"), mask: Buffer.alloc(SIZE, 0x00).toString("base64") }));
+    expect(fullDownloadParamImage(withData, { lsm: 4, bytes, owned }, 0xff)).toBe(bytes);
+  });
+
+  test("planFullDownload allocates Mode=1 Fill=255 and writes only parameter-covered octets, leaving unowned gaps at 0xFF", () => {
+    const xml = synthXml();
+    const cfg = parseAppConfig(xml);
+    const proc = parseLoadProcedures(xml);
+    const build = classify(cfg).planFullDownload("MV-07B0", { ia: "1.1.1", params: new Map(), links: [], proc });
+
+    const alloc = build.plan.find((s) => s.op === "alloc" && s.lsm === 4);
+    expect(alloc).toEqual({ op: "alloc", lsm: 4, size: SIZE, fill: true, fillByte: 0xff });
+
+    // Only the three non-fill parameter-covered octets are written (offsets 4, 8, 60); the 3-byte unowned
+    // gap at 5..7 (< 31 bytes) is NOT bridged, offset 9 (owned 0xFF) is left to the allocation fill, and
+    // offset 4 is 0x80 (unowned bits within the partially-owned byte stay 0).
+    const l4Writes = build.plan
+      .filter((s) => s.op === "writeSegment" && s.lsm === 4)
+      .map((s) => (s.op === "writeSegment" ? [s.offset, s.bytes.toString("hex")] : []));
+    expect(l4Writes).toEqual([[4, "80"], [8, "00"], [60, "12"]]);
+
+    // The L4 segment image reflects the final device memory: 0xFF outside owned bytes, encoded values inside.
+    const l4Seg = build.segments.find((s) => s.lsm === 4)!;
+    expect(l4Seg.fillByte).toBe(0xff);
+    expect(l4Seg.image.length).toBe(SIZE);
+    for (let i = 0; i < SIZE; i++) {
+      const want = i === 4 ? 0x80 : i === 8 ? 0x00 : i === 60 ? 0x12 : 0xff;
+      expect(l4Seg.image[i]).toBe(want);
+    }
+  });
+
+  test("partial download form does not apply the full-download fill to hidden-parameter checks", () => {
+    const unitMemory = { params: Buffer.alloc(SIZE, 0x00), paramsAt: 0x4000, paramsMcb: null, comObj: Buffer.from([0, 1, 0x00, 0x00]), comObjAt: 0x5200, comObjMcb: null };
+    // Full form with Fill=255 refuses hidden default 0 (differs from 0xFF) and accepts 255.
+    const xmlZero = synthXml({ preferPartial: true, hiddenVal: 0 });
+    const cfgZero = parseAppConfig(xmlZero);
+    const procZero = parseLoadProcedures(xmlZero);
+    expect(() => classify(cfgZero).planFullDownload("MV-07B0", { ia: "1.1.1", params: new Map(), links: [], proc: procZero }))
+      .toThrow(expect.objectContaining({ code: "PARAM_HIDDEN_UNSUPPORTED" }));
+    // Partial form keeps the unit's 0x00 bytes, so hidden default 0 matches and builds cleanly.
+    expect(() => classify(cfgZero).planFullDownload("MV-07B0", { ia: "1.1.1", params: new Map(), links: [], proc: procZero, unitHoldsApplication: true, unitMemory }))
+      .not.toThrow();
+
+    // Conversely, hidden default 255 is accepted by the full form (matches Fill=255) and refused by the partial form.
+    const xmlFF = synthXml({ preferPartial: true, hiddenVal: 255 });
+    const cfgFF = parseAppConfig(xmlFF);
+    const procFF = parseLoadProcedures(xmlFF);
+    expect(() => classify(cfgFF).planFullDownload("MV-07B0", { ia: "1.1.1", params: new Map(), links: [], proc: procFF }))
+      .not.toThrow();
+    expect(() => classify(cfgFF).planFullDownload("MV-07B0", { ia: "1.1.1", params: new Map(), links: [], proc: procFF, unitHoldsApplication: true, unitMemory }))
+      .toThrow(expect.objectContaining({ code: "PARAM_HIDDEN_UNSUPPORTED" }));
+  });
+
+  test("Mode=0 with <Data> and Fill=255 still writes every byte of the segment whole", () => {
+    const data = Buffer.alloc(SIZE, 0xff).toString("base64");
+    const xml = synthXml({ data, mode: "0", fill: "255" });
+    const cfg = parseAppConfig(xml);
+    const proc = parseLoadProcedures(xml);
+    const build = classify(cfg).planFullDownload("MV-07B0", { ia: "1.1.1", params: new Map(), links: [], proc });
+
+    const alloc = build.plan.find((s) => s.op === "alloc" && s.lsm === 4);
+    expect(alloc).toEqual({ op: "alloc", lsm: 4, size: SIZE, fill: false, fillByte: 0xff });
+    const l4Writes = build.plan.filter((s) => s.op === "writeSegment" && s.lsm === 4);
+    expect(l4Writes).toHaveLength(1);
+    expect(l4Writes[0].op === "writeSegment" ? [l4Writes[0].offset, l4Writes[0].bytes.length] : []).toEqual([0, SIZE]);
+  });
+
+  test("downloadFull verifies via the PID 27 MCB CRC fast path when the device pre-fills with 0xFF", async () => {
+    const xml = synthXml();
+    const cfg = parseAppConfig(xml);
+    const dev = new MockDevice({ segmentSize: SIZE, mcb: "actual", tableMcb: true, confirmedWrites: true, crc: crc16CcittFalse });
+
+    const res = await classify(cfg).downloadFull(asDev(dev), "MV-07B0", {
+      deviceId: "d", ia: "1.1.1", appXml: xml, params: new Map(), links: [], moduleInstances: [], dryRun: false,
+      persistBackups: () => "backup",
+    });
+    expect(res.kind).toBe("flashed");
+    if (res.kind !== "flashed") throw new Error("unreachable");
+    expect(res.verified).toBe(true);
+    // MCB CRC matched the 0xFF-filled segment without falling back to a full segment read-back.
+    expect(dev.reads.filter((r) => r.addr === A[OBJ.LSM] && r.len === SIZE)).toEqual([]);
+    const l4Writes = dev.writes.filter((w) => w.addr >= A[OBJ.LSM] && w.addr < A[OBJ.LSM] + SIZE);
+    expect(l4Writes.map((w) => [w.addr - A[OBJ.LSM], w.data.toString("hex")])).toEqual([[4, "80"], [8, "00"], [60, "12"]]);
+    const finalL4 = dev.segBytes(OBJ.LSM, 0, SIZE);
+    expect(finalL4[0]).toBe(0xff);
+    expect(finalL4[4]).toBe(0x80);
+    expect(finalL4[5]).toBe(0xff);
+    expect(finalL4[8]).toBe(0x00);
+    expect(finalL4[9]).toBe(0xff);
+    expect(finalL4[60]).toBe(0x12);
+    expect(finalL4[127]).toBe(0xff);
+  }, 30_000);
 });
