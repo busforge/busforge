@@ -6,12 +6,13 @@
 // a core delays its row's timers just the same.
 import { availableParallelism } from "node:os";
 import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
-import type { ManifestRow, Verdict } from "./ets-sweep.ts";
+import type { Explained, ManifestRow, Verdict } from "./ets-sweep.ts";
 
 const ROLE = "ets-sweep-row";
 // What a row's judgement carries besides its verdict: its manifest entry (tools/ets-sweep.ts manifestRow), and
-// Busforge's capture with the simulator's lines, each where asked for.
-export interface RowWants { manifest?: boolean; keep?: boolean }
+// Busforge's capture with the simulator's lines, each where asked for. `dir` judges a row outside the corpus
+// (tools/ets-sweep.ts --import-dir), optionally carrying the corpus's existing explained.json so causes stay.
+export interface RowWants { manifest?: boolean; keep?: boolean; dir?: string; existingExplained?: Explained }
 export interface RowJudgement { verdict: Verdict; manifest?: ManifestRow; kept?: { capture: string; simLines: string[] } }
 // A row and its answer between the pool and a worker; `job` tells two judgements of one row apart.
 export interface RowRequest extends RowWants { job: number; id: string }
@@ -172,9 +173,9 @@ export function serveRows(judge: (request: RowRequest) => Promise<RowJudgement>)
 
 const started = workerData as { role?: string; module?: string } | null;
 if (!isMainThread && started?.role === ROLE && started.module === import.meta.url) {
-  const { manifestRow, readRow, runRow } = await import("./ets-sweep.ts");
-  serveRows(async ({ id, manifest, keep }) => {
-    const row = readRow(id);
+  const { manifestRow, readRow, readRowAt, runRow } = await import("./ets-sweep.ts");
+  serveRows(async ({ id, dir, existingExplained, manifest, keep }) => {
+    const row = dir !== undefined ? readRowAt(id, dir, { requireExplained: false, existingExplained }) : readRow(id);
     const r = await runRow(row);
     return { verdict: r.verdict, ...(manifest ? { manifest: manifestRow(row, r) } : {}), ...(keep ? { kept: { capture: r.busforge.capture, simLines: r.busforge.sim.lines } } : {}) };
   });

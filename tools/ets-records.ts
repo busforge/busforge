@@ -21,8 +21,8 @@
 // the run names every one that cannot and writes nothing. `--dry-run` names the projects it would record and
 // the entries it would drop, opens nothing and writes nothing. A file of an earlier format is written again only by
 // `--missing` over the whole corpus, which records every project anew.
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { isAbsolute, posix } from "node:path";
+import { existsSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { isAbsolute, join, posix } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { loadKnxproj, extractAppPrograms, decodeLoadedImage, type Device, type EtsLoaded } from "../packages/project/src/index.ts";
 import {
@@ -34,7 +34,7 @@ import { codeOf, corpusArchives, describeFailure, NOT_THIS_PASSWORD, passwords }
 import { deviceRows, type DeviceRows } from "./etsdiff.ts";
 import { sha256 } from "./evidence.ts";
 
-const FORMAT = "busforge-ets-records/2";
+export const ETS_RECORDS_FORMAT = "busforge-ets-records/2";
 // The formats before it, which a run that records the whole corpus replaces: /1 keyed a device's application by its
 // Hardware2Program id.
 const EARLIER_FORMATS = ["busforge-ets-records/1"];
@@ -55,12 +55,12 @@ export interface DeviceRecord {
   config?: DeviceRows;                 // present exactly where loadedImage is
 }
 export interface ProjectRecords { path: string; sha256: string; devices: DeviceRecord[] }
-export interface EtsRecords { format: typeof FORMAT; projects: ProjectRecords[]; apps: Record<string, string> } // apps: application id -> base64(gzip(xml))
+export interface EtsRecords { format: typeof ETS_RECORDS_FORMAT; projects: ProjectRecords[]; apps: Record<string, string> } // apps: application id -> base64(gzip(xml))
 
 export function readEtsRecords(): EtsRecords {
   const r = readStoredRecords();
   const format: unknown = r.format;
-  if (format !== FORMAT) throw new Error(`${ETS_RECORDS_FILE} is of format ${String(format)}, not ${FORMAT}`);
+  if (format !== ETS_RECORDS_FORMAT) throw new Error(`${ETS_RECORDS_FILE} is of format ${String(format)}, not ${ETS_RECORDS_FORMAT}`);
   return r;
 }
 const readStoredRecords = (): EtsRecords => JSON.parse(gunzipSync(readFileSync(corpusPath(ETS_RECORDS_FILE))).toString("utf8")) as EtsRecords;
@@ -69,11 +69,11 @@ const readStoredRecords = (): EtsRecords => JSON.parse(gunzipSync(readFileSync(c
 // the run records the whole corpus (`--missing` without a directory, or the root "."), which replaces every entry;
 // refused otherwise, and for a format this tool does not know (a later one is never written back over).
 export function recordsToStartFrom(stored: { format?: unknown }, missing: boolean, targets: readonly string[]): EtsRecords {
-  if (stored.format === FORMAT) return stored as EtsRecords;
+  if (stored.format === ETS_RECORDS_FORMAT) return stored as EtsRecords;
   const wholeCorpus = missing && targets.every((t) => posix.normalize(t).replace(/\/+$/, "") === ".");
-  if (!EARLIER_FORMATS.includes(String(stored.format))) throw new Error(`${ETS_RECORDS_FILE} is of format ${String(stored.format)}, which this tool does not know; it writes ${FORMAT}`);
+  if (!EARLIER_FORMATS.includes(String(stored.format))) throw new Error(`${ETS_RECORDS_FILE} is of format ${String(stored.format)}, which this tool does not know; it writes ${ETS_RECORDS_FORMAT}`);
   if (!wholeCorpus) throw new Error(`${ETS_RECORDS_FILE} is of the earlier format ${String(stored.format)}: record the whole corpus again with --missing`);
-  return { format: FORMAT, projects: [], apps: {} };
+  return { format: ETS_RECORDS_FORMAT, projects: [], apps: {} };
 }
 
 // Every project of the corpus, relative to its root, sorted: the set the records must hold.
@@ -251,16 +251,121 @@ export function recordDevice(
   return { ...rec, loadedImage: d.etsLoadedImage, checkSums: d.etsCheckSums, config: ctx.rows(d.id) };
 }
 
-function recordProject(path: string, candidates: readonly string[], apps: Record<string, string>): ProjectRecords {
-  const bytes = readFileSync(corpusUnlistedPath(path));
+export function etsRecordPasswordCandidates(): string[] {
+  return [...new Set([...(process.env.KNXPROJ_PASSWORD ? [process.env.KNXPROJ_PASSWORD] : []), ...passwords()])];
+}
+
+function recordProjectAt(
+  path: string, sourcePath: string, candidates: readonly string[], catalogue: ReadonlySet<string>, apps: Record<string, string>,
+): ProjectRecords {
+  const bytes = readFileSync(sourcePath);
   const proj = openProject(bytes, path, candidates);
   // The import leaves these devices out, so their records would be missing without anything saying so.
   const left = proj.skippedInstallations + proj.unassignedDevices + proj.malformedDevices;
   if (left) throw new Error(`${path}: the import leaves out devices (${proj.skippedInstallations} further installations, ${proj.unassignedDevices} unassigned and ${proj.malformedDevices} malformed devices), whose download records would go unrecorded`);
-  const catalogue = new Set(listCatalogue());
   const declares = new Map<string, boolean | null>();
   const devices = proj.devices.map((d) => recordDevice(d, { path, bytes, catalogue, declares, apps, rows: (id) => deviceRows(proj, id) }));
   return { path, sha256: sha256(bytes), devices };
+}
+
+export interface RecordTarget {
+  // Canonical corpus-relative `.knxproj` path stored in ProjectRecords.path.
+  path: string;
+  // Optional filesystem path to read from when pre-staging before copying into the corpus.
+  sourcePath?: string;
+}
+
+export interface PreparedRecordsUpdate {
+  entries: ProjectRecords[];
+  apps: Record<string, string>;
+  recorded: { path: string; devices: number; withLoadedImage: number }[];
+}
+
+export interface RecordsUpdateResult {
+  recorded: { path: string; devices: number; withLoadedImage: number }[];
+  dropped: string[];
+  totalProjects: number;
+}
+
+function readStoredRecordsAt(root: string, missing: boolean, targetSpecs: readonly string[]): EtsRecords {
+  const stored = JSON.parse(gunzipSync(readFileSync(join(root, ETS_RECORDS_FILE))).toString("utf8")) as { format?: unknown };
+  return recordsToStartFrom(stored, missing, targetSpecs);
+}
+
+function writeGzipAtomic(path: string, content: Buffer): void {
+  const tmp = `${path}.${process.pid}.tmp`;
+  try {
+    writeFileSync(tmp, content);
+    renameSync(tmp, path);
+  } catch (e) {
+    if (existsSync(tmp)) unlinkSync(tmp);
+    throw e;
+  }
+}
+
+// Validates the corpus's records file format and records `targets` in memory (optionally reading from
+// `target.sourcePath` before files are copied into the corpus). Throws before writing anything if any project fails.
+export function prepareEtsRecordsUpdate(
+  root: string,
+  targets: readonly RecordTarget[],
+  candidates: readonly string[],
+  options: { missing?: boolean; targetSpecs?: readonly string[]; onRecorded?: (entry: ProjectRecords) => void } = {},
+): PreparedRecordsUpdate {
+  const missing = options.missing ?? false;
+  const targetSpecs = options.targetSpecs ?? targets.map((t) => t.path);
+  // Validate the existing records file format before doing work.
+  readStoredRecordsAt(root, missing, targetSpecs);
+  const byPath = new Map<string, RecordTarget>();
+  for (const t of targets) {
+    const norm = posix.normalize(t.path);
+    if (isAbsolute(t.path) || norm !== t.path || norm === ".." || norm.startsWith("../") || !t.path.endsWith(".knxproj")) {
+      throw new Error(`${t.path} is not a canonical corpus-relative .knxproj path`);
+    }
+    byPath.set(t.path, t);
+  }
+  const uniqueTargets = [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path));
+  const catalogueDirPath = join(root, "catalogue");
+  const catalogue = new Set(existsSync(catalogueDirPath) ? readdirSync(catalogueDirPath).filter((f) => f.endsWith(".xml.gz")).sort() : []);
+  const apps: Record<string, string> = {};
+  const entries: ProjectRecords[] = [];
+  const recorded: PreparedRecordsUpdate["recorded"] = [];
+  const failures: string[] = [];
+  for (const t of uniqueTargets) {
+    try {
+      const entry = recordProjectAt(t.path, t.sourcePath ?? join(root, t.path), candidates, catalogue, apps);
+      entries.push(entry);
+      recorded.push({ path: t.path, devices: entry.devices.length, withLoadedImage: entry.devices.filter((d) => d.loadedImage).length });
+      options.onRecorded?.(entry);
+    } catch (e) {
+      failures.push(`${t.path}: ${describeFailure(e)}`);
+    }
+  }
+  if (failures.length) throw new Error(`${failures.length} of ${uniqueTargets.length} project(s) cannot be recorded, so nothing was written:\n${failures.join("\n")}`);
+  return { entries, apps, recorded };
+}
+
+// Re-reads `<root>/captures/ets-download-records.json.gz`, merges a prepared update, drops missing projects
+// (and any explicit `dropPaths`), prunes unused embedded apps, and writes the file atomically.
+export function commitEtsRecordsUpdate(
+  root: string,
+  prepared: PreparedRecordsUpdate,
+  options: { missing?: boolean; targetSpecs?: readonly string[]; dropPaths?: readonly string[] } = {},
+): RecordsUpdateResult {
+  const missing = options.missing ?? false;
+  const targetSpecs = options.targetSpecs ?? prepared.entries.map((e) => e.path);
+  const records = readStoredRecordsAt(root, missing, targetSpecs);
+  const dropSet = new Set(options.dropPaths ?? []);
+  const replacing = new Set(prepared.entries.map((e) => e.path));
+  const dropped = records.projects.filter((p) => !replacing.has(p.path) && (dropSet.has(p.path) || !existsSync(join(root, p.path)))).map((p) => p.path);
+  records.projects = [
+    ...records.projects.filter((p) => !dropped.includes(p.path) && !replacing.has(p.path)),
+    ...prepared.entries,
+  ].sort((a, b) => a.path.localeCompare(b.path));
+  Object.assign(records.apps, prepared.apps);
+  const used = new Set(records.projects.flatMap((p) => p.devices.flatMap((d) => (d.loadedImage ? [d.application] : []))));
+  records.apps = Object.fromEntries(Object.entries(records.apps).filter(([id]) => used.has(id)));
+  writeGzipAtomic(join(root, ETS_RECORDS_FILE), gzipSync(Buffer.from(JSON.stringify(records))));
+  return { recorded: prepared.recorded, dropped, totalProjects: records.projects.length };
 }
 
 if (import.meta.main) {
@@ -283,20 +388,17 @@ if (import.meta.main) {
     for (const p of dropped) console.log(`would drop the entry of ${p}, which is no longer in the corpus`);
     process.exit(0);
   }
-  const candidates = [...new Set([...(process.env.KNXPROJ_PASSWORD ? [process.env.KNXPROJ_PASSWORD] : []), ...passwords()])];
-  const failures: string[] = [];
-  for (const p of paths) {
-    try {
-      const entry = recordProject(p, candidates, records.apps);
-      records.projects = [...records.projects.filter((x) => x.path !== p), entry].sort((a, b) => a.path.localeCompare(b.path));
-      console.log(`${p}: ${entry.devices.length} devices, ${entry.devices.filter((d) => d.loadedImage).length} with ETS's download record`);
-    } catch (e) {
-      failures.push(`${p}: ${describeFailure(e)}`);
-    }
-  }
-  if (failures.length) throw new Error(`${failures.length} of ${paths.length} project(s) cannot be recorded, so nothing was written:\n${failures.join("\n")}`);
-  const used = new Set(records.projects.flatMap((p) => p.devices.flatMap((d) => (d.loadedImage ? [d.application] : []))));
-  records.apps = Object.fromEntries(Object.entries(records.apps).filter(([id]) => used.has(id)));
-  writeFileSync(corpusPath(ETS_RECORDS_FILE), gzipSync(Buffer.from(JSON.stringify(records))));
-  console.log(`recorded ${paths.length} project(s)${dropped.length ? `, dropped ${dropped.length} no longer in the corpus` : ""}`);
+  const root = corpusUnlistedPath("");
+  const prepared = prepareEtsRecordsUpdate(
+    root,
+    paths.map((path) => ({ path })),
+    etsRecordPasswordCandidates(),
+    {
+      missing,
+      targetSpecs: targets,
+      onRecorded: (entry) => console.log(`${entry.path}: ${entry.devices.length} devices, ${entry.devices.filter((d) => d.loadedImage).length} with ETS's download record`),
+    },
+  );
+  const res = commitEtsRecordsUpdate(root, prepared, { missing, targetSpecs: targets });
+  console.log(`recorded ${res.recorded.length} project(s)${res.dropped.length ? `, dropped ${res.dropped.length} no longer in the corpus` : ""}`);
 }
