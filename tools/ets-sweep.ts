@@ -712,7 +712,8 @@ export function rowUnit(id: string, dir: string, application: string, spec: RowS
   if (spec.export === undefined) throw new Error(`row ${id}: a catalogue unit's application program comes from the row's export, and row.json names none`);
   const appXml = extractAppPrograms(readMaybeGzipped(join(dir, spec.export)), [application]).get(application);
   if (appXml === undefined) throw new Error(`row ${id}: its export ${spec.export} holds no application program ${application}`);
-  const unit = catalogueUnitSpec(application, appXml, { donor: named.donor, learned: named.identity, recordedRule: rule });
+  const skipPropertyHardwareType = named.properties["0/78"]?.startsWith("identity loop:") === true;
+  const unit = catalogueUnitSpec(application, appXml, { donor: named.donor, learned: named.identity, recordedRule: rule, skipPropertyHardwareType });
   if ("refused" in unit) throw new Error(`row ${id}: no catalogue unit: ${unit.refused}`);
   if (unit.rule !== named.rule) throw new Error(`row ${id}: its unit was chosen by the rule "${named.rule}", the rule of its mask is now "${unit.rule}": the row is to run again`);
   if (donorDigest(unit.donor) !== named.donorDigest) throw new Error(`row ${id}: its donor ${donor} was collected again, run on another application program or given another behaviour since the row ran: the row is to run again`);

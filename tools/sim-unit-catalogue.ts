@@ -49,6 +49,10 @@ export interface CatalogueUnitSpec {
   // Set for a stored sweep row recorded under an earlier rule of its mask whose application now has no qualifying
   // donor: keeps the row replayable on its recorded donor while manifestRow records rulePicksNow.
   retiredRule?: true;
+  // Set when replaying a row whose 0/78 the identity loop alone gave: skips declaredHardwareType
+  // (<Property ObjectIndex="0" PropertyId="78"/> and <ApplicationProgram HardwareType="..."/>) so the unit keeps
+  // the exact property sources ETS saw.
+  skipPropertyHardwareType?: true;
 }
 
 // The unit of a sweep row: an own unit, or a catalogue unit.
@@ -470,11 +474,11 @@ export type PrecheckOutcome =
   | { kind: "refused"; why: string }
   | { kind: "fallback"; why: string };
 
-// Offline donor pre-check for `application` against an ETS ProductStore application file (`raw`, plain or gzipped
-// XML). Returns the exact chooseDonor() verdict when the file decodes strictly as UTF-8, validates as well-formed
-// XML, parses cleanly and matches `application` (and `mask`, when given, as "07B0" or "MV-07B0"), or `fallback` when
-// the file is truncated, corrupt, unparseable, or disagrees on identity so the batch runner falls back to ETS's export
-// instead of refusing on broken local data.
+// Offline donor and product-identity pre-check for `application` against an ETS ProductStore application file (`raw`,
+// plain or gzipped XML). Returns the exact chooseDonor() / productIdentity() verdict when the file decodes strictly as
+// UTF-8, validates as well-formed XML, parses cleanly and matches `application` (and `mask`, when given, as "07B0" or
+// "MV-07B0"), or `fallback` when the file is truncated, corrupt, unparseable, or disagrees on identity so the batch
+// runner falls back to ETS's export instead of refusing on broken local data.
 export function precheckDonor(
   application: string,
   raw: string | Buffer,
@@ -491,12 +495,27 @@ export function precheckDonor(
     return { kind: "fallback", why: `could not parse ProductStore XML: ${e instanceof Error ? e.message : String(e)}` };
   }
   if (cfg.id !== application) return { kind: "fallback", why: `ProductStore XML holds ${cfg.id || "no application id"}, expected ${application}` };
+  if (!/^M-[0-9A-Fa-f]{4}_/.test(cfg.id)) return { kind: "fallback", why: `ProductStore XML has invalid application id ${cfg.id}` };
+  if (!Number.isInteger(cfg.appNumber) || cfg.appNumber < 0 || cfg.appNumber > 0xffff) {
+    return { kind: "fallback", why: `ProductStore XML has invalid ApplicationNumber (${cfg.appNumber})` };
+  }
+  if (!Number.isInteger(cfg.appVersion) || cfg.appVersion < 0 || cfg.appVersion > 0xff) {
+    return { kind: "fallback", why: `ProductStore XML has invalid ApplicationVersion (${cfg.appVersion})` };
+  }
+  if (!Number.isInteger(cfg.appPeiType) || cfg.appPeiType < 0 || cfg.appPeiType > 0xff) {
+    return { kind: "fallback", why: `ProductStore XML has invalid PeiType (${cfg.appPeiType})` };
+  }
   if (opts.mask !== undefined) {
     const wantMask = opts.mask.startsWith("MV-") ? opts.mask : `MV-${opts.mask}`;
     if (cfg.mask !== wantMask) return { kind: "fallback", why: `ProductStore XML mask ${cfg.mask || "missing"} disagrees with ${wantMask}` };
   }
   const choice = chooseDonorFor(cfg, opts.units ?? SIM_UNITS);
-  return "refused" in choice ? { kind: "refused", why: choice.refused } : { kind: "donor", donor: choice.donor, rule: choice.rule };
+  if ("refused" in choice) return { kind: "refused", why: choice.refused };
+  try { productIdentity(xml, cfg, { includePropertyHardwareType: false }); } catch (e) {
+    if (e instanceof Error && /^no (?:catalogue|product) unit:/.test(e.message)) return { kind: "refused", why: e.message };
+    throw e;
+  }
+  return { kind: "donor", donor: choice.donor, rule: choice.rule };
 }
 
 // The donor of `appXml` by the rule of its mask, among `units`.
@@ -523,7 +542,7 @@ function chooseDonorFor(cfg: AppConfig, units: readonly SimUnitSpec[]): DonorCho
 export function catalogueUnitSpec(
   application: string,
   appXml: string,
-  opts: { donor?: string; learned?: string[]; units?: readonly SimUnitSpec[]; recordedRule?: string } = {},
+  opts: { donor?: string; learned?: string[]; units?: readonly SimUnitSpec[]; recordedRule?: string; skipPropertyHardwareType?: boolean } = {},
 ): CatalogueUnitSpec | { refused: string } {
   const units = opts.units ?? SIM_UNITS;
   const own = units.find((u) => u.catalogue === `${application}.xml.gz`);
@@ -555,7 +574,12 @@ export function catalogueUnitSpec(
   }
   if ("refused" in choice) return choice;
   const { donor, rule } = choice;
-  return { id: `${application}@${donor.id}`, name: `${application} (catalogue unit on ${donor.name})`, application, appXml, interfaceIa: donor.interfaceIa, interfaceMaxApdu: donor.interfaceMaxApdu, donor, rule, learned: opts.learned ?? [], ...(retiredRule ? { retiredRule: true as const } : {}) };
+  return {
+    id: `${application}@${donor.id}`, name: `${application} (catalogue unit on ${donor.name})`, application, appXml,
+    interfaceIa: donor.interfaceIa, interfaceMaxApdu: donor.interfaceMaxApdu, donor, rule, learned: opts.learned ?? [],
+    ...(retiredRule ? { retiredRule: true as const } : {}),
+    ...(opts.skipPropertyHardwareType ? { skipPropertyHardwareType: true as const } : {}),
+  };
 }
 
 const hex = (b: Buffer) => b.toString("hex");
@@ -563,9 +587,9 @@ const hex = (b: Buffer) => b.toString("hex");
 const programIdKey = (cfg: AppConfig) => `${maskInfo(cfg.mask).family === "system-b" ? 4 : 3}/${PID.PROGRAM_ID}`;
 
 // The identity the product gives: productUnit's, with the application's program id on its application object.
-function productIdentity(appXml: string, cfg: AppConfig): ProductUnit {
+function productIdentity(appXml: string, cfg: AppConfig, opts: { includePropertyHardwareType?: boolean } = {}): ProductUnit {
   const refuse = (why: string): never => { throw new Error(`no catalogue unit: ${why}`); };
-  const unit = productUnit(appXml, cfg);
+  const unit = productUnit(appXml, cfg, opts);
   const key = programIdKey(cfg);
   const id = programIdStamp(cfg);
   const had = unit.properties.get(key);
@@ -677,7 +701,7 @@ export function catalogueUnit(spec: CatalogueUnitSpec): CatalogueUnit {
     }
     return { objects, properties };
   };
-  let identity = productIdentity(appXml, cfg);
+  let identity = productIdentity(appXml, cfg, { includePropertyHardwareType: !spec.skipPropertyHardwareType });
   for (const line of spec.learned) {
     const r = rerunIdentity(identity, line, answered(compose(identity).objects));
     if ("refused" in r) refuse(`the identity loop's line does not apply: ${r.refused}`);
@@ -733,12 +757,27 @@ export function learnIdentity(spec: CatalogueUnitSpec, log: Buffer | string): { 
 export function catalogueUnitFrom(application: string, product: Buffer, opts: { donor?: string; learnedFrom?: { name: string; log: Buffer }[] } = {}): CatalogueUnitSpec | { refused: string } {
   const appXml = extractAppPrograms(product, [application]).get(application);
   if (appXml === undefined) throw new Error(`the product holds no application program ${application}`);
-  let spec: CatalogueUnitSpec | { refused: string } = catalogueUnitSpec(application, appXml, { donor: opts.donor });
-  for (const { name, log } of opts.learnedFrom ?? []) {
-    if ("refused" in spec) break;
-    const r = learnIdentity(spec, log);
-    spec = "refused" in r ? { refused: `${name}: ${r.refused}` } : r.spec;
-  }
+  const applyLogs = (initial: CatalogueUnitSpec | { refused: string }) => {
+    let spec = initial;
+    for (const { name, log } of opts.learnedFrom ?? []) {
+      if ("refused" in spec) break;
+      const r = learnIdentity(spec, log);
+      spec = "refused" in r ? { refused: `${name}: ${r.refused}` } : r.spec;
+    }
+    return spec;
+  };
+  const base = catalogueUnitSpec(application, appXml, { donor: opts.donor });
+  const spec = applyLogs(base);
+  if (!("refused" in spec) || "refused" in base || !opts.learnedFrom?.length) return spec;
+  // A log recorded without declaredHardwareType pre-seeding names the donor's un-preseeded 0/78 and asks ETS's
+  // required value; replay it with skipPropertyHardwareType only when all logs apply cleanly and land on the same 0/78.
+  let baseHw: Buffer;
+  try { baseHw = answered(catalogueUnit(base).objects)("0/78"); } catch { return spec; }
+  const hist = applyLogs(catalogueUnitSpec(application, appXml, { donor: opts.donor, skipPropertyHardwareType: true }));
+  if ("refused" in hist) return spec;
+  try {
+    if (answered(catalogueUnit(hist).objects)("0/78").equals(baseHw)) return hist;
+  } catch { /* keep original refusal */ }
   return spec;
 }
 

@@ -53,12 +53,13 @@
 //
 // THE BATCH (runBatch). The rows of the catalogue list (tools/ets-catalogue.ts) in its order, each written as a row is
 // under <out>/<application>/defaults/ with batch-result.json beside it (tools/ets-batch.ts: resume, failure classes,
-// batch.log). Before driving ETS for a catalogue-unit row, the runner pre-checks chooseDonor() against the application's
-// XML in ETS's local ProductStore (read-only over ssh from the bench host, or from --product-store <dir>, disabled with
-// --no-precheck); a donor refusal writes sim-refused.txt and batch-result.json directly without touching ETS, while a
-// missing, unreadable or malformed ProductStore file falls back to the normal ETS export path. Before it starts, the
-// bench host must be kept awake: Home Assistant's switch.x390_wach on (HA_TOKEN; the
-// host sleeps in the evening without it). Before each row ETS is up and in its layout (its project open, no dialog).
+// batch.log). Before driving ETS for a catalogue-unit row, the runner pre-checks chooseDonor() and productIdentity()
+// (which validates productUnit()) against the application's XML in ETS's local ProductStore (read-only over ssh from
+// the bench host, or from --product-store <dir>, disabled with --no-precheck); a donor or product-unit refusal writes
+// sim-refused.txt and batch-result.json directly without touching ETS, while a missing, unreadable or malformed
+// ProductStore file falls back to the normal ETS export path. Before it starts, the bench host must be kept awake:
+// Home Assistant's switch.x390_wach on (HA_TOKEN; the host sleeps in the evening without it). Before each row ETS is
+// up and in its layout (its project open, no dialog).
 // A failure of a row is classified (classifyFailure): ETS gone or one of its internal errors restarts ETS and runs the
 // row once more; an unknown dialog ends the row driver-failed with its screenshot and closes the dialog (or restarts
 // ETS); a bench host that does not answer, a KNX-ID login ETS asks for, an online catalogue that does not answer or an
@@ -2242,10 +2243,11 @@ export async function readProductStoreApp(manufacturer: string, application: str
   });
 }
 
-// Offline donor pre-check for one batch row before ETS is opened: own-unit rows proceed directly to ETS; otherwise
-// chooseDonor() runs against the application's ProductStore XML. A refusal returns `{ refused }` so the caller writes
-// sim-refused.txt and the batch result without touching ETS; missing, unreadable or malformed ProductStore data returns
-// `{ proceed: true, fallback }` so the batch falls back to the normal ETS export path.
+// Offline donor and product-identity pre-check for one batch row before ETS is opened: own-unit rows proceed directly
+// to ETS; otherwise chooseDonor() and productIdentity() (which validates productUnit()) run against the application's
+// ProductStore XML. A refusal returns `{ refused }` so the caller writes sim-refused.txt and the batch result without
+// touching ETS; missing, unreadable or malformed ProductStore data returns `{ proceed: true, fallback }` so the batch
+// falls back to the normal ETS export path.
 export async function batchRowPrecheck(
   row: Pick<ListRow, "application" | "manufacturer" | "mask">,
   readApp: (manufacturer: string, application: string) => Promise<{ bytes: Buffer } | { fallback: string }> | { bytes: Buffer } | { fallback: string },

@@ -386,4 +386,36 @@ corpusDescribe("offline donor pre-check for batch rows", () => {
     expect(await batchRowPrecheck(row(corruptMid, "0705"), (m, a) => readProductStoreApp(m, a, store)))
       .toMatchObject({ proceed: true, fallback: expect.stringContaining("ProductStore XML is malformed") });
   });
+
+  test("refuses no-product-unit rows offline (LdCtrlCompareMem, choose, contradictory 0/78, malformed LdCtrlCompareProp)", async () => {
+    const store = tempDir("ets-precheck-productunit-");
+    const baseApp = "M-0083_A-0137-20-7EB2";
+    const baseXml = catalogueXml(`${baseApp}.xml.gz`);
+    const putVariant = (id: string, extraLoadStep: string) => {
+      const mfr = id.slice(0, 6);
+      mkdirSync(join(store, mfr, id), { recursive: true });
+      const xml = baseXml.replaceAll(baseApp, id).replace("</LoadProcedure>", `${extraLoadStep}</LoadProcedure>`);
+      writeFileSync(join(store, mfr, id, "A"), xml);
+    };
+
+    const memApp = "M-0083_A-0137-20-FFE1";
+    putVariant(memApp, '<LdCtrlCompareMem Address="16384" InlineData="00" />');
+    expect(await batchRowPrecheck(row(memApp, "07B0"), (m, a) => readProductStoreApp(m, a, store)))
+      .toEqual({ refused: "no product unit: its load procedure holds LdCtrlCompareMem, whose expectation is not modelled" });
+
+    const chooseApp = "M-0083_A-0137-20-FFE2";
+    putVariant(chooseApp, '<choose ParamRefId="M-0083_A-0137-20-FFE2_P-1_R-1"><when test="0" /></choose>');
+    expect(await batchRowPrecheck(row(chooseApp, "07B0"), (m, a) => readProductStoreApp(m, a, store)))
+      .toEqual({ refused: "no product unit: its load procedure holds choose, whose expectation is not modelled" });
+
+    const contraApp = "M-0083_A-0137-20-FFE3";
+    putVariant(contraApp, '<LdCtrlCompareProp ObjIdx="0" PropId="78" InlineData="000102030405" /><LdCtrlCompareProp ObjIdx="0" PropId="78" InlineData="000102030406" />');
+    expect(await batchRowPrecheck(row(contraApp, "07B0"), (m, a) => readProductStoreApp(m, a, store)))
+      .toMatchObject({ refused: expect.stringContaining("no product unit: property 0/78: octet 5 is 05") });
+
+    const malformedApp = "M-0083_A-0137-20-FFE4";
+    putVariant(malformedApp, '<LdCtrlCompareProp ObjIdx="0" PropId="78" StartElement="2" InlineData="1234" />');
+    expect(await batchRowPrecheck(row(malformedApp, "07B0"), (m, a) => readProductStoreApp(m, a, store)))
+      .toMatchObject({ refused: expect.stringContaining("no product unit: LdCtrlCompareProp with malformed/missing inline data or element addressing") });
+  });
 });

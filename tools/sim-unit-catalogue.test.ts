@@ -11,7 +11,7 @@ import { tempDir } from "./test-temp.ts";
 import { segmentAllocationRefusal, type SimUnit } from "./sim-unit.ts";
 import type { SystemBBehaviour, UnitBehaviour } from "./sim-unit-model.ts";
 import { gzipSync } from "node:zlib";
-import { catalogueUnit, catalogueUnitRecord, catalogueUnitSpec, chooseDonor, donorDigest, donorUnfit, DONOR_RULES, learnIdentity, normalizeProductStoreXml, precheckDonor, PRODUCT_STORE_TAGS, RETIRED_DONOR_RULES, unitMask, type CatalogueUnitSpec } from "./sim-unit-catalogue.ts";
+import { catalogueUnit, catalogueUnitFrom, catalogueUnitRecord, catalogueUnitSpec, chooseDonor, donorDigest, donorUnfit, DONOR_RULES, learnIdentity, normalizeProductStoreXml, precheckDonor, PRODUCT_STORE_TAGS, RETIRED_DONOR_RULES, unitMask, type CatalogueUnitSpec } from "./sim-unit-catalogue.ts";
 import { mismatchLines } from "./sim-unit-product.ts";
 import { framePairs, replayCapture } from "./sim-unit-replay.ts";
 import { ABB_USU42, AURO_M0081, GIRA_TS3, MDT_BE02001, MEANWELL_KNX40E, newSimUnit, OPENKNX_RAUMCONTROLLER, SIM_UNITS, THEBEN_DALI_GATEWAY, type SimUnitSpec } from "./sim-units.ts";
@@ -301,6 +301,23 @@ corpusDescribe("a catalogue unit's donor", () => {
     expect(precheckDonor(okApp, Buffer.concat([Buffer.from(okStore, "utf8"), Buffer.from([0xff, 0xfe])]))).toMatchObject({ kind: "fallback", why: expect.stringContaining("could not decode ProductStore XML") });
     expect(precheckDonor(okApp, Buffer.from([0x1f, 0x8b, 0x08, 0x00, 0xff, 0xff]))).toMatchObject({ kind: "fallback", why: expect.stringContaining("could not decode ProductStore XML") });
     expect(precheckDonor(okApp, "<KNX><NoApp/></KNX>")).toMatchObject({ kind: "fallback", why: expect.stringContaining("could not parse ProductStore XML") });
+    expect(precheckDonor(okApp, okStore.replace(/ApplicationNumber="[^"]*"/, 'ApplicationNumber="broken"'))).toMatchObject({ kind: "fallback", why: expect.stringContaining("invalid ApplicationNumber") });
+
+    // Product-unit / product-identity refusals (LdCtrlCompareMem, choose, contradictory 0/78, malformed LdCtrlCompareProp,
+    // and program-id compare contradiction) are caught offline by precheckDonor after donor selection.
+    const baseApp = "M-0162_A-0004-11-F245";
+    const baseXml = catalogueXml(`${baseApp}.xml.gz`);
+    const injectLoad = (extra: string) => toProductStore(baseXml.replace("</LoadProcedure>", `${extra}</LoadProcedure>`));
+    expect(precheckDonor(baseApp, injectLoad('<LdCtrlCompareMem Address="16384" InlineData="00" />')))
+      .toEqual({ kind: "refused", why: "no product unit: its load procedure holds LdCtrlCompareMem, whose expectation is not modelled" });
+    expect(precheckDonor(baseApp, injectLoad('<choose ParamRefId="M-0162_A-0004-11-F245_P-1_R-1"><when test="0" /></choose>')))
+      .toEqual({ kind: "refused", why: "no product unit: its load procedure holds choose, whose expectation is not modelled" });
+    expect(precheckDonor(baseApp, injectLoad('<LdCtrlCompareProp ObjIdx="0" PropId="78" InlineData="000102030405" /><LdCtrlCompareProp ObjIdx="0" PropId="78" InlineData="000102030406" />')))
+      .toMatchObject({ kind: "refused", why: expect.stringContaining("no product unit: property 0/78: octet 5 is 05") });
+    expect(precheckDonor(baseApp, injectLoad('<LdCtrlCompareProp ObjIdx="0" PropId="78" StartElement="2" InlineData="1234" />')))
+      .toMatchObject({ kind: "refused", why: expect.stringContaining("no product unit: LdCtrlCompareProp with malformed/missing inline data or element addressing") });
+    expect(precheckDonor(baseApp, injectLoad('<LdCtrlCompareProp ObjIdx="4" PropId="13" InlineData="0000000000" />')))
+      .toMatchObject({ kind: "refused", why: expect.stringContaining("no catalogue unit: the application's program id") });
   });
 });
 
@@ -348,11 +365,15 @@ corpusDescribe("a catalogue unit", () => {
     const unit = catalogueUnit(s);
     const cat = await replay((o) => unit.make(o), s.interfaceIa, text);
     expect([own.sim.refusals, cat.sim.refusals]).toEqual([[], []]);
-    // Its frames are the donor's but for the manufacturer, which the product gives.
+    // Its frames are the donor's but for the manufacturer and the <Property 0/78> hardware type, which the product gives.
     const differ = own.frames.flatMap((f, i) => (f === cat.frames[i] ? [] : [[f, cat.frames[i]]]));
-    expect(differ).toEqual([["b0 53d6000c10010048", "b0 53d6000c1001008e"]]);
+    expect(differ).toEqual([
+      ["b0 53d6000c10010048", "b0 53d6000c1001008e"],
+      ["b0 57d6004e1001000000000000", "b0 57d6004e1001008e1e000000"],
+    ]);
     expect(cat.sim.lines.filter((l) => l.startsWith("source"))).toEqual([
       "source of 0/12: product: the application's manufacturer M-008E",
+      "source of 0/78: product: Property 0/78 (M-008E_A-7079-10-9C41_P-6 = 008e1e000000)",
       "source of 3/13: product: the application's program id 008e707910",
       "source of PEI type: product: the application's PEI type 0",
     ]);
@@ -451,10 +472,20 @@ corpusDescribe("a catalogue unit's identity loop", () => {
   });
 
   test("takes what ETS required where the unit answered what the line says, and refuses another run's line", () => {
-    // The MDT SCN-IP000.03 (MV-07B0, Data Secure) on the GVS AMMA.
-    const s = spec("M-0083_A-0137-20-7EB2", "gvs-amma");
+    // The MDT SCN-IP000.03 (MV-07B0, Data Secure) on the GVS AMMA. With its <Property 0/78> pre-seeded, 0/78 comes
+    // from the product and contradicts another required value; without <Property 0/78> (or on historical replay with
+    // skipPropertyHardwareType), 0/78 falls through to the donor and is learned from ETS6.log.
+    const preseeded = spec("M-0083_A-0137-20-7EB2", "gvs-amma");
+    const preseededUnit = catalogueUnit(preseeded);
+    expect(preseededUnit.objects.get(0)!.get(78)!.elements![0].toString("hex")).toBe("008300000085");
+    expect(preseededUnit.properties.get("0/78")).toBe("product: Property 0/78 (M-0083_A-0137-20-7EB2_P-173 = 008300000085)");
+    const contradict = mismatchLines(readFileSync(WRONG))[0].line.replace("620100000005 instead of 620100000004", "008300000085 instead of 0085000000AB");
+    expect(learnIdentity(preseeded, contradict)).toEqual({ refused: expect.stringContaining("ETS requires 0085000000ab in 0/78: octet 1 is 83") });
+
+    const s: CatalogueUnitSpec = { ...preseeded, skipPropertyHardwareType: true };
     const unit = catalogueUnit(s);
     const answers = unit.objects.get(0)!.get(78)!.elements![0].toString("hex");
+    expect(answers).toBe("00414d000002");
     // The line of the MEAN WELL run names another unit's answer.
     expect(learnIdentity(s, readFileSync(WRONG))).toEqual({ refused: `ETS saw 620100000005 in 0/78, which this identity does not answer: the log is of another run (${mismatchLines(readFileSync(WRONG))[0].line})` });
     // The same line, as ETS would write it for this unit: what it answers, and a value ETS requires instead.
@@ -473,6 +504,14 @@ corpusDescribe("a catalogue unit's identity loop", () => {
     expect(learnIdentity(s, line.replace("0085000000AB", "01"))).toEqual({ refused: expect.stringContaining("gives 1 octets 01, the donor answers 6; what the unit answers after them is not given") });
     // A value with a zero tail past the donor's element leaves the unit's answer as it was: a rerun would fail the same.
     expect(learnIdentity(s, line.replace("0085000000AB", `${answers.toUpperCase()}0000`))).toEqual({ refused: "the unit answers 0/78 as before with what ETS required: a rerun fails the same" });
+    // catalogueUnitFrom accepts a --learned-from log recorded without declaredHardwareType pre-seeding when it lands
+    // on the same 0/78, while still refusing a log that contradicts declaredHardwareType or names another donor's answer.
+    const xmlBuf = Buffer.from(catalogueXml("M-0083_A-0137-20-7EB2.xml.gz"), "utf8");
+    const histLine = mismatchLines(readFileSync(WRONG))[0].line.replace("620100000005 instead of 620100000004", `${answers.toUpperCase()} instead of 008300000085`);
+    const replayed = catalogueUnitFrom("M-0083_A-0137-20-7EB2", xmlBuf, { donor: "gvs-amma", learnedFrom: [{ name: "hist.log", log: Buffer.from(histLine, "latin1") }] });
+    if ("refused" in replayed) throw new Error(replayed.refused);
+    expect([replayed.skipPropertyHardwareType, catalogueUnit(replayed).objects.get(0)!.get(78)!.elements![0].toString("hex")]).toEqual([true, "008300000085"]);
+    expect(catalogueUnitFrom("M-0083_A-0137-20-7EB2", xmlBuf, { donor: "gvs-amma", learnedFrom: [{ name: "bad.log", log: Buffer.from(line, "latin1") }] })).toEqual({ refused: expect.stringContaining("bad.log:") });
   });
 });
 
