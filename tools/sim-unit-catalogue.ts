@@ -141,8 +141,8 @@ function maxDeclaredComObjectNumber(cfg: AppConfig, instances: readonly ModuleIn
 }
 
 // The System B relative segment sizes a full download allocates: every declared LdCtrlRelSegment (each distinct size
-// kept so a Size="0" step is never masked by a positive size on the same object) and the com-object table on object 3
-// (2 + 2 * maxComObjectNumber).
+// kept so a Size="0" step is never masked by a positive size on the same object) and an upper bound for the com-object
+// table on object 3 (2 + 2 * maxDeclaredComObjectNumber, including inactive module objects for donor capacity checks).
 function systemBSegments(cfg: AppConfig, steps: ReturnType<typeof fullSteps>): { lsm: number; size: number }[] | string {
   const seen = new Set<string>();
   const out: { lsm: number; size: number }[] = [];

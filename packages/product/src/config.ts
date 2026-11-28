@@ -253,17 +253,21 @@ export interface DeviceConfigBuild extends DeviceConfigView {
   // module com-objects. Carries the RESOLVED flags (ComObjectRef overrides applied), which
   // the com-object-table build needs. See buildDeviceConfig and CfgComObjImage.
   imageComObjects: Map<number, CfgComObjImage>;
-  // The highest com-object number the application DECLARES (across every choose branch and
-  // module instance, not only the active ones), i.e. the length the firmware's group-object
-  // table must have. thelsing/knx getGroupObject(n) is unbounded and OpenKNX modules address
-  // their objects by fixed number, so a table sized to the highest ACTIVE number instead sends
-  // the firmware off the end of its array on boot (hardware-proven: the RaumController reverts).
-  // The com-object-table build (comobjbuild.ts) sizes the table to this. See buildDeviceConfig.
+  // The System B com-object table entry count: the highest declared com-object number across flat
+  // `<ComObjectTable>` declarations and every module instance/branch, EXCEPT when `<ComObjectTable />`
+  // declares no flat com-objects at all and the active configuration reaches zero communication
+  // objects (`imageComObjects.size === 0`), in which case ETS allocates 2 bytes (`00 00`, count 0)
+  // rather than sizing from inactive module declarations (VIMAR 01506 at defaults). Whenever flat
+  // declarations exist or any com-object is active, the table covers every declared object because
+  // firmware such as thelsing/knx indexes `getGroupObject(n)` without bounds checks (hardware-proven:
+  // shortening the OpenKNX RaumController table from 1359 to the active maximum reverted the unit to
+  // factory). `buildComObjectTable` sizes the table to this. See buildDeviceConfig.
   maxComObjectNumber: number;
   // The highest declared com-object number across flat declarations and every module instance/branch,
   // or null when the application declares no com-objects at all. Unlike maxComObjectNumber (clamped
-  // at 0 for 1-based System B), null distinguishes "none declared" from "only object #0 declared"
-  // for 0-based MV-0705 com-object tables.
+  // at 0 for 1-based System B and 0 for empty-`<ComObjectTable />` modular apps with zero active
+  // objects), null distinguishes "none declared" from "only object #0 declared" for 0-based MV-0705
+  // com-object tables and bounds System B read-back across any module object the device may hold.
   maxDeclaredComObject: number | null;
   // The value a top-level ParameterRef holds in this configuration, resolved like the view does
   // (device value, a placed sibling ref's value, ref or parameter default) against the final
@@ -1111,21 +1115,20 @@ function buildDeviceConfigReading(
   imgCollect(app.dynamic, TOP);
   const rejectedRefs = new Set([...placedRejected].filter(([, rejected]) => rejected).map(([r]) => r));
 
-  // The com-object TABLE length the firmware needs: the highest com-object number the app DECLARES,
-  // active or not. imageComObjects is choose-gated (it only sees the objects the current config
-  // reaches), but the firmware's group-object array is sized to the DECLARATION: a table shorter than
-  // the highest declared number lets the unbounded getGroupObject(n) read off the end of the heap on
-  // boot (hardware-proven: the OpenKNX RaumController death-loops and reverts to factory when the table
-  // claims 138 objects and a module addresses object 1359).
-  //
-  // A flat (top-level) com-object's declared Number IS its on-device number, so take it straight from
-  // the declaration — independent of whether any dynamic node places it, so a declared-but-unreferenced
-  // object can never shorten the table. A module (BaseNumber) com-object only acquires a device number
-  // inside an instance scope (its Number plus the instance's BaseNumber), so those are resolved by
-  // walking each module instance, in a scope where every argument is present (no unresolved-arg abort).
-  // Every branch is walked, not selectWhens: an object placed only under an inactive choose still sizes
-  // the table, because the firmware indexes by number regardless of the active configuration.
+  // Declared com-object bounds:
+  // - `maxDeclaredComObject`: the highest com-object number across flat `<ComObjectTable>`
+  //   declarations and every module instance's declarations across all choose branches (used to
+  //   bound MV-0705 linked-bit clearing and System B read-back).
+  // - `maxComObjectNumber`: the System B com-object table entry count. Equals `max(0, maxDeclaredComObject)`
+  //   whenever the application declares any flat `<ComObject>` in `<Static><ComObjectTable>` (even
+  //   when zero objects are active, as ETS writes on the GVS AMMA, or when active objects are lower,
+  //   as required by unbounded firmware such as the OpenKNX RaumController) or activates at least
+  //   one com-object. Only when `<ComObjectTable />` has no flat `<ComObject>`s AND zero com-objects
+  //   are active (`imageComObjects.size === 0`) does ETS allocate 2 bytes (`00 00`, count 0) instead
+  //   of sizing from inactive module declarations (VIMAR 01506 at defaults); partially active
+  //   modular cases stay at `maxDeclaredComObject` until a capture establishes otherwise.
   let maxDeclaredComObject: number | null = null;
+  let hasStaticComObject = false;
   const noteDeclared = (n: number) => { maxDeclaredComObject = maxDeclaredComObject === null ? n : Math.max(maxDeclaredComObject, n); };
   const comObjsByMod = new Map<string, typeof app.comObjects extends Map<string, infer V> ? V[] : never>();
   for (const o of app.comObjects.values()) {
@@ -1134,6 +1137,7 @@ function buildDeviceConfigReading(
       if (list) list.push(o);
       else comObjsByMod.set(o.moduleDefId, [o]);
     } else if (!o.baseNumber) {
+      hasStaticComObject = true;
       noteDeclared(o.number);
     }
   }
@@ -1162,7 +1166,7 @@ function buildDeviceConfigReading(
     }
   };
   scanModuleComObjNums(app.dynamic, TOP, false);
-  const maxComObjectNumber = Math.max(0, maxDeclaredComObject ?? 0);
+  const maxComObjectNumber = !hasStaticComObject && imageComObjects.size === 0 ? 0 : Math.max(0, maxDeclaredComObject ?? 0);
 
   // Stable sort each sibling list by DisplayOrder (equal/missing keeps document order).
   const blocks: CfgBlock[] = [];
