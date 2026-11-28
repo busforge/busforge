@@ -4,6 +4,22 @@ import { resolveParamRef } from "./appconfig.ts";
 import { resolveModuleInstances, moduleArgNumber } from "./modules.ts";
 import { ProductError } from "./errors.ts";
 import type { MatrixOperation, OperationVerdict } from "./compatibility.ts";
+import {
+  buildRefsOfParam,
+  emptyPlacement,
+  holdsValue,
+  isChooseSkipped,
+  isSkippedRepeat,
+  recordPlacedRef,
+  resolveParamValue,
+  samePlacement,
+  selectChooseWhens,
+  unsettledDefaultRefusal,
+  type ChooseContext,
+  type ChoosePlacement,
+} from "./choose.ts";
+
+export { validateTest, matchTest, defaultBranchOf, chooseSkipsTests, unsettledDefaultRefusal, repeatCountOf, isSkippedRepeat } from "./choose.ts";
 
 // A human label for a datapoint type the engine cannot edit yet, shown on the
 // "not supported" row so the gap is explicit (never a blank/empty control).
@@ -309,38 +325,6 @@ export function moduleInstanceArgNumber(app: AppConfig, inst: ModuleInstance, fu
   return Number.isNaN(value) ? undefined : value;
 }
 
-// `test` grammar: space-separated tokens, OR-combined. A token is a bare integer
-// (equality) or one of =N, !=N, <N, >N, <=N, >=N. Compares the raw integer value.
-// This is ETS's own grammar for When/@test: `((-?\d+\s)*-?\d+)|((=|!=|>|<|>=|<=)-?\d+)`.
-// ETS forbids mixing the list form with an operator token; accepting that superset is harmless.
-//
-// Every token is validated BEFORE any is evaluated, and an unrecognised one refuses. Skipping it
-// would decide the branch on a partial reading of the condition: a `choose` whose branches all
-// test an unknown form would fall through to `default`, and that branch's parameters go into the
-// flashed image. Nothing downstream can catch it, because the device faithfully holds whatever it
-// was given and reads back green.
-const TEST_OP = /^(<=|>=|<|>|!=|=)(-?\d+)$/;
-export function validateTest(test: string): string[] {
-  const tokens = test.trim().split(/\s+/).filter((t) => t !== "");
-  for (const tok of tokens) {
-    if (!TEST_OP.test(tok) && !/^-?\d+$/.test(tok)) {
-      throw new ProductError("PARAM_TEST_UNSUPPORTED", `unsupported token "${tok}" in parameter condition "${test}"`);
-    }
-  }
-  return tokens;
-}
-export function matchTest(test: string, v: number): boolean {
-  const tokens = validateTest(test);
-  for (const tok of tokens) {
-    const m = TEST_OP.exec(tok);
-    if (m) {
-      const n = Number(m[2]);
-      if (m[1] === "<" ? v < n : m[1] === ">" ? v > n : m[1] === "<=" ? v <= n : m[1] === ">=" ? v >= n : m[1] === "!=" ? v !== n : v === n) return true;
-    } else if (v === Number(tok)) return true;
-  }
-  return false;
-}
-
 // Map a requested language to one the catalogue actually carries. The UI sends a
 // short code ("de", "en") while catalogues use full identifiers ("de-DE",
 // "en-GB"); match exactly first, then by primary subtag, else fall back to the
@@ -382,7 +366,8 @@ export function initialValues(app: AppConfig, lang?: string): Map<string, string
         const from = paramOf(n.source), to = paramOf(n.target);
         if (from && to) assigns.set(from.id, (assigns.get(from.id) ?? new Set()).add(to.id));
       }
-      if (n.kind === "block" || n.kind === "container") walk(n.children);
+      if (n.kind === "block") walk(n.children);
+      else if (n.kind === "container") { if (!isSkippedRepeat(n)) walk(n.children); }
       else if (n.kind === "choose") for (const w of n.whens) walk(w.children);
     }
   };
@@ -473,53 +458,10 @@ export function buildDeviceConfig(
   return { ...taken.build, otherReading: skipped, unsettledChooses };
 }
 
-// Whether a parameter's value is held by the device: in memory or in a property.
-const holdsValue = (p: CfgParam): boolean => p.hasMemory || !!p.onProperty;
-
-// What a choose none of whose tests matches does with its default branch: takes it on a ParameterRef an active
-// branch places ("take"), and on a memoryless parameter heading a reached block; not on a ref nothing places
-// ("skip"); "open" where no ETS download decides it (buildDeviceConfig). Shared with the module allocator.
-export function defaultBranchOf(app: AppConfig, defRefId: string, placed: boolean, heads: boolean): "take" | "skip" | "open" {
-  const ref = app.refs.get(defRefId);
-  if (!ref || placed) return "take";
-  const param = app.params.get(ref.paramId);
-  if (heads) return param && holdsValue(param) ? "open" : "take";
-  return (ref.access ?? param?.access) === "None" ? "open" : "skip";
-}
-
-// Whether a <choose ParamRefId="defRefId"> skips its <when test="..."> branches because no ref of
-// its parameter is placed, `defRefId` does not head a reached block, and no ref of its parameter
-// holds a stored or assigned value:
-// - Union members (any Access) hold no value while another member owns their memory (GVS AMMA:
-//   tests of 0 on idle Forced/Delay/Counter members placed no object in ETS).
-// - Non-union, non-property parameters with effective Access != "None" (`ref.access ?? p.access`)
-//   likewise match no <choose> test when unplaced and unstored, even when ETS still writes a
-//   memory-backed parameter's default into the parameter segment (Theben M-0048_A-0103-11-72A2:
-//   memoryless Access="Read" P-68 Value="1"; I.Trust 1ITRGV_100 M-02AA_A-0081-10-72A7-O0085:
-//   memory-backed P-37 offset 68 Value="1" and P-184 offset 468 Value="1" written as 0x10 and 0x11
-//   in RelMemory(4) while com-objects #164 and #220 stay 00 00; M-021E_A-0016-11-6EC4: unplaced
-//   memory-backed and memoryless editable parameters with Value="0"/"1"/"2" leave 14 objects 00 00).
-// Unplaced Access="None" Merkers (no <Memory>) still read as 0, and unplaced non-Access="None"
-// property-backed or Access="None" memory-backed parameters keep their default until a capture
-// shows otherwise. Shared with the module allocator (modules.ts).
-export function chooseSkipsTests(
-  app: AppConfig,
-  defRefId: string,
-  paramPlaced: boolean,
-  heads: boolean,
-  hasStored: boolean,
-): boolean {
-  if (paramPlaced || heads || hasStored) return false;
-  const ref = app.refs.get(defRefId);
-  const p = ref ? app.params.get(ref.paramId) : undefined;
-  if (!p) return false;
-  return !!p.union || (!p.onProperty && (ref!.access ?? p.access) !== "None");
-}
-
 // Module instances the allocators were re-run for (resolveModuleInstances) are refused where one belongs to a Module
 // node the configuration does not reach, or where the configuration reaches a Module node the allocator never
-// instantiated: the allocator evaluates the chooses on its own, so either mismatch leaves memory and com-object
-// offsets unknown or silently drops a reached module.
+// instantiated: although both walks share choose.ts, this guard still catches any remaining mismatch (e.g. a
+// <Repeat> loop mutating state across iterations) so memory and com-object offsets never shift silently.
 export function refuseUnreachedInstances(app: AppConfig, build: DeviceConfigBuild, instances: ModuleInstance[]): void {
   const off = instances.filter((mi) => !build.modulesReached.has(`${app.id}_${mi.refId}`));
   if (off.length) {
@@ -534,9 +476,6 @@ export function refuseUnreachedInstances(app: AppConfig, build: DeviceConfigBuil
 
 // Every reading of a configuration: the build, and the other reading where it has one (buildDeviceConfig).
 export const readingsOf = (b: DeviceConfigBuild): DeviceConfigBuild[] => (b.otherReading ? [b, b.otherReading] : [b]);
-
-export const unsettledDefaultRefusal = (chooses: string[] | undefined) => new ProductError("CHOOSE_DEFAULT_UNSETTLED",
-  `this configuration images differently depending on whether a <choose> takes its default branch${chooses?.length ? ` (on ${chooses.slice(0, 5).join(", ")})` : ""}: its ParameterRef is Access="None" and no active branch places it, or it has memory and only heads a reached block, and no ETS download shows which; an ETS download of this application in this configuration settles it`);
 
 function buildDeviceConfigReading(
   app: AppConfig,
@@ -554,96 +493,18 @@ function buildDeviceConfigReading(
   const instances = moduleInstances.length || !app.hasModules ? moduleInstances : resolveModuleInstances(app, overrides);
   const env = new Map(overrides); // working values; Assign mutates this
 
-  // Effective value: device instance value (keyed by the rewritten instance id)
-  // else the module-def ref default else the parameter default. `e` is the working
-  // value map; it defaults to the UI walk's `env`, but the image pass passes its own
-  // so its Assigns resolve in document order independently of the UI pass.
-  // A "Merker": an Access=None parameter with no <Memory>, used purely as a visibility
-  // flag in choose conditions. ETS does NOT give it its static default; it is UNSET
-  // until a ParameterRefRef placing it is reached in an active branch (which assigns the
-  // ref's value). So a never-placed Merker reads as unset (0 in choose tests, so non-zero
-  // tests fail), and the blocks it gates stay hidden, exactly as ETS leaves their parameter
-  // memory at the segment default. Hardware-verified on the Theben HMG6T Notprogramm block
-  // (gated by a Merker that is only placed when its real switch P-6 = 1; with P-6 = 0 the
-  // device keeps those bytes at 0, which only this rule reproduces). Unplaced non-Access="None"
-  // and union parameters are skipped in <choose> via chooseSkipsTests below; unplaced memoryless
-  // Access="Read" parameters also resolve to undefined via isUnplacedReadMerker.
-  const isMerker = (paramId: string): boolean => {
-    const p = app.params.get(paramId);
-    return !!p && p.access === "None" && !p.hasMemory;
+  // Shared <choose> and value-resolution context (choose.ts): `placement` is found by fixed-point
+  // iteration below so forward-placed Merkers and sibling-ref defaults resolve consistently across
+  // the UI walk, the image pass, and the module allocator.
+  const chooseCtx: ChooseContext = {
+    app,
+    refsOfParam: buildRefsOfParam(app),
+    placement: emptyPlacement(),
+    takeOpenDefaults,
+    unsettled: new Set(),
   };
-  // Several ParameterRefs of one Parameter share its single value. A ref's own Value is only the
-  // default of the ref that is shown (placed in an active branch): ETS applies it when that ref is
-  // placed, and a ref that a choose merely tests reads the same value (Jung 400021SE: P-505 has
-  // R-107 with the parameter's default 5 and R-1 with Value 0; with R-107 placed, ETS evaluated a
-  // choose on R-1 as 5, and its own project export stores no value for the parameter at all;
-  // docs/findings.md §9). So the value is the placed ref's: one stored on a placed ref, else the
-  // default of the placed ref. A value stored on a ref no active branch places is ETS's leftover from
-  // an earlier configuration and is not written (Theben Meteodata full-download capture, ETS-programmed
-  // Auros). A ref placed itself keeps its own default when no value is stored, and so does every ref
-  // of a parameter whose placed refs carry different defaults: which one ETS would use is not known.
-  // Only a parameter with no placed ref at all reads a value stored on its refs.
-  //
-  // `placement` (per instance-scoped parameter id, the def ref ids placed in active branches) is
-  // fixed before the walks below, and all of them read the same one. It is found by walking the tree
-  // until it no longer changes.
-  let placement = new Map<string, Set<string>>();
-  // The ParameterRefs (instance-scoped) heading a reached ParameterBlock: placed for a choose's default branch,
-  // not for the value they resolve to. Fixed with `placement`.
-  let headed = new Set<string>();
-  // The chooses (by instance-scoped ref id) whose default branch only takeOpenDefaults decides.
-  const unsettled = new Set<string>();
-  const refsOfParam = new Map<string, string[]>();
-  for (const r of app.refs.values()) (refsOfParam.get(r.paramId) ?? refsOfParam.set(r.paramId, []).get(r.paramId)!).push(r.id);
-  const storedOn = (refIds: string[], scope: Scope, e: Map<string, string>): string | undefined => {
-    const vals = new Set(refIds.filter((r) => e.has(scope.rewrite(r))).map((r) => e.get(scope.rewrite(r))!));
-    return vals.size === 1 ? [...vals][0] : undefined; // none, or conflicting: no shared stored value
-  };
-  const isParamPlaced = (paramId: string, scope: Scope): boolean => !!placement.get(scope.rewrite(paramId))?.size;
-  const hasParamStored = (paramId: string, scope: Scope, e: Map<string, string>): boolean =>
-    (refsOfParam.get(paramId) ?? []).some((r) => e.has(scope.rewrite(r)));
-  // An unplaced, unstored memoryless Access="Read" parameter resolves to undefined in `resolve`
-  // (as well as skipping <choose> tests via chooseSkipsTests; see Theben M-0048_A-0103-11-72A2).
-  const isUnplacedReadMerker = (defRefId: string, scope: Scope, e: Map<string, string>): boolean => {
-    const ref = app.refs.get(defRefId);
-    const p = ref ? app.params.get(ref.paramId) : undefined;
-    return !!p && p.access === "Read" && !holdsValue(p) && !isParamPlaced(ref!.paramId, scope) && !hasParamStored(ref!.paramId, scope, e);
-  };
-  const isUnplacedChooseParam = (defRefId: string, scope: Scope, e: Map<string, string>): boolean => {
-    const ref = app.refs.get(defRefId);
-    return !!ref && chooseSkipsTests(app, defRefId, isParamPlaced(ref.paramId, scope), headed.has(scope.rewrite(defRefId)), hasParamStored(ref.paramId, scope, e));
-  };
-  const resolve = (defRefId: string, scope: Scope, e: Map<string, string> = env): string | undefined => {
-    const instId = scope.rewrite(defRefId);
-    const ref = app.refs.get(defRefId);
-    if (!ref) return e.get(instId);
-    if (isMerker(ref.paramId)) return e.get(instId); // unplaced Merker: no static default for choose evaluation
-    const paramDefault = app.params.get(ref.paramId)?.value;
-    const siblings = (refsOfParam.get(ref.paramId) ?? []).filter((r) => r !== defRefId);
-    const placed = [...(placement.get(scope.rewrite(ref.paramId)) ?? [])];
-    const isPlaced = placed.includes(defRefId);
-    const placedSiblings = placed.filter((r) => r !== defRefId);
-    if (isPlaced) {
-      if (e.has(instId)) return e.get(instId);
-      return storedOn(placedSiblings, scope, e) ?? ref.value ?? paramDefault;
-    }
-    if (placedSiblings.length) {
-      const stored = storedOn(placedSiblings, scope, e);
-      if (stored !== undefined) return stored;
-      const defaults = new Set(placedSiblings.map((r) => app.refs.get(r)?.value ?? paramDefault));
-      return defaults.size === 1 ? [...defaults][0] : ref.value ?? paramDefault;
-    }
-    const stored = (e.has(instId) ? e.get(instId) : undefined) ?? storedOn(siblings, scope, e);
-    if (stored !== undefined) return stored;
-    return isUnplacedReadMerker(defRefId, scope, e) ? undefined : ref.value ?? paramDefault;
-  };
-  // Placing a ParameterRefRef to a Merker in an active branch assigns it (the ref's value
-  // or the parameter default), so a later choose on that ref sees it as set. Document-order
-  // walk guarantees the assignment precedes the read.
-  const assignIfMerker = (defRefId: string, scope: Scope, e: Map<string, string>) => {
-    const ref = app.refs.get(defRefId);
-    if (ref && isMerker(ref.paramId)) e.set(scope.rewrite(defRefId), ref.value ?? app.params.get(ref.paramId)?.value ?? "");
-  };
+  const resolve = (defRefId: string, scope: Scope, e: Map<string, string> = env): string | undefined =>
+    resolveParamValue(chooseCtx, defRefId, scope.rewrite, e);
   const tr = (elemId: string | undefined, attr: string, base: string): string => {
     const t = !elemId || language === app.defaultLanguage ? base : app.translations.get(language)?.get(elemId)?.get(attr) ?? base;
     return decode(t);
@@ -657,45 +518,8 @@ function buildDeviceConfigReading(
   // author's deliberate nesting still renders without leaking whitespace everywhere.
   const cap = (s: string): string => { const t = s.replace(/\r\n?/g, "\n").trim(); return t ? t.charAt(0).toLocaleUpperCase(language) + t.slice(1) : t; };
 
-  // ETS evaluates EVERY matching <when> of a <choose>, not just the first. The
-  // default branch fires only when no non-default test matches. This matters where a
-  // single choose drives two independent overlapping placements: e.g. the Theben RMG 8 S
-  // contact block has one choose on P-1 whose whens "0 1 3"/"2 4" place the contact-type
-  // param (bits 0-1) AND whose whens "0 1"/"2 3 4" place a union member (bits 2-3), so
-  // every P-1 value matches two whens and ETS places both. First-match-wins left the
-  // union bits unwritten (hardware-confirmed on an RMG 8 S: P-1=0 -> UP-11=2, P-1=2 -> UP-12=0).
-  //
-  // The default branch belongs to a ParameterRef an active branch places. A choose on a ref nothing places takes
-  // no default branch: ETS's full downloads of bussard's syn-choose-never-shown (a never-shown parameter) and
-  // syn-choose-per-ref (the unplaced second ref of a shown parameter) leave the com-object of the only, default
-  // branch out, and the second's download with that ref placed writes it. Its tests still count when the
-  // parameter is active through a placed sibling ref (Jung 400021SE's choose on its unplaced R-1), an active
-  // <Assign> (OpenKNX RaumController, M-00B6_A-4537-03-9C38), a block heading, or a stored value; otherwise
-  // chooseSkipsTests suppresses test matching for union members (any Access) and non-property parameters with
-  // effective Access != "None". A memoryless parameter heading a reached block counts as placed for the default
-  // branch: on the Gira, Theben and ABB products the captures show, ETS takes the default branch of a choose on
-  // such a page parameter.
-  const selectWhens = (defParamRefId: string, whens: DynWhen[], scope: Scope, e: Map<string, string> = env): DynWhen[] => {
-    // Union members (any Access) and non-property parameters with effective Access != "None" match
-    // none of their tests when unplaced, non-heading and unstored (chooseSkipsTests). Validate
-    // every test condition even when skipped so unsupported syntax still refuses. An unset
-    // Access="None" Merker (no <Memory>) still reads as 0 here.
-    if (isUnplacedChooseParam(defParamRefId, scope, e)) {
-      for (const w of whens) if (!w.isDefault && w.test !== undefined) validateTest(w.test);
-    } else {
-      const v = Number(resolve(defParamRefId, scope, e) ?? 0);
-      const matched = whens.filter((w) => !w.isDefault && w.test !== undefined && matchTest(w.test, v));
-      if (matched.length) return matched;
-    }
-    const def = whens.find((w) => w.isDefault);
-    if (!def) return [];
-    const ref = app.refs.get(defParamRefId);
-    const placed = !!ref && !!placement.get(scope.rewrite(ref.paramId))?.has(defParamRefId);
-    const rule = defaultBranchOf(app, defParamRefId, placed, headed.has(scope.rewrite(defParamRefId)));
-    if (rule !== "open") return rule === "take" ? [def] : [];
-    if (def.children.length) unsettled.add(scope.rewrite(defParamRefId));
-    return takeOpenDefaults ? [def] : [];
-  };
+  const selectWhens = (defParamRefId: string, whens: DynWhen[], scope: Scope, e: Map<string, string> = env): DynWhen[] =>
+    selectChooseWhens(chooseCtx, defParamRefId, whens, scope.rewrite, e);
 
   // A parameter's label as ETS shows it: the ParameterRef's own Text where it declares a non-empty
   // one (in the view's language), else its Parameter's. An empty ref Text keeps the Parameter's:
@@ -854,20 +678,20 @@ function buildDeviceConfigReading(
     for (const n of nodes) {
       switch (n.kind) {
         case "separator": items.push({ kind: "separator", text: fillTextParam(subst(tr(n.id, "Text", n.text), scope), n.textParamRefId ? resolve(n.textParamRefId, scope) ?? "" : undefined), uiHint: n.uiHint, cell: n.cell }); break;
-        case "paramRef": { assignIfMerker(n.refId, scope, env); const it = buildParam(n.refId, scope); if (it) { if (it.kind === "param" && n.indent) it.param.indent = n.indent; if (it.kind === "param") it.cell = n.cell; items.push(it); } break; }
+        case "paramRef": { const it = buildParam(n.refId, scope); if (it) { if (it.kind === "param" && n.indent) it.param.indent = n.indent; if (it.kind === "param") it.cell = n.cell; items.push(it); } break; }
         case "comObjRef": { const it = buildComObj(n.refId, scope); if (it) items.push(it); break; }
         // A scripted action. Carried through as itself (label + handler name) so the UI
         // can show an inert, honestly-labelled control; busforge never runs the script.
         case "button": items.push({ kind: "button", button: { text: subst(tr(n.id, "Text", n.text), scope), handler: n.handler }, cell: n.cell }); break;
         case "assign": env.set(scope.rewrite(n.target), n.value ?? (n.source ? resolve(n.source, scope) ?? "" : "")); break;
         case "choose": { for (const w of selectWhens(n.paramRefId, n.whens, scope)) collect(w.children, items, scope); break; }
-        case "container": collect(n.children, items, scope); break;
+        case "container": if (!isSkippedRepeat(n)) collect(n.children, items, scope); break;
         case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) collect(def.dynamic, items, makeScope(n.refId, def, inst)); break; }
         case "unsupported": items.push({ kind: "unsupported", label: n.tag }); break; // surface, never drop
         // Visible nested blocks become their own sections (handled by walk). A hidden Access="None"
-        // block nested inside a visible block runs its Merker/Assign side effects and emits its
+        // block nested inside a visible block runs its <Assign> side effects and emits its
         // communication objects here in document order, so a later choose at this level sees them;
-        // walk skips hidden blocks while inside a visible block (loose === null) so they run once.
+        // walk replays only its <Assign>s while inside a visible block (loose === null) so objects emit once.
         case "block":
           if (n.access === "None") applyEnv(n.children, scope, items);
           else if (n.inline) { inlineAt.set(scope.rewrite(n.id), items.length); inlineSeen++; }
@@ -913,26 +737,27 @@ function buildDeviceConfigReading(
     return { layout: n.layout, rows: lines(n.rows), cols: lines(n.cols) };
   };
 
-  // A block marked Access="None" is not shown, but its side effects on `env` still matter: a
-  // manufacturer often computes a "Merker" helper parameter (or Assigns one) inside an invisible
-  // block and then gates a later, VISIBLE choose on it. The Jung 400021SE hides its whole channel set
-  // exactly this way ("Kanal N anzeigen" is a Merker computed in the "Unsichtbar" block, and every
-  // channel's module hangs off a choose on it), so skipping the block wholesale left the Merker unset
-  // and every channel hidden. Run the env-mutating side effects of an invisible subtree (Merker
-  // assignments and Assigns) in document order, descending into blocks regardless of access, emitting
-  // no parameter. Same choose selection and value resolution as the display walk, so a later choose
-  // reads exactly the env it should (the image pass does the equivalent via imgEnv).
+  // A block marked Access="None" is not shown, but its <Assign> side effects on `env` still matter:
+  // a manufacturer often computes a helper parameter via <Assign> inside an invisible block and then
+  // gates a later, VISIBLE choose on it (Merker placements inside invisible blocks are already
+  // recorded upfront by findPlacement, which descends into all blocks regardless of access). Run the
+  // <Assign> side effects of an invisible subtree in document order, descending into blocks
+  // regardless of access, emitting no parameter. Same choose selection and value resolution as the
+  // display walk, so a later choose reads exactly the env it should (the image pass does the
+  // equivalent via imgEnv).
   // The block's communication objects stay active (ETS links them and its tables hold them: the MIX 2
-  // "Gemeinsame Objekte" block), so they go to `objects`, the section that encloses the block.
-  const applyEnv = (nodes: DynNode[], scope: Scope, objects: CfgItem[]) => {
+  // "Gemeinsame Objekte" block), so they go to `objects` when provided (null suppresses duplicate
+  // emission when walk replays Assigns after collect already emitted the block's objects).
+  const applyEnv = (nodes: DynNode[], scope: Scope, objects: CfgItem[] | null) => {
     for (const n of nodes) {
       switch (n.kind) {
-        case "paramRef": assignIfMerker(n.refId, scope, env); break;
+        case "paramRef": break;
         case "assign": env.set(scope.rewrite(n.target), n.value ?? (n.source ? resolve(n.source, scope) ?? "" : "")); break;
         case "choose": for (const w of selectWhens(n.paramRefId, n.whens, scope)) applyEnv(w.children, scope, objects); break;
-        case "container": case "block": applyEnv(n.children, scope, objects); break;
+        case "container": if (!isSkippedRepeat(n)) applyEnv(n.children, scope, objects); break;
+        case "block": applyEnv(n.children, scope, objects); break;
         case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) applyEnv(def.dynamic, makeScope(n.refId, def, inst), objects); break; }
-        case "comObjRef": { const it = buildComObj(n.refId, scope); if (it) objects.push(it); break; }
+        case "comObjRef": { if (objects) { const it = buildComObj(n.refId, scope); if (it) objects.push(it); } break; }
         case "separator": case "button": case "unsupported": break;
       }
     }
@@ -943,6 +768,10 @@ function buildDeviceConfigReading(
     const at = inlineAt.get(id);
     return at === undefined ? { inline: true } : { inline: true, at };
   };
+  const restoreEnv = (snapshot: Map<string, string>) => {
+    env.clear();
+    for (const [k, v] of snapshot) env.set(k, v);
+  };
   // `loose` receives the leaves placed outside every ParameterBlock: a ComObjectRefRef or
   // ParameterRefRef directly under a <Channel> or ChannelIndependentBlock (Theben places its
   // measured-value objects there; ETS lists them and its tables link them). Inside a block it is
@@ -952,10 +781,11 @@ function buildDeviceConfigReading(
     for (const n of nodes) {
       switch (n.kind) {
         case "block": {
-          // Hidden block outside a visible block (loose !== null): run its side effects and emit
-          // its objects into `section`. Inside a visible block (loose === null), collect() already
-          // ran applyEnv in document order before any sibling choose at this level.
-          if (n.access === "None") { if (loose !== null) applyEnv(n.children, scope, section); break; }
+          // Hidden block: outside a visible block (loose !== null) run its Assigns and emit its
+          // objects into `section`. Inside a visible block (loose === null), collect() already
+          // emitted its objects, so replay only its Assigns in document order for sibling chooses.
+          if (n.access === "None") { applyEnv(n.children, scope, loose !== null ? section : null); break; }
+          const envBefore = new Map(env);
           const items: CfgItem[] = [];
           const inlineBefore = inlineSeen;
           collect(n.children, items, scope);
@@ -966,6 +796,9 @@ function buildDeviceConfigReading(
             // An inline block keeps its authored place among its siblings: DisplayOrder orders pages, not rows on one.
             const node: Node = { block: { id, name: cap(name), items, level: 0, ...gridOf(n, scope), ...inlineOf(n, id) }, order: n.inline ? 0 : headOrder(n), seq: seq++, children: [] };
             into.push(node);
+            // Restore env before descending into children so a later <Assign> inside this block
+            // does not retroactively alter an earlier <choose> guarding a nested ParameterBlock.
+            restoreEnv(envBefore);
             walk(n.children, scope, node.children, null, items);
           } else if (n.children.length === 0 && (n.paramRefId || n.text)) {
             // A reached but childless block is a pure category header (e.g. the
@@ -976,11 +809,13 @@ function buildDeviceConfigReading(
             const id = scope.rewrite(n.id);
             if (name) into.push({ block: { id, name, items: [], level: 0, ...inlineOf(n, id) }, order: headOrder(n), seq: seq++, children: [] });
           } else {
+            restoreEnv(envBefore);
             walk(n.children, scope, into, null, section); // transparent wrapper: children keep this level; its leaves are none (collect found no items)
           }
           break;
         }
         case "container": {
+          if (isSkippedRepeat(n)) break;
           // A Channel with a heading text becomes a navigable section (e.g.
           // "GRUNDMODUL {{0}}" -> "Basic module HMG 6 T"); {{0}} is the channel's
           // TextParameterRefId value, else its Number (see fillTextParam). A text-less container
@@ -1006,60 +841,62 @@ function buildDeviceConfigReading(
         case "choose": { for (const w of selectWhens(n.paramRefId, n.whens, scope)) walk(w.children, scope, into, loose, section); break; }
         case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) walk(def.dynamic, makeScope(n.refId, def, inst), into, loose, section); break; }
         // Leaves: inside a block collect() has gathered them; outside every block they belong to the
-        // enclosing container. Listed rather than defaulted, so that a node kind added later shows up
-        // as a compile error here instead of vanishing from the UI.
-        case "paramRef": case "comObjRef": case "separator": case "button": case "assign": case "unsupported":
+        // enclosing container. Assign still runs when loose === null so nested blocks see prior Assigns
+        // in document order after env was restored to the block's entry state. Listed rather than
+        // defaulted, so that a node kind added later shows up as a compile error here instead of
+        // vanishing from the UI.
+        case "assign":
+          if (loose) collect([n], loose, scope);
+          else env.set(scope.rewrite(n.target), n.value ?? (n.source ? resolve(n.source, scope) ?? "" : ""));
+          break;
+        case "paramRef": case "comObjRef": case "separator": case "button": case "unsupported":
           if (loose) collect([n], loose, scope);
           break;
       }
     }
   };
-  // The placement the walks read (see resolve): the image pass's traversal, recording only which
-  // refs it places, repeated until the placement it finds is the one it walked with.
-  const findPlacement = (): { found: Map<string, Set<string>>; heads: Set<string> } => {
-    const found = new Map<string, Set<string>>();
-    const heads = new Set<string>();
+  // The placement the walks read (see resolveParamValue): the image pass's traversal, recording only
+  // which refs it places, repeated until the placement it finds is the one it walked with.
+  const findPlacement = (): ChoosePlacement => {
+    const found = emptyPlacement();
     const penv = new Map(overrides);
     const visit = (nodes: DynNode[], scope: Scope) => {
       for (const n of nodes) {
         switch (n.kind) {
-          case "paramRef": {
-            const ref = app.refs.get(n.refId);
-            if (ref) { const key = scope.rewrite(ref.paramId); (found.get(key) ?? found.set(key, new Set()).get(key)!).add(n.refId); }
-            assignIfMerker(n.refId, scope, penv);
+          case "paramRef":
+            recordPlacedRef(app, found, n.refId, scope.rewrite);
             break;
-          }
           case "assign": penv.set(scope.rewrite(n.target), n.value ?? (n.source ? resolve(n.source, scope, penv) ?? "" : "")); break;
           case "choose": for (const w of selectWhens(n.paramRefId, n.whens, scope, penv)) visit(w.children, scope); break;
-          case "container": visit(n.children, scope); break;
-          case "block": if (n.paramRefId) heads.add(scope.rewrite(n.paramRefId)); visit(n.children, scope); break;
+          case "container": if (!isSkippedRepeat(n)) visit(n.children, scope); break;
+          case "block": if (n.paramRefId) found.heads.add(scope.rewrite(n.paramRefId)); visit(n.children, scope); break;
           case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) visit(def.dynamic, makeScope(n.refId, def, inst)); break; }
           case "comObjRef": case "button": case "separator": case "unsupported": break;
         }
       }
     };
     visit(app.dynamic, TOP);
-    return { found, heads };
+    return found;
   };
-  const sameSet = (a: Set<string>, b: Set<string>) => a.size === b.size && [...a].every((x) => b.has(x));
-  const samePlacement = (a: { found: Map<string, Set<string>>; heads: Set<string> }, b: { found: Map<string, Set<string>>; heads: Set<string> }) =>
-    sameSet(a.heads, b.heads) && a.found.size === b.found.size && [...a.found].every(([k, v]) => { const w = b.found.get(k); return !!w && sameSet(v, w); });
   // A placement seen before without having settled is a cycle: the application admits no single
   // reading of its shared values, and picking one of the cycle's states would be a guess.
-  const seen: { found: Map<string, Set<string>>; heads: Set<string> }[] = [];
+  // Track every open default consulted during convergence too: a default branch that places its own
+  // Access="None" Merker would otherwise look "placed" on the next pass and drop out of `unsettled`,
+  // silently hiding that takeOpenDefaults=false settles to a different configuration.
+  const seen: ChoosePlacement[] = [];
+  const everUnsettled = new Set<string>();
   for (;;) {
+    chooseCtx.unsettled.clear();
     const next = findPlacement();
-    const current = { found: placement, heads: headed };
-    if (samePlacement(next, current)) break;
+    for (const id of chooseCtx.unsettled) everUnsettled.add(id);
+    if (samePlacement(next, chooseCtx.placement)) break;
     if (seen.some((p) => samePlacement(p, next))) {
       throw new ProductError("CONFIG_NOT_RESOLVABLE", "the application's parameter visibility does not settle: which parameter references are active keeps changing with the values they share");
     }
-    seen.push(current);
-    placement = next.found;
-    headed = next.heads;
+    seen.push(chooseCtx.placement);
+    chooseCtx.placement = next;
   }
-  // Only the walks over the settled placement decide which defaults are open.
-  unsettled.clear();
+  chooseCtx.unsettled.clear();
 
   const roots: Node[] = [];
   const outsideEveryContainer: CfgItem[] = [];
@@ -1087,7 +924,7 @@ function buildDeviceConfigReading(
   const imgCollect = (nodes: DynNode[], scope: Scope) => {
     for (const n of nodes) {
       switch (n.kind) {
-        case "paramRef": { if (scope === TOP) place(n.refId, false); assignIfMerker(n.refId, scope, imgEnv); const v = resolve(n.refId, scope, imgEnv); if (v !== undefined) imageValues.set(scope.rewrite(n.refId), v); break; }
+        case "paramRef": { if (scope === TOP) place(n.refId, false); const v = resolve(n.refId, scope, imgEnv); if (v !== undefined) imageValues.set(scope.rewrite(n.refId), v); break; }
         // Record EVERY reached com-object (active branches, descending into Access="None"
         // blocks, per module instance) with its resolved flags, so the com-object-table
         // build sees hidden objects' flags too. Keyed by resolved number; a later active
@@ -1114,7 +951,7 @@ function buildDeviceConfigReading(
         case "choose": {
           const taken = selectWhens(n.paramRefId, n.whens, scope, imgEnv);
           if (scope === TOP) {
-            const evaluated = !isUnplacedChooseParam(n.paramRefId, scope, imgEnv) && resolve(n.paramRefId, scope, imgEnv) !== undefined;
+            const evaluated = !isChooseSkipped(chooseCtx, n.paramRefId, scope.rewrite, imgEnv) && resolve(n.paramRefId, scope, imgEnv) !== undefined;
             for (const w of n.whens) if (!taken.includes(w)) placements(w.children, evaluated);
           }
           for (const w of taken) imgCollect(w.children, scope);
@@ -1125,7 +962,7 @@ function buildDeviceConfigReading(
         // <Rows>/<Columns> hold no parameters, and the placed items are the ordinary
         // paramRef/comObjRef children walked here, exactly as in a list block.
         case "button": break;
-        case "container": if (n.repeatCount !== 0) imgCollect(n.children, scope); break;
+        case "container": if (!isSkippedRepeat(n)) imgCollect(n.children, scope); break;
         case "block": imgCollect(n.children, scope); break;
         case "module": { const def = app.moduleDefs.get(n.refId); if (def) { modulesReached.add(n.id); for (const inst of instancesFor(n.id)) imgCollect(def.dynamic, makeScope(n.refId, def, inst)); } break; }
         // Neither owns a byte of the parameter image: a separator is a caption, and an unsupported
@@ -1143,7 +980,8 @@ function buildDeviceConfigReading(
   const placements = (nodes: DynNode[], rejected: boolean) => {
     for (const n of nodes) {
       if (n.kind === "paramRef") place(n.refId, rejected);
-      else if (n.kind === "container" || n.kind === "block") placements(n.children, rejected);
+      else if (n.kind === "container") { if (!isSkippedRepeat(n)) placements(n.children, rejected); }
+      else if (n.kind === "block") placements(n.children, rejected);
       else if (n.kind === "choose") for (const w of n.whens) placements(w.children, rejected);
     }
   };
@@ -1183,7 +1021,8 @@ function buildDeviceConfigReading(
         // scan above, and resolving them here would risk a BaseNumber that only makes sense per instance.
         case "comObjRef": { if (inModule) { const c = resolveComObjImage(n.refId, scope); if (c) noteDeclared(c.number); } break; }
         case "choose": for (const w of n.whens) scanModuleComObjNums(w.children, scope, inModule); break; // every branch, not selectWhens
-        case "container": case "block": scanModuleComObjNums(n.children, scope, inModule); break;
+        case "container": if (!isSkippedRepeat(n)) scanModuleComObjNums(n.children, scope, inModule); break;
+        case "block": scanModuleComObjNums(n.children, scope, inModule); break;
         case "module": {
           const def = app.moduleDefs.get(n.refId);
           if (def) {
@@ -1229,7 +1068,7 @@ function buildDeviceConfigReading(
 
   const build: DeviceConfigBuild = { blocks, hasModules: app.hasModules, dca: app.dca, imageValues, rejectedRefs, imageComObjects, maxComObjectNumber, maxDeclaredComObject, modulesReached, moduleInstances: instances, paramValue: (refId) => resolve(refId, TOP) };
   if (!moduleInstances.length) refuseUnreachedInstances(app, build, instances);
-  return { build, unsettled };
+  return { build, unsettled: chooseCtx.unsettled.size ? chooseCtx.unsettled : everUnsettled };
 }
 
 // One com-object of an application program's full declaration, resolved the way the

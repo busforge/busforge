@@ -20,3 +20,12 @@ export const kidsOf = (n: ONode): ONode[] => { const v = n[tagOf(n)]; return Arr
 export const childrenByTag = (nodes: ONode[], tag: string): ONode[] => nodes.filter((n) => tagOf(n) === tag);
 
 export const firstByTag = (nodes: ONode[], tag: string): ONode | undefined => nodes.find((n) => tagOf(n) === tag);
+
+export function deepFirst(nodes: ONode[], tag: string): ONode | undefined {
+  for (const n of nodes) {
+    if (tagOf(n) === tag) return n;
+    const hit = deepFirst(kidsOf(n), tag);
+    if (hit) return hit;
+  }
+  return undefined;
+}

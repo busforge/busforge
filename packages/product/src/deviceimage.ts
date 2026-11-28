@@ -1,6 +1,6 @@
 import { resolveParamRef, sameParamValue, type AppConfig, type CfgParamRef, type DynNode, type ModuleInstance } from "./appconfig.ts";
 import { toAppModel, type Param, type ParamType } from "./application.ts";
-import { buildDeviceConfig, decodeTextEntities, readingsOf, refuseUnreachedInstances, unsettledDefaultRefusal, type DeviceConfigBuild } from "./config.ts";
+import { buildDeviceConfig, decodeTextEntities, isSkippedRepeat, readingsOf, refuseUnreachedInstances, unsettledDefaultRefusal, type DeviceConfigBuild } from "./config.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { byteWidth, MAX_INT_BYTES, encode, textLength } from "./image.ts";
 import { ProductError } from "./errors.ts";
@@ -69,7 +69,8 @@ export function constantParams(app: AppConfig): Map<string, string> {
       if (n.kind === "unsupported" || n.kind === "button") opaque = true;
       else if (n.kind === "assign") assigned.add(n.target);
       else if (n.kind === "paramRef" && unconditional) placed.add(n.refId);
-      else if (n.kind === "block" || n.kind === "container") walk(n.children, unconditional);
+      else if (n.kind === "block") walk(n.children, unconditional);
+      else if (n.kind === "container") { if (!isSkippedRepeat(n)) walk(n.children, unconditional); }
       else if (n.kind === "choose") for (const w of n.whens) walk(w.children, false);
     }
   };
@@ -169,7 +170,8 @@ function treeOrderOf(app: AppConfig, active: Map<string, string>): TreeOrder {
   const walk = (nodes: DynNode[]) => {
     for (const n of nodes) {
       if (n.kind === "paramRef") { if (seen.has(n.refId)) repeated.add(n.refId); seen.add(n.refId); }
-      else if (n.kind === "block" || n.kind === "container") walk(n.children);
+      else if (n.kind === "block") walk(n.children);
+      else if (n.kind === "container") { if (!isSkippedRepeat(n)) walk(n.children); }
       else if (n.kind === "choose") for (const w of n.whens) walk(w.children);
     }
   };

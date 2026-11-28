@@ -77,7 +77,7 @@
         "address": 17244,
         "size": 13,
         "build": "434b2d8c923eb49f",
-        "owned": "1eb87c8dccc765ba",
+        "owned": "5fe79fbd60c8fb83",
         "verify": "d113968ce4e873e0"
       },
       "M-0008_A-10D7-11-2783-O000A_AS-4369": {
@@ -122,8 +122,8 @@
         "M-0008_A-10D7-11-2783-O000A_AS-435C": {
           "address": 17244,
           "size": 13,
-          "ownedBytes": 7,
-          "skippedUnowned": 6
+          "ownedBytes": 9,
+          "skippedUnowned": 4
         },
         "M-0008_A-10D7-11-2783-O000A_AS-4369": {
           "address": 17257,
