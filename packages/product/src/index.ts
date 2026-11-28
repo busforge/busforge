@@ -21,4 +21,5 @@ export * from "./collect.ts";
 export * from "./diagnostic.ts";
 export * from "./system1.ts";
 export * from "./rawdata.ts";
+export { deepFirst } from "./onode.ts";
 export { annotateCalculations, CALC_REFUSAL_TEXT } from "./calculations.ts";

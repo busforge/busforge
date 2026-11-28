@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { parseAppConfig } from "../src/appconfig.ts";
 import { toAppModel, unmappedParamRefs } from "../src/application.ts";
 import { resolveModuleInstances } from "../src/modules.ts";
-import { buildDeviceConfig } from "../src/config.ts";
+import { buildDeviceConfig, refuseUnreachedInstances } from "../src/config.ts";
 import { comObjectTable } from "../src/comobjtable.ts";
 import { readRealFixture } from "./real-catalogue.snapshot.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
@@ -265,12 +265,10 @@ test("a module in the default branch of a choose on a ParameterRef nothing place
   expect(() => resolveModuleInstances(gated({ access: "None" }), new Map())).toThrow(expect.objectContaining({ code: "CHOOSE_DEFAULT_UNSETTLED" }));
 });
 
-// The allocator shares chooseSkipsTests with config.ts, so unplaced non-Access="None" parameters
-// (including Access="Read" Merkers and memory-backed parameters) are skipped on both sides without
-// shifting allocator offsets for later modules. Unplaced Access="None" Merkers still read at their
-// static default in the allocator vs 0 in config.ts, and either mismatch is refused by
-// refuseUnreachedInstances (never placed at wrong offsets or silently omitted).
-test("unplaced non-Access=None chooses skip modules in allocator and config alike; Access=None Merker mismatches are refused", () => {
+// The allocator and config share choose.ts (selectChooseWhens and resolveParamValue), so
+// unplaced non-Access="None" parameters AND unplaced Access="None" Merkers agree on both sides
+// without shifting allocator offsets or triggering MODULE_INSTANCES_UNREACHED.
+test("unplaced non-Access=None and Access=None Merker chooses agree in allocator and config", () => {
   const base = readFileSync(join(import.meta.dir, "fixtures", "sample-module-app.xml"), "utf8");
   const merkerApp = (access: string, testVal: string, memory = false) => parseAppConfig(base
     .replace("<Parameters />", `<Parameters><Parameter Id="M-TEST_A-2_P-M" Name="Merker" ParameterType="M-TEST_A-2_PT-OnOff" Text="Merker"${access ? ` Access="${access}"` : ""} Value="1"${memory ? '><Memory CodeSegment="M-TEST_A-2_RS-1" Offset="0" BitOffset="0" /></Parameter>' : " />"}</Parameters>`)
@@ -282,14 +280,75 @@ test("unplaced non-Access=None chooses skip modules in allocator and config alik
     expect(resolveModuleInstances(app, new Map())).toEqual([]);
     expect(buildDeviceConfig(app, new Map()).moduleInstances).toEqual([]);
   }
-  // Unplaced Access="None" Merker still diverges (allocator sees Value="1", config sees 0), and is refused.
+  // Unplaced Access="None" Merker (Value="1") reads as unset (0) in BOTH allocator and config.
   const noneOne = merkerApp("None", "1");
-  expect(resolveModuleInstances(noneOne, new Map())).toHaveLength(4);
-  expect(() => buildDeviceConfig(noneOne, new Map())).toThrow(expect.objectContaining({ code: "MODULE_INSTANCES_UNREACHED" }));
-  expect(() => comObjectTable(noneOne, new Map())).toThrow(expect.objectContaining({ code: "MODULE_INSTANCES_UNREACHED" }));
-  const reverse = merkerApp("None", "0");
-  expect(resolveModuleInstances(reverse, new Map())).toEqual([]);
-  expect(() => buildDeviceConfig(reverse, new Map())).toThrow(expect.objectContaining({ code: "MODULE_INSTANCES_UNREACHED" }));
+  expect(resolveModuleInstances(noneOne, new Map())).toEqual([]);
+  expect(buildDeviceConfig(noneOne, new Map()).moduleInstances).toEqual([]);
+  expect([...comObjectTable(noneOne, new Map()).keys()]).toEqual([]);
+  const noneZero = merkerApp("None", "0");
+  expect(resolveModuleInstances(noneZero, new Map())).toHaveLength(4);
+  expect(buildDeviceConfig(noneZero, new Map()).moduleInstances).toHaveLength(4);
+});
+
+test("forward-placed Access=None Merker and Repeat Count=0 agree in allocator and config", () => {
+  const base = readFileSync(join(import.meta.dir, "fixtures", "sample-module-app.xml"), "utf8");
+  const forwardXml = base
+    .replace("<Parameters />", '<Parameters><Parameter Id="M-TEST_A-2_P-M" Name="Merker" ParameterType="M-TEST_A-2_PT-OnOff" Text="Merker" Access="None" Value="1" /></Parameters>')
+    .replace("<ParameterRefs />", '<ParameterRefs><ParameterRef Id="M-TEST_A-2_P-M_R-1" RefId="M-TEST_A-2_P-M" /><ParameterRef Id="M-TEST_A-2_P-M_R-2" RefId="M-TEST_A-2_P-M" /></ParameterRefs>')
+    .replace("<Static>", '<Static><Allocators><Allocator Id="M-TEST_A-2_AL-1" Name="Obj" Start="10" maxInclusive="99" /></Allocators>')
+    .replace(/<Repeat Id="M-TEST_A-2_X-1"[\s\S]*?<\/Repeat>/,
+      `<Repeat Id="M-TEST_A-2_X-0" Count="0"><Module Id="M-TEST_A-2_MD-1_M-0" RefId="M-TEST_A-2_MD-1" Name="Zero"><NumericArg RefId="M-TEST_A-2_MD-1_A-2" AllocatorRefId="M-TEST_A-2_AL-1" /></Module></Repeat>` +
+      `<choose ParamRefId="M-TEST_A-2_P-M_R-1"><when test="1"><Module Id="M-TEST_A-2_MD-1_M-1" RefId="M-TEST_A-2_MD-1" Name="Fwd"><NumericArg RefId="M-TEST_A-2_MD-1_A-2" AllocatorRefId="M-TEST_A-2_AL-1" /></Module></when></choose>` +
+      `<choose ParamRefId="M-TEST_A-2_P-M_R-2"><when test="1"><Module Id="M-TEST_A-2_MD-1_M-2" RefId="M-TEST_A-2_MD-1" Name="Sibling"><NumericArg RefId="M-TEST_A-2_MD-1_A-2" AllocatorRefId="M-TEST_A-2_AL-1" /></Module></when></choose>` +
+      `<ParameterBlock Id="M-TEST_A-2_PB-9" Name="later" Text="Later"><ParameterRefRef RefId="M-TEST_A-2_P-M_R-1" /></ParameterBlock>`);
+  const app = parseAppConfig(forwardXml);
+  // Repeat Count="0" allocates nothing (allocator stays at 10); forward-placed R-1 activates M-1;
+  // unplaced sibling R-2 stays unset (0), so M-2 is skipped.
+  const inst = resolveModuleInstances(app, new Map());
+  expect(inst).toEqual([{ id: "MD-1_M-1_MI-1", refId: "MD-1_M-1", args: [{ refId: "MD-1_A-2", value: "10" }] }]);
+  const build = buildDeviceConfig(app, new Map());
+  expect(build.moduleInstances).toEqual(inst);
+  expect([...build.imageComObjects.keys()]).toEqual([10]);
+  expect([...comObjectTable(app, new Map()).keys()]).toEqual([10]);
+});
+
+test("refuseUnreachedInstances refuses both extra unreached instances and missing reached modules", () => {
+  const base = readFileSync(join(import.meta.dir, "fixtures", "sample-module-app.xml"), "utf8")
+    .replace('<Module Id="M-TEST_A-2_MD-1_M-1" RefId="M-TEST_A-2_MD-1" Name="C" />', '<Module Id="M-TEST_A-2_MD-1_M-1" RefId="M-TEST_A-2_MD-1" Name="C"><NumericArg RefId="M-TEST_A-2_MD-1_A-2" Value="10" /></Module>');
+  const app = parseAppConfig(base);
+  const real = resolveModuleInstances(app, new Map());
+  const build = buildDeviceConfig(app, new Map(), undefined, real);
+  expect(() => refuseUnreachedInstances(app, build, real)).not.toThrow();
+  expect(() => refuseUnreachedInstances(app, build, [])).toThrow(expect.objectContaining({ code: "MODULE_INSTANCES_UNREACHED" }));
+  expect(() => refuseUnreachedInstances(app, build, [...real, { id: "MD-1_M-99_MI-1", refId: "MD-1_M-99", args: [] }])).toThrow(expect.objectContaining({ code: "MODULE_INSTANCES_UNREACHED" }));
+});
+
+test("resolveModuleInstances refuses invalid Repeat Count, refuses self-justifying default branch, and ignores provisional pass-0 dead allocators", () => {
+  const base = readFileSync(join(import.meta.dir, "fixtures", "sample-module-app.xml"), "utf8");
+  for (const bad of ["1.5", "-1", "Infinity", ""]) {
+    const app = parseAppConfig(base.replace('Count="4"', `Count="${bad}"`));
+    expect(() => resolveModuleInstances(app, new Map())).toThrow(expect.objectContaining({ code: "REPEAT_COUNT_INVALID" }));
+  }
+  const selfDefault = parseAppConfig(base
+    .replace("<Parameters />", '<Parameters><Parameter Id="M-TEST_A-2_P-M" Name="Merker" ParameterType="M-TEST_A-2_PT-OnOff" Text="Merker" Access="None" Value="1" /></Parameters>')
+    .replace("<ParameterRefs />", '<ParameterRefs><ParameterRef Id="M-TEST_A-2_P-M_R-1" RefId="M-TEST_A-2_P-M" /></ParameterRefs>')
+    .replace(/<Repeat Id="M-TEST_A-2_X-1"[\s\S]*?<\/Repeat>/,
+      `<choose ParamRefId="M-TEST_A-2_P-M_R-1"><when test="7" /><when default="true"><ParameterRefRef RefId="M-TEST_A-2_P-M_R-1" /><Module Id="M-TEST_A-2_MD-1_M-1" RefId="M-TEST_A-2_MD-1" Name="C"><NumericArg RefId="M-TEST_A-2_MD-1_A-2" Value="10" /></Module></when></choose>`));
+  expect(() => resolveModuleInstances(selfDefault, new Map())).toThrow(expect.objectContaining({ code: "CHOOSE_DEFAULT_UNSETTLED" }));
+
+  const provisionalDead = parseAppConfig(base
+    .replace("<Parameters />", '<Parameters><Parameter Id="M-TEST_A-2_P-M" Name="Merker" ParameterType="M-TEST_A-2_PT-OnOff" Text="Merker" Access="None" Value="1" /></Parameters>')
+    .replace("<ParameterRefs />", '<ParameterRefs><ParameterRef Id="M-TEST_A-2_P-M_R-1" RefId="M-TEST_A-2_P-M" /></ParameterRefs>')
+    .replace(/<Repeat Id="M-TEST_A-2_X-1"[\s\S]*?<\/Repeat>/,
+      `<ParameterBlock Id="M-TEST_A-2_PB-9" Name="p" Text="P"><ParameterRefRef RefId="M-TEST_A-2_P-M_R-1" /></ParameterBlock>` +
+      `<choose ParamRefId="M-TEST_A-2_P-M_R-1">` +
+        `<when test="0"><Module Id="M-TEST_A-2_MD-1_M-DEAD" RefId="M-TEST_A-2_MD-1" Name="Dead"><NumericArg RefId="M-TEST_A-2_MD-1_A-2" AllocatorRefId="M-TEST_A-2_AL-MISSING" /></Module></when>` +
+        `<when test="1"><Module Id="M-TEST_A-2_MD-1_M-1" RefId="M-TEST_A-2_MD-1" Name="Live"><NumericArg RefId="M-TEST_A-2_MD-1_A-2" Value="10" /></Module></when>` +
+      `</choose>`));
+  expect(resolveModuleInstances(provisionalDead, new Map())).toEqual([
+    { id: "MD-1_M-1_MI-1", refId: "MD-1_M-1", args: [{ refId: "MD-1_A-2", value: "10" }] },
+  ]);
+  expect([...buildDeviceConfig(provisionalDead, new Map()).imageComObjects.keys()]).toEqual([10]);
 });
 
 test("a module behind an unplaced memory-backed choose does not shift a later module's allocated offset", () => {

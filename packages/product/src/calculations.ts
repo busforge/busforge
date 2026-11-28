@@ -19,7 +19,7 @@
 // (./script/LICENSE).
 
 import { resolveParamRef, sameParamValue, takesValue, type AppConfig, type CfgCalculation, type DynNode, type ModuleInstance } from "./appconfig.ts";
-import { buildDeviceConfig, decodeTextEntities, resolveLanguage, type CalcRefusal, type CalcRefusalCode, type CalcState, type CfgCalculationMark, type DeviceConfigBuild } from "./config.ts";
+import { buildDeviceConfig, decodeTextEntities, isSkippedRepeat, resolveLanguage, type CalcRefusal, type CalcRefusalCode, type CalcState, type CfgCalculationMark, type DeviceConfigBuild } from "./config.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { runScript, scriptRefusal, ScriptError, type ScriptValue } from "./script/index.ts";
 
@@ -92,7 +92,8 @@ export function steeringParamIds(app: AppConfig): Set<string> {
     for (const n of nodes) {
       const ids = n.kind === "choose" ? [n.paramRefId] : n.kind === "assign" ? [n.target, n.source] : [];
       for (const r of ids) { const id = r ? resolveParamRef(app, r)?.param?.id : undefined; if (id) out.add(id); }
-      if (n.kind === "block" || n.kind === "container") walk(n.children);
+      if (n.kind === "block") walk(n.children);
+      else if (n.kind === "container") { if (!isSkippedRepeat(n)) walk(n.children); }
       else if (n.kind === "choose") for (const w of n.whens) walk(w.children);
     }
   };

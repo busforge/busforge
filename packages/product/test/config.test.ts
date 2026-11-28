@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseAppConfig } from "../src/appconfig.ts";
 import { buildDeviceConfig, matchTest, resolveLanguage, type CfgParamView, type CfgItem } from "../src/config.ts";
-import { buildAbsoluteSegmentTargets, buildRelativeSegmentTarget } from "../src/deviceimage.ts";
+import { buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, constantParams } from "../src/deviceimage.ts";
+import { steeringParamIds } from "../src/calculations.ts";
 
 const xml = readFileSync(join(import.meta.dir, "fixtures", "sample-app.xml"), "utf8");
 const app = parseAppConfig(xml);
@@ -1201,5 +1202,178 @@ describe("parameters the device does not hold", () => {
     expect(byRef("M-TEST_A-1_P-1_R-1").memoryless).toBe(true);
     expect(byRef("M-TEST_A-1_P-2_R-2").memoryless).toBeUndefined();
     expect(params(buildDeviceConfig(app, new Map())).every((p) => p.param.memoryless === undefined)).toBe(true);
+  });
+});
+
+describe("forward-placed Access=None Merkers and Repeat Count=0", () => {
+  // Siemens M-0001_A-20DF-22-4073-O000A / Gira M-0008_A-10D7-11-2783-O000A pattern:
+  // <choose ParamRefId="...P-M_R-1"> appears before <ParameterRefRef RefId="...P-M_R-1"/> in
+  // document order. Because placement settles before the walks run, the forward-placed Merker
+  // resolves to its default (1) rather than 0, while a sibling ref (R-2) of the same generic
+  // Access="None" Merker parameter stays independent (Theben 493B MD-7_P-7 pattern).
+  const mkXml = (dynamic: string) => `<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-TEST">
+    <ApplicationPrograms><ApplicationProgram Id="M-TEST_A-46" ApplicationNumber="46" ApplicationVersion="1" MaskVersion="MV-07B0" Name="ForwardMerker" DefaultLanguage="en-US">
+    <Static>
+      <ParameterTypes><ParameterType Id="M-TEST_A-46_PT-N"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="9" /></ParameterType></ParameterTypes>
+      <Parameters>
+        <Parameter Id="M-TEST_A-46_P-M" Name="Merker" ParameterType="M-TEST_A-46_PT-N" Text="Merker" Access="None" Value="1" />
+        <Parameter Id="M-TEST_A-46_P-OUT" Name="Out" ParameterType="M-TEST_A-46_PT-N" Text="Out" Value="0"><Memory CodeSegment="M-TEST_A-46_RS-4" Offset="0" BitOffset="0" /></Parameter>
+        <Parameter Id="M-TEST_A-46_P-Z" Name="ZeroRepeat" ParameterType="M-TEST_A-46_PT-N" Text="ZeroRepeat" Value="5"><Memory CodeSegment="M-TEST_A-46_RS-4" Offset="1" BitOffset="0" /></Parameter>
+      </Parameters>
+      <ParameterRefs>
+        <ParameterRef Id="M-TEST_A-46_P-M_R-1" RefId="M-TEST_A-46_P-M" />
+        <ParameterRef Id="M-TEST_A-46_P-M_R-2" RefId="M-TEST_A-46_P-M" />
+        <ParameterRef Id="M-TEST_A-46_P-OUT_R-0" RefId="M-TEST_A-46_P-OUT" Value="0" />
+        <ParameterRef Id="M-TEST_A-46_P-OUT_R-1" RefId="M-TEST_A-46_P-OUT" Value="2" />
+        <ParameterRef Id="M-TEST_A-46_P-OUT_R-2" RefId="M-TEST_A-46_P-OUT" Value="7" />
+        <ParameterRef Id="M-TEST_A-46_P-Z_R-1" RefId="M-TEST_A-46_P-Z" />
+      </ParameterRefs>
+      <ComObjectTable>
+        <ComObject Id="M-TEST_A-46_O-1" Name="O1" Number="1" Text="O1" FunctionText="" ObjectSize="1 Bit" DatapointType="DPST-1-1" ReadFlag="Enabled" WriteFlag="Enabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled" />
+        <ComObject Id="M-TEST_A-46_O-2" Name="O2" Number="2" Text="O2" FunctionText="" ObjectSize="1 Bit" DatapointType="DPST-1-1" ReadFlag="Enabled" WriteFlag="Enabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled" />
+      </ComObjectTable>
+      <ComObjectRefs>
+        <ComObjectRef Id="M-TEST_A-46_O-1_R-1" RefId="M-TEST_A-46_O-1" />
+        <ComObjectRef Id="M-TEST_A-46_O-2_R-1" RefId="M-TEST_A-46_O-2" />
+      </ComObjectRefs>
+    </Static>
+    <Dynamic>${dynamic}</Dynamic>
+    </ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+
+  test("evaluates a <choose> on a forward-placed Access=None Merker at its default in UI and image alike", () => {
+    const app = parseAppConfig(mkXml(`<ChannelIndependentBlock>
+      <ParameterBlock Id="M-TEST_A-46_PB-1" Name="h" Access="None">
+        <choose ParamRefId="M-TEST_A-46_P-M_R-1">
+          <when test="0"><ParameterRefRef RefId="M-TEST_A-46_P-OUT_R-0" /></when>
+          <when test="1"><ParameterRefRef RefId="M-TEST_A-46_P-OUT_R-1" /><ComObjectRefRef RefId="M-TEST_A-46_O-1_R-1" /></when>
+        </choose>
+      </ParameterBlock>
+      <ParameterBlock Id="M-TEST_A-46_PB-2" Name="main" Text="Main">
+        <ParameterRefRef RefId="M-TEST_A-46_P-M_R-1" />
+      </ParameterBlock>
+    </ChannelIndependentBlock>`));
+    const v = buildDeviceConfig(app, new Map());
+    expect(v.imageValues.get("M-TEST_A-46_P-OUT_R-1")).toBe("2");
+    expect(v.imageValues.has("M-TEST_A-46_P-OUT_R-0")).toBe(false);
+    expect(v.imageValues.get("M-TEST_A-46_P-M_R-1")).toBe("1");
+    expect([...v.imageComObjects.keys()]).toEqual([1]);
+    expect(comObjs(v).map((c) => c.comObject.number)).toEqual([1]);
+    expect(v.rejectedRefs.has("M-TEST_A-46_P-OUT_R-0")).toBe(true);
+  });
+
+  test("placing one ParameterRef of an Access=None Merker does not activate an unplaced sibling ref", () => {
+    const app = parseAppConfig(mkXml(`<ChannelIndependentBlock>
+      <ParameterBlock Id="M-TEST_A-46_PB-1" Name="main" Text="Main">
+        <ParameterRefRef RefId="M-TEST_A-46_P-M_R-2" />
+        <choose ParamRefId="M-TEST_A-46_P-M_R-1">
+          <when test="1"><ParameterRefRef RefId="M-TEST_A-46_P-OUT_R-1" /><ComObjectRefRef RefId="M-TEST_A-46_O-1_R-1" /></when>
+        </choose>
+      </ParameterBlock>
+    </ChannelIndependentBlock>`));
+    const v = buildDeviceConfig(app, new Map());
+    expect(v.imageValues.has("M-TEST_A-46_P-OUT_R-1")).toBe(false);
+    expect([...v.imageComObjects.keys()]).toEqual([]);
+    // Unset Merker choose is unevaluated, so its untaken branch is not marked rejected.
+    expect(v.rejectedRefs.has("M-TEST_A-46_P-OUT_R-1")).toBe(false);
+  });
+
+  test("an <Assign> before a Merker's <ParameterRefRef> is preserved rather than clobbered by placement", () => {
+    const app = parseAppConfig(mkXml(`<ChannelIndependentBlock>
+      <ParameterBlock Id="M-TEST_A-46_PB-1" Name="main" Text="Main">
+        <Assign TargetParamRefRef="M-TEST_A-46_P-M_R-1" Value="2" />
+        <ParameterRefRef RefId="M-TEST_A-46_P-M_R-1" />
+        <choose ParamRefId="M-TEST_A-46_P-M_R-1">
+          <when test="1"><ParameterRefRef RefId="M-TEST_A-46_P-OUT_R-1" /></when>
+          <when test="2"><ParameterRefRef RefId="M-TEST_A-46_P-OUT_R-2" /></when>
+        </choose>
+      </ParameterBlock>
+    </ChannelIndependentBlock>`));
+    const v = buildDeviceConfig(app, new Map());
+    expect(v.imageValues.get("M-TEST_A-46_P-OUT_R-2")).toBe("7");
+    expect(v.imageValues.has("M-TEST_A-46_P-OUT_R-1")).toBe(false);
+  });
+
+  test("Repeat Count=0 skips its subtree in placement, UI, Assigns, image values, com-objects, constantParams, and steeringParamIds", () => {
+    const app = parseAppConfig(mkXml(`<ChannelIndependentBlock>
+      <ParameterBlock Id="M-TEST_A-46_PB-1" Name="main" Text="Main">
+        <choose ParamRefId="M-TEST_A-46_P-M_R-1">
+          <when test="1"><ComObjectRefRef RefId="M-TEST_A-46_O-1_R-1" /></when>
+        </choose>
+        <Repeat Id="M-TEST_A-46_X-0" Count="0">
+          <ParameterRefRef RefId="M-TEST_A-46_P-M_R-1" />
+          <ParameterRefRef RefId="M-TEST_A-46_P-Z_R-1" />
+          <ComObjectRefRef RefId="M-TEST_A-46_O-2_R-1" />
+          <Assign TargetParamRefRef="M-TEST_A-46_P-OUT_R-0" Value="9" />
+          <ParameterBlock Id="M-TEST_A-46_PB-Z" Name="zero" Text="Zero">
+            <ParameterRefRef RefId="M-TEST_A-46_P-OUT_R-2" />
+          </ParameterBlock>
+        </Repeat>
+      </ParameterBlock>
+    </ChannelIndependentBlock>`).replace('Id="M-TEST_A-46_P-Z" Name="ZeroRepeat"', 'Id="M-TEST_A-46_P-Z" Name="ZeroRepeat" Access="None"'));
+    const v = buildDeviceConfig(app, new Map());
+    expect(v.blocks.map((b) => b.id)).toEqual([]);
+    expect(v.imageValues.size).toBe(0);
+    expect(v.imageComObjects.size).toBe(0);
+    expect(v.rejectedRefs.size).toBe(0);
+    expect(constantParams(app).has("M-TEST_A-46_P-Z")).toBe(false);
+    expect(steeringParamIds(app).has("M-TEST_A-46_P-OUT")).toBe(false);
+  });
+
+  test("invalid Repeat Count values refuse with REPEAT_COUNT_INVALID", () => {
+    for (const bad of ["1.5", "-1", "Infinity", "", "abc"]) {
+      const app = parseAppConfig(mkXml(`<ChannelIndependentBlock>
+        <ParameterBlock Id="M-TEST_A-46_PB-1" Name="main" Text="Main">
+          <Repeat Id="M-TEST_A-46_X-BAD" Count="${bad}"><ParameterRefRef RefId="M-TEST_A-46_P-Z_R-1" /></Repeat>
+        </ParameterBlock>
+      </ChannelIndependentBlock>`));
+      expect(() => buildDeviceConfig(app, new Map())).toThrow(expect.objectContaining({ code: "REPEAT_COUNT_INVALID" }));
+    }
+  });
+
+  test("a later <Assign> inside a parent block does not retroactively suppress an earlier <choose>'s nested block in the UI", () => {
+    const app = parseAppConfig(mkXml(`<ChannelIndependentBlock>
+      <ParameterBlock Id="M-TEST_A-46_PB-1" Name="parent" Text="Parent">
+        <ParameterRefRef RefId="M-TEST_A-46_P-Z_R-1" />
+        <choose ParamRefId="M-TEST_A-46_P-M_R-1">
+          <when test="1">
+            <ParameterBlock Id="M-TEST_A-46_PB-2" Name="child" Text="Child">
+              <ComObjectRefRef RefId="M-TEST_A-46_O-1_R-1" />
+            </ParameterBlock>
+          </when>
+        </choose>
+        <Assign TargetParamRefRef="M-TEST_A-46_P-M_R-1" Value="0" />
+        <ParameterRefRef RefId="M-TEST_A-46_P-M_R-1" />
+      </ParameterBlock>
+    </ChannelIndependentBlock>`));
+    const v = buildDeviceConfig(app, new Map());
+    expect(v.blocks.map((b) => b.id)).toEqual(["M-TEST_A-46_PB-1", "M-TEST_A-46_PB-2"]);
+    expect([...v.imageComObjects.keys()]).toEqual([1]);
+    expect(comObjs(v).map((c) => c.comObject.number)).toEqual([1]);
+  });
+
+  test("a self-justifying default branch on an unplaced Access=None Merker refuses with CHOOSE_DEFAULT_UNSETTLED", () => {
+    const app = parseAppConfig(mkXml(`<ChannelIndependentBlock>
+      <ParameterBlock Id="M-TEST_A-46_PB-1" Name="main" Text="Main">
+        <choose ParamRefId="M-TEST_A-46_P-M_R-1">
+          <when test="7"><ParameterRefRef RefId="M-TEST_A-46_P-OUT_R-0" /></when>
+          <when default="true">
+            <ParameterRefRef RefId="M-TEST_A-46_P-M_R-1" />
+            <ComObjectRefRef RefId="M-TEST_A-46_O-1_R-1" />
+          </when>
+        </choose>
+      </ParameterBlock>
+    </ChannelIndependentBlock>`));
+    expect(() => buildDeviceConfig(app, new Map())).toThrow(expect.objectContaining({ code: "CHOOSE_DEFAULT_UNSETTLED" }));
+  });
+
+  test("a self-negating Access=None Merker refuses with CONFIG_NOT_RESOLVABLE", () => {
+    const app = parseAppConfig(mkXml(`<ChannelIndependentBlock>
+      <ParameterBlock Id="M-TEST_A-46_PB-1" Name="main" Text="Main">
+        <choose ParamRefId="M-TEST_A-46_P-M_R-1">
+          <when test="0"><ParameterRefRef RefId="M-TEST_A-46_P-M_R-1" /></when>
+        </choose>
+      </ParameterBlock>
+    </ChannelIndependentBlock>`));
+    expect(() => buildDeviceConfig(app, new Map())).toThrow(expect.objectContaining({ code: "CONFIG_NOT_RESOLVABLE" }));
   });
 });

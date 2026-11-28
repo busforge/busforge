@@ -9,8 +9,8 @@
 // where the unit places its segments) the product unit does not hold, and `productAgainstUnit` lists it against a
 // collected unit.
 import { XMLParser } from "fast-xml-parser";
-import { assessParStep, declaredPropChecks, flattenSteps, maskInfo, matchTest, parseAppConfig, type AppConfig, type CfgParamRef, type DynNode } from "../packages/product/src/index.ts";
-import { attrsOf, childrenByTag, firstByTag, kidsOf, tagOf, type ONode } from "../packages/product/src/onode.ts";
+import { assessParStep, declaredPropChecks, deepFirst, flattenSteps, maskInfo, matchTest, parseAppConfig, type AppConfig, type CfgParamRef, type DynNode } from "../packages/product/src/index.ts";
+import { attrsOf, childrenByTag, firstByTag, kidsOf, type ONode } from "../packages/product/src/onode.ts";
 import type { collectedUnit } from "./sim-unit-model.ts";
 
 export type IdentitySource = { from: "product"; what: string } | { from: "ets6log"; line: string };
@@ -41,15 +41,6 @@ const XML_PARSER = new XMLParser({
 const hex = (b: Buffer) => b.toString("hex");
 const keyOf = (object: number, pid: number) => `${object}/${pid}`;
 const isDecInt = (s: string | undefined, n: number) => s !== undefined && /^\d+$/.test(s.trim()) && Number(s.trim()) === n;
-
-function deepFirst(nodes: ONode[], tag: string): ONode | undefined {
-  for (const n of nodes) {
-    if (tagOf(n) === tag) return n;
-    const hit = deepFirst(kidsOf(n), tag);
-    if (hit) return hit;
-  }
-  return undefined;
-}
 
 function decodeSixByteBase64(raw: string): Buffer | null {
   const trimmed = raw.trim();
@@ -82,8 +73,8 @@ function rawBinaryValueOf(staticNode: ONode | undefined, typeId: string, enumVal
 // A 6-byte hardware type (0/78) declared by the application outside <LoadProcedures>: either a single top-level
 // <Parameter> with <Property ObjectIndex="0" PropertyId="78" Offset="0" BitOffset="0"/> backed by a 48-bit
 // BinaryValue TypeRestriction whose default value resolves unambiguously in <Dynamic>, or <ApplicationProgram
-// HardwareType="..."/>. Evaluates <Dynamic> narrowly rather than via buildDeviceConfig so forward-placed
-// Access="None" Merkers and Repeat Count="0" resolve cleanly and every ambiguous case skips to the identity loop.
+// HardwareType="..."/>. Evaluates <Dynamic> narrowly rather than via buildDeviceConfig so every
+// ambiguous or unmodelled case skips cleanly to the identity loop without throwing.
 export function declaredHardwareType(
   appXml: string,
   cfg: AppConfig = parseAppConfig(appXml),

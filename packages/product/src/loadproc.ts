@@ -1,5 +1,5 @@
 import { XMLParser } from "fast-xml-parser";
-import { type ONode, tagOf, attrsOf, kidsOf, childrenByTag } from "./onode.ts";
+import { type ONode, tagOf, attrsOf, kidsOf, childrenByTag, deepFirst } from "./onode.ts";
 import { ProductError } from "./errors.ts";
 import type { StepRefusal } from "./deviceflash.ts";
 
@@ -78,15 +78,6 @@ export const KNOWN_LD_VERBS = new Set([
   // the synthetic captures show them"); where a download does not run one, it refuses it
   "LdCtrlDelay", "LdCtrlMasterReset", "LdCtrlTaskPtr", "LdCtrlTaskCtrl2",
 ]);
-
-function deepFirst(nodes: ONode[], tag: string): ONode | undefined {
-  for (const n of nodes) {
-    if (tagOf(n) === tag) return n;
-    const r = deepFirst(kidsOf(n), tag);
-    if (r) return r;
-  }
-  return undefined;
-}
 
 export function parseLoadProcedures(xml: string): LoadProcedures {
   const p = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "", attributesGroupName: ":@", preserveOrder: true });

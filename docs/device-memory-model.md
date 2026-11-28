@@ -141,13 +141,15 @@ same byte. The active branch's own placement still writes it.
 
 ### A block that is invisible still runs its side effects
 
-A `<choose>` can be gated on a Merker (an `Access="None"` or `Access="Read"`, memoryless and non-property visibility flag) that
-is only placed by a `<ParameterRefRef>` inside an invisible block. Skipping an
-`Access="None"` block wholesale therefore leaves the Merker unplaced and the dependent
-`choose` reads it as unset, so whole channels vanish from the config view while the image
-still materialises them. `buildDeviceConfig` runs an invisible block's Merker/Assign side
-effects (with the same `selectWhens` gating, so an inactive branch's placement is still not
-reached) without emitting the block.
+A `<choose>` can be gated on a Merker (an effective `Access="None"` parameter without `<Memory>`,
+or a memoryless, non-property `Access="Read"` visibility flag) that is only placed by a
+`<ParameterRefRef>` inside an invisible block, or computed via `<Assign>` there. Skipping an
+`Access="None"` block wholesale therefore leaves the Merker unplaced or unassigned and the
+dependent `choose` reads it as unset, so whole channels vanish from the config view while the image
+still materialises them. `buildDeviceConfig` discovers Merker placements upfront across all blocks
+(including invisible blocks and forward placements after the `<choose>`) and runs an invisible
+block's `<Assign>` side effects (with the same `selectChooseWhens` gating, so an inactive branch's
+side effects are still not reached) without emitting the block.
 
 ### Owned bytes and left-alone bytes
 
@@ -510,11 +512,12 @@ That per-instance base comes from one of two interchangeable sources:
   `<Allocators>` to compute the identical value. The counter is `Start + cumulative
   Allocates`, walked over the visibility-resolved active tree, with `<Repeat Count="k">`
   instantiating k copies. The re-run was validated against real multi-channel devices,
-  reproducing all 67 of their project-pinned module instances exactly. Its walk evaluates the
-  chooses on its own, with each default branch decided as the configuration decides it; a re-run
-  set holding an instance of a `<Module>` the configuration does not reach is refused
-  (`MODULE_INSTANCES_UNREACHED`), because that instance has moved the allocators every later one
-  starts from.
+  reproducing all 67 of their project-pinned module instances exactly. Its walk shares the same
+  `<choose>` and value-resolution helper (`packages/product/src/choose.ts`) with the configuration
+  walk for branch selection, Merker placement, and default branches; as a safety net, any re-run
+  set disagreeing with the `<Module>` nodes the configuration reaches (for example if a `<Repeat>`
+  loop mutates state across iterations) is still refused (`MODULE_INSTANCES_UNREACHED`), because an
+  extra or missing instance shifts every allocator after it.
 
 Both memory models resolve module offsets, and both have been exercised on hardware
 ([status.md](status.md)).

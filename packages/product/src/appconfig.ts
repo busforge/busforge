@@ -1,7 +1,7 @@
 import { XMLParser } from "fast-xml-parser";
 import { ProductError } from "./errors.ts";
 import { dpt9Encodable } from "./image.ts";
-import { type ONode, tagOf, attrsOf, kidsOf, childrenByTag, firstByTag } from "./onode.ts";
+import { type ONode, tagOf, attrsOf, kidsOf, childrenByTag, firstByTag, deepFirst } from "./onode.ts";
 import { loadProceduresOf, type LoadProcedures } from "./loadproc.ts";
 
 // Parse a KNX ApplicationProgram for the configuration UI: parameter types with
@@ -266,14 +266,6 @@ function attrOrText(n: ONode, name: string): string | undefined {
   if (a !== undefined) return a;
   const child = firstByTag(kidsOf(n), name);
   return child ? concatText(child) : undefined;
-}
-function deepFirst(nodes: ONode[], tag: string): ONode | undefined {
-  for (const n of nodes) {
-    if (tagOf(n) === tag) return n;
-    const r = deepFirst(kidsOf(n), tag);
-    if (r) return r;
-  }
-  return undefined;
 }
 
 const num = (s: string | undefined): number | undefined => (s === undefined ? undefined : Number(s));
@@ -767,7 +759,7 @@ function parseDyn(n: ONode): DynNode | null {
     // instance lookup expand each one; without this the whole repeated block (a
     // large part of channel devices) silently disappears.
     case "Repeat":
-      return { kind: "container", id: a.Id ?? "", name: a.Name ?? "", text: a.Text ?? "", textParamRefId: a.TextParameterRefId, number: a.Number, repeatCount: a.Count !== undefined ? Number(a.Count) : undefined, children: kidsOf(n).map(parseDyn).filter(Boolean) as DynNode[] };
+      return { kind: "container", id: a.Id ?? "", name: a.Name ?? "", text: a.Text ?? "", textParamRefId: a.TextParameterRefId, number: a.Number, repeatCount: a.Count !== undefined ? (/^\d+$/.test(a.Count.trim()) ? Number(a.Count.trim()) : NaN) : undefined, children: kidsOf(n).map(parseDyn).filter(Boolean) as DynNode[] };
     case "ParameterBlock": {
       const kids = kidsOf(n);
       // Layout="Grid"/"Table" turns the block into a cell grid. Any other value is a

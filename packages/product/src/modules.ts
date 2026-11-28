@@ -1,5 +1,16 @@
-import type { AppConfig, DynNode, DynWhen, ModuleInstance } from "./appconfig.ts";
-import { chooseSkipsTests, defaultBranchOf, matchTest, unsettledDefaultRefusal, validateTest } from "./config.ts";
+import type { AppConfig, DynNode, ModuleInstance } from "./appconfig.ts";
+import {
+  buildRefsOfParam,
+  emptyPlacement,
+  recordPlacedRef,
+  repeatCountOf,
+  resolveParamValue,
+  samePlacement,
+  selectChooseWhens,
+  unsettledDefaultRefusal,
+  type ChooseContext,
+  type ChoosePlacement,
+} from "./choose.ts";
 import { ProductError } from "./errors.ts";
 
 // A module argument's value as a number where it is used as one (a memory base offset, a com-object
@@ -24,22 +35,29 @@ export const moduleArgNumber = (value: string): number => (/^-?\d+$/.test(value)
 // binds an argument to an allocator takes the current counter and advances it by that
 // argument's `allocates`. A `<Repeat Count="k">` replays its body k times, so a six-channel
 // block yields six instances at start, start+allocates, ... A `choose` descends only into
-// the matching branch, so inactive device variants neither render nor allocate. Its default branch is taken
-// where the configuration takes it (config.ts defaultBranchOf), with the refs placed by reached ParameterRefRefs
-// and the refs heading reached blocks found by walking until they settle. Where no ETS download decides a default
-// branch, the instances are allocated with it taken and without, and refused (CHOOSE_DEFAULT_UNSETTLED) where the
-// two differ.
+// the matching branch(es), sharing choose.ts's selectChooseWhens and resolveParamValue with
+// config.ts so the allocator and the configuration walk cannot diverge on branch selection,
+// Merker placement, sibling defaults, skipped tests, or unsettled default branches. Where no
+// ETS download decides a default branch, the instances are allocated with it taken and without,
+// and refused (CHOOSE_DEFAULT_UNSETTLED) where the two differ.
 export function resolveModuleInstances(app: AppConfig, env: Map<string, string>): ModuleInstance[] {
-  const refsOfParam = new Map<string, string[]>();
-  for (const r of app.refs.values()) (refsOfParam.get(r.paramId) ?? refsOfParam.set(r.paramId, []).get(r.paramId)!).push(r.id);
+  const refsOfParam = buildRefsOfParam(app);
   const settled = (takeOpen: boolean) => {
-    let seen = { placed: new Set<string>(), placedParams: new Set<string>(), heads: new Set<string>() };
-    const same = (a: Set<string>, b: Set<string>) => a.size === b.size && [...a].every((r) => b.has(r));
+    let placement = emptyPlacement();
+    const seen: ChoosePlacement[] = [];
+    const everOpen = new Set<string>();
     for (let pass = 0; ; pass++) {
-      const run = allocate(app, env, refsOfParam, seen, takeOpen);
-      if (same(run.placed, seen.placed) && same(run.placedParams, seen.placedParams) && same(run.heads, seen.heads)) return run;
-      if (pass >= 50) throw new ProductError("CONFIG_NOT_RESOLVABLE", "the application's parameter visibility does not settle while its module instances are allocated");
-      seen = run;
+      const run = allocate(app, env, refsOfParam, placement, takeOpen);
+      for (const id of run.open) everOpen.add(id);
+      if (samePlacement(run.placement, placement)) {
+        if (run.unresolvedArgError) throw run.unresolvedArgError;
+        return { ...run, open: run.open.size ? run.open : everOpen };
+      }
+      if (pass >= 50 || seen.some((p) => samePlacement(p, run.placement))) {
+        throw new ProductError("CONFIG_NOT_RESOLVABLE", "the application's parameter visibility does not settle while its module instances are allocated");
+      }
+      seen.push(placement);
+      placement = run.placement;
     }
   };
   const taken = settled(true);
@@ -54,76 +72,42 @@ function allocate(
   app: AppConfig,
   env: Map<string, string>,
   refsOfParam: Map<string, string[]>,
-  before: { placed: Set<string>; placedParams: Set<string>; heads: Set<string> },
+  before: ChoosePlacement,
   takeOpen: boolean,
-): { out: ModuleInstance[]; placed: Set<string>; placedParams: Set<string>; heads: Set<string>; open: Set<string> } {
+): { out: ModuleInstance[]; placement: ChoosePlacement; open: Set<string>; unresolvedArgError?: ProductError } {
   const alloc = new Map<string, number>();
   for (const a of app.allocators.values()) alloc.set(a.id, a.start);
   const out: ModuleInstance[] = [];
-  const placed = new Set<string>(), placedParams = new Set<string>(), heads = new Set<string>(), open = new Set<string>();
+  const nextPlacement = emptyPlacement();
   const miCount = new Map<string, number>(); // module-node id -> instances seen so far (for MI-n)
   const workEnv = new Map(env);
+  let unresolvedArgError: ProductError | undefined;
+  const chooseCtx: ChooseContext = {
+    app,
+    refsOfParam,
+    placement: before,
+    takeOpenDefaults: takeOpen,
+    unsettled: new Set(),
+  };
 
   const strip = (id: string) => (id.startsWith(`${app.id}_`) ? id.slice(app.id.length + 1) : id);
-
-  // Effective value of a parameter ref for a choose test or Assign source: working value (stored or
-  // assigned on this ref or a sibling) else the ref default else the parameter default.
-  const effRaw = (defRefId: string, rewrite: (s: string) => string): string | undefined => {
-    const instId = rewrite(defRefId);
-    const ref = app.refs.get(defRefId);
-    if (workEnv.has(instId)) return workEnv.get(instId);
-    if (ref) {
-      const siblingVals = new Set((refsOfParam.get(ref.paramId) ?? []).filter((r) => workEnv.has(rewrite(r))).map((r) => workEnv.get(rewrite(r))!));
-      if (siblingVals.size === 1) return [...siblingVals][0];
-    }
-    return ref?.value ?? (ref ? app.params.get(ref.paramId)?.value : undefined);
-  };
-  const effVal = (defRefId: string, rewrite: (s: string) => string): number =>
-    // Default a fully unresolved selector to 0, identical to config.ts selectWhens, so the
-    // allocator walk and the config view never disagree on which choose branch is active
-    // (their instance sets must stay interchangeable). Without this a value-less selector
-    // yields NaN here but 0 there, potentially selecting different branches.
-    Number(effRaw(defRefId, rewrite) ?? 0);
 
   const walk = (nodes: DynNode[], rewrite: (s: string) => string) => {
     for (const n of nodes) {
       switch (n.kind) {
         case "block":
-          if (n.paramRefId) heads.add(rewrite(n.paramRefId));
+          if (n.paramRefId) nextPlacement.heads.add(rewrite(n.paramRefId));
           walk(n.children, rewrite);
           break;
-        case "container":
-          if (n.repeatCount !== undefined) for (let i = 0; i < n.repeatCount; i++) walk(n.children, rewrite);
+        case "container": {
+          const count = repeatCountOf(n);
+          if (count !== undefined) for (let i = 0; i < count; i++) walk(n.children, rewrite);
           else walk(n.children, rewrite);
           break;
-        case "choose": {
-          // ETS evaluates EVERY matching <when>, not just the first (see config.ts
-          // selectWhens); unplaced/unstored parameters skip their tests by chooseSkipsTests, and
-          // the default is taken only when none match, by defaultBranchOf. Allocation must walk
-          // the same branches the config/image walk does, or a from-scratch device's instance set
-          // would diverge from ETS's.
-          const id = rewrite(n.paramRefId);
-          const ref = app.refs.get(n.paramRefId);
-          const paramPlaced = !!ref && before.placedParams.has(rewrite(ref.paramId));
-          const isHeaded = before.heads.has(id);
-          const hasStored = !!ref && (refsOfParam.get(ref.paramId) ?? []).some((r) => workEnv.has(rewrite(r)));
-          let matched: DynWhen[];
-          if (chooseSkipsTests(app, n.paramRefId, paramPlaced, isHeaded, hasStored)) {
-            for (const x of n.whens) if (!x.isDefault && x.test !== undefined) validateTest(x.test);
-            matched = [];
-          } else {
-            matched = n.whens.filter((x) => !x.isDefault && x.test !== undefined && matchTest(x.test, effVal(n.paramRefId, rewrite)));
-          }
-          const def = n.whens.find((x) => x.isDefault);
-          let branches = matched;
-          if (!matched.length && def) {
-            const rule = defaultBranchOf(app, n.paramRefId, before.placed.has(id), isHeaded);
-            if (rule === "open" && def.children.length) open.add(id);
-            branches = rule === "take" || (rule === "open" && takeOpen) ? [def] : [];
-          }
-          for (const w of branches) walk(w.children, rewrite);
-          break;
         }
+        case "choose":
+          for (const w of selectChooseWhens(chooseCtx, n.paramRefId, n.whens, rewrite, workEnv)) walk(w.children, rewrite);
+          break;
         case "module": {
           const def = app.moduleDefs.get(n.refId);
           if (!def) break;
@@ -140,14 +124,16 @@ function allocate(
               // An arg bound to an undeclared allocator means the whole allocation chain
               // (this instance AND every later one) is unknowable. Silently omitting the
               // arg used to make downstream placement fall back to base offset 0, i.e.
-              // channel-1 memory. Refuse instead: a wrong placement is flashable damage.
+              // channel-1 memory. Refuse once placement has settled so a provisional pass-0
+              // branch (before a Merker's placement is known) does not abort a valid config.
               if (cur === undefined) {
-                throw new ProductError("MODULE_ARG_UNRESOLVED",
+                unresolvedArgError ??= new ProductError("MODULE_ARG_UNRESOLVED",
                   `module instance ${instId}: argument ${strip(na.argId)} is bound to allocator ${strip(na.allocatorRefId)}, which the application does not declare; cannot place this module's memory`);
+              } else {
+                val = String(cur);
+                const allocates = def.args.find((d) => d.id === na.argId)?.allocates ?? 0;
+                alloc.set(na.allocatorRefId, cur + allocates);
               }
-              val = String(cur);
-              const allocates = def.args.find((d) => d.id === na.argId)?.allocates ?? 0;
-              alloc.set(na.allocatorRefId, cur + allocates);
             }
             if (val !== undefined) args.push({ refId: strip(na.argId), value: val });
           }
@@ -160,17 +146,14 @@ function allocate(
           walk(def.dynamic, childRewrite);
           break;
         }
-        // Leaves. ParameterRefRef records placement for chooseSkipsTests and defaultBranchOf;
+        // Leaves. ParameterRefRef records placement for selectChooseWhens and resolveParamValue;
         // Assign updates workEnv so later chooses see assigned targets. Listed rather than left to
         // a `default`, so a node kind added later cannot be skipped silently here.
-        case "paramRef": {
-          placed.add(rewrite(n.refId));
-          const ref = app.refs.get(n.refId);
-          if (ref) placedParams.add(rewrite(ref.paramId));
+        case "paramRef":
+          recordPlacedRef(app, nextPlacement, n.refId, rewrite);
           break;
-        }
         case "assign":
-          workEnv.set(rewrite(n.target), n.value ?? (n.source ? effRaw(n.source, rewrite) ?? "" : ""));
+          workEnv.set(rewrite(n.target), n.value ?? (n.source ? resolveParamValue(chooseCtx, n.source, rewrite, workEnv) ?? "" : ""));
           break;
         case "comObjRef": case "separator": case "button": case "unsupported":
           break;
@@ -178,5 +161,5 @@ function allocate(
     }
   };
   walk(app.dynamic, (s) => s);
-  return { out, placed, placedParams, heads, open };
+  return { out, placement: nextPlacement, open: chooseCtx.unsettled, unresolvedArgError };
 }
