@@ -52,10 +52,6 @@ const KNOWN_DEVIATIONS = [
   "insta-o000a-module-param-base-value: M-0001_A-20DF-22-4073-O000A object 4 at 10476: Busforge 03, ETS 01 (1 project)",
   "insta-o000a-module-param-base-value: M-0001_A-20DF-22-4073-O000A object 4 at 10477: Busforge 00, ETS 02 (1 project)",
   "insta-o000a-module-param-base-value: M-0001_A-20DF-22-4073-O000A object 4 at 167: Busforge 0a, ETS 1e (1 project)",
-  // Forward-placed Access="None" Merker P-28_R-54 (Value="1") evaluates as 0 in Busforge.
-  "insta-20df-forward-merker-p28: M-0001_A-20DF-22-4073-O000A object 4 at 16: Busforge 00, ETS 20 (1 project)",
-  "insta-20df-forward-merker-p28: M-0001_A-20DF-22-4073-O000A object 4 at 19: Busforge 00, ETS 21 (1 project)",
-  "insta-20df-forward-merker-p28: M-0001_A-20DF-22-4073-O000A object 4 at 43: Busforge 00, ETS 31 (1 project)",
   // ETS's record of the com-object table dates from a download when object 3 had no link, and was not
   // written again after the project linked it; ETS's own later download writes 0x4f for the linked object.
   "gvs-amma-object-3-record-older-than-its-link: M-0085_A-0072-30-69AA object 3 at 6: Busforge 4f, ETS 4b (1 project)",
@@ -82,10 +78,6 @@ const KNOWN_DEVIATIONS = [
   "insta-o000a-module-param-base-value: M-00A0_A-20DF-12-AEEA-O000A object 4 at 10476: Busforge 03, ETS 01 (1 project)",
   "insta-o000a-module-param-base-value: M-00A0_A-20DF-12-AEEA-O000A object 4 at 10477: Busforge 00, ETS 02 (1 project)",
   "insta-o000a-module-param-base-value: M-00A0_A-20DF-12-AEEA-O000A object 4 at 167: Busforge 0a, ETS 1e (1 project)",
-  // Same forward-placed Access="None" Merker P-28_R-54 evaluation on the Blumotix 20DF OEM variant.
-  "insta-20df-forward-merker-p28: M-00A0_A-20DF-12-AEEA-O000A object 4 at 16: Busforge 00, ETS 20 (1 project)",
-  "insta-20df-forward-merker-p28: M-00A0_A-20DF-12-AEEA-O000A object 4 at 19: Busforge 00, ETS 21 (1 project)",
-  "insta-20df-forward-merker-p28: M-00A0_A-20DF-12-AEEA-O000A object 4 at 43: Busforge 00, ETS 31 (1 project)",
 ];
 
 // The devices with a record that are not compared, each with why: ETS marks a part of the device as
