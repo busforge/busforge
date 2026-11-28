@@ -579,17 +579,48 @@ it by guess would write a plausible wrong value.
 
 ## 11. A choose on a ParameterRef nothing places takes no default branch
 
-A `<choose>` whose ParameterRef no active branch places (no reached `ParameterRefRef` names it) still
-evaluates its tests, but its `<when default="true">` is not taken. ETS's full downloads of two synthetic
-products show it (bussard's syn-choose-never-shown and syn-choose-per-ref, [third-party test data](testing.md#third-party-test-data)):
+A `<choose>` whose ParameterRef no active branch places (no reached `ParameterRefRef` names it) takes no
+`<when default="true">`. ETS's full downloads of two synthetic products show it (bussard's
+syn-choose-never-shown and syn-choose-per-ref, [third-party test data](testing.md#third-party-test-data)):
 a com-object in the only, default branch of a choose on a parameter no block shows, or on the second
 ParameterRef of a shown parameter that only an untaken branch places, gets no entry in the com-object
 table (`00 00`). With that second ref placed (its parameter set so that the branch placing it is taken),
 ETS writes the object's entry.
 
-The tests still count. The Jung 400021SE's choose on its unplaced `R-1` (§9) and the OpenKNX
-RaumController's chooses on internal values no branch places take the branches their tests match, as
-ETS's downloads of both show.
+Its `<when test="...">` branches still count when the underlying parameter is active through a placed
+sibling ParameterRef, an active `<Assign>`, a block heading, or a stored value: the Jung 400021SE's
+choose on its unplaced `R-1` (§9, sibling `R-107` placed), the OpenKNX RaumController's chooses on
+assigned `Access="None"` internals, and `M-00B6_A-4537-03-9C38`'s choose on an assigned memory-backed
+parameter (`P-1264_R-1570`) take the branches their tests match, as ETS's downloads show.
+
+When no ParameterRef of a parameter is placed, the tested ref does not head a reached block, and no ref
+of the parameter holds a stored or assigned value, ETS matches none of its `<when test="...">` branches
+either (neither non-zero nor `0`), for **all union members** (any `Access`) and for **non-property
+parameters with effective `Access` other than `"None"`** (`ParameterRef/@Access`, else
+`Parameter/@Access`):
+
+- **Unions** overlay several parameters on the same bytes; only the member an active branch places is
+  meaningful. On the GVS AMMA, tests of `0` on unplaced Forced/Delay/Counter union members activate
+  three com-objects (5, 6, 8) if evaluated at their static default; ETS leaves them out
+  (partial-download capture).
+- **Memoryless parameters** (`Access="Read"` and editable): on the Theben `M-0048_A-0103-11-72A2`,
+  memoryless `Access="Read"` `P-68` (`Value="1"`) is unplaced at defaults and ETS leaves its gated
+  com-objects (5, 6, 7) at `00 00`; on `M-021E_A-0016-11-6EC4`, unplaced editable memoryless parameters
+  likewise match neither `0` nor `2`.
+- **Plain memory-backed parameters**: on the I.Trust 1ITRGV_100 (`M-02AA_A-0081-10-72A7-O0085`), `P-37`
+  (offset 68, `Value="1"`) and `P-184` (offset 468, `Value="1"`) are unplaced at defaults; ETS still
+  writes their defaults into the parameter segment (`0x10` at 68, `0x11` at 468, under `MinEtsVersion`
+  5.0 with no `DownloadInvisibleParameters`), yet does not match `<when test="1">` in `<choose>`,
+  leaving com-objects 164 and 220 at `00 00`. On `M-021E_A-0016-11-6EC4`, unplaced memory-backed
+  parameters with `Value="0"` or `"1"` likewise leave all of their gated com-objects at `00 00` while
+  ETS writes their memory defaults.
+
+An active `<Assign>` target still counts (shown on OpenKNX and `M-00B6_A-4537-03-9C38`). A stored value
+in `0.xml` on an unplaced union or plain parameter still counts in Busforge as well; the captures show
+only the unstored case for those, so that stored-value half is an assumption. Unplaced `Access="None"`
+parameters without `<Memory>` (Merkers) still read as `0`, and unplaced non-`Access="None"`
+property-backed or `Access="None"` memory-backed parameters keep their default until an ETS download
+shows otherwise.
 
 A page parameter that a choose tests heads a reached `ParameterBlock` (its `ParamRefId`) on every product
 the captures show (`TypeNone`, no value: Gira Tastsensor 3, Theben Meteodata 140 S, ABB US/U 4.2), and
@@ -601,14 +632,6 @@ and 5, the differential counter's overrun value). Busforge's image of that confi
 ETS's. So a memoryless parameter heading a reached block counts as placed for the default branch; the
 captures show it for `TypeNone` and numeric headings, and Busforge applies it to a memoryless heading of any
 type. It decides nothing else; the value its ParameterRef resolves to is the one §9 gives.
-
-Unions overlay several parameters on the same bytes; only the member an active branch places is
-meaningful. On the GVS AMMA a choose tests a union member that no active branch places. Evaluated
-with that member's default, it takes a branch that activates three com-objects (5, 6, 8); ETS
-leaves them out (partial-download capture). So a choose on a union member that is not placed and
-has no stored value matches none of its tests, and, its ref unplaced, takes no default branch
-either, unless its ref is `Access="None"` (below). A stored value on such a member still counts; the
-capture shows only the case without one, so that half is an assumption.
 
 No ETS download shows the default branch of a choose on an `Access="None"` ParameterRef no branch
 places (an internal value that applications assign and test but never place, as OpenKNX does), nor of one

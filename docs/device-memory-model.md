@@ -86,9 +86,13 @@ the other path is never entered.
 
 The `default` branch belongs to a controlling ParameterRef that is itself placed (a reached
 `ParameterRefRef`, or, for a memoryless parameter, the `ParamRefId` heading a reached block): a choose
-on a ref nothing places takes only the branches its tests match, not its default. Where no ETS download
-shows the default branch (an `Access="None"` ref, or a parameter with memory that only heads a block),
-both readings are built and a configuration they image differently is refused
+on a ref nothing places takes no default branch. Furthermore, when no ParameterRef of the parameter is
+placed, the tested ref does not head a reached block, and no ref holds a stored or assigned value,
+neither a union member (any `Access`) nor a non-property parameter with effective `Access` other than
+`"None"` matches any `<when test="...">` branch, even when ETS still writes its memory default into the
+parameter segment. Where no ETS download shows the default branch (an `Access="None"` ref, or a
+parameter with memory that only heads a block), both readings are built and a configuration they image
+differently is refused
 ([findings.md](findings.md#11-a-choose-on-a-parameterref-nothing-places-takes-no-default-branch)).
 
 `buildDeviceConfig` (`packages/product/src/config.ts`) walks the Dynamic tree with the

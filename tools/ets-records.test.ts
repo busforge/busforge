@@ -31,11 +31,6 @@ const KNOWN_DEVIATIONS = [
   // ETS's record of the com-object table dates from a download when object 3 had no link, and was not
   // written again after the project linked it; ETS's own later download writes 0x4f for the linked object.
   "gvs-amma-object-3-record-older-than-its-link: M-0085_A-0072-30-69AA object 3 at 6: Busforge 4f, ETS 4b (1 project)",
-  // Open Busforge bug (fix pending; documented in internal/ets-download-record-deviations.md): ComObjects #164 and #220
-  // are gated by <choose> on unplaced memory-backed parameters (P-37_R-37, P-184_R-240); ETS leaves both disabled (0x00)
-  // while Busforge evaluates their static default 1 and writes 0x43.
-  "itrust-0081-unplaced-memory-param-choose: M-02AA_A-0081-10-72A7-O0085 object 3 at 328: Busforge 43, ETS 00 (1 project)",
-  "itrust-0081-unplaced-memory-param-choose: M-02AA_A-0081-10-72A7-O0085 object 3 at 440: Busforge 43, ETS 00 (1 project)",
 ];
 
 // The devices with a record that are not compared, each with why: ETS marks a part of the device as
@@ -226,8 +221,7 @@ corpusDescribe("ETS's download record in the corpus projects", () => {
     expect(counted(found.map((f) => f.what))).toEqual(pinnedDeviations);
     expect(counted(notCompared.map((f) => f.what))).toEqual(NOT_COMPARED);
     // 519 compared records of 56 distinct device states (84916 bytes) across 547 records in all corpus projects
-    // (547 = 519 compared + 28 not compared: 16 not loaded, 12 refused; full-run batch 1 adds 23 MV-07B0 records:
-    // 8 refused and 15 compared distinct states totalling 22679 bytes, with 1 open deviation listed above).
+    // (547 = 519 compared + 28 not compared: 16 not loaded, 12 refused).
     const pinned: PinnedCount[] = [
       { what: "compared records", found: comparedIn.length, pinned: 519, byProject: tally(comparedIn) },
       { what: "distinct device states, each counted for the first project that shows it", found: distinctIn.length, pinned: 56, byProject: tally(distinctIn) },

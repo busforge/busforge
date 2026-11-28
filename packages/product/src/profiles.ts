@@ -5,7 +5,7 @@ import { refuseRawDataWrites } from "./rawdata.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { assertComObjectTableStable } from "./comobjtable.ts";
 import { buildComObjectTable, comObjectTableRefusal, refuseObjectZeroOverride, programIdStamp, withLinkedCommFlags, linkedBitObjects, refuseAppCommOffLinks, downloadPluginRefusal, withInstanceOverrides, refuseUnwritableOverrides, decodeComObjectTable, decodeComObjectTableMv0705, comObjFlagsDiffering, refuseUnknownDeviceFlags, changedEntryBits, type ComObjInstanceOverride, type ObservedComObjFlags, type OverridableBit } from "./comobjbuild.ts";
-import { buildDeviceConfig, type DeviceCapabilities, type CfgComObjImage, type DeviceConfigBuild } from "./config.ts";
+import { buildDeviceConfig, refuseUnreachedInstances, type DeviceCapabilities, type CfgComObjImage, type DeviceConfigBuild } from "./config.ts";
 import { decodeParameterImage, decodeAbsoluteImage, imageValueForm } from "./image.ts";
 import { buildGroupTables, buildGroupTablesMv0705, decodeGroupTables, decodeGroupTablesMv0705, type ComObjectLink } from "./grouptables.ts";
 import { assessParCoverage, malformedStepRefusal, fullDownloadParCoverage, systemBMasterResets, declaredPropChecks, relParamFillByte, relParamFullMode, declaredMcbWrites, unrunGrpSteps, lsmIdx, stepAddress, type ParCoverage, type LoadProcedures, type McbWrite } from "./loadproc.ts";
@@ -1370,6 +1370,7 @@ export class SystemBProfile extends DeviceProfile {
     if (!target || target.size === 0) throw new ProductError("EMPTY_IMAGE", "built an empty parameter image; refusing to download");
 
     const view = buildDeviceConfig(cfg, ctx.params, undefined, instances);
+    if (!ctx.moduleInstances?.length) refuseUnreachedInstances(cfg, view, instances);
     // A link whose com-object this configuration does not activate cannot be programmed: the
     // association table would point a group address at an entry that reads 0x0000, i.e. at an
     // object that does not communicate. Filtering such a link away and carrying on would leave the
@@ -1772,8 +1773,7 @@ export class SystemBProfile extends DeviceProfile {
     // are small tables, so this never touches the large parameter image (L4) — the point of not
     // promoting a mere link change to a full download. The staleness gate above guarantees the only L3
     // difference is link-driven (params did not move it), so on a pure re-point L3 is byte-identical.
-    const { instances } = moduleAwareModel(cfg, ctx.params, ctx.moduleInstances ?? []);
-    const view = buildDeviceConfig(cfg, ctx.params, undefined, instances);
+    const view = buildDeviceConfig(cfg, ctx.params, undefined, ctx.moduleInstances ?? []);
     const active = new Set(view.imageComObjects.keys());
     const orphans = ctx.links.filter((l) => !active.has(l.comObjNum));
     if (orphans.length) {
@@ -1908,6 +1908,7 @@ export class SystemBProfile extends DeviceProfile {
       }
     })();
     const view = buildDeviceConfig(cfg, ctx.params, undefined, instances);
+    if (!ctx.moduleInstances?.length) refuseUnreachedInstances(cfg, view, instances);
     const active = new Set(view.imageComObjects.keys());
     const orphans = ctx.links.filter((l) => !active.has(l.comObjNum));
     if (orphans.length) {
@@ -2236,7 +2237,7 @@ export class System7Profile extends DeviceProfile {
     const { addr, assoc } = buildGroupTablesMv0705(ctx.links, iaToNum(ctx.ia));
     const flagBaseline = builtBefore(() => baselineComObjects(cfg, ctx));
     const brackets = builtBefore(() => planSystem7TableBrackets(cfg, cfg.loadProcedures, { addr, assoc }));
-    const l3View = builtBefore(() => buildDeviceConfig(cfg, ctx.params, undefined, moduleAwareModel(cfg, ctx.params, ctx.moduleInstances ?? []).instances));
+    const l3View = builtBefore(() => buildDeviceConfig(cfg, ctx.params, undefined, ctx.moduleInstances ?? []));
     const cur = await readGroupTablesMv0705(dev);
     // CAPACITY: a System 7 device's address/association tables sit in PRE-RESERVED absolute
     // segments (no reallocation, unlike System B's allocSegment). The app program declares how
@@ -2358,6 +2359,7 @@ export class System7Profile extends DeviceProfile {
     refuseUnencodableChange(cfg, ctx, false);
     const instances = cfg.hasModules ? (ctx.moduleInstances?.length ? ctx.moduleInstances : resolveModuleInstances(cfg, ctx.params)) : [];
     const view = buildDeviceConfig(cfg, ctx.params, undefined, instances);
+    if (!ctx.moduleInstances?.length) refuseUnreachedInstances(cfg, view, instances);
     const active = new Set(view.imageComObjects.keys());
     const orphans = ctx.links.filter((l) => !active.has(l.comObjNum));
     if (orphans.length) {
@@ -2438,6 +2440,7 @@ export class System7Profile extends DeviceProfile {
     refuseRawDataWrites(cfg, ctx.params, instances);
     refuseCalculationWrites(cfg, ctx.params, instances);
     const view = buildDeviceConfig(cfg, ctx.params, undefined, instances);
+    if (!ctx.moduleInstances?.length) refuseUnreachedInstances(cfg, view, instances);
     // A link whose com-object this configuration does not activate would build an association to an
     // object the device ignores: a group address the UI calls programmed and the device never answers.
     // Refuse, exactly as the surgical GA flash and the System B full download do. Without this the

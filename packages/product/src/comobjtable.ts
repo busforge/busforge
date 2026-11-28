@@ -37,7 +37,6 @@
 // reverse-engineered for MV-0705): both sides come from the application model, so it works on
 // every family the config engine understands.
 import { buildDeviceConfig, type CfgComObjImage } from "./config.ts";
-import { resolveModuleInstances } from "./modules.ts";
 import { ProductError } from "./errors.ts";
 import type { AppConfig, ComObjFlags, ModuleInstance } from "./appconfig.ts";
 
@@ -64,8 +63,9 @@ const flagDiff = (a: ComObjFlags, b: ComObjFlags): string[] =>
 // programmed against, and would throw MODULE_ARG_UNRESOLVED on a device whose project-supplied
 // instances flash fine.
 export function comObjectTable(app: AppConfig, params: Map<string, string>, instances: ModuleInstance[] = []): Map<number, CfgComObjImage> {
-  const inst = instances.length || !app.hasModules ? instances : resolveModuleInstances(app, params);
-  return buildDeviceConfig(app, params, undefined, inst).imageComObjects;
+  // Pass `instances` directly so from-scratch builds (empty `instances`) still run
+  // refuseUnreachedInstances inside buildDeviceConfig instead of masking allocator divergence.
+  return buildDeviceConfig(app, params, undefined, instances).imageComObjects;
 }
 
 // Compare two implied com-object tables. Both sides are derived the SAME way (comObjectTable),

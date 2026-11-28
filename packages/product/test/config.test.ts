@@ -905,8 +905,10 @@ describe("ParameterRefs of one parameter share its value", () => {
 });
 
 test("a placement that never settles is refused, not picked", () => {
-  // A choose on R-B places its sibling R-A only while R-B reads 0; once R-A is placed, R-B reads
-  // R-A's default 1 and places nothing, which makes R-B read 0 again.
+  // With R-B stored as 0 (assumption: a stored value on an unplaced parameter still evaluates its
+  // choose tests), an unplaced P-1 evaluates R-B as 0 and places its sibling R-A; once R-A is
+  // placed, R-B reads R-A's default 1 (ignoring the stale stored 0 on unplaced R-B) and places
+  // nothing, which makes R-B read 0 again.
   const xml = `<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-TEST">
     <ApplicationPrograms><ApplicationProgram Id="M-TEST_A-41" ApplicationNumber="41" ApplicationVersion="1" MaskVersion="MV-07B0" Name="Cycle" DefaultLanguage="en-US">
     <Static><ParameterTypes>
@@ -919,7 +921,139 @@ test("a placement that never settles is refused, not picked", () => {
     </ParameterRefs></Static><Dynamic><ChannelIndependentBlock><ParameterBlock Id="M-TEST_A-41_PB-1" Name="m" Text="Main">
       <choose ParamRefId="M-TEST_A-41_P-1_R-B"><when test="0"><ParameterRefRef RefId="M-TEST_A-41_P-1_R-A" /></when></choose>
     </ParameterBlock></ChannelIndependentBlock></Dynamic></ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
-  expect(() => buildDeviceConfig(parseAppConfig(xml), new Map())).toThrow(/does not settle/);
+  expect(() => buildDeviceConfig(parseAppConfig(xml), new Map([["M-TEST_A-41_P-1_R-B", "0"]]))).toThrow(/does not settle/);
+});
+
+describe("unplaced memory-backed and editable memoryless parameters in <choose>", () => {
+  // I.Trust 1ITRGV_100 (M-02AA_A-0081-10-72A7-O0085) pattern: P-37 (offset 68, default 1) and
+  // P-184 (offset 468, default 1) are normal memory-backed parameters placed only in inactive
+  // branches. ETS still writes their default into RelMemory(4) (MinEtsVersion 5.0, no
+  // DownloadInvisibleParameters), yet does not match <when test="1"> (or test="0") for their
+  // <choose> elements, leaving gated com-objects disabled (00 00). Once placed, heading a reached
+  // block, targeted by an active <Assign>, sharing a placed sibling ref, or holding a stored value
+  // (assumption for unplaced plain/union parameters), the choose matches. Effective access
+  // (ref.access ?? param.access) governs whether a ref is Access="None".
+  const xml = `<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-TEST"><ApplicationPrograms>
+<ApplicationProgram Id="M-TEST_A-45" ApplicationNumber="45" ApplicationVersion="1" MaskVersion="MV-07B0" MinEtsVersion="5.0" Name="Unplaced Memory Choose" DefaultLanguage="en-US">
+  <Static>
+    <Code><RelativeSegment Id="M-TEST_A-45_RS-4" LoadStateMachine="4" Size="6"><Data>AAAAAAAA</Data></RelativeSegment></Code>
+    <ParameterTypes>
+      <ParameterType Id="M-TEST_A-45_PT-N"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="15" /></ParameterType>
+    </ParameterTypes>
+    <Parameters>
+      <Parameter Id="M-TEST_A-45_P-SW" Name="Switch" ParameterType="M-TEST_A-45_PT-N" Text="Switch" Value="0"><Memory CodeSegment="M-TEST_A-45_RS-4" Offset="0" BitOffset="0" /></Parameter>
+      <Parameter Id="M-TEST_A-45_P-M1" Name="MemOne" ParameterType="M-TEST_A-45_PT-N" Text="MemOne" Value="1"><Memory CodeSegment="M-TEST_A-45_RS-4" Offset="1" BitOffset="0" /></Parameter>
+      <Parameter Id="M-TEST_A-45_P-M0" Name="MemZero" ParameterType="M-TEST_A-45_PT-N" Text="MemZero" Value="0"><Memory CodeSegment="M-TEST_A-45_RS-4" Offset="2" BitOffset="0" /></Parameter>
+      <Parameter Id="M-TEST_A-45_P-ED" Name="MemlessEdit" ParameterType="M-TEST_A-45_PT-N" Text="MemlessEdit" Value="1" />
+      <Parameter Id="M-TEST_A-45_P-SUB" Name="Sub" ParameterType="M-TEST_A-45_PT-N" Text="Sub" Value="7"><Memory CodeSegment="M-TEST_A-45_RS-4" Offset="3" BitOffset="0" /></Parameter>
+      <Parameter Id="M-TEST_A-45_P-REFNONE" Name="RefNone" ParameterType="M-TEST_A-45_PT-N" Text="RefNone" Value="1"><Memory CodeSegment="M-TEST_A-45_RS-4" Offset="4" BitOffset="0" /></Parameter>
+      <Parameter Id="M-TEST_A-45_P-REFRW" Name="RefRW" ParameterType="M-TEST_A-45_PT-N" Text="RefRW" Access="None" Value="1"><Memory CodeSegment="M-TEST_A-45_RS-4" Offset="5" BitOffset="0" /></Parameter>
+      <Parameter Id="M-TEST_A-45_P-HEAD" Name="Head" ParameterType="M-TEST_A-45_PT-N" Text="Head" Value="1" />
+    </Parameters>
+    <ParameterRefs>
+      <ParameterRef Id="M-TEST_A-45_P-SW_R-1" RefId="M-TEST_A-45_P-SW" />
+      <ParameterRef Id="M-TEST_A-45_P-M1_R-1" RefId="M-TEST_A-45_P-M1" />
+      <ParameterRef Id="M-TEST_A-45_P-M1_R-2" RefId="M-TEST_A-45_P-M1" />
+      <ParameterRef Id="M-TEST_A-45_P-M0_R-1" RefId="M-TEST_A-45_P-M0" />
+      <ParameterRef Id="M-TEST_A-45_P-ED_R-1" RefId="M-TEST_A-45_P-ED" />
+      <ParameterRef Id="M-TEST_A-45_P-SUB_R-1" RefId="M-TEST_A-45_P-SUB" />
+      <ParameterRef Id="M-TEST_A-45_P-REFNONE_R-1" RefId="M-TEST_A-45_P-REFNONE" Access="None" />
+      <ParameterRef Id="M-TEST_A-45_P-REFRW_R-1" RefId="M-TEST_A-45_P-REFRW" Access="ReadWrite" />
+      <ParameterRef Id="M-TEST_A-45_P-HEAD_R-1" RefId="M-TEST_A-45_P-HEAD" />
+    </ParameterRefs>
+    <ComObjectTable>
+      ${[1, 2, 3, 4, 5, 6, 7].map((n) => `<ComObject Id="M-TEST_A-45_O-${n}" Name="O${n}" Number="${n}" Text="O${n}" FunctionText="" ObjectSize="1 Bit" DatapointType="DPST-1-1" ReadFlag="Enabled" WriteFlag="Disabled" CommunicationFlag="Enabled" TransmitFlag="Enabled" UpdateFlag="Disabled" ReadOnInitFlag="Disabled" />`).join("")}
+    </ComObjectTable>
+    <ComObjectRefs>
+      ${[1, 2, 3, 4, 5, 6, 7].map((n) => `<ComObjectRef Id="M-TEST_A-45_O-${n}_R-1" RefId="M-TEST_A-45_O-${n}" />`).join("")}
+    </ComObjectRefs>
+  </Static>
+  <Dynamic>
+    <ChannelIndependentBlock>
+      <ParameterBlock Id="M-TEST_A-45_PB-1" Name="main" Text="Main" ParamRefId="M-TEST_A-45_P-HEAD_R-1">
+        <ParameterRefRef RefId="M-TEST_A-45_P-SW_R-1" />
+        <choose ParamRefId="M-TEST_A-45_P-SW_R-1">
+          <when test="1"><ParameterRefRef RefId="M-TEST_A-45_P-M1_R-1" /><ParameterRefRef RefId="M-TEST_A-45_P-M0_R-1" /><ParameterRefRef RefId="M-TEST_A-45_P-ED_R-1" /></when>
+          <when test="2"><ParameterRefRef RefId="M-TEST_A-45_P-M1_R-2" /></when>
+          <when test="3"><Assign TargetParamRefRef="M-TEST_A-45_P-M1_R-1" Value="1" /></when>
+          <when test="4">
+            <ParameterBlock Id="M-TEST_A-45_PB-H" Name="hidden" Access="None">
+              <Assign TargetParamRefRef="M-TEST_A-45_P-M1_R-1" Value="1" />
+            </ParameterBlock>
+          </when>
+        </choose>
+        <choose ParamRefId="M-TEST_A-45_P-M1_R-1">
+          <when test="1"><ComObjectRefRef RefId="M-TEST_A-45_O-1_R-1" /></when>
+          <when test="2"><ParameterRefRef RefId="M-TEST_A-45_P-SUB_R-1" /></when>
+        </choose>
+        <choose ParamRefId="M-TEST_A-45_P-M1_R-2">
+          <when test="1"><ComObjectRefRef RefId="M-TEST_A-45_O-2_R-1" /></when>
+        </choose>
+        <choose ParamRefId="M-TEST_A-45_P-M0_R-1">
+          <when test="0"><ComObjectRefRef RefId="M-TEST_A-45_O-3_R-1" /></when>
+        </choose>
+        <choose ParamRefId="M-TEST_A-45_P-ED_R-1">
+          <when test="1"><ComObjectRefRef RefId="M-TEST_A-45_O-4_R-1" /></when>
+        </choose>
+        <choose ParamRefId="M-TEST_A-45_P-REFNONE_R-1">
+          <when test="1"><ComObjectRefRef RefId="M-TEST_A-45_O-5_R-1" /></when>
+        </choose>
+        <choose ParamRefId="M-TEST_A-45_P-REFRW_R-1">
+          <when test="1"><ComObjectRefRef RefId="M-TEST_A-45_O-6_R-1" /></when>
+        </choose>
+        <choose ParamRefId="M-TEST_A-45_P-HEAD_R-1">
+          <when test="1"><ComObjectRefRef RefId="M-TEST_A-45_O-7_R-1" /></when>
+        </choose>
+      </ParameterBlock>
+    </ChannelIndependentBlock>
+  </Dynamic>
+</ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+  const unplacedApp = parseAppConfig(xml);
+
+  test("unplaced memory-backed and editable memoryless parameters match neither test=1 nor test=0; ref-level Access=None and block headings still evaluate; memory defaults still write", () => {
+    const v = buildDeviceConfig(unplacedApp, new Map());
+    // O-1..O-4 (unplaced P-M1, P-M0, P-ED) and O-6 (Parameter Access=None overridden by ref Access=ReadWrite) stay off;
+    // O-5 (ref Access=None on memory-backed P-REFNONE) and O-7 (block-heading P-HEAD) activate.
+    expect([...v.imageComObjects.keys()].sort((a, b) => a - b)).toEqual([5, 7]);
+    expect(comObjs(v)).toHaveLength(2);
+    // The skipped choose on unplaced P-M1 does not mark its untaken <when test="2"> branch (P-SUB) as rejected.
+    expect(v.rejectedRefs.has("M-TEST_A-45_P-SUB_R-1")).toBe(false);
+    // Parameter memory still writes P-M1's default 1 at offset 1, P-SUB's default 7 at offset 3,
+    // P-REFNONE's default 1 at offset 4 (MinEtsVersion 5.0); P-REFRW (Parameter Access=None) stays unowned.
+    const target = buildRelativeSegmentTarget(unplacedApp, new Map(), 4, { ownIdleUnionDefaults: true })!;
+    expect(target.bytes.toString("hex")).toBe("000100070100");
+    expect(target.owned).toEqual([0xff, 0xff, 0xff, 0xff, 0xff, 0]);
+  });
+
+  test("once placed, memory-backed and editable memoryless parameters match their tests and reject untaken branches", () => {
+    const v = buildDeviceConfig(unplacedApp, new Map([["M-TEST_A-45_P-SW_R-1", "1"]]));
+    expect([...v.imageComObjects.keys()].sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 7]);
+    expect(v.rejectedRefs.has("M-TEST_A-45_P-SUB_R-1")).toBe(true);
+  });
+
+  test("a placed sibling ParameterRef activates chooses on its unplaced sibling ref", () => {
+    const v = buildDeviceConfig(unplacedApp, new Map([["M-TEST_A-45_P-SW_R-1", "2"]]));
+    expect([...v.imageComObjects.keys()].sort((a, b) => a - b)).toEqual([1, 2, 5, 7]);
+  });
+
+  test("an active <Assign> targeting an unplaced memory-backed parameter activates its chooses, also from a nested Access=None block", () => {
+    for (const sw of ["3", "4"]) {
+      const v = buildDeviceConfig(unplacedApp, new Map([["M-TEST_A-45_P-SW_R-1", sw]]));
+      expect([...v.imageComObjects.keys()].sort((a, b) => a - b)).toEqual([1, 2, 5, 7]);
+      expect(comObjs(v)).toHaveLength(4);
+    }
+  });
+
+  test("a stored value on an unplaced memory-backed parameter activates its chooses (assumption)", () => {
+    const v = buildDeviceConfig(unplacedApp, new Map([["M-TEST_A-45_P-M1_R-1", "1"]]));
+    expect([...v.imageComObjects.keys()].sort((a, b) => a - b)).toEqual([1, 2, 5, 7]);
+  });
+
+  test("an unplaced <choose> with an unsupported test token still refuses with PARAM_TEST_UNSUPPORTED", () => {
+    const bad = parseAppConfig(xml.replace(`<when test="1"><ComObjectRefRef RefId="M-TEST_A-45_O-1_R-1" /></when>`, `<when test="on"><ComObjectRefRef RefId="M-TEST_A-45_O-1_R-1" /></when>`));
+    expect(() => buildDeviceConfig(bad, new Map())).toThrow(expect.objectContaining({ code: "PARAM_TEST_UNSUPPORTED" }));
+  });
 });
 
 // A choose's default branch belongs to a ParameterRef an active branch places; on a ref nothing places it is not

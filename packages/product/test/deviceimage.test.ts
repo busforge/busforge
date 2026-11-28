@@ -233,6 +233,7 @@ const assignOrderXml = `<?xml version="1.0" encoding="utf-8"?>
 <Code><AbsoluteSegment Id="M-0003_A-0001-01-0001_AS-1" Address="100" Size="3"><Data>AAAA</Data></AbsoluteSegment></Code>
 </Static>
 <Dynamic><ParameterBlock Id="M-0003_A-0001-01-0001_PB-1" Name="Main" Text="Main">
+<ParameterRefRef RefId="M-0003_A-0001-01-0001_P-ctrl_R"/>
 <choose ParamRefId="M-0003_A-0001-01-0001_P-ctrl_R">
 <when test="0"><ParameterRefRef RefId="M-0003_A-0001-01-0001_P-A_R"/></when>
 <when default="true"><ParameterRefRef RefId="M-0003_A-0001-01-0001_P-B_R"/></when>

@@ -244,8 +244,9 @@ export interface DeviceConfigBuild extends DeviceConfigView {
   // hidden from the UI; the image build needs them. See buildDeviceConfig.
   imageValues: Map<string, string>;
   // The top-level ParameterRefs every placement of which lies in a branch of a choose the image
-  // pass evaluated and did not take. A choose on an unset Merker evaluates nothing, so what it
-  // gates is not in here; neither is a ref placed nowhere.
+  // pass evaluated and did not take. A choose on an unset Merker or an unplaced, unstored
+  // parameter whose tests are skipped (chooseSkipsTests) evaluates nothing, so what it gates is
+  // not in here; neither is a ref placed nowhere.
   rejectedRefs: Set<string>;
   // Resolved com-objects reached in the active dynamic tree, keyed by resolved object
   // number. Unlike `blocks` this INCLUDES com-objects inside Access="None" blocks (hidden
@@ -319,13 +320,17 @@ export function moduleInstanceArgNumber(app: AppConfig, inst: ModuleInstance, fu
 // flashed image. Nothing downstream can catch it, because the device faithfully holds whatever it
 // was given and reads back green.
 const TEST_OP = /^(<=|>=|<|>|!=|=)(-?\d+)$/;
-export function matchTest(test: string, v: number): boolean {
+export function validateTest(test: string): string[] {
   const tokens = test.trim().split(/\s+/).filter((t) => t !== "");
   for (const tok of tokens) {
     if (!TEST_OP.test(tok) && !/^-?\d+$/.test(tok)) {
       throw new ProductError("PARAM_TEST_UNSUPPORTED", `unsupported token "${tok}" in parameter condition "${test}"`);
     }
   }
+  return tokens;
+}
+export function matchTest(test: string, v: number): boolean {
+  const tokens = validateTest(test);
   for (const tok of tokens) {
     const m = TEST_OP.exec(tok);
     if (m) {
@@ -482,6 +487,35 @@ export function defaultBranchOf(app: AppConfig, defRefId: string, placed: boolea
   return (ref.access ?? param?.access) === "None" ? "open" : "skip";
 }
 
+// Whether a <choose ParamRefId="defRefId"> skips its <when test="..."> branches because no ref of
+// its parameter is placed, `defRefId` does not head a reached block, and no ref of its parameter
+// holds a stored or assigned value:
+// - Union members (any Access) hold no value while another member owns their memory (GVS AMMA:
+//   tests of 0 on idle Forced/Delay/Counter members placed no object in ETS).
+// - Non-union, non-property parameters with effective Access != "None" (`ref.access ?? p.access`)
+//   likewise match no <choose> test when unplaced and unstored, even when ETS still writes a
+//   memory-backed parameter's default into the parameter segment (Theben M-0048_A-0103-11-72A2:
+//   memoryless Access="Read" P-68 Value="1"; I.Trust 1ITRGV_100 M-02AA_A-0081-10-72A7-O0085:
+//   memory-backed P-37 offset 68 Value="1" and P-184 offset 468 Value="1" written as 0x10 and 0x11
+//   in RelMemory(4) while com-objects #164 and #220 stay 00 00; M-021E_A-0016-11-6EC4: unplaced
+//   memory-backed and memoryless editable parameters with Value="0"/"1"/"2" leave 14 objects 00 00).
+// Unplaced Access="None" Merkers (no <Memory>) still read as 0, and unplaced non-Access="None"
+// property-backed or Access="None" memory-backed parameters keep their default until a capture
+// shows otherwise. Shared with the module allocator (modules.ts).
+export function chooseSkipsTests(
+  app: AppConfig,
+  defRefId: string,
+  paramPlaced: boolean,
+  heads: boolean,
+  hasStored: boolean,
+): boolean {
+  if (paramPlaced || heads || hasStored) return false;
+  const ref = app.refs.get(defRefId);
+  const p = ref ? app.params.get(ref.paramId) : undefined;
+  if (!p) return false;
+  return !!p.union || (!p.onProperty && (ref!.access ?? p.access) !== "None");
+}
+
 // Module instances the allocators were re-run for (resolveModuleInstances) are refused where one belongs to a Module
 // node the configuration does not reach, or where the configuration reaches a Module node the allocator never
 // instantiated: the allocator evaluates the chooses on its own, so either mismatch leaves memory and com-object
@@ -524,17 +558,16 @@ function buildDeviceConfigReading(
   // else the module-def ref default else the parameter default. `e` is the working
   // value map; it defaults to the UI walk's `env`, but the image pass passes its own
   // so its Assigns resolve in document order independently of the UI pass.
-  // A "Merker": an Access=None parameter with no memory, used purely as a visibility
+  // A "Merker": an Access=None parameter with no <Memory>, used purely as a visibility
   // flag in choose conditions. ETS does NOT give it its static default; it is UNSET
   // until a ParameterRefRef placing it is reached in an active branch (which assigns the
   // ref's value). So a never-placed Merker reads as unset (0 in choose tests, so non-zero
   // tests fail), and the blocks it gates stay hidden, exactly as ETS leaves their parameter
   // memory at the segment default. Hardware-verified on the Theben HMG6T Notprogramm block
   // (gated by a Merker that is only placed when its real switch P-6 = 1; with P-6 = 0 the
-  // device keeps those bytes at 0, which only this rule reproduces). Memory-backed or
-  // editable parameters are unaffected and keep their default; unplaced memoryless
-  // Access="Read" parameters are handled alongside unplaced union members below
-  // (isUnplacedReadMerker).
+  // device keeps those bytes at 0, which only this rule reproduces). Unplaced non-Access="None"
+  // and union parameters are skipped in <choose> via chooseSkipsTests below; unplaced memoryless
+  // Access="Read" parameters also resolve to undefined via isUnplacedReadMerker.
   const isMerker = (paramId: string): boolean => {
     const p = app.params.get(paramId);
     return !!p && p.access === "None" && !p.hasMemory;
@@ -566,23 +599,19 @@ function buildDeviceConfigReading(
     const vals = new Set(refIds.filter((r) => e.has(scope.rewrite(r))).map((r) => e.get(scope.rewrite(r))!));
     return vals.size === 1 ? [...vals][0] : undefined; // none, or conflicting: no shared stored value
   };
-  const isUnplacedAndUnstored = (paramId: string, scope: Scope, e: Map<string, string>): boolean =>
-    !placement.get(scope.rewrite(paramId))?.size && !(refsOfParam.get(paramId) ?? []).some((r) => e.has(scope.rewrite(r)));
-  // A union member none of whose refs is placed and none of which holds a stored value.
-  const isUnplacedUnionMember = (defRefId: string, scope: Scope, e: Map<string, string>): boolean => {
-    const ref = app.refs.get(defRefId);
-    return !!ref && !!app.params.get(ref.paramId)?.union && isUnplacedAndUnstored(ref.paramId, scope, e);
-  };
-  // An Access="Read" parameter with no memory or property, none of whose refs is placed and none
-  // of which holds a stored value. ETS leaves it unset instead of falling back to its static
-  // default (shown by ETS simulator capture and LoadedImage on Theben M-0048_A-0103-11-72A2:
-  // P-68 has Access="Read" and Value="1", is unplaced at defaults, and ETS leaves its gated
-  // com-objects #5-#7 at 00 00). Unlike an Access="None" Merker, placement comes from the settled
-  // `placement` set so sibling ParameterRefs and stored/assigned values keep §9 sharing intact.
+  const isParamPlaced = (paramId: string, scope: Scope): boolean => !!placement.get(scope.rewrite(paramId))?.size;
+  const hasParamStored = (paramId: string, scope: Scope, e: Map<string, string>): boolean =>
+    (refsOfParam.get(paramId) ?? []).some((r) => e.has(scope.rewrite(r)));
+  // An unplaced, unstored memoryless Access="Read" parameter resolves to undefined in `resolve`
+  // (as well as skipping <choose> tests via chooseSkipsTests; see Theben M-0048_A-0103-11-72A2).
   const isUnplacedReadMerker = (defRefId: string, scope: Scope, e: Map<string, string>): boolean => {
     const ref = app.refs.get(defRefId);
     const p = ref ? app.params.get(ref.paramId) : undefined;
-    return !!p && p.access === "Read" && !holdsValue(p) && isUnplacedAndUnstored(ref!.paramId, scope, e);
+    return !!p && p.access === "Read" && !holdsValue(p) && !isParamPlaced(ref!.paramId, scope) && !hasParamStored(ref!.paramId, scope, e);
+  };
+  const isUnplacedChooseParam = (defRefId: string, scope: Scope, e: Map<string, string>): boolean => {
+    const ref = app.refs.get(defRefId);
+    return !!ref && chooseSkipsTests(app, defRefId, isParamPlaced(ref.paramId, scope), headed.has(scope.rewrite(defRefId)), hasParamStored(ref.paramId, scope, e));
   };
   const resolve = (defRefId: string, scope: Scope, e: Map<string, string> = env): string | undefined => {
     const instId = scope.rewrite(defRefId);
@@ -639,18 +668,21 @@ function buildDeviceConfigReading(
   // The default branch belongs to a ParameterRef an active branch places. A choose on a ref nothing places takes
   // no default branch: ETS's full downloads of bussard's syn-choose-never-shown (a never-shown parameter) and
   // syn-choose-per-ref (the unplaced second ref of a shown parameter) leave the com-object of the only, default
-  // branch out, and the second's download with that ref placed writes it. Its tests still count: the Jung
-  // 400021SE's choose on its unplaced R-1 and the OpenKNX RaumController's on unplaced internal values place what
-  // ETS writes. A memoryless parameter heading a reached block counts as placed: on the Gira, Theben and ABB
-  // products the captures show, ETS takes the default branch of a choose on such a page parameter.
+  // branch out, and the second's download with that ref placed writes it. Its tests still count when the
+  // parameter is active through a placed sibling ref (Jung 400021SE's choose on its unplaced R-1), an active
+  // <Assign> (OpenKNX RaumController, M-00B6_A-4537-03-9C38), a block heading, or a stored value; otherwise
+  // chooseSkipsTests suppresses test matching for union members (any Access) and non-property parameters with
+  // effective Access != "None". A memoryless parameter heading a reached block counts as placed for the default
+  // branch: on the Gira, Theben and ABB products the captures show, ETS takes the default branch of a choose on
+  // such a page parameter.
   const selectWhens = (defParamRefId: string, whens: DynWhen[], scope: Scope, e: Map<string, string> = env): DynWhen[] => {
-    // A choose on an unplaced, unstored union member or memoryless Access="Read" Merker matches
-    // none of its tests: a union member holds no value while another member owns its memory (GVS
-    // AMMA, ETS partial download: tests of 0 on the idle Forced/Delay/Counter members placed no
-    // object in ETS), and an unplaced memoryless Access="Read" Merker is unset in ETS (Theben
-    // M-0048_A-0103-11-72A2: P-68 Value="1" left its gated objects 00 00). An unset Access="None"
-    // Merker still reads as 0 here.
-    if (!isUnplacedUnionMember(defParamRefId, scope, e) && !isUnplacedReadMerker(defParamRefId, scope, e)) {
+    // Union members (any Access) and non-property parameters with effective Access != "None" match
+    // none of their tests when unplaced, non-heading and unstored (chooseSkipsTests). Validate
+    // every test condition even when skipped so unsupported syntax still refuses. An unset
+    // Access="None" Merker (no <Memory>) still reads as 0 here.
+    if (isUnplacedChooseParam(defParamRefId, scope, e)) {
+      for (const w of whens) if (!w.isDefault && w.test !== undefined) validateTest(w.test);
+    } else {
       const v = Number(resolve(defParamRefId, scope, e) ?? 0);
       const matched = whens.filter((w) => !w.isDefault && w.test !== undefined && matchTest(w.test, v));
       if (matched.length) return matched;
@@ -832,14 +864,14 @@ function buildDeviceConfigReading(
         case "container": collect(n.children, items, scope); break;
         case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) collect(def.dynamic, items, makeScope(n.refId, def, inst)); break; }
         case "unsupported": items.push({ kind: "unsupported", label: n.tag }); break; // surface, never drop
-        // Nested blocks become their own sections (handled by walk, which also runs a hidden
-        // block's Merker/Assign side effects via applyEnv). Known limit: a hidden block nested
-        // DIRECTLY inside a visible ParameterBlock is not descended here, so a Merker it places
-        // would read stale for a choose collected at this same visible level. No device authored
-        // that way is known (Jung/HMG place the hidden block at container/top level, where walk
-        // orders it correctly). Should one leave the view's objects different from the image's,
-        // the configuration is refused (CONFIG_VIEW_INCOMPLETE below), not shown short.
-        case "block": if (n.inline && n.access !== "None") { inlineAt.set(scope.rewrite(n.id), items.length); inlineSeen++; } break;
+        // Visible nested blocks become their own sections (handled by walk). A hidden Access="None"
+        // block nested inside a visible block runs its Merker/Assign side effects and emits its
+        // communication objects here in document order, so a later choose at this level sees them;
+        // walk skips hidden blocks while inside a visible block (loose === null) so they run once.
+        case "block":
+          if (n.access === "None") applyEnv(n.children, scope, items);
+          else if (n.inline) { inlineAt.set(scope.rewrite(n.id), items.length); inlineSeen++; }
+          break;
       }
     }
   };
@@ -920,7 +952,10 @@ function buildDeviceConfigReading(
     for (const n of nodes) {
       switch (n.kind) {
         case "block": {
-          if (n.access === "None") { applyEnv(n.children, scope, section); break; } // hidden, but its Merker/Assign side effects still gate later chooses
+          // Hidden block outside a visible block (loose !== null): run its side effects and emit
+          // its objects into `section`. Inside a visible block (loose === null), collect() already
+          // ran applyEnv in document order before any sibling choose at this level.
+          if (n.access === "None") { if (loose !== null) applyEnv(n.children, scope, section); break; }
           const items: CfgItem[] = [];
           const inlineBefore = inlineSeen;
           collect(n.children, items, scope);
@@ -1079,7 +1114,7 @@ function buildDeviceConfigReading(
         case "choose": {
           const taken = selectWhens(n.paramRefId, n.whens, scope, imgEnv);
           if (scope === TOP) {
-            const evaluated = resolve(n.paramRefId, scope, imgEnv) !== undefined;
+            const evaluated = !isUnplacedChooseParam(n.paramRefId, scope, imgEnv) && resolve(n.paramRefId, scope, imgEnv) !== undefined;
             for (const w of n.whens) if (!taken.includes(w)) placements(w.children, evaluated);
           }
           for (const w of taken) imgCollect(w.children, scope);
