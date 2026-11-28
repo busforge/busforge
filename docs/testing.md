@@ -903,6 +903,40 @@ requests the unit did not take, the second check). The output goes to `--out`, a
 outside the corpus (by default a new one under the system's temporary directory), to be checked before
 it is copied in; it goes straight into the corpus only with `--in-place`.
 
+**Importing a batch or driver run directory** into the corpus is one command:
+
+```bash
+BUSFORGE_CORPUS=... KNXPROJ_PASSWORDS=<one per line> CAPTURE_KEYS=<name>=<32 hex>,... \
+  bun run tools/ets-sweep.ts --import-dir <dir> [--dry-run] [--apps <list>] [--apps-file <path>]
+```
+
+It scans `<dir>` (outside the corpus) for `<application>/<variant>/` rows that completed or ended
+`sim-refused` with wire logs, and skips unfinished rows (missing `batch-result.json` in a batch
+directory or missing required capture files), `driver-refused`, `driver-failed`, `ets-failed`, and
+`sim-refused` rows without wire logs, listing every skipped row with its reason. Optional `--apps`
+(comma-separated application IDs or `<application>/<variant>` IDs) and `--apps-file` (one per line,
+`#` comments allowed) narrow the selection and refuse unknown entries.
+
+Before writing anything to the corpus, it snapshots the allow-listed files, judges every discovered
+row against Busforge through the same worker pool as above, pre-stages the `ets-download-records.json.gz`
+entries from the staged exports, and verifies that refreshing `internal/captures/{INDEX.md,index.json}`
+will not drop previously read Data Secure keys (`KNXPROJ_PASSWORDS`, `CAPTURE_KEYS`) before mutating
+any file. It prints a verdict table, `differs` details, and a summary of new or updated `.knxproj`
+exports and `LoadedImage` records. With `--dry-run`, the command stops here and leaves the corpus
+untouched (without requiring `KNXPROJ_PASSWORDS` or `CAPTURE_KEYS` unless an export itself needs a
+password). Without `--dry-run`, it copies only the allow-listed canonical capture files (`row.json`,
+`configuration.json`, `ets.log`, `ets.log.sim.txt`, `ets6.log.txt`, the export named by `row.json`,
+and whichever of `ets.log.serve.txt`, `ets.pcapng`, `ets.log.dumpcap.txt` are present; never
+`batch-result.json`, `attempts/`, `screenshots/`, `failure.*`, `dialog.*`, or stray files), removes
+stale optional sidecars or a replaced export on an updated row, writes or updates `explained.json`
+through `rejudge` (preserving causes of existing differences, reporting disappeared causes, and
+leaving new ones with cause `null`), writes a structured `notes.md` on new rows while preserving an
+existing non-empty `notes.md` (and reporting what moved since the manifest), and refreshes
+`internal/ets-sweep/manifest.json`, `captures/ets-download-records.json.gz`, and
+`internal/captures/{INDEX.md,index.json}`. The command exits 1 when any imported row has an
+unexplained difference or calibration position (`cause: null`), or when an updated row's verdict
+moves to a refusal/failure or its refusal/failure `detail` moves.
+
 **A calibrated row** names in `row.json` ETS's capture of the same configuration downloaded into the
 real unit. ETS's dialogue with the simulated unit (its requests with their line confirmations, the
 unit's frames with their first control field) is held to its dialogue with the real unit position by

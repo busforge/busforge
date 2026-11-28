@@ -1,14 +1,18 @@
 import { afterAll, describe, expect, test, setDefaultTimeout } from "bun:test";
-import { existsSync, readdirSync, readFileSync, symlinkSync } from "node:fs";
-import { join } from "node:path";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { gunzipSync, gzipSync } from "node:zlib";
 import { appProgramId, loadKnxproj, readAppProgram } from "../packages/project/src/index.ts";
 import { parseAppConfig } from "../packages/product/src/index.ts";
 import { iaToNum } from "../packages/knx/src/index.ts";
 import { storeZip } from "../packages/project/test/ziputil.ts";
-import { captureText, corpusPath, corpusRoot } from "./corpus.ts";
+import { INDEX_DIRS, INDEX_JSON, INDEX_MD, type CaptureIndex } from "./capture-index.ts";
+import { captureText, CORPUS_FILES, corpusPath, corpusRoot, ETS_RECORDS_FILE } from "./corpus.ts";
 import { corpusDescribe } from "./corpus-test.ts";
+import { BATCH_LOG, RESULT_FILE, RESULT_FORMAT } from "./ets-batch.ts";
 import { capturedOnLoadedUnit, deviceConfiguration, deviceRows, dialogueDifferences, parseCapture } from "./etsdiff.ts";
-import { causes, compareRuns, configuredApplication, etsBranches, etsOutcome, expected, inCorpus, judge, judged, listRows, loadedImageCheck, MANIFEST, MANIFEST_FORMAT, movedSince, readRow, refusalsAfterRestart, rejudge, ROW_FILES, runState, simRefusals, SWEEP_DIR, updateManifest, verdictDetail, writeRejudged, type EtsOutcome, type Explained, type Manifest, type ManifestRow, type RowConfiguration, type RowSpec, type Verdict, withCause } from "./ets-sweep.ts";
+import { ETS_RECORDS_FORMAT, type EtsRecords } from "./ets-records.ts";
+import { causes, compareRuns, configuredApplication, discoverImportRows, etsBranches, etsOutcome, expected, importCopyFiles, importSweepDir, inCorpus, judge, judged, listRows, loadedImageCheck, MANIFEST, MANIFEST_FORMAT, movedSince, NOTES_FILE, parseAppFilters, parseSweepArgs, readRow, refusalsAfterRestart, rejudge, renderRowNotes, ROW_FILES, ROW_FORMAT, runState, simRefusals, SWEEP_DIR, updateManifest, verdictDetail, writeRejudged, type EtsOutcome, type Explained, type Manifest, type ManifestRow, type RowConfiguration, type RowSpec, type Verdict, withCause } from "./ets-sweep.ts";
 import { ROW_WORKERS, RowPool } from "./ets-sweep-workers.ts";
 import { mismatchLines } from "./sim-unit-product.ts";
 import { tempDir } from "./test-temp.ts";
@@ -497,6 +501,558 @@ describe("rejudging a row (--rejudge)", () => {
   });
 });
 
+describe("importing a batch or driver run directory (--import-dir)", () => {
+  const APP_OK = "M-0001_A-1001-10-AAAA";
+  const APP_SIM = "M-0001_A-1002-10-BBBB";
+  const APP_DIFF = "M-0001_A-1003-10-CCCC";
+  const APP_SKIP_NOUNIT = "M-0001_A-1004-10-DDDD";
+  const APP_SKIP_DRIVER = "M-0001_A-1005-10-EEEE";
+  const APP_SKIP_FAILED = "M-0001_A-1006-10-FFFF";
+  const APP_SKIP_UNFINISHED = "M-0001_A-1007-10-0000";
+
+  function syntheticKnxproj(appId: string, withLoadedImage = true): Buffer {
+    const h2p = `${appId.replace("_A-", "_H-1_HP-")}`;
+    const mfr = appId.split("_")[0];
+    const appXml = `<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="${mfr}"><ApplicationPrograms><ApplicationProgram Id="${appId}" ProgramType="ApplicationProgram" ApplicationNumber="1" ApplicationVersion="1" MaskVersion="MV-07B0" Name="${appId}" LoadProcedureStyle="MergedProcedure"><Static><LoadProcedures><LoadProcedure MergeId="7"><LdCtrlLoadImageProp ObjIdx="4" PropId="27" /></LoadProcedure></LoadProcedures></Static></ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+    const hwXml = `<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="${mfr}"><Hardware><Hardware Id="${mfr}_H-1"><Hardware2Programs><Hardware2Program Id="${h2p}" MediumTypes="MT-0"><ApplicationProgramRef RefId="${appId}"/></Hardware2Program></Hardware2Programs></Hardware></Hardware></Manufacturer></ManufacturerData></KNX>`;
+    const diAttrs = withLoadedImage
+      ? `IsActivityCalculated="true" Address="20" IndividualAddressLoaded="true" ApplicationProgramLoaded="true" ParametersLoaded="true" CommunicationPartLoaded="true" MediumConfigLoaded="true" LoadedImage="AAECAw==" CheckSums="0102:abcd"`
+      : `IsActivityCalculated="true" Address="20" IndividualAddressLoaded="true" ApplicationProgramLoaded="false" ParametersLoaded="false" CommunicationPartLoaded="false" MediumConfigLoaded="false"`;
+    const zeroXml = `<KNX xmlns="http://knx.org/xml/project/20"><Project Id="P-0001"><Installations><Installation Name="" InstallationId="0"><Topology><Area Id="P-0001-0_A-1" Address="1"><Line Id="P-0001-0_L-1" Address="1"><DeviceInstance Id="P-0001-0_DI-1" ProductRefId="${mfr}_H-1_P-1" Hardware2ProgramRefId="${h2p}" ${diAttrs}/></Line></Area></Topology></Installation></Installations></Project></KNX>`;
+    const projXml = `<KNX xmlns="http://knx.org/xml/project/20"><Project Id="P-0001"><ProjectInformation Name="Sweep"/></Project></KNX>`;
+    return storeZip({
+      "P-0001/0.xml": zeroXml,
+      "P-0001/project.xml": projXml,
+      [`${mfr}/Hardware.xml`]: hwXml,
+      [`${mfr}/${appId}.xml`]: appXml,
+    });
+  }
+
+  function makeTempCorpus(): string {
+    const root = tempDir("ets-sweep-import-corpus-");
+    for (const d of INDEX_DIRS) mkdirSync(join(root, d), { recursive: true });
+    const emptyRecords: EtsRecords = { format: ETS_RECORDS_FORMAT, projects: [], apps: {} };
+    writeFileSync(join(root, ETS_RECORDS_FILE), gzipSync(Buffer.from(JSON.stringify(emptyRecords))));
+    return root;
+  }
+
+  function writeSweepSourceRow(
+    baseDir: string,
+    appId: string,
+    opts: {
+      variant?: string;
+      batchKind?: "completed" | "sim-refused" | "driver-refused" | "driver-failed" | "ets-failed" | null;
+      why?: string;
+      withFiles?: boolean;
+      withOptional?: boolean;
+      withStray?: boolean;
+      withExport?: boolean;
+      withLoadedImage?: boolean;
+      exportName?: string;
+    } = {},
+  ): string {
+    const variant = opts.variant ?? "defaults";
+    const dir = join(baseDir, appId, variant);
+    mkdirSync(dir, { recursive: true });
+    if (opts.batchKind !== null && opts.batchKind !== undefined) {
+      writeFileSync(join(dir, RESULT_FILE), JSON.stringify({
+        format: RESULT_FORMAT,
+        application: appId,
+        manufacturer: appId.split("_")[0],
+        mask: "07B0",
+        orderNumber: "ORD-1234",
+        kind: opts.batchKind,
+        ...(opts.why ? { why: opts.why } : {}),
+        minutes: 4.5,
+        startedAt: "2026-11-28T01:00:00.000Z",
+        endedAt: "2026-11-28T01:04:30.000Z",
+        attempts: [{ kind: opts.batchKind, minutes: 4.5 }],
+        unit: "donor meanwell-knx40e",
+      }, null, 1) + "\n");
+    }
+    if (opts.withFiles !== false) {
+      const exportName = opts.withExport === false ? undefined : (opts.exportName ?? "export.knxproj");
+      const spec: RowSpec = {
+        format: ROW_FORMAT,
+        unit: {
+          source: "donor",
+          donor: "meanwell-knx40e",
+          donorDigest: "0".repeat(64),
+          rule: "MV-07B0: test rule",
+          identity: [],
+          properties: { "0/12": `product: ${appId}` },
+        },
+        etsBuild: "ETS 6.4.1 Home (6.4.8718)",
+        simulator: "127.0.0.1:3701",
+        ...(exportName !== undefined ? { export: exportName } : {}),
+      };
+      const conf: RowConfiguration = { ia: "1.1.20", params: [], links: [] };
+      writeFileSync(join(dir, ROW_FILES.row), JSON.stringify(spec, null, 2) + "\n");
+      writeFileSync(join(dir, ROW_FILES.configuration), JSON.stringify(conf, null, 1) + "\n");
+      writeFileSync(join(dir, ROW_FILES.ets), capture(line("ETS->BRIDGE", "80"), line("ETS->BRIDGE", "428240000102"), line("ETS->BRIDGE", "4780")) + "\n");
+      writeFileSync(join(dir, ROW_FILES.etsSim), "connected to 1.1.255\nrestart\n");
+      writeFileSync(join(dir, ROW_FILES.ets6log), LOG("127.0.0.1:3701") + "\n", "latin1");
+      if (exportName !== undefined) {
+        writeFileSync(join(dir, exportName), syntheticKnxproj(appId, opts.withLoadedImage ?? true));
+      }
+      if (opts.withOptional !== false) {
+        writeFileSync(join(dir, "ets.log.serve.txt"), "sim-unit-serve ok\n");
+        writeFileSync(join(dir, "ets.pcapng"), Buffer.from([0x0a, 0x0d, 0x0d, 0x0a, 0x00]));
+        writeFileSync(join(dir, "ets.log.dumpcap.txt"), "Capturing on 'lo'\n");
+      }
+    }
+    if (opts.withStray) {
+      writeFileSync(join(dir, "failure.png"), "fake-png");
+      writeFileSync(join(dir, "failure.json"), "{\"step\":\"download\"}\n");
+      writeFileSync(join(dir, "dialog.png"), "fake-dialog");
+      writeFileSync(join(dir, "stray.tmp"), "temp");
+      mkdirSync(join(dir, "attempts", "1"), { recursive: true });
+      writeFileSync(join(dir, "attempts", "1", "ets.log"), "old attempt");
+      mkdirSync(join(dir, "screenshots"), { recursive: true });
+      writeFileSync(join(dir, "screenshots", "screen.png"), "shot");
+    }
+    return dir;
+  }
+
+  function makeFakeManifest(appId: string, verdict: Verdict, existing: Explained | null, loadedImage: ManifestRow["loadedImage"] = { state: "equal", bytes: 4 }): ManifestRow {
+    const diffs = causes(verdict, existing ?? { verdict: "identical", differences: [] });
+    const detail = verdictDetail(verdict);
+    const [first, cause] = verdict.verdict === "identical" ? [null, null]
+      : verdict.verdict === "differs" ? [diffs[0].difference, diffs[0].cause]
+      : verdict.verdict === "refused" ? [verdict.code, verdict.message]
+      : verdict.verdict === "sim-refused" ? [verdict.refusals[0], `the simulator refused ${verdict.run}`]
+      : [null, null];
+    return {
+      application: appId,
+      variant: "defaults",
+      unit: "meanwell-knx40e",
+      product: appId,
+      mask: "MV-07B0",
+      manufacturer: appId.split("_")[0],
+      etsBuild: "ETS 6.4.1 Home (6.4.8718)",
+      verdict: verdict.verdict,
+      first,
+      cause,
+      differences: diffs,
+      ...(detail ? { detail } : {}),
+      reads: { onlyEts: [], onlyBusforge: [] },
+      notTaken: { ets: [], busforge: [] },
+      loadedImage,
+      calibration: null,
+      refusalsAfterRestart: [],
+      unitSource: { source: "donor", donor: "meanwell-knx40e", rule: "MV-07B0: test rule" },
+      propertySources: { "0/12": `product: ${appId}` },
+      etsBranches: [],
+      files: [],
+    };
+  }
+
+  test("CLI argument parsing and --apps / --apps-file validation", () => {
+    expect(parseSweepArgs(["--import-dir", "/tmp/run", "--dry-run", "--apps", "A,B"])).toEqual({
+      mode: "import", importDir: "/tmp/run", dryRun: true, apps: "A,B", appsFile: undefined,
+    });
+    expect(parseSweepArgs(["--import-dir=/tmp/run", "--apps-file=/tmp/apps.txt"])).toEqual({
+      mode: "import", importDir: "/tmp/run", dryRun: false, apps: undefined, appsFile: "/tmp/apps.txt",
+    });
+    expect(() => parseSweepArgs(["--dry-run"])).toThrow("--dry-run, --apps and --apps-file go with --import-dir");
+    expect(() => parseSweepArgs(["--apps", "A"])).toThrow("--dry-run, --apps and --apps-file go with --import-dir");
+    expect(() => parseSweepArgs(["--import-dir", "/tmp/run", "--rejudge"])).toThrow("cannot be combined");
+    expect(() => parseSweepArgs(["--import-dir", "/tmp/run", "--keep=/tmp/k"])).toThrow("cannot be combined");
+    expect(() => parseSweepArgs(["--import-dir", "/tmp/run", "M-0001_A-1/defaults"])).toThrow("takes no positional row ids");
+    expect(() => parseSweepArgs(["--import-dir"])).toThrow("--import-dir takes a value");
+    expect(() => parseSweepArgs(["--import-dir", ""])).toThrow("--import-dir takes a value");
+    expect(() => parseSweepArgs(["--import-dir", "/tmp/a", "--import-dir", "/tmp/b"])).toThrow("given more than once");
+
+    const dir = tempDir("ets-sweep-appsfile-");
+    const appsFile = join(dir, "apps.txt");
+    writeFileSync(appsFile, `# comment\n\n  ${APP_OK}  \n${APP_SIM}/defaults\n${APP_OK}\n`);
+    expect(parseAppFilters(`${APP_DIFF},${APP_OK}`, appsFile)).toEqual([APP_DIFF, APP_OK, `${APP_SIM}/defaults`]);
+    expect(() => parseAppFilters(`${APP_OK},`, undefined)).toThrow("empty entry");
+    expect(() => parseAppFilters(undefined, join(dir, "missing.txt"))).toThrow("is not a file");
+    const emptyFile = join(dir, "empty.txt");
+    writeFileSync(emptyFile, "# only comment\n\n");
+    expect(() => parseAppFilters(undefined, emptyFile)).toThrow("names no application or row");
+  });
+
+  test("discoverImportRows classifies completed, sim-refused with/without wire logs, failed/unfinished rows, filters, and rejects unsafe paths", () => {
+    const runDir = tempDir("ets-sweep-discover-");
+    writeFileSync(join(runDir, BATCH_LOG), "2026-11-28T00:00:00.000Z start\n");
+    // Top-level bookkeeping directories that must be ignored.
+    mkdirSync(join(runDir, ".attempts", APP_OK, "1"), { recursive: true });
+    mkdirSync(join(runDir, ".interrupted", APP_OK), { recursive: true });
+    mkdirSync(join(runDir, "attempts", "x"), { recursive: true });
+    mkdirSync(join(runDir, "screenshots", "x"), { recursive: true });
+
+    writeSweepSourceRow(runDir, APP_OK, { batchKind: "completed", withStray: true });
+    writeSweepSourceRow(runDir, APP_SIM, { batchKind: "sim-refused", why: "sim-refused write 4/5", withStray: true, withLoadedImage: false });
+    // sim-refused without wire logs (no product unit)
+    const noUnitDir = writeSweepSourceRow(runDir, APP_SKIP_NOUNIT, { batchKind: "sim-refused", why: "no product unit: compare", withFiles: false });
+    writeFileSync(join(noUnitDir, "sim-refused.txt"), "no product unit: compare\n");
+    writeFileSync(join(noUnitDir, ROW_FILES.etsSim), "");
+    // driver-refused, driver-failed, unfinished (no batch-result.json)
+    writeSweepSourceRow(runDir, APP_SKIP_DRIVER, { batchKind: "driver-refused", why: "compatibility mode", withFiles: false });
+    writeSweepSourceRow(runDir, APP_SKIP_FAILED, { batchKind: "driver-failed", why: "timeout", withFiles: false });
+    writeSweepSourceRow(runDir, APP_SKIP_UNFINISHED, { batchKind: null, withFiles: true });
+
+    const disc = discoverImportRows(runDir);
+    expect(disc.rows.map((r) => r.id)).toEqual([`${APP_OK}/defaults`, `${APP_SIM}/defaults`]);
+    // Strict allow-list: only canonical files, never batch-result.json, failure.png, attempts/, screenshots/, stray.tmp.
+    expect(disc.rows[0].files).toEqual([
+      "configuration.json", "ets.log", "ets.log.dumpcap.txt", "ets.log.serve.txt", "ets.log.sim.txt",
+      "ets.pcapng", "ets6.log.txt", "export.knxproj", "row.json",
+    ]);
+    expect(disc.skipped).toEqual([
+      { id: `${APP_SKIP_NOUNIT}/defaults`, reason: "sim-refused without wire logs (no product unit: compare)" },
+      { id: `${APP_SKIP_DRIVER}/defaults`, reason: "driver-refused: compatibility mode" },
+      { id: `${APP_SKIP_FAILED}/defaults`, reason: "driver-failed: timeout" },
+      { id: `${APP_SKIP_UNFINISHED}/defaults`, reason: `unfinished (no ${RESULT_FILE})` },
+    ]);
+
+    // Filter by app and by <app>/<variant>; unknown entry throws.
+    expect(discoverImportRows(runDir, { filter: [APP_SIM] }).rows.map((r) => r.id)).toEqual([`${APP_SIM}/defaults`]);
+    expect(discoverImportRows(runDir, { filter: [`${APP_OK}/defaults`] }).rows.map((r) => r.id)).toEqual([`${APP_OK}/defaults`]);
+    expect(() => discoverImportRows(runDir, { filter: ["M-9999_A-0000-00-0000"] })).toThrow("filter matched no row");
+
+    // Passing a single row directory directly produces a helpful hint.
+    expect(() => discoverImportRows(join(runDir, APP_OK, "defaults"))).toThrow("looks like a single row directory");
+
+    // Unsafe export filename (path traversal) and symlinks (file or directory) are refused loudly.
+    const badDir = tempDir("ets-sweep-bad-");
+    const badRowDir = writeSweepSourceRow(badDir, APP_OK, { batchKind: null, withExport: false });
+    const badSpec = JSON.parse(readFileSync(join(badRowDir, ROW_FILES.row), "utf8")) as RowSpec;
+    writeFileSync(join(badRowDir, ROW_FILES.row), JSON.stringify({ ...badSpec, export: "../secret.knxproj" }));
+    expect(() => discoverImportRows(badDir)).toThrow("not a plain .knxproj filename");
+    expect(() => importCopyFiles(badRowDir, { ...badSpec, export: "../secret.knxproj" }, `${APP_OK}/defaults`)).toThrow("not a plain .knxproj filename");
+
+    const symDir = tempDir("ets-sweep-sym-");
+    const symRowDir = writeSweepSourceRow(symDir, APP_OK, { batchKind: null, withOptional: false });
+    const targetFile = join(symDir, "outside.txt");
+    writeFileSync(targetFile, "outside");
+    symlinkSync(targetFile, join(symRowDir, "ets.log.serve.txt"));
+    expect(() => discoverImportRows(symDir)).toThrow("is a symlink");
+
+    const symAppParent = tempDir("ets-sweep-symdir-");
+    const realRowParent = tempDir("ets-sweep-realdir-");
+    writeSweepSourceRow(realRowParent, APP_OK, { batchKind: null });
+    symlinkSync(join(realRowParent, APP_OK), join(symAppParent, APP_OK));
+    expect(() => discoverImportRows(symAppParent)).toThrow("is a symlink, not a row directory");
+
+    // Standalone driver directory (no batch-result.json): skips ets-failed rows without simulator refusals,
+    // keeps sim-refused rows whose simulator log has a refusal outside post-restart.
+    const standalone = tempDir("ets-sweep-standalone-");
+    const etsFailedDir = writeSweepSourceRow(standalone, APP_SKIP_FAILED, { batchKind: null });
+    writeFileSync(join(etsFailedDir, ROW_FILES.ets6log), LOG("127.0.0.1:3701", false) + "\n", "latin1");
+    const standaloneSimDir = writeSweepSourceRow(standalone, APP_SIM, { batchKind: null });
+    writeFileSync(join(standaloneSimDir, ROW_FILES.ets6log), LOG("127.0.0.1:3701", false) + "\n", "latin1");
+    writeFileSync(join(standaloneSimDir, ROW_FILES.etsSim), "connected to 1.1.255\nsim-refused A_PropertyValue_Write 4/5: not shown\n");
+    const standaloneDisc = discoverImportRows(standalone);
+    expect(standaloneDisc.rows.map((r) => r.id)).toEqual([`${APP_SIM}/defaults`]);
+    expect(standaloneDisc.skipped.map((s) => s.id)).toEqual([`${APP_SKIP_FAILED}/defaults`]);
+    expect(standaloneDisc.skipped[0].reason).toContain("ets-failed:");
+  });
+
+  test("importSweepDir --dry-run leaves the temp corpus untouched and prints verdict table, differs, and exact LoadedImage record counts", async () => {
+    const corpus = makeTempCorpus();
+    const runDir = tempDir("ets-sweep-dryrun-");
+    writeSweepSourceRow(runDir, APP_OK, { batchKind: "completed", withStray: true });
+    writeSweepSourceRow(runDir, APP_DIFF, { batchKind: "completed", withStray: true });
+    // Even when Busforge refuses a download (loadedImage: not compared), its .knxproj still adds a LoadedImage record.
+    writeSweepSourceRow(runDir, APP_SIM, { batchKind: "completed", withLoadedImage: true });
+    writeSweepSourceRow(runDir, APP_SKIP_DRIVER, { batchKind: "driver-refused", why: "compatibility mode", withFiles: false });
+
+    const beforeRecords = readFileSync(join(corpus, ETS_RECORDS_FILE));
+    const res = await importSweepDir({
+      importDir: runDir,
+      corpusRoot: corpus,
+      dryRun: true,
+      passwords: [],
+      captureKeys: [],
+      judge: async (d, existing) => {
+        if (d.application === APP_OK) return makeFakeManifest(d.application, { verdict: "identical" }, existing, { state: "equal", bytes: 4 });
+        if (d.application === APP_SIM) return makeFakeManifest(d.application, { verdict: "refused", code: "PARAM_HIDDEN_UNSUPPORTED", message: "hidden" }, existing, { state: "not compared", why: "Busforge refuses" });
+        return makeFakeManifest(d.application, { verdict: "differs", differences: ["memory 0x4000: ETS 01, Busforge 02"] }, existing, { state: "differs", bytes: 4, mismatches: ["object 4 at 0: Busforge 02, ETS 01"] });
+      },
+    });
+    expect(res.wrote).toBe(false);
+    expect(res.exit).toBe(0);
+    expect(existsSync(join(corpus, SWEEP_DIR))).toBe(false);
+    expect(existsSync(join(corpus, MANIFEST))).toBe(false);
+    expect(existsSync(join(corpus, INDEX_MD))).toBe(false);
+    expect(readFileSync(join(corpus, ETS_RECORDS_FILE)).equals(beforeRecords)).toBe(true);
+    const out = res.report.join("\n");
+    expect(out).toContain(`Skipped 1 row(s):`);
+    expect(out).toContain(`${APP_SKIP_DRIVER}/defaults: driver-refused: compatibility mode`);
+    expect(out).toContain("Dry-run 3 row(s) (3 new, 0 update):");
+    expect(out).toContain("Differs details (1 row(s)):");
+    expect(out).toContain("memory 0x4000: ETS 01, Busforge 02");
+    expect(out).toContain("LoadedImage / .knxproj exports: 3 new (3 LoadedImage record(s)), 0 updated (0 LoadedImage record(s)); compared: 1 equal, 1 differs (8 bytes)");
+    expect(out).toContain("dry-run: corpus untouched");
+  });
+
+  test("importSweepDir copies strict allow-list only, writes explained.json/notes.md/manifest/records/index, and preserves notes.md & causes on update", async () => {
+    const corpus = makeTempCorpus();
+    const runDir = tempDir("ets-sweep-import-run-");
+    writeSweepSourceRow(runDir, APP_OK, { batchKind: "completed", withStray: true });
+    writeSweepSourceRow(runDir, APP_SIM, { batchKind: "sim-refused", why: "sim-refused write", withStray: true, withLoadedImage: false });
+    writeSweepSourceRow(runDir, APP_DIFF, { batchKind: "completed", withStray: true });
+
+    const judgeRow = async (d: { application: string }, existing: Explained | null): Promise<ManifestRow> => {
+      if (d.application === APP_OK) return makeFakeManifest(d.application, { verdict: "identical" }, existing, { state: "equal", bytes: 4 });
+      if (d.application === APP_SIM) return makeFakeManifest(d.application, { verdict: "sim-refused", run: "ETS", refusals: ["sim-refused 80 42 ms after the restart: not shown"] }, existing, { state: "not compared", why: "ETS marks the application as not loaded" });
+      return makeFakeManifest(d.application, { verdict: "differs", differences: ["memory 0x4000: ETS 01, Busforge 02"] }, existing, { state: "equal", bytes: 4 });
+    };
+
+    const first = await importSweepDir({
+      importDir: runDir,
+      corpusRoot: corpus,
+      passwords: [],
+      captureKeys: [],
+      judge: judgeRow,
+    });
+    expect(first.wrote).toBe(true);
+    // Exits 1 because APP_DIFF has cause: null.
+    expect(first.exit).toBe(1);
+    expect(first.manifestRows).toBe(3);
+
+    // Strict allow-list verified on disk: NO batch-result.json, attempts/, screenshots/, failure.*, dialog.*, stray.tmp.
+    const expectedFiles = [
+      "configuration.json", "ets.log", "ets.log.dumpcap.txt", "ets.log.serve.txt", "ets.log.sim.txt",
+      "ets.pcapng", "ets6.log.txt", "explained.json", "export.knxproj", "notes.md", "row.json",
+    ];
+    for (const app of [APP_OK, APP_SIM, APP_DIFF]) {
+      const targetDir = join(corpus, SWEEP_DIR, app, "defaults");
+      expect(readdirSync(targetDir).sort()).toEqual(expectedFiles);
+      for (const forbidden of [RESULT_FILE, "attempts", "screenshots", "failure.png", "failure.json", "dialog.png", "stray.tmp"]) {
+        expect(existsSync(join(targetDir, forbidden))).toBe(false);
+      }
+    }
+
+    // explained.json contents: identical, sim-refused with timeless detail, differs with cause null.
+    expect(JSON.parse(readFileSync(join(corpus, SWEEP_DIR, APP_OK, "defaults", ROW_FILES.explained), "utf8"))).toEqual({
+      verdict: "identical", differences: [],
+    });
+    expect(JSON.parse(readFileSync(join(corpus, SWEEP_DIR, APP_SIM, "defaults", ROW_FILES.explained), "utf8"))).toEqual({
+      verdict: "sim-refused",
+      differences: [],
+      detail: { run: "ETS", refusals: ["sim-refused 80 <n> ms after the restart: not shown"] },
+    });
+    expect(JSON.parse(readFileSync(join(corpus, SWEEP_DIR, APP_DIFF, "defaults", ROW_FILES.explained), "utf8"))).toEqual({
+      verdict: "differs",
+      differences: [{ difference: "memory 0x4000: ETS 01, Busforge 02", cause: null }],
+    });
+
+    // notes.md written cleanly.
+    const diffNotes = readFileSync(join(corpus, SWEEP_DIR, APP_DIFF, "defaults", NOTES_FILE), "utf8");
+    expect(diffNotes).toContain(`# Sweep row: ${APP_DIFF} at defaults`);
+    expect(diffNotes).toContain("## Verdict: differs");
+    expect(diffNotes).toContain("Cause: pending investigation (see explained.json).");
+
+    // manifest.json has all 3 rows and exact corpus target files (no batch-result.json).
+    const manifest = JSON.parse(readFileSync(join(corpus, MANIFEST), "utf8")) as Manifest;
+    expect(manifest.rows.map((r) => `${r.application}/${r.variant}`)).toEqual([
+      `${APP_OK}/defaults`, `${APP_SIM}/defaults`, `${APP_DIFF}/defaults`,
+    ]);
+    expect(manifest.rows[0].files).toEqual(expectedFiles.map((f) => `${SWEEP_DIR}/${APP_OK}/defaults/${f}`));
+
+    // ets-download-records.json.gz recorded all 3 .knxproj exports, 2 with LoadedImage.
+    const records = JSON.parse(gunzipSync(readFileSync(join(corpus, ETS_RECORDS_FILE))).toString("utf8")) as EtsRecords;
+    expect(records.projects.map((p) => p.path)).toEqual([
+      `${SWEEP_DIR}/${APP_OK}/defaults/export.knxproj`,
+      `${SWEEP_DIR}/${APP_SIM}/defaults/export.knxproj`,
+      `${SWEEP_DIR}/${APP_DIFF}/defaults/export.knxproj`,
+    ]);
+    expect(records.projects.filter((p) => p.devices.some((d) => d.loadedImage)).length).toBe(2);
+
+    // capture-index updated both INDEX.md and index.json with the imported ets.log files.
+    expect(existsSync(join(corpus, INDEX_MD))).toBe(true);
+    const index = JSON.parse(readFileSync(join(corpus, INDEX_JSON), "utf8")) as CaptureIndex;
+    expect(index.files.map((f) => f.file)).toContain(`${SWEEP_DIR}/${APP_OK}/defaults/ets.log`);
+
+    // Now explain APP_DIFF's difference, write a human cause note in notes.md, add a preserved checks/ dir,
+    // and re-import from a fresh run without optional sidecar files:
+    // human notes.md, existing difference cause, and checks/ must stay; stale optional files must be removed; exit becomes 0.
+    const diffDir = join(corpus, SWEEP_DIR, APP_DIFF, "defaults");
+    const customNotes = "# Human investigation note\n\nCause: known test deviation.\n";
+    writeFileSync(join(diffDir, NOTES_FILE), customNotes);
+    writeFileSync(join(diffDir, ROW_FILES.explained), JSON.stringify({
+      verdict: "differs",
+      differences: [{ difference: "memory 0x4000: ETS 01, Busforge 02", cause: "known test deviation" }],
+    }, null, 2) + "\n");
+    mkdirSync(join(diffDir, "checks", "repeat"), { recursive: true });
+    writeFileSync(join(diffDir, "checks", "repeat", "expected.json"), "{}\n");
+
+    const runDir2 = tempDir("ets-sweep-import-update-");
+    writeSweepSourceRow(runDir2, APP_DIFF, { batchKind: "completed", withOptional: false, withStray: true });
+    const second = await importSweepDir({
+      importDir: runDir2,
+      corpusRoot: corpus,
+      passwords: [],
+      captureKeys: [],
+      judge: judgeRow,
+    });
+    expect(second.wrote).toBe(true);
+    expect(second.exit).toBe(0);
+    expect(readFileSync(join(diffDir, NOTES_FILE), "utf8")).toBe(customNotes);
+    expect(JSON.parse(readFileSync(join(diffDir, ROW_FILES.explained), "utf8"))).toEqual({
+      verdict: "differs",
+      differences: [{ difference: "memory 0x4000: ETS 01, Busforge 02", cause: "known test deviation" }],
+    });
+    expect(existsSync(join(diffDir, "checks", "repeat", "expected.json"))).toBe(true);
+    expect(existsSync(join(diffDir, "ets.log.serve.txt"))).toBe(false);
+    expect(existsSync(join(diffDir, "ets.pcapng"))).toBe(false);
+    expect(existsSync(join(diffDir, "ets.log.dumpcap.txt"))).toBe(false);
+    expect(existsSync(join(diffDir, RESULT_FILE))).toBe(false);
+
+    // Refuses --import-dir lying inside the corpus.
+    const inside = join(corpus, "captures", "tmp-import");
+    mkdirSync(inside, { recursive: true });
+    let err: unknown;
+    try { await importSweepDir({ importDir: inside, corpusRoot: corpus }); } catch (e) { err = e; }
+    expect(err instanceof Error ? err.message : String(err)).toContain("lies in the corpus");
+  });
+
+  test("importSweepDir refuses pre-write failures without mutating corpus, flags moved update verdicts/gone causes, and keeps concurrent manifest entries", async () => {
+    const corpus = makeTempCorpus();
+    const run1 = tempDir("ets-sweep-reg-1-");
+    writeSweepSourceRow(run1, APP_OK, { batchKind: "completed" });
+    writeSweepSourceRow(run1, APP_DIFF, { batchKind: "completed" });
+    // First import: APP_OK identical, APP_DIFF with an explained cause.
+    const first = await importSweepDir({
+      importDir: run1,
+      corpusRoot: corpus,
+      passwords: [],
+      captureKeys: [{ name: "fdsk-test", key: Buffer.alloc(16, 1) }],
+      judge: async (d, existing) => d.application === APP_OK
+        ? makeFakeManifest(d.application, { verdict: "identical" }, existing)
+        : makeFakeManifest(d.application, { verdict: "differs", differences: ["memory 0x4000: ETS 01, Busforge 02"] }, existing),
+    });
+    expect(first.exit).toBe(1);
+    writeFileSync(join(corpus, SWEEP_DIR, APP_DIFF, "defaults", ROW_FILES.explained), JSON.stringify({
+      verdict: "differs",
+      differences: [{ difference: "memory 0x4000: ETS 01, Busforge 02", cause: "known root cause" }],
+    }, null, 2) + "\n");
+
+    // 1. Missing CAPTURE_KEYS compared to existing index.json refuses BEFORE mutating any corpus file.
+    const run2 = tempDir("ets-sweep-reg-2-");
+    writeSweepSourceRow(run2, APP_SIM, { batchKind: "completed" });
+    let keyErr: unknown;
+    try {
+      await importSweepDir({
+        importDir: run2,
+        corpusRoot: corpus,
+        passwords: [],
+        captureKeys: [],
+        judge: async (d, existing) => makeFakeManifest(d.application, { verdict: "identical" }, existing),
+      });
+    } catch (e) { keyErr = e; }
+    expect(keyErr instanceof Error ? keyErr.message : String(keyErr)).toContain("fdsk-test");
+    expect(existsSync(join(corpus, SWEEP_DIR, APP_SIM))).toBe(false);
+
+    // 2. Corrupted .knxproj export fails during pre-staging BEFORE writing any row or manifest.
+    const badExportRun = tempDir("ets-sweep-bad-export-");
+    const badRow = writeSweepSourceRow(badExportRun, APP_SIM, { batchKind: "completed" });
+    writeFileSync(join(badRow, "export.knxproj"), "not-a-zip");
+    let recErr: unknown;
+    try {
+      await importSweepDir({
+        importDir: badExportRun,
+        corpusRoot: corpus,
+        passwords: [],
+        captureKeys: [{ name: "fdsk-test", key: Buffer.alloc(16, 1) }],
+        judge: async (d, existing) => makeFakeManifest(d.application, { verdict: "identical" }, existing),
+      });
+    } catch (e) { recErr = e; }
+    expect(recErr instanceof Error ? recErr.message : String(recErr)).toContain("cannot be recorded, so nothing was written");
+    expect(existsSync(join(corpus, SWEEP_DIR, APP_SIM))).toBe(false);
+
+    // 3. Updating APP_OK from identical -> refused (preserved notes.md) exits 1, and APP_DIFF becoming identical reports the gone cause.
+    const moved = await importSweepDir({
+      importDir: run1,
+      corpusRoot: corpus,
+      passwords: [],
+      captureKeys: [{ name: "fdsk-test", key: Buffer.alloc(16, 1) }],
+      judge: async (d, existing) => d.application === APP_OK
+        ? makeFakeManifest(d.application, { verdict: "refused", code: "NEW_REFUSAL", message: "refused now" }, existing)
+        : makeFakeManifest(d.application, { verdict: "identical" }, existing),
+    });
+    expect(moved.exit).toBe(1);
+    const movedOut = moved.report.join("\n");
+    expect(movedOut).toContain("NOT EXPLAINED: verdict: identical -> refused: NEW_REFUSAL");
+    expect(movedOut).toContain("gone: difference: memory 0x4000: ETS 01, Busforge 02");
+    expect(movedOut).toContain("cause it had: known root cause");
+
+    // 4. Target symlink in corpus is refused before writing anything.
+    const symTargetCorpus = makeTempCorpus();
+    const outsideTarget = tempDir("ets-sweep-outside-");
+    mkdirSync(join(symTargetCorpus, SWEEP_DIR, APP_SIM), { recursive: true });
+    symlinkSync(outsideTarget, join(symTargetCorpus, SWEEP_DIR, APP_SIM, "defaults"));
+    let targetSymErr: unknown;
+    try {
+      await importSweepDir({
+        importDir: run2,
+        corpusRoot: symTargetCorpus,
+        passwords: [],
+        captureKeys: [],
+        judge: async (d, existing) => makeFakeManifest(d.application, { verdict: "identical" }, existing),
+      });
+    } catch (e) { targetSymErr = e; }
+    expect(targetSymErr instanceof Error ? targetSymErr.message : String(targetSymErr)).toContain("has a symlink");
+    expect(readdirSync(outsideTarget)).toEqual([]);
+
+    // 5. Overlapping imports of two distinct rows preserve BOTH rows in manifest.json and ets-download-records.json.gz.
+    const concCorpus = makeTempCorpus();
+    const runA = tempDir("ets-sweep-conc-a-");
+    const runB = tempDir("ets-sweep-conc-b-");
+    writeSweepSourceRow(runA, APP_OK, { batchKind: "completed" });
+    writeSweepSourceRow(runB, APP_SIM, { batchKind: "completed" });
+    let releaseA!: () => void;
+    const waitA = new Promise<void>((r) => { releaseA = r; });
+    const pA = importSweepDir({
+      importDir: runA,
+      corpusRoot: concCorpus,
+      passwords: [],
+      captureKeys: [],
+      judge: async (d, existing) => { await waitA; return makeFakeManifest(d.application, { verdict: "identical" }, existing); },
+    });
+    const resB = await importSweepDir({
+      importDir: runB,
+      corpusRoot: concCorpus,
+      passwords: [],
+      captureKeys: [],
+      judge: async (d, existing) => makeFakeManifest(d.application, { verdict: "identical" }, existing),
+    });
+    releaseA();
+    const resA = await pA;
+    expect([resA.exit, resB.exit]).toEqual([0, 0]);
+    const concManifest = JSON.parse(readFileSync(join(concCorpus, MANIFEST), "utf8")) as Manifest;
+    expect(concManifest.rows.map((r) => `${r.application}/${r.variant}`)).toEqual([`${APP_OK}/defaults`, `${APP_SIM}/defaults`]);
+    const concRecords = JSON.parse(gunzipSync(readFileSync(join(concCorpus, ETS_RECORDS_FILE))).toString("utf8")) as EtsRecords;
+    expect(concRecords.projects.map((p) => p.path)).toEqual([
+      `${SWEEP_DIR}/${APP_OK}/defaults/export.knxproj`,
+      `${SWEEP_DIR}/${APP_SIM}/defaults/export.knxproj`,
+    ]);
+  });
+
+  test("renderRowNotes formats verdicts cleanly and normalizes post-restart refusal timings", () => {
+    const m = makeFakeManifest(APP_OK, { verdict: "refused", code: "PARAM_HIDDEN_UNSUPPORTED", message: "hidden param" }, null, { state: "not compared", why: "Busforge refuses the full download: PARAM_HIDDEN_UNSUPPORTED" });
+    m.refusalsAfterRestart = [{ run: "Busforge", refusal: "sim-refused 80 3012 ms after the restart: not shown" }];
+    const { explained: exp } = rejudge({ verdict: m.verdict, differences: [], ...(m.detail ? { detail: m.detail } : {}) }, m);
+    expect(exp).toEqual({ verdict: "refused", differences: [], detail: { code: "PARAM_HIDDEN_UNSUPPORTED", message: "hidden param" } });
+    const notes = renderRowNotes({
+      id: `${APP_OK}/defaults`,
+      application: APP_OK,
+      variant: "defaults",
+      spec: { format: ROW_FORMAT, unit: "meanwell-knx40e", etsBuild: "ETS 6.4.1", simulator: "127.0.0.1:3701" },
+      conf: { ia: "1.1.20", params: [], links: [] },
+      batchResult: null,
+    }, m, exp);
+    expect(notes).toContain("## Verdict: refused");
+    expect(notes).toContain("`PARAM_HIDDEN_UNSUPPORTED`: hidden param");
+    expect(notes).toContain("sim-refused 80 <n> ms after the restart: not shown");
+    expect(notes).toContain("Second check: not compared");
+  });
+});
+
 // Busforge's current plan against every ETS row in the corpus. A row's explained.json names its verdict and
 // every difference with its cause; a new difference fails, and so does an explained one that is gone.
 // Where --rejudge and --keep may write: nothing here writes into the corpus, the alias lies in a test directory.
@@ -582,4 +1138,112 @@ corpusDescribe("the driver's checks of a row against ETS's real logs", () => {
       });
     }
   }
+});
+
+corpusDescribe("CLI --import-dir end-to-end against a temporary corpus", () => {
+  test("--import-dir --dry-run and --import-dir judge and ingest a real sweep row into a temp corpus without copying stray files", () => {
+    const realCorpus = corpusRoot()!;
+    // Pick one existing identical row with a .knxproj export (read-only from real corpus).
+    const sampleId = listRows().find((id) => {
+      const r = readRow(id);
+      return r.explained.verdict === "identical" && r.spec.export?.endsWith(".knxproj");
+    });
+    expect(sampleId).toBeDefined();
+    const sample = readRow(sampleId!);
+
+    // Build an isolated temp corpus in $TMPDIR: symlink individual read-only CORPUS_FILES,
+    // keep writable directories and fresh ets-download-records.json.gz strictly inside $TMPDIR.
+    const tmpCorpus = tempDir("ets-sweep-cli-corpus-");
+    for (const d of INDEX_DIRS) mkdirSync(join(tmpCorpus, d), { recursive: true });
+    for (const rel of CORPUS_FILES) {
+      if (rel === ETS_RECORDS_FILE) continue;
+      const dst = join(tmpCorpus, rel);
+      mkdirSync(dirname(dst), { recursive: true });
+      symlinkSync(join(realCorpus, rel), dst);
+    }
+    const emptyRecords: EtsRecords = { format: ETS_RECORDS_FORMAT, projects: [], apps: {} };
+    writeFileSync(join(tmpCorpus, ETS_RECORDS_FILE), gzipSync(Buffer.from(JSON.stringify(emptyRecords))));
+
+    // Build an external batch run directory holding the copied sample row + stray files + a skipped row.
+    const importDir = tempDir("ets-sweep-cli-import-");
+    writeFileSync(join(importDir, BATCH_LOG), "2026-11-28T00:00:00.000Z start\n");
+    const rowOut = join(importDir, sample.id);
+    mkdirSync(rowOut, { recursive: true });
+    for (const f of readdirSync(sample.dir)) {
+      if (f === ROW_FILES.explained || f === NOTES_FILE || f === "checks") continue;
+      copyFileSync(join(sample.dir, f), join(rowOut, f));
+    }
+    writeFileSync(join(rowOut, RESULT_FILE), JSON.stringify({
+      format: RESULT_FORMAT,
+      application: sample.application,
+      manufacturer: sample.application.split("_")[0],
+      mask: "07B0",
+      orderNumber: "TEST-ORD",
+      kind: "completed",
+      minutes: 3.2,
+      startedAt: "2026-11-28T00:00:00.000Z",
+      endedAt: "2026-11-28T00:03:12.000Z",
+      attempts: [{ kind: "completed", minutes: 3.2 }],
+    }, null, 1) + "\n");
+    writeFileSync(join(rowOut, "failure.png"), "not-a-capture");
+    mkdirSync(join(rowOut, "attempts", "1"), { recursive: true });
+    writeFileSync(join(rowOut, "attempts", "1", "ets.log"), "attempt-1");
+    mkdirSync(join(rowOut, "screenshots"), { recursive: true });
+    writeFileSync(join(rowOut, "screenshots", "shot.png"), "shot");
+
+    const skippedDir = join(importDir, "M-0000_A-0000-00-0000", "defaults");
+    mkdirSync(skippedDir, { recursive: true });
+    writeFileSync(join(skippedDir, RESULT_FILE), JSON.stringify({
+      format: RESULT_FORMAT,
+      application: "M-0000_A-0000-00-0000",
+      manufacturer: "M-0000",
+      mask: "07B0",
+      orderNumber: "SKIP-1",
+      kind: "driver-refused",
+      why: "compatibility mode",
+      minutes: 1.0,
+      startedAt: "2026-11-28T00:00:00.000Z",
+      endedAt: "2026-11-28T00:01:00.000Z",
+      attempts: [{ kind: "driver-refused", why: "compatibility mode", minutes: 1.0 }],
+    }, null, 1) + "\n");
+
+    const env: Record<string, string | undefined> = { ...process.env, BUSFORGE_CORPUS: tmpCorpus };
+    delete env.KNXPROJ_PASSWORDS;
+    delete env.KNXPROJ_PASSWORD;
+    const tool = join(import.meta.dir, "ets-sweep.ts");
+
+    // 1. --dry-run judges the real row and leaves tmpCorpus completely unmutated.
+    const dry = Bun.spawnSync(["bun", "run", tool, "--import-dir", importDir, "--dry-run"], { env });
+    expect(dry.exitCode).toBe(0);
+    const dryOut = dry.stdout.toString("utf8");
+    expect(dryOut).toContain("Skipped 1 row(s):");
+    expect(dryOut).toContain("Dry-run 1 row(s) (1 new, 0 update):");
+    expect(dryOut).toContain(`${sample.id}`);
+    expect(dryOut).toContain("identical");
+    expect(dryOut).toContain("dry-run: corpus untouched");
+    expect(existsSync(join(tmpCorpus, SWEEP_DIR, sample.id))).toBe(false);
+    expect(existsSync(join(tmpCorpus, MANIFEST))).toBe(false);
+
+    // 2. Real --import-dir copies only canonical files and updates manifest, records, and capture index.
+    const real = Bun.spawnSync(["bun", "run", tool, "--import-dir", importDir], { env });
+    expect(real.exitCode).toBe(0);
+    const dstDir = join(tmpCorpus, SWEEP_DIR, sample.id);
+    expect(existsSync(join(dstDir, ROW_FILES.row))).toBe(true);
+    expect(existsSync(join(dstDir, ROW_FILES.explained))).toBe(true);
+    expect(existsSync(join(dstDir, NOTES_FILE))).toBe(true);
+    expect(existsSync(join(dstDir, RESULT_FILE))).toBe(false);
+    expect(existsSync(join(dstDir, "failure.png"))).toBe(false);
+    expect(existsSync(join(dstDir, "attempts"))).toBe(false);
+    expect(existsSync(join(dstDir, "screenshots"))).toBe(false);
+
+    const manifest = JSON.parse(readFileSync(join(tmpCorpus, MANIFEST), "utf8")) as Manifest;
+    expect(manifest.rows.map((r) => `${r.application}/${r.variant}`)).toEqual([sample.id]);
+    expect(manifest.rows[0].verdict).toBe("identical");
+    expect(manifest.rows[0].files.some((f) => f.includes(RESULT_FILE) || f.includes("failure.png"))).toBe(false);
+
+    const records = JSON.parse(gunzipSync(readFileSync(join(tmpCorpus, ETS_RECORDS_FILE))).toString("utf8")) as EtsRecords;
+    expect(records.projects.map((p) => p.path)).toEqual([`${SWEEP_DIR}/${sample.id}/${sample.spec.export}`]);
+    expect(existsSync(join(tmpCorpus, INDEX_MD))).toBe(true);
+    expect(existsSync(join(tmpCorpus, INDEX_JSON))).toBe(true);
+  });
 });

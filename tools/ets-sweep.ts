@@ -18,6 +18,18 @@
 // is not written; the output names what moved for it. It writes to --out (an empty directory outside the corpus, by
 // default a new one under the system's temporary directory), into the corpus only with --in-place.
 //
+//   BUSFORGE_CORPUS=... KNXPROJ_PASSWORDS=... CAPTURE_KEYS=... bun run tools/ets-sweep.ts --import-dir <dir> [--dry-run] [--apps <list>] [--apps-file <path>]
+//
+// discovers completed (and sim-refused with wire logs) sweep rows under <dir> (outside the corpus), snapshots only the
+// allow-listed canonical capture files, pre-judges each against Busforge, pre-stages captures/ets-download-records.json.gz
+// and verifies capture-index keys (KNXPROJ_PASSWORDS, CAPTURE_KEYS) before mutating the corpus, copies the allow-listed
+// files into captures/ets-sweep/<application>/<variant>/, updates explained.json through rejudge and writes notes.md
+// (preserving an existing non-empty notes.md), and refreshes internal/ets-sweep/manifest.json,
+// captures/ets-download-records.json.gz and internal/captures/{INDEX.md,index.json}. --dry-run stops after pre-judging
+// and pre-staging records, printing the verdict table, differs details and LoadedImage record summary without touching
+// the corpus. Exits 1 on a real import when any row has an unexplained difference or calibration position (cause null),
+// or when an updated row's verdict moves to a refusal/failure or its refusal/failure detail moves.
+//
 // A ROW lives in the corpus under captures/ets-sweep/<application id>/<variant>/ (ROW_FILES):
 //   row.json            what the row is (RowSpec): the simulated unit, ETS's build, the simulator's endpoint
 //                       ETS was set to, ETS's project export where the row has one, the capture of ETS's
@@ -57,22 +69,25 @@
 // the answer to a confirmed restart, whether PreferPartialDownloadIfApplicationLoaded triggered, MV-0701's read before
 // write; function etsBranches).
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync, copyFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { gunzipSync } from "node:zlib";
 import { APCI, KnxIpServer, MM_CTRL_ADDR, MM_STATUS_BASE, PID, iaToNum, numToIa, realTcpListener } from "../packages/knx/src/index.ts";
 import { appProgramId, etsLoadedCompletely, etsNotDownloaded, extractAppPrograms, hardwareApplications, loadKnxproj, type Project } from "../packages/project/src/index.ts";
 import { isMemoryMappedLsm, parseAppConfig, parseLoadProcedures, ProductError, type ComObjectLink, type ComObjInstanceOverride, type FlashResult, type ModuleInstance } from "../packages/product/src/index.ts";
 import { downloadDeviceFull } from "../apps/server/src/deviceprofile.ts";
 import type { Connection } from "../apps/server/src/db/connections.ts";
 import { ApiError } from "../apps/server/src/errors.ts";
-import { apciName } from "./capture-index.ts";
-import { corpusPath, corpusUnlistedPath } from "./corpus.ts";
+import { apciName, buildIndex, documentedKeyringPasswords, INDEX_DIRS, INDEX_FORMAT, INDEX_JSON, INDEX_MD, KEYS_ENV, renderMarkdown, type CaptureIndex } from "./capture-index.ts";
+import { CORPUS_ENV, corpusPath, corpusUnlistedPath, ETS_RECORDS_FILE, refuseDotenv } from "./corpus.ts";
 import { openWithPasswords, passwords, PASSWORDS_ENV } from "./corpus-archives.ts";
+import { BATCH_LOG, readResult as readBatchResult, RESULT_FILE, type RowResult as BatchRowResult } from "./ets-batch.ts";
 import { captureLData, capturedOnLoadedUnit, dialogueDifferences, memWriteOf, parseCapture } from "./etsdiff.ts";
-import { loadedImageComparison } from "./ets-records.ts";
+import { commitEtsRecordsUpdate, etsRecordPasswordCandidates, loadedImageComparison, prepareEtsRecordsUpdate, type EtsRecords, type RecordsUpdateResult } from "./ets-records.ts";
 import { gitRevision } from "./evidence.ts";
 import { startProxy } from "./knxproxy.ts";
+import { corpusKeys, parseKeyList, type NamedKey } from "./secure-capture.ts";
 import type { SimUnit } from "./sim-unit.ts";
 import { catalogueUnit, catalogueUnitRecord, catalogueUnitSpec, chooseDonor, donorDigest, hasProgramIdStampSource, isCatalogueUnit, loadStateMachineAt, newRowUnit, readMaybeGzipped, unitAppXml, type CatalogueUnitRecord, type RowUnit } from "./sim-unit-catalogue.ts";
 import { simUnitSpec } from "./sim-units.ts";
@@ -85,6 +100,19 @@ export const MANIFEST_FORMAT = "busforge-ets-sweep-manifest/1";
 export const ROW_FILES = {
   row: "row.json", configuration: "configuration.json", ets: "ets.log", etsSim: "ets.log.sim.txt", ets6log: "ets6.log.txt", explained: "explained.json",
 } as const;
+export const NOTES_FILE = "notes.md";
+// Canonical capture files copied by --import-dir (beside spec.export, when set).
+export const IMPORT_REQUIRED_FILES = [
+  ROW_FILES.row, ROW_FILES.configuration, ROW_FILES.ets, ROW_FILES.etsSim, ROW_FILES.ets6log,
+] as const;
+export const IMPORT_OPTIONAL_FILES = ["ets.log.serve.txt", "ets.pcapng", "ets.log.dumpcap.txt"] as const;
+const SAFE_EXPORT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*\.knxproj(?:\.gz)?$/;
+
+function assertSafeExportName(exportName: string, id: string): void {
+  if (!SAFE_EXPORT_NAME.test(exportName)) {
+    throw new Error(`row ${id}: export ${JSON.stringify(exportName)} is not a plain .knxproj filename`);
+  }
+}
 
 export interface RowSpec {
   format: typeof ROW_FORMAT;
@@ -706,32 +734,52 @@ export function loadedImageCheck(proj: Project, appXml: string, conf: RowConfigu
 
 export interface Row { id: string; application: string; variant: string; dir: string; spec: RowSpec; unit: RowUnit; conf: RowConfiguration; explained: Explained }
 
-// Every row in the corpus, as "<application>/<variant>".
-export function listRows(): string[] {
-  const root = corpusPath(SWEEP_DIR);
+// Every row under `<root>/captures/ets-sweep`, as "<application>/<variant>".
+export function listRowsAt(corpusRootDir: string): string[] {
+  const root = join(corpusRootDir, SWEEP_DIR);
   if (!existsSync(root)) return [];
   return readdirSync(root).filter((a) => statSync(join(root, a)).isDirectory()).sort()
     .flatMap((a) => readdirSync(join(root, a)).filter((v) => statSync(join(root, a, v)).isDirectory()).sort().map((v) => `${a}/${v}`));
 }
 
+// Every row in the corpus, as "<application>/<variant>".
+export function listRows(): string[] {
+  // Validate corpus presence and that SWEEP_DIR is a listed walked directory before reading.
+  corpusPath(SWEEP_DIR);
+  return listRowsAt(corpusUnlistedPath(""));
+}
+
 const readJson = <T>(path: string): T => JSON.parse(readFileSync(path, "utf8")) as T;
+
+function parseRowId(id: string): [application: string, variant: string] {
+  const [application, variant, ...rest] = id.split("/");
+  if (!application || !variant || rest.length || application === "." || application === ".." || variant === "." || variant === "..") {
+    throw new Error(`a row is named "<application>/<variant>", not "${id}"`);
+  }
+  return [application, variant];
+}
 
 // A row's directory in the corpus.
 function rowDir(id: string): string {
-  const [application, variant, ...rest] = id.split("/");
-  if (!application || !variant || rest.length) throw new Error(`a row is named "<application>/<variant>", not "${id}"`);
+  parseRowId(id);
   return corpusPath(`${SWEEP_DIR}/${id}`);
 }
 
-export function readRow(id: string): Row {
-  const dir = rowDir(id);
-  const [application, variant] = id.split("/");
-  const missing = Object.values(ROW_FILES).filter((f) => !existsSync(join(dir, f)));
+export function readRowAt(
+  id: string, dir: string, options: { requireExplained?: boolean; existingExplained?: Explained } = {},
+): Row {
+  const [application, variant] = parseRowId(id);
+  const requireExplained = options.requireExplained ?? true;
+  const required = requireExplained ? Object.values(ROW_FILES) : [...IMPORT_REQUIRED_FILES];
+  const missing = required.filter((f) => !existsSync(join(dir, f)));
   if (missing.length) throw new Error(`row ${id} lacks ${missing.join(", ")}`);
   const spec = readJson<RowSpec>(join(dir, ROW_FILES.row));
   const format: unknown = spec.format;
   if (format !== ROW_FORMAT) throw new Error(`row ${id}: ${ROW_FILES.row} is of format ${String(format)}, not ${ROW_FORMAT}`);
-  if (spec.export !== undefined && !existsSync(join(dir, spec.export))) throw new Error(`row ${id}: the export ${spec.export} is missing`);
+  if (spec.export !== undefined) {
+    assertSafeExportName(spec.export, id);
+    if (!existsSync(join(dir, spec.export))) throw new Error(`row ${id}: the export ${spec.export} is missing`);
+  }
   const unit = rowUnit(id, dir, application, spec);
   const conf = readJson<RowConfiguration>(join(dir, ROW_FILES.configuration));
   if (conf.appRef !== undefined) {
@@ -742,7 +790,14 @@ export function readRow(id: string): Row {
   if (spec.calibration !== undefined && !existsSync(corpusPath(spec.calibration))) throw new Error(`row ${id}: the calibration capture ${spec.calibration} is missing`);
   const from: unknown = spec.calibrationFrom;
   if (from !== undefined && (spec.calibration === undefined || typeof from !== "number" || !Number.isInteger(from) || from < 0)) throw new Error(`row ${id}: calibrationFrom ${JSON.stringify(from)} is no position of a calibration capture`);
-  return { id, application, variant, dir, spec, unit, conf, explained: readJson<Explained>(join(dir, ROW_FILES.explained)) };
+  const explained = requireExplained
+    ? readJson<Explained>(join(dir, ROW_FILES.explained))
+    : (options.existingExplained ?? { verdict: "identical", differences: [] });
+  return { id, application, variant, dir, spec, unit, conf, explained };
+}
+
+export function readRow(id: string): Row {
+  return readRowAt(id, rowDir(id));
 }
 
 // The application a configuration's Hardware2Program runs, as the row's export names it (hardwareApplications, as a
@@ -925,13 +980,18 @@ export function manifestRow(row: Row, r: RowResult): ManifestRow {
   };
 }
 
-// The corpus's manifest, or null where it has none yet.
-export function readManifest(): Manifest | null {
-  const path = corpusUnlistedPath(MANIFEST);
+// The manifest under `corpusRootDir`, or null where it has none yet.
+export function readManifestAt(corpusRootDir: string): Manifest | null {
+  const path = join(corpusRootDir, MANIFEST);
   const old: Manifest | null = existsSync(path) ? readJson<Manifest>(path) : null;
   const format: unknown = old?.format;
   if (old && format !== MANIFEST_FORMAT) throw new Error(`${MANIFEST} is of format ${String(format)}, not ${MANIFEST_FORMAT}`);
   return old;
+}
+
+// The corpus's manifest, or null where it has none yet.
+export function readManifest(): Manifest | null {
+  return readManifestAt(corpusUnlistedPath(""));
 }
 
 const entryId = (r: ManifestRow) => `${r.application}/${r.variant}`;
@@ -1035,11 +1095,724 @@ export function writeRejudged(root: string, results: ManifestRow[], olds: Map<st
   return { report, exit: unexplained.length ? 1 : 0 };
 }
 
-const USAGE = "usage: bun run tools/ets-sweep.ts [<application>/<variant>]... [--keep=<dir>] [--rejudge [--out <dir> | --in-place]]";
+// ---- importing a batch/driver directory into the corpus (--import-dir) ----
+
+const IGNORED_IMPORT_DIRS = new Set(["attempts", "screenshots"]);
+
+function isSymlink(path: string): boolean {
+  try { return lstatSync(path).isSymbolicLink(); } catch { return false; }
+}
+
+function isRegularFile(path: string): boolean {
+  try { return lstatSync(path).isFile(); } catch { return false; }
+}
+
+function firstLine(path: string): string | undefined {
+  if (!isRegularFile(path)) return undefined;
+  return readFileSync(path, "utf8").split(/\r?\n/).map((l) => l.trim()).find((l) => l.length > 0);
+}
+
+function writeFileAtomic(path: string, content: string | Buffer): void {
+  const tmp = `${path}.${process.pid}.tmp`;
+  try {
+    writeFileSync(tmp, content);
+    renameSync(tmp, path);
+  } catch (e) {
+    if (existsSync(tmp)) unlinkSync(tmp);
+    throw e;
+  }
+}
+
+// Verifies that no existing component of `rel` under `root` is a symlink and that the existing ancestor
+// resolves inside `root`, so writes/unlinks cannot follow a symlink out of the target corpus row or corpus.
+function assertSafeTargetPath(root: string, rel: string): void {
+  const rootReal = realpathSync(root);
+  const parts = rel.split("/").filter(Boolean);
+  let cur = root;
+  for (const part of parts) {
+    cur = join(cur, part);
+    if (isSymlink(cur)) throw new Error(`target path ${rel} has a symlink at ${cur}; refusing to write through it`);
+    if (existsSync(cur)) {
+      const r = relative(rootReal, realpathSync(cur));
+      if (isAbsolute(r) || r.split(sep)[0] === "..") {
+        throw new Error(`target path ${rel} resolves outside corpus root ${root}`);
+      }
+    }
+  }
+}
+
+// Returns the allow-listed canonical capture files present in `srcDir`: the five required row files,
+// `spec.export` (when set), and whichever of the three driver sidecars exist as regular files.
+// Never copies batch-result.json, attempts/, screenshots/, failure.*/dialog.*, or stray/temp files.
+// Refuses symlinks and unsafe export filenames.
+export function importCopyFiles(srcDir: string, spec: RowSpec, id = srcDir): string[] {
+  if (spec.export !== undefined) assertSafeExportName(spec.export, id);
+  const required = [...IMPORT_REQUIRED_FILES, ...(spec.export !== undefined ? [spec.export] : [])];
+  for (const f of required) {
+    const p = join(srcDir, f);
+    if (isSymlink(p)) throw new Error(`row ${id}: ${f} is a symlink, not a regular file`);
+    if (!isRegularFile(p)) throw new Error(`row ${id}: required file ${f} is missing`);
+  }
+  const optional: string[] = [];
+  for (const f of IMPORT_OPTIONAL_FILES) {
+    const p = join(srcDir, f);
+    if (isSymlink(p)) throw new Error(`row ${id}: ${f} is a symlink, not a regular file`);
+    if (isRegularFile(p)) optional.push(f);
+  }
+  return [...new Set([...required, ...optional])].sort();
+}
+
+export interface DiscoveredImportRow {
+  id: string;
+  application: string;
+  variant: string;
+  dir: string;
+  spec: RowSpec;
+  conf: RowConfiguration;
+  batchResult: BatchRowResult | null;
+  files: string[];
+}
+
+export interface SkippedImportRow {
+  id: string;
+  reason: string;
+}
+
+export interface ImportDiscovery {
+  rows: DiscoveredImportRow[];
+  skipped: SkippedImportRow[];
+}
+
+// Discovers completed (and sim-refused with wire logs) sweep rows under `importDir` (<application>/<variant>/).
+// Skips unfinished/failed rows, driver-refused rows, and sim-refused rows without wire logs cleanly with reasons.
+// Uses lstat so dangling symlinks do not crash discovery and symlinked row directories are refused.
+export function discoverImportRows(importDir: string, options: { filter?: readonly string[] } = {}): ImportDiscovery {
+  if (!existsSync(importDir) || !statSync(importDir).isDirectory()) {
+    throw new Error(`--import-dir ${importDir} is not a directory`);
+  }
+  const rawCandidates: { id: string; application: string; variant: string; dir: string }[] = [];
+  for (const app of readdirSync(importDir).sort()) {
+    if (app.startsWith(".") || IGNORED_IMPORT_DIRS.has(app)) continue;
+    const appDir = join(importDir, app);
+    const appStat = lstatSync(appDir);
+    if (appStat.isSymbolicLink()) throw new Error(`${appDir} is a symlink, not a row directory`);
+    if (!appStat.isDirectory()) continue;
+    for (const variant of readdirSync(appDir).sort()) {
+      if (variant.startsWith(".") || IGNORED_IMPORT_DIRS.has(variant)) continue;
+      const dir = join(appDir, variant);
+      const dirStat = lstatSync(dir);
+      if (dirStat.isSymbolicLink()) throw new Error(`${dir} is a symlink, not a row directory`);
+      if (!dirStat.isDirectory()) continue;
+      rawCandidates.push({ id: `${app}/${variant}`, application: app, variant, dir });
+    }
+  }
+  if (rawCandidates.length === 0) {
+    const hint = existsSync(join(importDir, ROW_FILES.row)) || existsSync(join(importDir, RESULT_FILE))
+      ? " (it looks like a single row directory; pass its parent directory holding <application>/<variant>/ subdirectories)"
+      : "";
+    throw new Error(`no <application>/<variant> row directories found under ${importDir}${hint}`);
+  }
+  const isBatchDir = existsSync(join(importDir, BATCH_LOG)) || rawCandidates.some((c) => existsSync(join(c.dir, RESULT_FILE)));
+  const filter = options.filter;
+  let candidates = rawCandidates;
+  if (filter !== undefined && filter.length > 0) {
+    const matches = (c: { id: string; application: string }, token: string) => (token.includes("/") ? c.id === token : c.application === token);
+    const unmatched = filter.filter((token) => !rawCandidates.some((c) => matches(c, token)));
+    if (unmatched.length) throw new Error(`filter matched no row under ${importDir}: ${unmatched.join(", ")}`);
+    candidates = rawCandidates.filter((c) => filter.some((token) => matches(c, token)));
+  }
+
+  const rows: DiscoveredImportRow[] = [];
+  const skipped: SkippedImportRow[] = [];
+  for (const c of candidates) {
+    const resultPath = join(c.dir, RESULT_FILE);
+    let batchResult: BatchRowResult | null = null;
+    if (existsSync(resultPath)) {
+      batchResult = readBatchResult(c.dir);
+      if (batchResult !== null && batchResult.application !== c.application) {
+        throw new Error(`row ${c.id}: ${RESULT_FILE} names application ${batchResult.application}, not ${c.application}`);
+      }
+    }
+    if (batchResult !== null) {
+      if (batchResult.kind === "driver-refused" || batchResult.kind === "driver-failed" || batchResult.kind === "ets-failed") {
+        skipped.push({ id: c.id, reason: `${batchResult.kind}${batchResult.why ? `: ${batchResult.why}` : ""}` });
+        continue;
+      }
+      if (batchResult.kind !== "completed" && batchResult.kind !== "sim-refused") {
+        skipped.push({ id: c.id, reason: `unsupported batch kind: ${String(batchResult.kind)}` });
+        continue;
+      }
+    } else if (isBatchDir) {
+      skipped.push({ id: c.id, reason: `unfinished (no ${RESULT_FILE})` });
+      continue;
+    } else {
+      if (existsSync(join(c.dir, "driver-refused.txt"))) {
+        const why = firstLine(join(c.dir, "driver-refused.txt"));
+        skipped.push({ id: c.id, reason: `driver-refused${why ? `: ${why}` : ""}` });
+        continue;
+      }
+      if (existsSync(join(c.dir, "driver-failed.txt"))) {
+        const why = firstLine(join(c.dir, "driver-failed.txt"));
+        skipped.push({ id: c.id, reason: `driver-failed${why ? `: ${why}` : ""}` });
+        continue;
+      }
+    }
+
+    const simRefusedRow = batchResult?.kind === "sim-refused" || existsSync(join(c.dir, "sim-refused.txt"));
+    const simRefusedWhy = batchResult?.why ?? firstLine(join(c.dir, "sim-refused.txt"));
+    const missingRequired = IMPORT_REQUIRED_FILES.filter((f) => !isSymlink(join(c.dir, f)) && !isRegularFile(join(c.dir, f)));
+    if (missingRequired.length) {
+      skipped.push({
+        id: c.id,
+        reason: simRefusedRow
+          ? `sim-refused without wire logs (${simRefusedWhy ?? `missing ${missingRequired.join(", ")}`})`
+          : `incomplete (missing ${missingRequired.join(", ")})`,
+      });
+      continue;
+    }
+    if (isRegularFile(join(c.dir, ROW_FILES.ets)) && lstatSync(join(c.dir, ROW_FILES.ets)).size === 0) {
+      skipped.push({
+        id: c.id,
+        reason: simRefusedRow
+          ? `sim-refused without wire logs (empty ${ROW_FILES.ets}${simRefusedWhy ? `: ${simRefusedWhy}` : ""})`
+          : `incomplete (empty ${ROW_FILES.ets})`,
+      });
+      continue;
+    }
+    const spec = readJson<RowSpec>(join(c.dir, ROW_FILES.row));
+    const format: unknown = spec.format;
+    if (format !== ROW_FORMAT) throw new Error(`row ${c.id}: ${ROW_FILES.row} is of format ${String(format)}, not ${ROW_FORMAT}`);
+    if (spec.export !== undefined) {
+      assertSafeExportName(spec.export, c.id);
+      const exportPath = join(c.dir, spec.export);
+      if (!isSymlink(exportPath) && !isRegularFile(exportPath)) {
+        skipped.push({
+          id: c.id,
+          reason: simRefusedRow ? `sim-refused without export ${spec.export}` : `incomplete (missing ${spec.export})`,
+        });
+        continue;
+      }
+    }
+    const files = importCopyFiles(c.dir, spec, c.id);
+    const conf = readJson<RowConfiguration>(join(c.dir, ROW_FILES.configuration));
+    // In a standalone driver directory (no batch-result.json), classify ETS's outcome the same way
+    // tools/ets-driver.ts writtenRowKind does so ets-failed/driver-failed rows are skipped.
+    if (batchResult === null) {
+      const outcome = etsOutcome(readFileSync(join(c.dir, ROW_FILES.ets6log), "latin1"), conf.ia, spec.simulator);
+      if (outcome.kind === "driver-failed") {
+        skipped.push({ id: c.id, reason: `driver-failed: ${outcome.why}` });
+        continue;
+      }
+      if (outcome.kind === "ets-failed") {
+        // Mask only switches memory-mapped LSM decoding; changesAfterRestart and notTaken are mask-independent.
+        const etsRun = runState(readFileSync(join(c.dir, ROW_FILES.ets), "utf8"), "ETS", iaToNum(conf.ia), "MV-07B0");
+        const split = refusalsAfterRestart(readFileSync(join(c.dir, ROW_FILES.etsSim), "utf8"), etsRun);
+        if (split.others.length === 0) {
+          skipped.push({ id: c.id, reason: `ets-failed: ${outcome.why}` });
+          continue;
+        }
+      }
+    }
+    rows.push({ id: c.id, application: c.application, variant: c.variant, dir: c.dir, spec, conf, batchResult, files });
+  }
+  return { rows, skipped };
+}
+
+// Renders a clean structured default notes.md for a newly imported sweep row.
+export function renderRowNotes(
+  row: Pick<DiscoveredImportRow, "id" | "application" | "variant" | "spec" | "conf" | "batchResult">,
+  entry: ManifestRow,
+  explained: Explained,
+): string {
+  const lines: string[] = [];
+  lines.push(`# Sweep row: ${row.application} at ${row.variant}`, "");
+  const unitDesc = typeof row.spec.unit === "string"
+    ? `own unit \`${row.spec.unit}\``
+    : `catalogue unit on donor \`${row.spec.unit.donor}\``;
+  const exportDesc = row.spec.export ? `export \`${row.spec.export}\`` : "no export";
+  const identityLines = typeof row.spec.unit === "string" ? [] : row.spec.unit.identity;
+  const identityDesc = identityLines.length === 0
+    ? "No identity-loop retries needed."
+    : `Identity loop learned ${identityLines.length} property mismatch(es) (${identityLines.join("; ")}).`;
+  const driverMeta = row.batchResult !== null
+    ? `driven by \`tools/ets-driver.ts batch\` (order number \`${row.batchResult.orderNumber}\`, manufacturer \`${entry.manufacturer}\`, mask \`${entry.mask}\`, address ${row.conf.ia}, ${unitDesc}, interface ${row.spec.simulator}, ${exportDesc}). ${identityDesc} Driver time ${row.batchResult.minutes.toFixed(1)} min (${row.batchResult.attempts.length} ${row.batchResult.attempts.length === 1 ? "attempt" : "attempts"}).`
+    : `driven by \`tools/ets-driver.ts\` (manufacturer \`${entry.manufacturer}\`, mask \`${entry.mask}\`, address ${row.conf.ia}, ${unitDesc}, interface ${row.spec.simulator}, ${exportDesc}). ${identityDesc}`;
+  lines.push(`${row.spec.etsBuild}, ${driverMeta}`, "");
+
+  const preferPartial = (entry.etsBranches ?? []).find((b) => b.on === "prefer-partial");
+  if (preferPartial) lines.push(`PreferPartial branch: ${preferPartial.answer}.`, "");
+
+  lines.push(`## Verdict: ${entry.verdict}`, "");
+  switch (entry.verdict) {
+    case "identical":
+      lines.push("Busforge's full download into a fresh simulated unit equals ETS's in every compared item.", "");
+      break;
+    case "differs": {
+      lines.push(`${entry.differences.length} difference(s); first: \`${entry.first ?? ""}\`.`, "");
+      const distinctCauses = [...new Set(explained.differences.map((d) => d.cause?.trim()).filter((c): c is string => Boolean(c)))];
+      const hasUnexplained = explained.differences.some((d) => noCause(d.cause));
+      if (distinctCauses.length > 0 && !hasUnexplained) lines.push(`Cause: ${distinctCauses.join("; ")}`, "");
+      else if (distinctCauses.length > 0) lines.push(`Cause: ${distinctCauses.join("; ")} (plus unexplained difference(s) in explained.json).`, "");
+      else lines.push("Cause: pending investigation (see explained.json).", "");
+      break;
+    }
+    case "refused": {
+      const code = typeof entry.detail?.code === "string" ? entry.detail.code : entry.first ?? "unknown";
+      const message = typeof entry.detail?.message === "string" ? entry.detail.message : entry.cause ?? "";
+      lines.push(`ETS completed cleanly; Busforge refused with \`${code}\`: ${message}`, "");
+      break;
+    }
+    case "sim-refused": {
+      const run = typeof entry.detail?.run === "string" ? entry.detail.run : "ETS";
+      const refusals = Array.isArray(entry.detail?.refusals) ? (entry.detail.refusals as string[]) : (entry.first ? [entry.first] : []);
+      lines.push(`Simulator refused ${run} (${refusals.length} refusal(s)): \`${refusals[0] ?? ""}\``, "");
+      if (typeof entry.detail?.busforge === "string") lines.push(`Busforge side: ${entry.detail.busforge}`, "");
+      break;
+    }
+    case "busforge-only":
+      lines.push(`${entry.first ?? "Busforge wrote where ETS did not download"} (${entry.cause ?? ""}).`, "");
+      break;
+    case "ets-failed":
+    case "driver-failed":
+      lines.push(`${entry.cause ?? entry.first ?? entry.verdict}`, "");
+      break;
+  }
+
+  const refusalsAfter = (entry.refusalsAfterRestart ?? []).map((x) => `${x.run}: ${timeless(x.refusal)}`);
+  const refusalsText = refusalsAfter.length ? refusalsAfter.join("; ") : "none";
+  const li = entry.loadedImage;
+  const loadedImageText = li.state === "equal"
+    ? `LoadedImage equal (${li.bytes} bytes)`
+    : li.state === "differs"
+      ? `LoadedImage differs (${li.bytes} bytes, ${li.mismatches.length} mismatch(es))`
+      : li.state === "not compared"
+        ? `not compared (${li.why})`
+        : "no export";
+  lines.push(`Refusals after restart: ${refusalsText}. Second check: ${loadedImageText}.`, "");
+  return lines.join("\n");
+}
+
+export interface PlannedImportItem {
+  discovered: DiscoveredImportRow;
+  action: "new" | "update";
+  manifest: ManifestRow;
+  explained: Explained;
+  existingNotes: string | null;
+  oldExport: string | undefined;
+  exportRel: string | null;
+  exportStatus: "none" | "new" | "update";
+  recordedLoadedImages: number;
+  moved: string[];
+  unexplained: string[];
+  gone: string[];
+}
+
+export interface ImportPlan {
+  importDir: string;
+  corpusRoot: string;
+  items: PlannedImportItem[];
+  skipped: SkippedImportRow[];
+  indexKeyMissing: { envKeys: string[]; unreadableFiles: string[] };
+}
+
+export interface ImportDirOptions {
+  importDir: string;
+  corpusRoot: string;
+  dryRun?: boolean;
+  filter?: readonly string[];
+  // Custom row judge (for unit tests without real corpus donors); defaults to RowPool judging from staged dir.
+  judge?: (discovered: DiscoveredImportRow, existingExplained: Explained | null) => Promise<ManifestRow>;
+  passwords?: readonly string[];
+  captureKeys?: readonly NamedKey[];
+}
+
+export interface ImportDirResult {
+  plan: ImportPlan;
+  report: string[];
+  wrote: boolean;
+  exit: number;
+  manifestRows?: number;
+  records?: RecordsUpdateResult | null;
+  index?: { files: number; notIndexed: number; unreadableKeys: number } | null;
+}
+
+function readExistingExport(dir: string): string | undefined {
+  const p = join(dir, ROW_FILES.row);
+  if (!isRegularFile(p)) return undefined;
+  const spec = readJson<Partial<RowSpec>>(p);
+  return typeof spec.export === "string" && SAFE_EXPORT_NAME.test(spec.export) ? spec.export : undefined;
+}
+
+function readRecordedProjectPaths(corpusRootDir: string): Set<string> {
+  const p = join(corpusRootDir, ETS_RECORDS_FILE);
+  if (!existsSync(p) || !statSync(p).isFile()) return new Set();
+  const parsed = JSON.parse(gunzipSync(readFileSync(p)).toString("utf8")) as Partial<EtsRecords>;
+  if (!Array.isArray(parsed.projects)) return new Set();
+  return new Set(parsed.projects.map((x) => x.path));
+}
+
+// Checks before any corpus mutation whether refreshing capture-index would lose previously read Data Secure keys
+// from existing internal/captures/index.json (missing CAPTURE_KEYS or missing KNXPROJ_PASSWORDS).
+function checkCaptureIndexPreconditions(
+  corpusRootDir: string, indexPasswords: readonly string[], indexKeys: readonly NamedKey[],
+): { envKeys: string[]; unreadableFiles: string[] } {
+  for (const d of INDEX_DIRS) {
+    if (!existsSync(join(corpusRootDir, d))) {
+      throw new Error(`the corpus has no ${d}/, which INDEX_DIRS names; cannot refresh capture index`);
+    }
+  }
+  const indexPath = join(corpusRootDir, INDEX_JSON);
+  if (!existsSync(indexPath) || !statSync(indexPath).isFile()) return { envKeys: [], unreadableFiles: [] };
+  const existing = JSON.parse(readFileSync(indexPath, "utf8")) as Partial<CaptureIndex>;
+  if (existing.format !== INDEX_FORMAT || !existing.keys) return { envKeys: [], unreadableFiles: [] };
+  const providedEnv = new Set(indexKeys.map((k) => k.name));
+  const envKeys = (existing.keys.environment ?? []).filter((name) => !providedEnv.has(name));
+  const previouslyRead = (existing.keys.read ?? [])
+    .map((r) => r.file)
+    .filter((f) => existsSync(join(corpusRootDir, f)));
+  const unreadableFiles = previouslyRead.length === 0
+    ? []
+    : corpusKeys(corpusRootDir, previouslyRead, [...indexPasswords, ...documentedKeyringPasswords(corpusRootDir)])
+      .notRead.map((n) => n.file);
+  return { envKeys, unreadableFiles };
+}
+
+function loadedImageCell(li: LoadedImageCheck): string {
+  if (li.state === "equal") return `equal (${li.bytes} B)`;
+  if (li.state === "differs") return `differs (${li.bytes} B, ${li.mismatches.length} mis)`;
+  if (li.state === "not compared") return "not compared";
+  return "no export";
+}
+
+function firstCell(m: ManifestRow): string {
+  const raw = m.verdict === "identical" ? "-"
+    : m.verdict === "differs" ? `${m.differences.length} diff: ${m.first ?? ""}`
+    : (m.first ?? m.cause ?? "-");
+  return raw.replace(/\s+/g, " ").trim();
+}
+
+// Renders the pre-judgement summary (skipped rows, verdict table, totals, differs details, LoadedImage summary).
+export function formatImportSummary(plan: ImportPlan, options: { dryRun: boolean }): string[] {
+  const out: string[] = [];
+  if (plan.skipped.length > 0) {
+    out.push(`Skipped ${plan.skipped.length} row(s):`);
+    for (const s of plan.skipped) out.push(`  ${s.id}: ${s.reason}`);
+  }
+  if (plan.items.length === 0) {
+    out.push(`0 importable row(s) under ${plan.importDir}; corpus untouched.`);
+    return out;
+  }
+
+  const headers = ["Row", "Action", "Mask", "Verdict", "LoadedImage", "First / Detail"];
+  const rows = plan.items.map((it) => [
+    it.discovered.id,
+    it.action,
+    it.manifest.mask,
+    it.manifest.verdict,
+    loadedImageCell(it.manifest.loadedImage),
+    firstCell(it.manifest).slice(0, 90),
+  ]);
+  const widths = headers.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i].length)));
+  const fmt = (cols: string[]) => cols.map((c, i) => c.padEnd(widths[i])).join("  ").trimEnd();
+  out.push(`${options.dryRun ? "Dry-run" : "Judged"} ${plan.items.length} row(s) (${plan.items.filter((i) => i.action === "new").length} new, ${plan.items.filter((i) => i.action === "update").length} update):`);
+  out.push(fmt(headers));
+  out.push(fmt(widths.map((w) => "-".repeat(w))));
+  for (const r of rows) out.push(fmt(r));
+
+  const counts = new Map<Verdict["verdict"], number>();
+  for (const it of plan.items) counts.set(it.manifest.verdict, (counts.get(it.manifest.verdict) ?? 0) + 1);
+  const verdictSummary = [...counts.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([v, n]) => `${v}: ${n}`).join(", ");
+  out.push(`Verdicts: ${verdictSummary}`);
+
+  const differing = plan.items.filter((it) => it.manifest.verdict === "differs");
+  if (differing.length > 0) {
+    out.push(`Differs details (${differing.length} row(s)):`);
+    for (const it of differing) {
+      out.push(`  ${it.discovered.id} (${it.manifest.differences.length} difference(s)):`);
+      for (const d of it.manifest.differences) {
+        out.push(`    - ${d.difference}`);
+        out.push(`      cause: ${d.cause ?? "NOT EXPLAINED"}`);
+      }
+    }
+  }
+
+  const newExports = plan.items.filter((it) => it.exportStatus === "new");
+  const updatedExports = plan.items.filter((it) => it.exportStatus === "update");
+  const newLiRecords = newExports.reduce((sum, it) => sum + it.recordedLoadedImages, 0);
+  const updatedLiRecords = updatedExports.reduce((sum, it) => sum + it.recordedLoadedImages, 0);
+  const liEqual = plan.items.filter((it) => it.manifest.loadedImage.state === "equal");
+  const liDiffers = plan.items.filter((it) => it.manifest.loadedImage.state === "differs");
+  const liBytes = [...liEqual, ...liDiffers].reduce((sum, it) => sum + ("bytes" in it.manifest.loadedImage ? it.manifest.loadedImage.bytes : 0), 0);
+  if (newExports.length > 0 || updatedExports.length > 0 || liEqual.length > 0 || liDiffers.length > 0) {
+    out.push(
+      `LoadedImage / .knxproj exports: ${newExports.length} new (${newLiRecords} LoadedImage record(s)), `
+      + `${updatedExports.length} updated (${updatedLiRecords} LoadedImage record(s)); `
+      + `compared: ${liEqual.length} equal, ${liDiffers.length} differs (${liBytes} bytes)`,
+    );
+    for (const it of liDiffers) {
+      const li = it.manifest.loadedImage;
+      if (li.state !== "differs") continue;
+      out.push(`  LoadedImage mismatch in ${it.discovered.id}: ${li.mismatches.length} byte(s), first: ${li.mismatches[0]}`);
+    }
+    if (newExports.length > 0 || updatedExports.length > 0) {
+      out.push("  Note: new/updated .knxproj exports move pinned counts in tools/ets-records.test.ts.");
+    }
+  }
+  if (options.dryRun) {
+    if (plan.indexKeyMissing.envKeys.length > 0 || plan.indexKeyMissing.unreadableFiles.length > 0) {
+      const need: string[] = [];
+      if (plan.indexKeyMissing.unreadableFiles.length > 0) need.push(`${PASSWORDS_ENV} (${plan.indexKeyMissing.unreadableFiles.length} protected project(s)/keyring(s))`);
+      if (plan.indexKeyMissing.envKeys.length > 0) need.push(`${KEYS_ENV} (${plan.indexKeyMissing.envKeys.join(", ")})`);
+      out.push(`  Note: real import will require ${need.join(" and ")} to refresh ${INDEX_MD} without dropping keys.`);
+    }
+    out.push(`dry-run: corpus untouched (${plan.items.length} row(s) would be imported, ${plan.skipped.length} skipped).`);
+  }
+  return out;
+}
+
+// Imports completed (and sim-refused with wire logs) rows from `options.importDir` into `options.corpusRoot`.
+export async function importSweepDir(options: ImportDirOptions): Promise<ImportDirResult> {
+  const { importDir, corpusRoot: targetCorpus } = options;
+  const dryRun = options.dryRun ?? false;
+  if (inCorpus(importDir, targetCorpus)) {
+    throw new Error(`--import-dir ${importDir} lies in the corpus; import from a directory outside the corpus`);
+  }
+  if (!options.judge) {
+    const envCorpus = process.env[CORPUS_ENV];
+    if (!envCorpus || !existsSync(envCorpus) || realpathSync(envCorpus) !== realpathSync(targetCorpus)) {
+      throw new Error(`importSweepDir without a custom judge requires ${CORPUS_ENV} to match corpusRoot (${targetCorpus})`);
+    }
+  }
+  // Parse keys/passwords before touching anything so invalid CAPTURE_KEYS fails before any corpus mutation.
+  const indexKeys = options.captureKeys !== undefined ? [...options.captureKeys] : parseKeyList(process.env[KEYS_ENV]);
+  const indexPasswords = options.passwords !== undefined ? [...options.passwords] : passwords();
+  const recordCandidates = options.passwords !== undefined ? [...options.passwords] : etsRecordPasswordCandidates();
+
+  const discovery = discoverImportRows(importDir, { filter: options.filter });
+  for (const d of discovery.rows) {
+    if (inCorpus(d.dir, targetCorpus)) throw new Error(`row ${d.id} at ${d.dir} lies in the corpus`);
+  }
+  if (discovery.rows.length === 0) {
+    const plan: ImportPlan = {
+      importDir, corpusRoot: targetCorpus, items: [], skipped: discovery.skipped,
+      indexKeyMissing: { envKeys: [], unreadableFiles: [] },
+    };
+    return { plan, report: formatImportSummary(plan, { dryRun }), wrote: false, exit: 0 };
+  }
+
+  // Snapshot the allow-listed files into an isolated staging directory so judging, ets-records pre-staging,
+  // and final corpus copying all operate on the exact same immutable bytes.
+  const stagingDir = tempDir("ets-sweep-import-stage-");
+  try {
+    const stagedDirOf = new Map<string, string>();
+    for (const d of discovery.rows) {
+      const staged = join(stagingDir, d.id);
+      mkdirSync(staged, { recursive: true });
+      for (const f of d.files) copyFileSync(join(d.dir, f), join(staged, f));
+      stagedDirOf.set(d.id, staged);
+    }
+
+    const before = readManifestAt(targetCorpus);
+    const recordedProjects = readRecordedProjectPaths(targetCorpus);
+    const existingByRow = new Map(discovery.rows.map((d) => {
+      const targetDir = join(targetCorpus, SWEEP_DIR, d.id);
+      const existed = existsSync(join(targetDir, ROW_FILES.row));
+      const existingExplained = isRegularFile(join(targetDir, ROW_FILES.explained))
+        ? readJson<Explained>(join(targetDir, ROW_FILES.explained))
+        : null;
+      const existingNotes = isRegularFile(join(targetDir, NOTES_FILE))
+        ? readFileSync(join(targetDir, NOTES_FILE), "utf8")
+        : null;
+      const oldExport = readExistingExport(targetDir);
+      return [d.id, { targetDir, existed, existingExplained, existingNotes, oldExport }] as const;
+    }));
+
+    // Judge every discovered row from the immutable snapshot before mutating a single corpus file.
+    let judgedEntries: Map<string, ManifestRow>;
+    if (options.judge) {
+      judgedEntries = new Map();
+      for (const d of discovery.rows) {
+        const ex = existingByRow.get(d.id)!;
+        const stagedRow: DiscoveredImportRow = { ...d, dir: stagedDirOf.get(d.id)! };
+        judgedEntries.set(d.id, await options.judge(stagedRow, ex.existingExplained));
+      }
+    } else {
+      const { ROW_WORKERS, RowPool } = await import("./ets-sweep-workers.ts");
+      const pool = new RowPool(Math.min(ROW_WORKERS, discovery.rows.length));
+      try {
+        const pairs = await Promise.all(discovery.rows.map(async (d) => {
+          const ex = existingByRow.get(d.id)!;
+          const { manifest: m } = await pool.judge(d.id, {
+            manifest: true,
+            dir: stagedDirOf.get(d.id)!,
+            existingExplained: ex.existingExplained ?? undefined,
+          });
+          return [d.id, m!] as const;
+        }));
+        judgedEntries = new Map(pairs);
+      } finally {
+        pool.close();
+      }
+    }
+
+    // Pre-stage ets-download-records.json.gz from the staged exports before mutating the corpus,
+    // giving exact LoadedImage record counts for dry-run and failing early if any export cannot be recorded.
+    const recordTargets: { path: string; sourcePath: string }[] = [];
+    const removedExports: string[] = [];
+    for (const d of discovery.rows) {
+      const ex = existingByRow.get(d.id)!;
+      if (d.spec.export?.endsWith(".knxproj")) {
+        recordTargets.push({ path: `${SWEEP_DIR}/${d.id}/${d.spec.export}`, sourcePath: join(stagedDirOf.get(d.id)!, d.spec.export) });
+      }
+      if (ex.oldExport && ex.oldExport !== d.spec.export && ex.oldExport.endsWith(".knxproj")) {
+        removedExports.push(`${SWEEP_DIR}/${d.id}/${ex.oldExport}`);
+      }
+    }
+    const preparedRecords = (recordTargets.length > 0 || removedExports.length > 0)
+      ? prepareEtsRecordsUpdate(targetCorpus, recordTargets, recordCandidates)
+      : null;
+    const loadedImageCountByExport = new Map((preparedRecords?.recorded ?? []).map((r) => [r.path, r.withLoadedImage]));
+
+    const indexKeyMissing = checkCaptureIndexPreconditions(targetCorpus, indexPasswords, indexKeys);
+
+    const items: PlannedImportItem[] = discovery.rows.map((d) => {
+      const ex = existingByRow.get(d.id)!;
+      const manifest: ManifestRow = { ...judgedEntries.get(d.id)! };
+      // New rows get fresh notes.md, so only unexplained differences/calibration fail; updated rows preserve
+      // notes.md, so rejudge also flags verdicts moving to a refusal/failure or a refusal/failure detail moving.
+      const baseline: Explained = ex.existingExplained ?? {
+        verdict: manifest.verdict,
+        differences: [],
+        ...(manifest.detail ? { detail: manifest.detail } : {}),
+      };
+      const judged = rejudge(baseline, manifest);
+      const exportRel = d.spec.export?.endsWith(".knxproj") ? `${SWEEP_DIR}/${d.id}/${d.spec.export}` : null;
+      const exportStatus: PlannedImportItem["exportStatus"] = exportRel === null
+        ? "none"
+        : recordedProjects.has(exportRel) ? "update" : "new";
+      const moved = ex.existed ? movedSince(before?.rows.find((b) => entryId(b) === d.id), manifest) : [];
+      return {
+        discovered: d,
+        action: ex.existed ? "update" : "new",
+        manifest,
+        explained: judged.explained,
+        existingNotes: ex.existingNotes,
+        oldExport: ex.oldExport,
+        exportRel,
+        exportStatus,
+        recordedLoadedImages: exportRel ? (loadedImageCountByExport.get(exportRel) ?? 0) : 0,
+        moved,
+        unexplained: judged.unexplained,
+        gone: judged.gone,
+      };
+    });
+
+    const plan: ImportPlan = { importDir, corpusRoot: targetCorpus, items, skipped: discovery.skipped, indexKeyMissing };
+    const report = formatImportSummary(plan, { dryRun });
+    if (dryRun) return { plan, report, wrote: false, exit: 0 };
+
+    // Refuse before mutating anything if refreshing capture-index would strip previously read Data Secure keys.
+    if (indexKeyMissing.envKeys.length > 0 || indexKeyMissing.unreadableFiles.length > 0) {
+      const parts: string[] = [];
+      if (indexKeyMissing.unreadableFiles.length > 0) {
+        parts.push(`${indexKeyMissing.unreadableFiles.length} protected project(s)/keyring(s) cannot be read without ${PASSWORDS_ENV} (first: ${indexKeyMissing.unreadableFiles[0]})`);
+      }
+      if (indexKeyMissing.envKeys.length > 0) {
+        parts.push(`${KEYS_ENV} is missing previously indexed key(s): ${indexKeyMissing.envKeys.join(", ")}`);
+      }
+      throw new Error(`refusing to overwrite ${INDEX_MD}/${INDEX_JSON} with missing Data Secure keys: ${parts.join("; ")}`);
+    }
+
+    // Verify no target corpus path or parent directory is a symlink before writing anything.
+    for (const item of items) {
+      const rowRel = `${SWEEP_DIR}/${item.discovered.id}`;
+      assertSafeTargetPath(targetCorpus, rowRel);
+      for (const f of [...item.discovered.files, ROW_FILES.explained, NOTES_FILE, ...IMPORT_OPTIONAL_FILES, ...(item.oldExport ? [item.oldExport] : [])]) {
+        assertSafeTargetPath(targetCorpus, `${rowRel}/${f}`);
+      }
+    }
+    for (const metaRel of [MANIFEST, ETS_RECORDS_FILE, INDEX_JSON, INDEX_MD]) {
+      assertSafeTargetPath(targetCorpus, metaRel);
+    }
+
+    const allUnexplained: string[] = [];
+    for (const item of items) {
+      const d = item.discovered;
+      const staged = stagedDirOf.get(d.id)!;
+      const targetDir = join(targetCorpus, SWEEP_DIR, d.id);
+      mkdirSync(targetDir, { recursive: true });
+      // Remove stale replaced export or absent optional capture sidecars so old run artifacts never mix with new ones.
+      if (item.oldExport && item.oldExport !== d.spec.export && isRegularFile(join(targetDir, item.oldExport))) {
+        unlinkSync(join(targetDir, item.oldExport));
+      }
+      for (const opt of IMPORT_OPTIONAL_FILES) {
+        if (!d.files.includes(opt) && isRegularFile(join(targetDir, opt))) unlinkSync(join(targetDir, opt));
+      }
+      for (const f of d.files) copyFileSync(join(staged, f), join(targetDir, f));
+      writeFileAtomic(join(targetDir, ROW_FILES.explained), JSON.stringify(item.explained, null, 2) + "\n");
+      const notesPreserved = item.existingNotes !== null && item.existingNotes.trim().length > 0;
+      if (!notesPreserved) {
+        writeFileAtomic(join(targetDir, NOTES_FILE), renderRowNotes(d, item.manifest, item.explained));
+      }
+      item.manifest.files = readdirSync(targetDir).sort().map((f) => `${SWEEP_DIR}/${d.id}/${f}`);
+      report.push(`wrote ${SWEEP_DIR}/${d.id}/ (${d.files.length} capture file(s), explained.json, notes.md ${notesPreserved ? "preserved" : "written"})`);
+      if (notesPreserved && item.moved.length > 0) {
+        report.push("  moved since the manifest (review preserved notes.md):", ...item.moved.map((x) => `    ${x}`));
+      }
+      for (const g of item.gone) report.push(`  gone: ${g}`);
+      for (const u of item.unexplained) {
+        allUnexplained.push(`${d.id}: ${u}`);
+        report.push(`  NOT EXPLAINED: ${u}`);
+      }
+    }
+
+    // Re-read the latest manifest right before merging so concurrent imports do not drop each other's entries.
+    const latestManifest = readManifestAt(targetCorpus);
+    const manifest = updateManifest(latestManifest, items.map((it) => it.manifest), listRowsAt(targetCorpus));
+    const manifestPath = join(targetCorpus, MANIFEST);
+    mkdirSync(dirname(manifestPath), { recursive: true });
+    writeFileAtomic(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
+    report.push(`manifest: ${MANIFEST} (${manifest.rows.length} rows)`);
+
+    let records: RecordsUpdateResult | null = null;
+    if (preparedRecords !== null) {
+      records = commitEtsRecordsUpdate(targetCorpus, preparedRecords, { dropPaths: removedExports });
+      report.push(
+        `ets-records: recorded ${records.recorded.length} project(s)`
+        + `${records.dropped.length ? `, dropped ${records.dropped.length}` : ""} (${records.totalProjects} total in ${ETS_RECORDS_FILE})`,
+      );
+    }
+
+    const index = buildIndex(targetCorpus, { passwords: indexPasswords, environment: indexKeys });
+    mkdirSync(dirname(join(targetCorpus, INDEX_JSON)), { recursive: true });
+    writeFileAtomic(join(targetCorpus, INDEX_JSON), JSON.stringify(index, null, 1) + "\n");
+    writeFileAtomic(join(targetCorpus, INDEX_MD), renderMarkdown(index));
+    const indexSummary: ImportDirResult["index"] = {
+      files: index.files.length, notIndexed: index.notIndexed.length, unreadableKeys: index.keys.notRead.length,
+    };
+    report.push(`capture-index: ${index.files.length} files read, ${index.notIndexed.length} not read -> ${INDEX_MD}, ${INDEX_JSON}`);
+
+    if (allUnexplained.length > 0) {
+      report.push(`${allUnexplained.length} unexplained (a difference in explained.json, a verdict in notes.md):`, ...allUnexplained.map((u) => `  ${u}`));
+    }
+    return {
+      plan,
+      report,
+      wrote: true,
+      exit: allUnexplained.length > 0 ? 1 : 0,
+      manifestRows: manifest.rows.length,
+      records,
+      index: indexSummary,
+    };
+  } finally {
+    removeTempDir(stagingDir);
+  }
+}
+
+const USAGE = "usage: bun run tools/ets-sweep.ts [<application>/<variant>]... [--keep=<dir>] | --rejudge [<application>/<variant>]... [--out <dir> | --in-place] | --import-dir <dir> [--dry-run] [--apps <list>] [--apps-file <path>]";
 
 // Whether `dir` lies in the corpus, as written and with the symlinks of the part of it that exists resolved.
-export function inCorpus(dir: string): boolean {
-  const corpus = corpusUnlistedPath("");
+export function inCorpus(dir: string, corpus = corpusUnlistedPath("")): boolean {
   let at = resolve(dir), rest = "";
   while (!existsSync(at)) { rest = join(basename(at), rest); at = dirname(at); }
   return [resolve(dir), join(realpathSync(at), rest)].some((d) => [corpus, realpathSync(corpus)].some((c) => {
@@ -1059,26 +1832,104 @@ function rejudgeRoot(out: string | undefined, inPlace: boolean): string {
   return out;
 }
 
-async function main(): Promise<number> {
-  const args = process.argv.slice(2);
-  if (args.filter((a) => a === "--out" || a.startsWith("--out=")).length > 1) throw new Error(`--out is given more than once; ${USAGE}`);
-  const outAt = args.indexOf("--out");
-  const out = outAt >= 0 ? args[outAt + 1] : args.find((a) => a.startsWith("--out="))?.slice(6);
-  if (outAt >= 0 && (out === undefined || out.startsWith("--"))) throw new Error(`--out takes a directory; ${USAGE}`);
-  const rest = args.filter((_, i) => i !== outAt && !(outAt >= 0 && i === outAt + 1));
-  const flags = new Set(["--rejudge", "--in-place"]);
-  const unknown = rest.filter((a) => a.startsWith("--") && !a.startsWith("--keep=") && !a.startsWith("--out=") && !flags.has(a));
+export function parseAppFilters(appsArg: string | undefined, appsFile: string | undefined): string[] | undefined {
+  if (appsArg === undefined && appsFile === undefined) return undefined;
+  const out: string[] = [];
+  if (appsArg !== undefined) {
+    const raw = appsArg.split(",");
+    if (raw.some((s) => !s.trim())) throw new Error(`--apps contains an empty entry: ${JSON.stringify(appsArg)}`);
+    for (const s of raw) out.push(s.trim());
+  }
+  if (appsFile !== undefined) {
+    if (!existsSync(appsFile) || !statSync(appsFile).isFile()) throw new Error(`--apps-file ${appsFile} is not a file`);
+    const entries = readFileSync(appsFile, "utf8").split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0 && !l.startsWith("#"));
+    if (entries.length === 0) throw new Error(`--apps-file ${appsFile} names no application or row`);
+    out.push(...entries);
+  }
+  return [...new Set(out)];
+}
+
+export type SweepCliMode =
+  | { mode: "judge"; ids: string[]; keep?: string }
+  | { mode: "rejudge"; ids: string[]; keep?: string; out?: string; inPlace: boolean }
+  | { mode: "import"; importDir: string; dryRun: boolean; apps?: string; appsFile?: string };
+
+export function parseSweepArgs(args: readonly string[]): SweepCliMode {
+  let out: string | undefined;
+  let importDir: string | undefined;
+  let apps: string | undefined;
+  let appsFile: string | undefined;
+  let keep: string | undefined;
+  let rejudging = false, inPlace = false, dryRun = false;
+  const ids: string[] = [];
+  const unknown: string[] = [];
+
+  const takeValue = (flag: string, current: string | undefined, i: number, eqValue: string | undefined): [string, number] => {
+    if (current !== undefined) throw new Error(`${flag} is given more than once; ${USAGE}`);
+    if (eqValue !== undefined) {
+      if (!eqValue) throw new Error(`${flag} takes a value; ${USAGE}`);
+      return [eqValue, i];
+    }
+    const next = args[i + 1];
+    if (!next || next.startsWith("--")) throw new Error(`${flag} takes a value; ${USAGE}`);
+    return [next, i + 1];
+  };
+
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--rejudge") rejudging = true;
+    else if (a === "--in-place") inPlace = true;
+    else if (a === "--dry-run") dryRun = true;
+    else if (a === "--out" || a.startsWith("--out=")) [out, i] = takeValue("--out", out, i, a.startsWith("--out=") ? a.slice(6) : undefined);
+    else if (a === "--import-dir" || a.startsWith("--import-dir=")) [importDir, i] = takeValue("--import-dir", importDir, i, a.startsWith("--import-dir=") ? a.slice(13) : undefined);
+    else if (a === "--apps" || a.startsWith("--apps=")) [apps, i] = takeValue("--apps", apps, i, a.startsWith("--apps=") ? a.slice(7) : undefined);
+    else if (a === "--apps-file" || a.startsWith("--apps-file=")) [appsFile, i] = takeValue("--apps-file", appsFile, i, a.startsWith("--apps-file=") ? a.slice(12) : undefined);
+    else if (a.startsWith("--keep=")) {
+      if (keep !== undefined) throw new Error(`--keep is given more than once; ${USAGE}`);
+      keep = a.slice(7);
+      if (!keep) throw new Error(`--keep takes a directory; ${USAGE}`);
+    } else if (a.startsWith("--")) unknown.push(a);
+    else ids.push(a);
+  }
   if (unknown.length) throw new Error(`unknown option(s): ${unknown.join(" ")}; ${USAGE}`);
-  const rejudging = rest.includes("--rejudge"), inPlace = rest.includes("--in-place");
+
+  if (importDir !== undefined) {
+    if (rejudging || out !== undefined || inPlace || keep !== undefined) {
+      throw new Error(`--import-dir cannot be combined with --rejudge, --out, --in-place or --keep; ${USAGE}`);
+    }
+    if (ids.length > 0) throw new Error(`--import-dir takes no positional row ids (use --apps or --apps-file); ${USAGE}`);
+    return { mode: "import", importDir, dryRun, apps, appsFile };
+  }
+  if (dryRun || apps !== undefined || appsFile !== undefined) {
+    throw new Error(`--dry-run, --apps and --apps-file go with --import-dir; ${USAGE}`);
+  }
   if (!rejudging && (out !== undefined || inPlace)) throw new Error(`--out and --in-place go with --rejudge; ${USAGE}`);
-  const keep = rest.find((a) => a.startsWith("--keep="))?.slice(7);
+  return rejudging ? { mode: "rejudge", ids, keep, out, inPlace } : { mode: "judge", ids, keep };
+}
+
+async function main(): Promise<number> {
+  const cli = parseSweepArgs(process.argv.slice(2));
+  if (cli.mode === "import") {
+    refuseDotenv(KEYS_ENV);
+    const corpus = corpusUnlistedPath("");
+    const filter = parseAppFilters(cli.apps, cli.appsFile);
+    const res = await importSweepDir({
+      importDir: cli.importDir,
+      corpusRoot: corpus,
+      dryRun: cli.dryRun,
+      filter,
+    });
+    for (const l of res.report) console.log(l);
+    return res.exit;
+  }
+
+  const keep = cli.keep;
   if (keep !== undefined && inCorpus(keep)) throw new Error(`--keep=${keep} lies in the corpus`);
   const present = listRows();
-  const ids = rest.filter((a) => !a.startsWith("--"));
-  const todo = ids.length ? [...new Set(ids)] : present;
+  const todo = cli.ids.length ? [...new Set(cli.ids)] : present;
   if (todo.length === 0) throw new Error(`no row under ${SWEEP_DIR}`);
   // Before the rows run, so a wrong --out is refused at once.
-  const root = rejudging ? rejudgeRoot(out, inPlace) : null;
+  const root = cli.mode === "rejudge" ? rejudgeRoot(cli.out, cli.inPlace) : null;
   // What the rows' explained.json hold before the run; each worker reads and checks its row itself.
   const olds = new Map(todo.map((id) => [id, readJson<Explained>(join(rowDir(id), ROW_FILES.explained))]));
   // The rows side by side, as tools/ets-sweep.test.ts judges them; imported here, as the pool's workers import this
