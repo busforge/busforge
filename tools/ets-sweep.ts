@@ -54,7 +54,8 @@
 // (own, or the donor and its rule, and the donor the rule picks now where that is another), `propertySources` (a
 // catalogue unit's sources, product or identity loop; everything else is the donor's), and `etsBranches` (where ETS
 // went by an answer of the unit, which a catalogue unit gives as its donor does: the maximum APDU, the verify mode,
-// the answer to a confirmed restart, MV-0701's read before write; function etsBranches).
+// the answer to a confirmed restart, whether PreferPartialDownloadIfApplicationLoaded triggered, MV-0701's read before
+// write; function etsBranches).
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync, copyFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -73,7 +74,7 @@ import { loadedImageComparison } from "./ets-records.ts";
 import { gitRevision } from "./evidence.ts";
 import { startProxy } from "./knxproxy.ts";
 import type { SimUnit } from "./sim-unit.ts";
-import { catalogueUnit, catalogueUnitRecord, catalogueUnitSpec, chooseDonor, donorDigest, isCatalogueUnit, loadStateMachineAt, newRowUnit, readMaybeGzipped, unitAppXml, type CatalogueUnitRecord, type RowUnit } from "./sim-unit-catalogue.ts";
+import { catalogueUnit, catalogueUnitRecord, catalogueUnitSpec, chooseDonor, donorDigest, hasProgramIdStampSource, isCatalogueUnit, loadStateMachineAt, newRowUnit, readMaybeGzipped, unitAppXml, type CatalogueUnitRecord, type RowUnit } from "./sim-unit-catalogue.ts";
 import { simUnitSpec } from "./sim-units.ts";
 import { removeTempDir, tempDir } from "./test-temp.ts";
 
@@ -463,17 +464,47 @@ export function refusalsAfterRestart(simLines: string, run: RunState): { after: 
 // One place ETS's download went by an answer of the unit: what the unit answered and what ETS made of it, as its
 // lines show (`evidence`: the ETS6.log lines without their time, or the frames summed up). A catalogue unit answers
 // these as its donor does, so a row's verdict holds for what ETS sends a unit that answers so.
-export interface EtsBranch { on: "max-apdu" | "verify-mode" | "confirmed-restart" | "read-before-write"; answer: string; evidence: string[] }
+export interface EtsBranch { on: "max-apdu" | "verify-mode" | "confirmed-restart" | "prefer-partial" | "read-before-write"; answer: string; evidence: string[] }
 
 const MAX_APDU_LINE = /\[(c[ol] \S+ \w+)\] (?:PID_MAX_APDULENGTH=(\d+)|Failed to read PID_MAX_APDULENGTH \((.*)\); assuming (\d+)|NegotiateMaxApduLength -> (\d+), restricted by (\w+))/;
 const VERIFY_LINE = /Detected memory verify mode (on|off)|Switching on AutoVerifyMode/;
 const CONFIRMED_RESTART_ANSWER = /Received ConfirmedRestart_Response_ind .*Error=(\w+) ProcessTime=(\S+)/;
+const PREFER_PARTIAL_LINE = /LoadDeviceTask - Trying partial\/differential download because of PreferPartialDownloadIfApplicationLoaded\b/;
+const PARTIAL_NOT_POSSIBLE_LINE = /LoadDeviceTask - Partial download not possible\b/;
+const DIFFERENTIAL_FALLBACK_LINE = /LoadDeviceTask - Differential Image Stamp does not match, falling back to partial download\b/;
+const DOWNLOAD_START = /(?:StartLoadDevice\(Application\)|Begin LoadApplicationProgram) (\d+\.\d+\.\d+)\b/;
+const DOWNLOAD_END = /LoadDeviceTask - End LoadApplicationProgram (\d+\.\d+\.\d+)\b/;
 const logText = (l: string) => l.replace(/^\S+ \S+ \[\d+\]\s+/, "").trim();
+
+// Lines belonging to `ia`'s application download(s) in an ETS6.log excerpt, or all lines when the excerpt carries no
+// StartLoadDevice / Begin LoadApplicationProgram markers (unit-test snippets). Excludes another device's download so
+// fallback lines logged for a different device are never attributed to `ia`.
+function deviceDownloadLines(lines: string[], ia: string): string[] {
+  if (!lines.some((l) => DOWNLOAD_START.test(l))) return lines;
+  const out: string[] = [];
+  let active = false;
+  for (const l of lines) {
+    const start = DOWNLOAD_START.exec(l);
+    if (start) {
+      active = start[1] === ia;
+      if (active) out.push(l);
+      continue;
+    }
+    if (!active) continue;
+    out.push(l);
+    const end = DOWNLOAD_END.exec(l);
+    if ((end && end[1] === ia) || ETS_TASK_FAILED.test(l)) active = false;
+  }
+  return out;
+}
 
 // From a row's ETS6.log and ETS's capture of its run into the unit at `device`: the maximum APDU ETS negotiated from
 // the unit's PID 56 (each ETS task's, once), the memory verify mode ETS detected and whether it switched it on, the
 // unit's answers to confirmed restarts (the lines of `device`; the verify-mode lines name no device, the row's ETS6.log
-// is of its one download), and on MV-0701 (memory-mapped; ETS reads before it writes and writes only what
+// is of its one download), whether ETS tried a partial or differential download for
+// PreferPartialDownloadIfApplicationLoaded and any subsequent fallback (`Partial download not possible` or
+// `Differential Image Stamp does not match, falling back to partial download`, scoped to `device`'s download window
+// when markers are present), and on MV-0701 (memory-mapped; ETS reads before it writes and writes only what
 // differs) how many octets the unit answered ETS before ETS wrote there and how many of them ETS then wrote, each
 // frame as the unit took it (runState: a repetition once; a write the line confirmed negatively, or a numbered one
 // outside a connection, none).
@@ -507,6 +538,32 @@ export function etsBranches(ets6log: string, capture: string, device: number, ma
   for (const [answer, evidence] of answers) out.push({ on: "confirmed-restart", answer: `the unit answered the confirmed restart with ${answer}`, evidence: [...new Set(evidence)] });
   if (!answers.size && lines.some((l) => l.includes(`Send ConfirmedRestart_req -> ${ia} `))) {
     out.push({ on: "confirmed-restart", answer: "ETS sent a confirmed restart, and ETS6.log shows no answer of the unit", evidence: [...new Set(lines.filter((l) => l.includes("ConfirmedRestart")).map(logText))] });
+  }
+  const scoped = deviceDownloadLines(lines, ia);
+  const firstTrigger = scoped.findIndex((l) => PREFER_PARTIAL_LINE.test(l));
+  const afterTrigger = firstTrigger >= 0 ? scoped.slice(firstTrigger + 1) : scoped;
+  const notPossible = afterTrigger.filter((l) => PARTIAL_NOT_POSSIBLE_LINE.test(l));
+  const diffFallback = firstTrigger >= 0 ? afterTrigger.filter((l) => DIFFERENTIAL_FALLBACK_LINE.test(l)) : [];
+  if (firstTrigger >= 0) {
+    const preferPartial = scoped.filter((l) => PREFER_PARTIAL_LINE.test(l));
+    const fallbacks = [...notPossible, ...diffFallback];
+    const reasons = [...new Set(fallbacks.map((l) => logText(l).replace(/^.*?LoadDeviceTask - /, "")))];
+    out.push({
+      on: "prefer-partial",
+      answer: notPossible.length
+        ? `ETS tried partial/differential download because of PreferPartialDownloadIfApplicationLoaded, then fell back (${reasons.join("; ")})`
+        : diffFallback.length
+          ? `ETS tried partial/differential download because of PreferPartialDownloadIfApplicationLoaded (${reasons.join("; ")})`
+          : "ETS tried partial/differential download because of PreferPartialDownloadIfApplicationLoaded",
+      evidence: [...new Set([...preferPartial, ...fallbacks].map(logText))],
+    });
+  } else if (notPossible.length) {
+    const reasons = [...new Set(notPossible.map((l) => logText(l).replace(/^.*?LoadDeviceTask - /, "")))];
+    out.push({
+      on: "prefer-partial",
+      answer: `ETS reported partial download not possible (${reasons.join("; ")})`,
+      evidence: [...new Set(notPossible.map(logText))],
+    });
   }
   if (isMemoryMappedLsm(mask)) {
     // The load controls at MM_CTRL_ADDR and the load states after MM_STATUS_BASE are no memory ETS compares.
@@ -712,7 +769,9 @@ export function rowUnit(id: string, dir: string, application: string, spec: RowS
   if (spec.export === undefined) throw new Error(`row ${id}: a catalogue unit's application program comes from the row's export, and row.json names none`);
   const appXml = extractAppPrograms(readMaybeGzipped(join(dir, spec.export)), [application]).get(application);
   if (appXml === undefined) throw new Error(`row ${id}: its export ${spec.export} holds no application program ${application}`);
-  const unit = catalogueUnitSpec(application, appXml, { donor: named.donor, learned: named.identity, recordedRule: rule });
+  const skipPropertyHardwareType = named.properties["0/78"]?.startsWith("identity loop:") === true;
+  const stampProgramId = hasProgramIdStampSource(named.properties["4/13"]);
+  const unit = catalogueUnitSpec(application, appXml, { donor: named.donor, learned: named.identity, recordedRule: rule, skipPropertyHardwareType, stampProgramId });
   if ("refused" in unit) throw new Error(`row ${id}: no catalogue unit: ${unit.refused}`);
   if (unit.rule !== named.rule) throw new Error(`row ${id}: its unit was chosen by the rule "${named.rule}", the rule of its mask is now "${unit.rule}": the row is to run again`);
   if (donorDigest(unit.donor) !== named.donorDigest) throw new Error(`row ${id}: its donor ${donor} was collected again, run on another application program or given another behaviour since the row ran: the row is to run again`);

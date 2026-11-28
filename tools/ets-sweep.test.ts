@@ -99,6 +99,55 @@ describe("a sweep row's run", () => {
     expect(branches).toEqual([{ on: "read-before-write", answer: "the unit answered ETS 2 octets of its memory before ETS wrote there; ETS then wrote 2 of them and left 0 as the unit answered them", evidence: ["1 memory answers of the unit, 1 memory writes of ETS the line took"] }]);
   });
 
+  test("records PreferPartialDownloadIfApplicationLoaded in etsBranches, with fallback, differential fallback, and device-window scoping", () => {
+    const tried = "2026-11-27 16:45:20,206 [57] INFO  Knx.Ets.Hawk.LoadDeviceTask - Trying partial/differential download because of PreferPartialDownloadIfApplicationLoaded";
+    const fallback = "2026-11-21 08:23:19,738 [38] INFO  Knx.Ets.Hawk.LoadDeviceTask - Partial download not possible because application program not loaded: load status=3";
+    const diffFallback = "2026-11-27 16:30:29,000 [48] WARN  Knx.Ets.Hawk.LoadDeviceTask - Differential Image Stamp does not match, falling back to partial download";
+    expect(etsBranches("", "", DEV, "MV-07B0")).toEqual([]);
+    expect(etsBranches(tried, "", DEV, "MV-07B0")).toEqual([{
+      on: "prefer-partial",
+      answer: "ETS tried partial/differential download because of PreferPartialDownloadIfApplicationLoaded",
+      evidence: ["INFO  Knx.Ets.Hawk.LoadDeviceTask - Trying partial/differential download because of PreferPartialDownloadIfApplicationLoaded"],
+    }]);
+    expect(etsBranches(`${tried}\n${fallback}`, "", DEV, "MV-07B0")).toEqual([{
+      on: "prefer-partial",
+      answer: "ETS tried partial/differential download because of PreferPartialDownloadIfApplicationLoaded, then fell back (Partial download not possible because application program not loaded: load status=3)",
+      evidence: [
+        "INFO  Knx.Ets.Hawk.LoadDeviceTask - Trying partial/differential download because of PreferPartialDownloadIfApplicationLoaded",
+        "INFO  Knx.Ets.Hawk.LoadDeviceTask - Partial download not possible because application program not loaded: load status=3",
+      ],
+    }]);
+    expect(etsBranches(`${tried}\n${diffFallback}`, "", DEV, "MV-07B0")).toEqual([{
+      on: "prefer-partial",
+      answer: "ETS tried partial/differential download because of PreferPartialDownloadIfApplicationLoaded (Differential Image Stamp does not match, falling back to partial download)",
+      evidence: [
+        "INFO  Knx.Ets.Hawk.LoadDeviceTask - Trying partial/differential download because of PreferPartialDownloadIfApplicationLoaded",
+        "WARN  Knx.Ets.Hawk.LoadDeviceTask - Differential Image Stamp does not match, falling back to partial download",
+      ],
+    }]);
+    // Standalone Partial download not possible without Trying partial... is still reported.
+    expect(etsBranches(fallback, "", DEV, "MV-07B0")).toEqual([{
+      on: "prefer-partial",
+      answer: "ETS reported partial download not possible (Partial download not possible because application program not loaded: load status=3)",
+      evidence: ["INFO  Knx.Ets.Hawk.LoadDeviceTask - Partial download not possible because application program not loaded: load status=3"],
+    }]);
+    // A fallback logged during a later download of another device (1.1.11) is not attributed to DEV (1.1.10).
+    const twoDevices = [
+      "2026-11-27 16:45:19,000 [1] INFO  Knx.Ets.ViewModel.OnlineOperations.Download.DownloadManager - StartLoadDevice(Application) 1.1.10 UnitA",
+      tried,
+      "2026-11-27 16:45:25,000 [1] INFO  Knx.Ets.Hawk.LoadDeviceTask - End LoadApplicationProgram 1.1.10 (LoadApplicationProgram)",
+      "2026-11-27 16:45:26,000 [1] INFO  Knx.Ets.ViewModel.OnlineOperations.Download.DownloadManager - StartLoadDevice(Application) 1.1.11 UnitB",
+      tried,
+      fallback,
+      "2026-11-27 16:45:30,000 [1] INFO  Knx.Ets.Hawk.LoadDeviceTask - End LoadApplicationProgram 1.1.11 (LoadApplicationProgram)",
+    ].join("\n");
+    expect(etsBranches(twoDevices, "", DEV, "MV-07B0")).toEqual([{
+      on: "prefer-partial",
+      answer: "ETS tried partial/differential download because of PreferPartialDownloadIfApplicationLoaded",
+      evidence: ["INFO  Knx.Ets.Hawk.LoadDeviceTask - Trying partial/differential download because of PreferPartialDownloadIfApplicationLoaded"],
+    }]);
+  });
+
   test("records a function property's state read as a read and compares its command", () => {
     const s = runState(capture(
       line("ETS->BRIDGE", "01d500110010330000"), // A_FunctionPropertyExtState_Read of the security mode (17/1/51)

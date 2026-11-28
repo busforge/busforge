@@ -2,13 +2,15 @@
 // unit of the application's mask (tools/sim-units.ts), with what the application's product gives put over it, and what
 // ETS required of it in an earlier run (the identity loop, tools/sim-unit-product.ts) put over that.
 //
-// From the product: the mask (the donor's must be the application's), the manufacturer (0/12), the application's
-// program id (PID 13 of the application object, ETS's LdCtrlWriteProp and task segments carry it), every bit its
+// From the product: the mask (the donor's must be the application's), the manufacturer (0/12), on System 7 the
+// application's program id (3/13, which its task segments carry and its full download checks), every bit its
 // LdCtrlCompareProp steps expect, on System 7 the PEI type of its task segments, and on MV-0705 the task segments and
-// task control 1 it declares, which the unit checks a download's against. From the identity loop: each
-// value an ETS6.log `Required data mismatch` line required. From the donor: everything else, as its collection and
-// its captures show it (its serial, order info, hardware type where nothing above names one, descriptions, segment
-// places, load states, restart, link timing). What neither gives is refused, never filled in: a property the product
+// task control 1 it declares, which the unit checks a download's against. On System B (4/13), the donor's own program
+// id stays unless the application declares LdCtrlCompareProp on 4/13 (or historical replay sets stampProgramId). From
+// the identity loop: each value an ETS6.log `Required data mismatch` line required. From the donor: everything else,
+// as its collection and its captures show it (its serial, order info, hardware type where nothing above names one,
+// descriptions, segment places, load states, restart, link timing, and on System B its 4/13 program id). What neither
+// gives is refused, never filled in: a property the product
 // gives only some bits of and the donor never showed, a value longer than the donor's element with bits set past it, a
 // value given whole and shorter than the donor's element, a segment the donor places nowhere or cannot fit (checked
 // up front by the MV-07B0 donor rule, and by the simulator for anything else when it comes). Every answer carries its
@@ -49,6 +51,13 @@ export interface CatalogueUnitSpec {
   // Set for a stored sweep row recorded under an earlier rule of its mask whose application now has no qualifying
   // donor: keeps the row replayable on its recorded donor while manifestRow records rulePicksNow.
   retiredRule?: true;
+  // Set when replaying a row whose 0/78 the identity loop alone gave: skips declaredHardwareType
+  // (<Property ObjectIndex="0" PropertyId="78"/> and <ApplicationProgram HardwareType="..."/>) so the unit keeps
+  // the exact property sources ETS saw.
+  skipPropertyHardwareType?: true;
+  // Set when replaying a stored MV-07B0 row whose row.json recorded 4/13 stamped with the application's program id:
+  // keeps the exact property sources ETS saw while new runs leave 4/13 as the donor's own.
+  stampProgramId?: true;
 }
 
 // The unit of a sweep row: an own unit, or a catalogue unit.
@@ -470,11 +479,11 @@ export type PrecheckOutcome =
   | { kind: "refused"; why: string }
   | { kind: "fallback"; why: string };
 
-// Offline donor pre-check for `application` against an ETS ProductStore application file (`raw`, plain or gzipped
-// XML). Returns the exact chooseDonor() verdict when the file decodes strictly as UTF-8, validates as well-formed
-// XML, parses cleanly and matches `application` (and `mask`, when given, as "07B0" or "MV-07B0"), or `fallback` when
-// the file is truncated, corrupt, unparseable, or disagrees on identity so the batch runner falls back to ETS's export
-// instead of refusing on broken local data.
+// Offline donor and product-identity pre-check for `application` against an ETS ProductStore application file (`raw`,
+// plain or gzipped XML). Returns the exact chooseDonor() / productIdentity() verdict when the file decodes strictly as
+// UTF-8, validates as well-formed XML, parses cleanly and matches `application` (and `mask`, when given, as "07B0" or
+// "MV-07B0"), or `fallback` when the file is truncated, corrupt, unparseable, or disagrees on identity so the batch
+// runner falls back to ETS's export instead of refusing on broken local data.
 export function precheckDonor(
   application: string,
   raw: string | Buffer,
@@ -491,12 +500,27 @@ export function precheckDonor(
     return { kind: "fallback", why: `could not parse ProductStore XML: ${e instanceof Error ? e.message : String(e)}` };
   }
   if (cfg.id !== application) return { kind: "fallback", why: `ProductStore XML holds ${cfg.id || "no application id"}, expected ${application}` };
+  if (!/^M-[0-9A-Fa-f]{4}_/.test(cfg.id)) return { kind: "fallback", why: `ProductStore XML has invalid application id ${cfg.id}` };
+  if (!Number.isInteger(cfg.appNumber) || cfg.appNumber < 0 || cfg.appNumber > 0xffff) {
+    return { kind: "fallback", why: `ProductStore XML has invalid ApplicationNumber (${cfg.appNumber})` };
+  }
+  if (!Number.isInteger(cfg.appVersion) || cfg.appVersion < 0 || cfg.appVersion > 0xff) {
+    return { kind: "fallback", why: `ProductStore XML has invalid ApplicationVersion (${cfg.appVersion})` };
+  }
+  if (!Number.isInteger(cfg.appPeiType) || cfg.appPeiType < 0 || cfg.appPeiType > 0xff) {
+    return { kind: "fallback", why: `ProductStore XML has invalid PeiType (${cfg.appPeiType})` };
+  }
   if (opts.mask !== undefined) {
     const wantMask = opts.mask.startsWith("MV-") ? opts.mask : `MV-${opts.mask}`;
     if (cfg.mask !== wantMask) return { kind: "fallback", why: `ProductStore XML mask ${cfg.mask || "missing"} disagrees with ${wantMask}` };
   }
   const choice = chooseDonorFor(cfg, opts.units ?? SIM_UNITS);
-  return "refused" in choice ? { kind: "refused", why: choice.refused } : { kind: "donor", donor: choice.donor, rule: choice.rule };
+  if ("refused" in choice) return { kind: "refused", why: choice.refused };
+  try { productIdentity(xml, cfg, { includePropertyHardwareType: false }); } catch (e) {
+    if (e instanceof Error && /^no (?:catalogue|product) unit:/.test(e.message)) return { kind: "refused", why: e.message };
+    throw e;
+  }
+  return { kind: "donor", donor: choice.donor, rule: choice.rule };
 }
 
 // The donor of `appXml` by the rule of its mask, among `units`.
@@ -523,7 +547,7 @@ function chooseDonorFor(cfg: AppConfig, units: readonly SimUnitSpec[]): DonorCho
 export function catalogueUnitSpec(
   application: string,
   appXml: string,
-  opts: { donor?: string; learned?: string[]; units?: readonly SimUnitSpec[]; recordedRule?: string } = {},
+  opts: { donor?: string; learned?: string[]; units?: readonly SimUnitSpec[]; recordedRule?: string; skipPropertyHardwareType?: boolean; stampProgramId?: boolean } = {},
 ): CatalogueUnitSpec | { refused: string } {
   const units = opts.units ?? SIM_UNITS;
   const own = units.find((u) => u.catalogue === `${application}.xml.gz`);
@@ -555,24 +579,46 @@ export function catalogueUnitSpec(
   }
   if ("refused" in choice) return choice;
   const { donor, rule } = choice;
-  return { id: `${application}@${donor.id}`, name: `${application} (catalogue unit on ${donor.name})`, application, appXml, interfaceIa: donor.interfaceIa, interfaceMaxApdu: donor.interfaceMaxApdu, donor, rule, learned: opts.learned ?? [], ...(retiredRule ? { retiredRule: true as const } : {}) };
+  return {
+    id: `${application}@${donor.id}`, name: `${application} (catalogue unit on ${donor.name})`, application, appXml,
+    interfaceIa: donor.interfaceIa, interfaceMaxApdu: donor.interfaceMaxApdu, donor, rule, learned: opts.learned ?? [],
+    ...(retiredRule ? { retiredRule: true as const } : {}),
+    ...(opts.skipPropertyHardwareType ? { skipPropertyHardwareType: true as const } : {}),
+    ...(opts.stampProgramId ? { stampProgramId: true as const } : {}),
+  };
 }
 
 const hex = (b: Buffer) => b.toString("hex");
 // The property that holds the application's program id: on System B object 4's, on System 7 object 3's.
 const programIdKey = (cfg: AppConfig) => `${maskInfo(cfg.mask).family === "system-b" ? 4 : 3}/${PID.PROGRAM_ID}`;
+const PROGRAM_ID_SOURCE_PREFIX = "the application's program id ";
 
-// The identity the product gives: productUnit's, with the application's program id on its application object.
-function productIdentity(appXml: string, cfg: AppConfig): ProductUnit {
+// Whether a recorded property-source string from row.json includes productIdentity's program-id stamp (including when
+// combined with an earlier LdCtrlCompareProp or a later identity-loop entry).
+export function hasProgramIdStampSource(source: string | undefined): boolean {
+  return source !== undefined && new RegExp(`(?:^|; )product: ${PROGRAM_ID_SOURCE_PREFIX}[0-9a-f]{10}(?:$|; |, over donor )`).test(source);
+}
+
+// The identity the product gives: productUnit's, with the application's program id on System 7 (object 3 PID 13,
+// which its task segments carry and its full download checks). On System B (object 4 PID 13), the donor's own program
+// id stays unless the application explicitly compares 4/13 (already in productUnit) or `stampProgramId` replays a
+// stored row: stamping the target's 4/13 onto a loaded donor (4/5=1) with another application's segments produced a
+// mismatched device state where ETS took PreferPartialDownloadIfApplicationLoaded against the donor's layout.
+function productIdentity(
+  appXml: string,
+  cfg: AppConfig,
+  opts: { includePropertyHardwareType?: boolean; stampProgramId?: boolean } = {},
+): ProductUnit {
   const refuse = (why: string): never => { throw new Error(`no catalogue unit: ${why}`); };
-  const unit = productUnit(appXml, cfg);
+  const unit = productUnit(appXml, cfg, opts);
+  if (maskInfo(cfg.mask).family === "system-b" && !opts.stampProgramId) return unit;
   const key = programIdKey(cfg);
   const id = programIdStamp(cfg);
   const had = unit.properties.get(key);
   // A compare on the program id (the ABB US/U 4.2's on its application number) must hold on the application's own.
   if (had && Array.from(had.bytes).some((b, i) => i >= id.length ? (b & had.known[i]) !== 0 : (b & had.known[i]) !== (id[i] & had.known[i]))) refuse(`the application's program id ${hex(id)} does not pass its own compare of ${key} (${hex(had.bytes)})`);
   const properties = new Map(unit.properties);
-  properties.set(key, { bytes: id, known: Buffer.alloc(id.length, 0xff), sources: [...(had?.sources ?? []), { from: "product", what: `the application's program id ${hex(id)}` }] });
+  properties.set(key, { bytes: id, known: Buffer.alloc(id.length, 0xff), sources: [...(had?.sources ?? []), { from: "product", what: `${PROGRAM_ID_SOURCE_PREFIX}${hex(id)}` }] });
   return { ...unit, properties };
 }
 
@@ -584,10 +630,12 @@ const sourceOf = (v: IdentityValue) => v.sources.map((s) => (s.from === "product
 
 type SimOpts = ConstructorParameters<typeof SimUnit>[2];
 type Objects = SimUnitCoreModel["objects"];
-// What the catalogue unit puts over its donor's model: its properties and their sources, on System 7 the program id
-// and PEI type its task segments carry, which the unit checks them against, and on MV-0705 the task segments and
+// What the catalogue unit puts over its donor's model: its properties and their sources, and on System 7 the program
+// id and PEI type its task segments carry (which the unit checks them against), plus on MV-0705 the task segments and
 // task control 1 its application declares.
-type Over = { objects: Objects; sources: AnswerSources; programId: Buffer; peiType: number; tasks: DeclaredTasks | null };
+type Over =
+  | { kind: "system-b"; objects: Objects; sources: AnswerSources }
+  | { kind: "system-7"; objects: Objects; sources: AnswerSources; programId: Buffer; peiType: number; tasks: DeclaredTasks | null };
 
 // The load-state machine (1 to 15) whose state a System 7 unit answers at memory address `a`, or null.
 export const loadStateMachineAt = (a: number): number | null => (a > MM_STATUS_BASE && a <= MM_STATUS_BASE + 15 ? a - MM_STATUS_BASE : null);
@@ -604,10 +652,11 @@ function memoryAt(u: UnitModel): (a: number) => number | undefined {
 
 // The donor's model with what the catalogue unit puts over it. System B's program id is its object 4 PID 13 alone, and
 // its unit takes no task segment.
-function overDonor(u: UnitModel, { objects, sources, programId, peiType, tasks }: Over): UnitModel {
-  if (u.kind === "property-mapped") return { kind: u.kind, model: { ...u.model, ...tasks, objects, sources, programId, propertyMapped: { ...u.model.propertyMapped, peiType } } };
-  if (u.kind === "memory-mapped") return { kind: u.kind, model: { ...u.model, objects, sources, programId, memoryMapped: { ...u.model.memoryMapped, peiType } } };
-  return { kind: u.kind, model: { ...u.model, objects, sources } };
+function overDonor(u: UnitModel, over: Over): UnitModel {
+  if (u.kind === "system-b") return { kind: u.kind, model: { ...u.model, objects: over.objects, sources: over.sources } };
+  if (over.kind !== "system-7") throw new Error(`overDonor: expected system-7 overlay for ${u.kind}`);
+  if (u.kind === "property-mapped") return { kind: u.kind, model: { ...u.model, ...over.tasks, objects: over.objects, sources: over.sources, programId: over.programId, propertyMapped: { ...u.model.propertyMapped, peiType: over.peiType } } };
+  return { kind: u.kind, model: { ...u.model, objects: over.objects, sources: over.sources, programId: over.programId, memoryMapped: { ...u.model.memoryMapped, peiType: over.peiType } } };
 }
 
 // What a donor is, as a digest: its collection, its application program (whose segments, tasks and descriptions its
@@ -677,7 +726,7 @@ export function catalogueUnit(spec: CatalogueUnitSpec): CatalogueUnit {
     }
     return { objects, properties };
   };
-  let identity = productIdentity(appXml, cfg);
+  let identity = productIdentity(appXml, cfg, { includePropertyHardwareType: !spec.skipPropertyHardwareType, stampProgramId: spec.stampProgramId });
   for (const line of spec.learned) {
     const r = rerunIdentity(identity, line, answered(compose(identity).objects));
     if ("refused" in r) refuse(`the identity loop's line does not apply: ${r.refused}`);
@@ -689,7 +738,6 @@ export function catalogueUnit(spec: CatalogueUnitSpec): CatalogueUnit {
     const v = objects.get(c.obj)?.get(c.pid)?.elements?.[0];
     if (!v || !declaredPropMatches(v, c.expect, c.mask)) refuse(`the application expects ${hex(c.expect)} in property ${c.obj}/${c.pid}, the unit answers ${v ? hex(v) : "nothing"}`);
   }
-  const programId = identity.properties.get(programIdKey(cfg))!.bytes;
   const sources: AnswerSources = {
     unit: `catalogue unit of ${spec.application} from donor ${spec.donor.id} (${spec.donor.name}), by the rule ${spec.rule}`,
     mask: `product: the application's mask ${cfg.mask}, donor ${spec.donor.id}'s`,
@@ -698,10 +746,18 @@ export function catalogueUnit(spec: CatalogueUnitSpec): CatalogueUnit {
     absent: `neither the product nor donor ${spec.donor.id} gives it`,
     memoryAt: memoryAt(donor),
   };
-  if (spec.donor.propertyMapped || spec.donor.memoryMapped) properties.set("PEI type", `product: the application's PEI type ${cfg.appPeiType}`);
-  const tasks = spec.donor.propertyMapped ? declaredTasks(fullSteps(cfg.loadProcedures)) : null;
-  if (typeof tasks === "string") return refuse(tasks);
-  const overlaid = overDonor(donor, { objects, sources, programId: Buffer.from(programId), peiType: cfg.appPeiType, tasks });
+  let overlay: Over;
+  if (donor.kind === "system-b") {
+    overlay = { kind: "system-b", objects, sources };
+  } else {
+    properties.set("PEI type", `product: the application's PEI type ${cfg.appPeiType}`);
+    const tasks = spec.donor.propertyMapped ? declaredTasks(fullSteps(cfg.loadProcedures)) : null;
+    if (typeof tasks === "string") return refuse(tasks);
+    const prog = identity.properties.get(programIdKey(cfg))?.bytes;
+    if (!prog) return refuse(`the System 7 identity carries no ${programIdKey(cfg)} program id`);
+    overlay = { kind: "system-7", objects, sources, programId: Buffer.from(prog), peiType: cfg.appPeiType, tasks };
+  }
+  const overlaid = overDonor(donor, overlay);
   return { spec, identity, objects, properties, make: (opts = {}) => simUnitOf(spec.donor, overlaid, opts) };
 }
 
@@ -733,12 +789,27 @@ export function learnIdentity(spec: CatalogueUnitSpec, log: Buffer | string): { 
 export function catalogueUnitFrom(application: string, product: Buffer, opts: { donor?: string; learnedFrom?: { name: string; log: Buffer }[] } = {}): CatalogueUnitSpec | { refused: string } {
   const appXml = extractAppPrograms(product, [application]).get(application);
   if (appXml === undefined) throw new Error(`the product holds no application program ${application}`);
-  let spec: CatalogueUnitSpec | { refused: string } = catalogueUnitSpec(application, appXml, { donor: opts.donor });
-  for (const { name, log } of opts.learnedFrom ?? []) {
-    if ("refused" in spec) break;
-    const r = learnIdentity(spec, log);
-    spec = "refused" in r ? { refused: `${name}: ${r.refused}` } : r.spec;
-  }
+  const applyLogs = (initial: CatalogueUnitSpec | { refused: string }) => {
+    let spec = initial;
+    for (const { name, log } of opts.learnedFrom ?? []) {
+      if ("refused" in spec) break;
+      const r = learnIdentity(spec, log);
+      spec = "refused" in r ? { refused: `${name}: ${r.refused}` } : r.spec;
+    }
+    return spec;
+  };
+  const base = catalogueUnitSpec(application, appXml, { donor: opts.donor });
+  const spec = applyLogs(base);
+  if (!("refused" in spec) || "refused" in base || !opts.learnedFrom?.length) return spec;
+  // A log recorded without declaredHardwareType pre-seeding names the donor's un-preseeded 0/78 and asks ETS's
+  // required value; replay it with skipPropertyHardwareType only when all logs apply cleanly and land on the same 0/78.
+  let baseHw: Buffer;
+  try { baseHw = answered(catalogueUnit(base).objects)("0/78"); } catch { return spec; }
+  const hist = applyLogs(catalogueUnitSpec(application, appXml, { donor: opts.donor, skipPropertyHardwareType: true }));
+  if ("refused" in hist) return spec;
+  try {
+    if (answered(catalogueUnit(hist).objects)("0/78").equals(baseHw)) return hist;
+  } catch { /* keep original refusal */ }
   return spec;
 }
 

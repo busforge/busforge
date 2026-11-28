@@ -669,12 +669,20 @@ simulator's answers, and the answers are a real unit's only as far as the table 
 
 A catalogue row of the sweep has no collection of a real unit. `tools/sim-unit-product.ts` takes from the
 application program alone what it says of the unit's identity: the mask (descriptor 0), and, each with its
-source, the manufacturer the application is registered under (object 0 PID 12) and what each
-`LdCtrlCompareProp` expects, bit by bit where the compare masks. Refused: a mask whose identity is not
-held in a device object's properties (only System B and System 7 are taken), and an application whose
-identity rests on what is not modelled (`LdCtrlCompareMem`, a `choose` in its load procedure, a compare
-on another element than the first, with a malformed mask or with further attributes). Nothing else is
-taken.
+source, the manufacturer the application is registered under (object 0 PID 12), what each
+`LdCtrlCompareProp` expects (bit by bit where the compare masks), and (where no `LdCtrlCompareProp` already
+names `0/78`, `PID_HARDWARE_TYPE`) an unambiguous 6-byte hardware type declared outside `<LoadProcedures>`
+(`declaredHardwareType`): either a single top-level non-union `<Parameter>` with
+`<Property ObjectIndex="0" PropertyId="78" Offset="0" BitOffset="0"/>` backed by a 48-bit `BinaryValue`
+`TypeRestriction` whose default value resolves cleanly in `<Dynamic>` (single enumeration, static default,
+unconditional `<Assign>`, or `<choose>` over constant-default parameters), or `<ApplicationProgram
+HardwareType="..."/>`. Anything ambiguous or unmodelled (multiple `0/78` parameters, `ObjectType="0"`
+without `ObjectIndex`, non-zero offsets, non-48-bit types, `ParameterCalculation` targets, `<Assign Source=.../>`,
+`InitialValue`, `<Union>`/`<ModuleDef>` declarations, or unresolvable `<choose>` branches) is skipped cleanly
+so the identity loop stays a safe fallback. Refused: a mask whose identity is not held in a device object's
+properties (only System B and System 7 are taken), and an application whose identity rests on what is not
+modelled (`LdCtrlCompareMem`, a `choose` in its load procedure, a compare on another element than the first,
+with a malformed mask or with further attributes). Nothing else is taken.
 
 When ETS finds the unit's identity unfit for the product, it refuses the download and logs in
 `ETS6.log` what it required:
@@ -709,17 +717,21 @@ earlier run put over that.
 
 | Source | What the unit answers from it |
 |---|---|
-| the product (the application program) | the mask (the donor's must be the application's), the manufacturer (0/12), the application's program id (PID 13 of the application object), every bit its `LdCtrlCompareProp` steps expect, on System 7 the PEI type of its task segments, on MV-0705 the task segments and task control 1 it declares, which the unit checks a download's against |
+| the product (the application program) | the mask (the donor's must be the application's), the manufacturer (0/12), every bit its `LdCtrlCompareProp` steps expect, an unambiguous 6-byte hardware type (0/78) from `<Property ObjectIndex="0" PropertyId="78"/>` or `<ApplicationProgram HardwareType="..."/>` where no compare names 0/78, on System 7 the application's program id (3/13) and the PEI type of its task segments, on MV-0705 the task segments and task control 1 it declares, which the unit checks a download's against |
 | the identity loop | each value an ETS6.log `Required data mismatch` line required (`learnIdentity`, `rerunIdentity` against what the unit answered) |
-| the donor | everything else, as its collection and its captures show it: serial, order info, hardware type where nothing above names one, descriptions, maximum APDU, segment places, load states, restart, link timing |
+| the donor | everything else, as its collection and its captures show it: serial, order info, hardware type where nothing above names one, descriptions, maximum APDU, segment places, load states, restart, link timing, and on System B its program id (4/13) where no `LdCtrlCompareProp` names it |
 
 A value is put over the donor's element bit by bit, at the donor's length; bits past it must be zero (ETS takes a
 shorter answer with a zero tail). What neither source gives is refused, never filled in: a property the product
 gives only some bits of and the donor never showed, a value longer than the donor's element with bits set past it,
 a value given whole and shorter than the donor's element (what the unit answers after it nobody gave), a segment
-the donor places nowhere or cannot fit, a task segment for another application than the product's. The unit answers
-the product's program id as the application it holds, as each donor answered its own when it was collected; its
-memory and segments at the start are the donor's application's (what an MV-0701 download reads before it writes).
+the donor places nowhere or cannot fit, a task segment for another application than the product's. On System 7 the
+unit answers the product's program id (3/13) as the application it holds (its task segments carry it and System 7's
+full download checks it); on System B the unit keeps the donor's own 4/13 unless `LdCtrlCompareProp` declares one,
+avoiding the mismatched state where a loaded donor (`4/5=1`) carries the target application's `4/13` alongside another
+application's segments (which caused ETS to take `PreferPartialDownloadIfApplicationLoaded`'s partial path against the
+donor's segments). Its memory and segments at the start are the donor's application's
+(what an MV-0701 download reads before it writes).
 
 **The donor** is chosen by one rule per mask, never per product, from the own units there are (`DONOR_RULES`):
 a unit of the mask qualifies where its application leaves its memory as written after a restart (another
@@ -843,7 +855,10 @@ its application program and its behaviour, the rule that chose it, the identity 
 otherwise than its donor, each held against the unit built today, so a row whose unit moved runs again (except a
 stored row recorded under a known retired rule in `RETIRED_DONOR_RULES` whose application now has no qualifying donor,
 which stays replayable on its recorded donor while `donorDigest` and its property sources hold and carries
-`rulePicksNow` in the manifest); ETS's build, the simulator's endpoint ETS was set to, the export
+`rulePicksNow` in the manifest, a row whose `0/78` the identity loop alone gave, which replays with
+`skipPropertyHardwareType` (skipping `<Property ObjectIndex="0" PropertyId="78"/>` and `<ApplicationProgram
+HardwareType="..."/>`), and a stored MV-07B0 row whose `row.json` recorded `4/13` stamped with the application's
+program id, which replays with `stampProgramId`, so the property sources ETS saw stay intact); ETS's build, the simulator's endpoint ETS was set to, the export
 where there is one, the calibration where there is one), `configuration.json` (the device's
 configuration ETS downloaded, which Busforge downloads), ETS's capture `ets.log` with the simulator's
 lines `ets.log.sim.txt`, `ets6.log.txt`, and `explained.json` (the row's verdict today and every
@@ -856,7 +871,9 @@ of their own. A catalogue unit's application program comes from the row's export
 `catalogue/`. The tool writes the verdicts into `internal/ets-sweep/manifest.json`, with each row's unit source
 (own, or the donor and its rule, and the donor the rule picks today where that is another), a catalogue unit's
 property sources, and where ETS went by an answer of the unit (`etsBranches`: the maximum APDU it negotiated from
-PID 56, the memory verify mode it detected, the unit's answer to a confirmed restart, and on MV-0701 how many octets
+PID 56, the memory verify mode it detected, the unit's answer to a confirmed restart, whether ETS tried a partial or
+differential download for `PreferPartialDownloadIfApplicationLoaded` and any subsequent fallback (`Partial download
+not possible` or `Differential Image Stamp does not match, falling back to partial download`), and on MV-0701 how many octets
 the unit answered it before it wrote there and how many of them it then wrote, a write the line refused not
 counted), which a catalogue unit gives as its donor does:
 
@@ -1106,9 +1123,10 @@ HA_TOKEN=... BUSFORGE_CORPUS=... bun run tools/ets-driver.ts batch <catalogue-li
   moved aside under `<out>/.interrupted/` and the row runs again from its start. A batch stopped by a signal
   stops its simulator with it.
 - **The unit.** An application with an own unit runs on it; every other on its catalogue unit. Before opening ETS
-  for a catalogue-unit row, the runner pre-checks `chooseDonor()` against the application's XML in ETS's local
-  `ProductStore` (read-only over ssh from the bench host, or from `--product-store <dir>`; disabled with
-  `--no-precheck`). When `chooseDonor()` refuses it, the row ends `sim-refused` directly (`sim-refused.txt` and
+  for a catalogue-unit row, the runner pre-checks `chooseDonor()` and `productIdentity()` (which validates
+  `productUnit()`) against the application's XML in ETS's local `ProductStore` (read-only over ssh from the bench
+  host, or from `--product-store <dir>`; disabled with `--no-precheck`). When either refuses it (`no donor`,
+  `no product unit`, or `no catalogue unit`), the row ends `sim-refused` directly (`sim-refused.txt` and
   `batch-result.json`) without driving ETS; when the ProductStore file is missing, unreadable, malformed or disagrees
   on application id or mask, the fallback reason is logged to `batch.log` and the row runs through the normal ETS
   export path. A catalogue row that ETS fails on a `Required data mismatch` runs again with what ETS required, up to

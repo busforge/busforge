@@ -1,6 +1,6 @@
 import { KnxDevice, KnxError, OBJECT_TYPE_KNXNETIP, type LoadPlan, type SecurityObjectTables, SENDER_ENTRY, planSystemBGaFlash, planSystemBFullDownload, appId, runLoadPlan, withVerifyMode, withVerifyModeEchoed, iaToNum, compareDeclaredProp, readGroupTables, readGroupTablesMv0705, assocFormOf, ASSOC_TABLE_DESCRIPTION, type AssocForm, loadedTableAddr, readMcbTable, mcbProves, mcbProvenRegions, MCB_ELEMENT_BYTES, type McbEntry, GroupTableUnreadable, OBJ, PID, lsmState, STATE } from "@busforge/knx";
 import { toAppModel, unmappedParamRefs } from "./application.ts";
-import { buildRelativeSegmentTarget, type RelativeSegmentTarget, mergeRelativeTarget, differingFF, leaveUnreadUnchanged, verifyMaskedBytes, confirmedMatch, type ConfirmedOnlyRange, buildAbsoluteSegmentTargets, wholeBytes, refuseColorWrites, refuseCalculationWrites, differingConstants, type ConstantDifference } from "./deviceimage.ts";
+import { buildRelativeSegmentTarget, fullDownloadParamImage, type RelativeSegmentTarget, mergeRelativeTarget, differingFF, leaveUnreadUnchanged, verifyMaskedBytes, confirmedMatch, type ConfirmedOnlyRange, buildAbsoluteSegmentTargets, wholeBytes, refuseColorWrites, refuseCalculationWrites, differingConstants, type ConstantDifference } from "./deviceimage.ts";
 import { refuseRawDataWrites } from "./rawdata.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { assertComObjectTableStable } from "./comobjtable.ts";
@@ -1271,7 +1271,7 @@ export class SystemBProfile extends DeviceProfile {
   }
 
   // `images`: systemBImages of `ctx`, where the caller built them already (builtBefore).
-  private planSystemBFull(_mask: string, ctx: FullDownloadInputs, images?: () => SystemBImages): FullDownloadBuild & { target: RelativeSegmentTarget; comObj: Buffer; addr: Buffer; assoc: Buffer; security?: SecurityObjectTables } {
+  private planSystemBFull(_mask: string, ctx: FullDownloadInputs, images?: () => SystemBImages): FullDownloadBuild & { params: Buffer; target: RelativeSegmentTarget; comObj: Buffer; addr: Buffer; assoc: Buffer; security?: SecurityObjectTables } {
     const cfg = this.requireCfg("full download");
     const proc = ctx.proc;
     assertFullParCoverage(proc);
@@ -1283,23 +1283,25 @@ export class SystemBProfile extends DeviceProfile {
     // first, refuses every other mode and the unfilled allocation of a segment no capture shows it with.
     const filled = relParamFullMode(proc) !== "0";
     const fillByte = relParamFillByte(proc);
-    const { target, comObj, addr, assoc, security } = images ? images() : this.systemBImages(cfg, ctx);
+    const { target, comObj, addr, assoc, security } = images ? images() : this.systemBImages(cfg, ctx, filled ? fillByte : undefined);
 
     // Whether the closing A_Restart must prove a reboot. thelsing/knx persists ON the restart, so a
     // device that does not reboot lost the download; other firmware persists at LoadCompleted and
     // never goes silent (see PERSIST_ON_LOAD_COMPLETED). Default true keeps the safe behavior.
     const requireReboot = !persistsOnLoadCompleted(cfg);
+    const paramsInImage = fullDownloadImageCoverage(cfg, target.owned);
+    const params = filled ? fullDownloadParamImage(cfg, target, fillByte) : target.bytes;
     // The mask's full download unloads the PEI program first (MV-07B0 Load ap1); the application's
     // secure procedure closes with the confirmed restart (IsSecureEnabled), the plain one with A_Restart.
     const plan = withVerifyMode(withClosing(withConfirmedRestart(planSystemBFullDownload({
-      params: target.bytes, paramsInImage: fullDownloadImageCoverage(cfg, target.owned), comObj, addr, assoc, programId: programIdStamp(cfg),
+      params, paramsInImage, comObj, addr, assoc, programId: programIdStamp(cfg),
     }, fillByte, requireReboot, declaredMcbWrites(proc, target.size), security, true, closesAtOnce(cfg), filled, systemBMasterResets(proc, cfg.mask)), proc.secureEnabled), proc, "full"), verifyModeDeclared(cfg.mask));
     const imageBytes = target.size + comObj.length + addr.length + assoc.length;
 
     return {
-      plan, imageBytes, target, comObj, addr, assoc, security,
+      plan, imageBytes, params, target, comObj, addr, assoc, security,
       segments: [
-        { id: "L4 parameter segment", lsm: LSM, source: "params", address: null, image: target.bytes, ...(filled ? { fillByte } : {}) },
+        { id: "L4 parameter segment", lsm: LSM, source: "params", address: null, image: params, ...(filled ? { fillByte } : {}) },
         { id: "L3 com-object table", lsm: OBJ.COMOBJ_TABLE, source: "comObjTable", address: null, image: comObj },
         { id: "L2 association table", lsm: OBJ.ASSOC_TABLE, source: "assocTable", address: null, image: assoc },
         { id: "L1 address table", lsm: OBJ.ADDR_TABLE, source: "addrTable", address: null, image: addr },
@@ -1351,8 +1353,9 @@ export class SystemBProfile extends DeviceProfile {
 
   // The images a full download writes, in either form: the parameter target, the com-object table
   // authored for this configuration and its links, both group tables and, on a Data Secure device, the
-  // security object.
-  private systemBImages(cfg: AppConfig, ctx: FullDownloadInputs): SystemBImages {
+  // security object. `fullFill` is the filled allocation's fill byte (full form only; partial form
+  // keeps the unit's unowned bytes).
+  private systemBImages(cfg: AppConfig, ctx: FullDownloadInputs, fullFill?: number): SystemBImages {
     const { model, instances } = moduleAwareModel(cfg, ctx.params, ctx.moduleInstances ?? []);
     const unmapped = unmappedParamRefs(model, ctx.params);
     if (unmapped.length) {
@@ -1366,7 +1369,7 @@ export class SystemBProfile extends DeviceProfile {
     // In the full form the download owns the whole segment: every byte we do not derive is the
     // allocation's fill (filled allocation) or the segment's <Data> it writes (unfilled). The partial form
     // merges the owned bytes into the unit's segment.
-    const target = buildRelativeSegmentTarget(cfg, ctx.params, LSM, { moduleInstances: instances, ownIdleUnionDefaults: true });
+    const target = buildRelativeSegmentTarget(cfg, ctx.params, LSM, { moduleInstances: instances, ownIdleUnionDefaults: true, ...(fullFill !== undefined ? { fullFill } : {}) });
     if (!target || target.size === 0) throw new ProductError("EMPTY_IMAGE", "built an empty parameter image; refusing to download");
 
     const view = buildDeviceConfig(cfg, ctx.params, undefined, instances);
@@ -1406,11 +1409,19 @@ export class SystemBProfile extends DeviceProfile {
     refuse(this.operationRefusals().fullDownload);
     // The device's own declared pre-flight (hardware type / application id) still runs: a full
     // download to the wrong hardware is the most expensive mistake available here.
-    const proc = this.requireCfg("full download").loadProcedures;
+    const cfg = this.requireCfg("full download");
+    const proc = cfg.loadProcedures;
     const coverage = assertFullParCoverage(proc);
-    refuseKnxIpSettings(this.requireCfg("full download"), ctx.knxIp);
+    refuseKnxIpSettings(cfg, ctx.knxIp);
     // For either form, with the association table in its long form; the unit's form is asked below.
-    const images = builtBefore(() => this.systemBImages(this.requireCfg("full download"), { ...ctx, proc }));
+    // On a dataless segment with a non-zero filled allocation, the full form checks hidden parameters
+    // against the fill byte while the partial form keeps the unit's unowned bytes.
+    const filled = relParamFullMode(proc) !== "0";
+    const fillByte = relParamFillByte(proc);
+    const fullFill = filled && fillByte !== 0 && cfg.segments.find((s) => s.lsm === LSM)?.data.length === 0 ? fillByte : undefined;
+    const canPartial = proc.preferPartialIfLoaded && closesAtOnce(cfg) && !persistsOnLoadCompleted(cfg);
+    const fullImages = builtBefore(() => this.systemBImages(cfg, { ...ctx, proc }, fullFill));
+    const partialImages = canPartial && fullFill !== undefined ? builtBefore(() => this.systemBImages(cfg, { ...ctx, proc })) : fullImages;
     await runDeclaredChecks(dev, coverage);
     // ETS reads the association table's description first and writes entries of the width it gives: the short
     // form on the MDT IP Interface/Router (its full-download capture), the long one everywhere else captured.
@@ -1422,21 +1433,20 @@ export class SystemBProfile extends DeviceProfile {
     // size (its memory-control block, PID 27); a unit that is not, which no capture shows ETS on, gets
     // the full form, which rewrites every object. So do the two firmware stacks hardware-shown not to
     // take the structural bracket this form is made of (structuralFirmwareOff).
-    if (proc.preferPartialIfLoaded && closesAtOnce(this.requireCfg("full download")) && !persistsOnLoadCompleted(this.requireCfg("full download"))) {
-      const cfg = this.requireCfg("full download");
+    if (canPartial) {
       const id = await dev.propReadIfPresent(OBJ.APP_PROGRAM, PID.PROGRAM_ID);
       if (id?.equals(programIdStamp(cfg)) && await allLoaded(dev, [OBJ.APP_PROGRAM, OBJ.COMOBJ_TABLE, OBJ.ASSOC_TABLE, OBJ.ADDR_TABLE])) {
-        const size = images().target.size;
+        const size = partialImages().target.size;
         const paramsMcb = await readMcbTable(dev, LSM, size);
         if (paramsMcb && paramsMcb.reduce((n, r) => n + r.size, 0) === size) {
           if (assocForm !== 4) refuseWith(PARTIAL_SHORT_ASSOC_REFUSAL);
-          return this.downloadPartialForm(dev, mask, ctx, proc, images, paramsMcb, assocForm);
+          return this.downloadPartialForm(dev, mask, ctx, proc, partialImages, paramsMcb, assocForm);
         }
       }
     }
     // Only the group tables depend on the width, and they are cheap to build with the connection open.
-    const formImages = assocForm === 4 ? images : builtBefore(() => ({ ...images(), ...buildGroupTables(ctx.links, assocForm) }));
-    const { plan, imageBytes, target, comObj, addr, assoc, security, segments } = this.planSystemBFull(mask, { ...ctx, proc, assocEntryBytes: assocForm }, formImages);
+    const formImages = assocForm === 4 ? fullImages : builtBefore(() => ({ ...fullImages(), ...buildGroupTables(ctx.links, assocForm) }));
+    const { plan, imageBytes, params, target, comObj, addr, assoc, security, segments } = this.planSystemBFull(mask, { ...ctx, proc, assocEntryBytes: assocForm }, formImages);
     // A full download UNLOADS every segment before it rewrites them, so whatever the device held is
     // gone the moment it starts. A virgin device holds nothing (its load-state machines point at
     // address 0) and there is genuinely nothing to save. A device that was already programmed, by
@@ -1520,7 +1530,7 @@ export class SystemBProfile extends DeviceProfile {
         const { ok } = await verifySettled(
           async () => {
             const gt = await unreadIfUserMemory(groupTablesContent(dev, { addr, assoc, comObj }, assocForm));
-            const img = await unreadIfUserMemory(segmentContent(dev, LSM, target.bytes, await loadedTableAddr(dev, LSM, "parameter segment")));
+            const img = await unreadIfUserMemory(segmentContent(dev, LSM, params, await loadedTableAddr(dev, LSM, "parameter segment")));
             // This form reads no security object before it writes, so a key table the read refuses is
             // only met here, after the write: it leaves the download unverified rather than unloaded.
             const sec = security ? await readSecurityObject(dev, security).catch((e: unknown) => { if (e instanceof ProductError && e.code === "SECURE_KEY_TABLE_UNPROVEN") return null; throw e; }) : null;
@@ -1528,7 +1538,7 @@ export class SystemBProfile extends DeviceProfile {
           },
           ({ gt, img, sec }) => {
             const tablesOk = gt !== null && gt.addr.equals(addr) && gt.assoc.equals(assoc) && gt.comObj.equals(comObj);
-            const paramsOk = img !== null && verifyMaskedBytes(img, target.bytes, wholeBytes(target.verify, target.markers));
+            const paramsOk = img !== null && verifyMaskedBytes(img, params, wholeBytes(target.verify, target.markers));
             const securityOk = !security || (sec !== null && sameSecurityObject(sec, security));
             return tablesOk && paramsOk && securityOk;
           },
