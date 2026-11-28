@@ -411,9 +411,10 @@ describe("unplaced memoryless Access=Read Merker in <choose>", () => {
   // Theben M-0048_A-0103-11-72A2 pattern: P-68 is declared Access="Read" with Value="1" and no
   // <Memory>, placed only when a controlling switch is active. When unplaced and unstored, ETS
   // treats it as unset so neither <when test="1"> nor <when test="0"> fires; once placed (or
-  // assigned), it evaluates to its value and activates its gated com-object while displaying as
-  // read-only. Stored values, sibling ParameterRefs (both mixed-access and multi-ref Access="Read"),
-  // and property-backed Access="Read" parameters keep their normal resolution.
+  // assigned), it evaluates to its value and activates its own gated com-object while displaying as
+  // read-only. Because ETS decides <choose> activity per ParameterRef, placing or assigning one ref
+  // does not activate a <choose> on an unplaced sibling ref (though paramValue still reads the
+  // parameter's shared value). Property-backed Access="Read" parameters keep their default.
   const readMerkerXml = `<?xml version="1.0" encoding="utf-8"?>
 <KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-TEST"><ApplicationPrograms>
 <ApplicationProgram Id="M-TEST_A-31" ApplicationNumber="31" ApplicationVersion="1" MaskVersion="MV-07B0" Name="Read Merker" DefaultLanguage="en-US">
@@ -503,18 +504,21 @@ describe("unplaced memoryless Access=Read Merker in <choose>", () => {
     expect(v.paramValue("M-TEST_A-31_P-PROP_R-1")).toBe("1");
   });
 
-  test("once placed (even in an Inline block), memoryless Access=Read activates its chooses and sibling refs, and renders read-only", () => {
+  test("once placed (even in an Inline block), memoryless Access=Read activates its own choose without activating an unplaced sibling ref's choose, and renders read-only", () => {
     const v = buildDeviceConfig(readMerkerApp, new Map([["M-TEST_A-31_P-1_R-1", "1"]]));
-    expect([...v.imageComObjects.keys()].sort((a, b) => a - b)).toEqual([5, 7, 9]);
+    // O-1 (5) activates on placed R-2 and O-3 (7) on property-backed P-PROP; O-5 (9) stays off because sibling R-3 is unplaced.
+    expect([...v.imageComObjects.keys()].sort((a, b) => a - b)).toEqual([5, 7]);
     const merkerParam = params(v).find((p) => p.param.refId === "M-TEST_A-31_P-M_R-2");
     expect(merkerParam?.param.value).toBe("1");
     expect(merkerParam?.param.readOnly).toBe(true);
     expect(merkerParam?.param.memoryless).toBe(true);
+    expect(v.paramValue("M-TEST_A-31_P-M_R-3")).toBe("1");
   });
 
-  test("an Assign targeting an unplaced memoryless Access=Read parameter sets it for choose evaluation", () => {
+  test("an Assign targeting an unplaced memoryless Access=Read ref activates only that ref's choose", () => {
     const v = buildDeviceConfig(readMerkerApp, new Map([["M-TEST_A-31_P-1_R-1", "2"]]));
-    expect([...v.imageComObjects.keys()].sort((a, b) => a - b)).toEqual([5, 7, 9]);
+    // Assign targets R-2 (activates O-1 = 5), leaving unassigned/unplaced sibling R-3 (O-5 = 9) skipped.
+    expect([...v.imageComObjects.keys()].sort((a, b) => a - b)).toEqual([5, 7]);
   });
 
   test("a stored value on a placed memoryless Access=Read ref is preserved, and a placed sibling overrides a stale value on an unplaced sibling", () => {
@@ -528,9 +532,11 @@ describe("unplaced memoryless Access=Read Merker in <choose>", () => {
     expect(merkerParam?.param.value).toBe("2");
   });
 
-  test("an editable memoryless parameter's Access=Read ref still reads its placed editable sibling's value", () => {
+  test("an unplaced Access=Read sibling ref reads its placed editable sibling's shared value via paramValue while its own choose stays skipped", () => {
     const v = buildDeviceConfig(readMerkerApp, new Map([["M-TEST_A-31_P-MIX_R-1", "3"]]));
-    expect([...v.imageComObjects.keys()].sort((a, b) => a - b)).toEqual([7, 8]);
+    // P-MIX_R-2 is unplaced, so its choose (O-4 = 8) is skipped even while placed P-MIX_R-1 holds 3.
+    expect([...v.imageComObjects.keys()].sort((a, b) => a - b)).toEqual([7]);
+    expect(v.paramValue("M-TEST_A-31_P-MIX_R-2")).toBe("3");
   });
 });
 
@@ -810,10 +816,11 @@ describe("inline blocks", () => {
 });
 
 // Several ParameterRefs of one parameter share one value (docs/findings.md §9). Modelled on the Jung
-// 400021SE: P-S is shown through R-A (the parameter's default 5) and tested through R-B (Value 0);
-// the test on R-B picks one of two union members. The place that shows R-A is a nested block, and
-// the test comes after it, so a document-order rule would read R-B differently in the UI walk and
-// in the image pass.
+// 400021SE: P-S is shown through R-A (the parameter's default 5) or R-B (Value 0), with separate
+// <choose> blocks on R-A and R-B picking one of two union members (and each gating its own warning
+// separator). Because ETS decides <choose> activity per ParameterRef (§11), the choose on unplaced
+// R-B is skipped while R-A is placed, while R-B still resolves to R-A's shared value (and ignores
+// stale leftovers on unplaced refs).
 describe("ParameterRefs of one parameter share its value", () => {
   const xml = (extraRef = "") => `<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-TEST">
     <ApplicationPrograms><ApplicationProgram Id="M-TEST_A-40" ApplicationNumber="40" ApplicationVersion="1" MaskVersion="MV-07B0" Name="Share" DefaultLanguage="en-US">
@@ -833,27 +840,38 @@ describe("ParameterRefs of one parameter share its value", () => {
     </ParameterRefs></Static><Dynamic><ChannelIndependentBlock><ParameterBlock Id="M-TEST_A-40_PB-1" Name="m" Text="Main">
       <ParameterBlock Id="M-TEST_A-40_PB-2" Name="n" Text="Nested"><ParameterRefRef RefId="M-TEST_A-40_P-S_R-A" /></ParameterBlock>
       ${extraRef}
-      <choose ParamRefId="M-TEST_A-40_P-S_R-B">
+      <choose ParamRefId="M-TEST_A-40_P-S_R-A">
         <when test="0"><ParameterRefRef RefId="M-TEST_A-40_UP-Hi_R-H" /></when>
+        <when test="&gt;0"><ParameterRefRef RefId="M-TEST_A-40_UP-Lo_R-L" /></when>
+      </choose>
+      <choose ParamRefId="M-TEST_A-40_P-S_R-B">
+        <when test="0"><ParameterRefRef RefId="M-TEST_A-40_UP-Hi_R-H" /><ParameterSeparator Id="M-TEST_A-40_PS-B" Text="Warning B" /></when>
         <when test="&gt;0"><ParameterRefRef RefId="M-TEST_A-40_UP-Lo_R-L" /></when>
       </choose>
     </ParameterBlock></ChannelIndependentBlock></Dynamic></ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
   const visible = (v: ReturnType<typeof buildDeviceConfig>) => params(v).map((p) => p.param.refId.split("_").pop() ?? "").sort((a, b) => a.localeCompare(b));
+  const separators = (v: ReturnType<typeof buildDeviceConfig>) => v.blocks.flatMap((b) => b.items.filter((i) => i.kind === "separator").map((i) => i.text));
 
-  test("a ref that is only tested reads the shown ref's default, in the UI and in the image alike", () => {
+  test("an unplaced sibling ref reads the shown ref's default via paramValue while its own choose stays skipped", () => {
     const v = buildDeviceConfig(parseAppConfig(xml()), new Map());
     expect(visible(v)).toEqual(["R-A", "R-L"]);
     expect([...v.imageValues.keys()].map((k) => k.split("_").pop() ?? "").sort((a, b) => a.localeCompare(b))).toEqual(["R-A", "R-L"]);
+    expect(v.paramValue("M-TEST_A-40_P-S_R-B")).toBe("5");
+    expect(separators(v)).toEqual([]);
   });
 
-  test("a value stored on the shown ref is what the tested ref reads", () => {
+  test("a value stored on the shown ref updates its own choose and paramValue without waking the unplaced sibling's choose", () => {
     const v = buildDeviceConfig(parseAppConfig(xml()), new Map([["M-TEST_A-40_P-S_R-A", "0"]]));
     expect(visible(v)).toEqual(["R-A", "R-H"]);
+    expect(v.paramValue("M-TEST_A-40_P-S_R-B")).toBe("0");
+    // Unplaced R-B's choose does not fire its duplicate separator when placed R-A is edited to 0.
+    expect(separators(v)).toEqual([]);
   });
 
   test("the shown ref's stored value wins over a stale one on the tested ref", () => {
     const v = buildDeviceConfig(parseAppConfig(xml()), new Map([["M-TEST_A-40_P-S_R-A", "7"], ["M-TEST_A-40_P-S_R-B", "0"]]));
     expect(visible(v)).toEqual(["R-A", "R-L"]);
+    expect(v.paramValue("M-TEST_A-40_P-S_R-B")).toBe("7");
   });
 
   test("a value stored only on a ref that is not shown is not what the shown ref writes, nor what a test reads", () => {
@@ -864,6 +882,7 @@ describe("ParameterRefs of one parameter share its value", () => {
     const v = buildDeviceConfig(parseAppConfig(xml()), new Map([["M-TEST_A-40_P-S_R-B", "0"]]));
     expect(v.imageValues.get("M-TEST_A-40_P-S_R-A")).toBe("5");
     expect(visible(v)).toEqual(["R-A", "R-L"]);
+    expect(v.paramValue("M-TEST_A-40_P-S_R-B")).toBe("5");
   });
 
   test("switching which ref is shown shows the new ref's default, not the value stored on the old one", () => {
@@ -895,21 +914,22 @@ describe("ParameterRefs of one parameter share its value", () => {
 
   test("a tested ref whose shown siblings carry different defaults reads its own default, not a value stored on it", () => {
     const v = buildDeviceConfig(parseAppConfig(xml('<ParameterRefRef RefId="M-TEST_A-40_P-S_R-B" />').replace('<ParameterRef Id="M-TEST_A-40_P-S_R-B" RefId="M-TEST_A-40_P-S" Value="0" />', '<ParameterRef Id="M-TEST_A-40_P-S_R-B" RefId="M-TEST_A-40_P-S" Value="0" /><ParameterRef Id="M-TEST_A-40_P-S_R-C" RefId="M-TEST_A-40_P-S" Value="0" />').replace('ParamRefId="M-TEST_A-40_P-S_R-B"', 'ParamRefId="M-TEST_A-40_P-S_R-C"')), new Map([["M-TEST_A-40_P-S_R-C", "9"]]));
-    // R-A (5) and R-B (0) are shown; the choose on R-C reads R-C's own default 0, not the 9 stored on it.
-    expect(visible(v)).toEqual(["R-A", "R-B", "R-H"]);
+    // R-A (5) and R-B (0) are shown; unplaced R-C's stale stored 9 neither activates its choose nor overrides its own default 0.
+    expect(visible(v)).toEqual(["R-A", "R-B", "R-L"]);
+    expect(v.paramValue("M-TEST_A-40_P-S_R-C")).toBe("0");
   });
 
   test("with both refs shown and different defaults, each keeps its own (which one ETS uses is unknown)", () => {
     const v = buildDeviceConfig(parseAppConfig(xml('<ParameterRefRef RefId="M-TEST_A-40_P-S_R-B" />')), new Map());
-    expect(visible(v)).toEqual(["R-A", "R-B", "R-H"]);
+    expect(visible(v)).toEqual(["R-A", "R-B", "R-H", "R-L"]);
   });
 });
 
 test("a placement that never settles is refused, not picked", () => {
-  // With R-B stored as 0 (assumption: a stored value on an unplaced parameter still evaluates its
-  // choose tests), an unplaced P-1 evaluates R-B as 0 and places its sibling R-A; once R-A is
-  // placed, R-B reads R-A's default 1 (ignoring the stale stored 0 on unplaced R-B) and places
-  // nothing, which makes R-B read 0 again.
+  // With R-B stored as 0 (assumption: a stored value on an unplaced ref with no placed sibling
+  // still evaluates its choose tests), pass 0 evaluates R-B as 0 and places its sibling R-A; once
+  // R-A is placed, isChooseSkipped skips <choose ParamRefId="R-B"> (its stored 0 is stale while
+  // sibling R-A is placed) and places nothing, which makes pass 2 place R-A again.
   const xml = `<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-TEST">
     <ApplicationPrograms><ApplicationProgram Id="M-TEST_A-41" ApplicationNumber="41" ApplicationVersion="1" MaskVersion="MV-07B0" Name="Cycle" DefaultLanguage="en-US">
     <Static><ParameterTypes>
@@ -930,10 +950,11 @@ describe("unplaced memory-backed and editable memoryless parameters in <choose>"
   // P-184 (offset 468, default 1) are normal memory-backed parameters placed only in inactive
   // branches. ETS still writes their default into RelMemory(4) (MinEtsVersion 5.0, no
   // DownloadInvisibleParameters), yet does not match <when test="1"> (or test="0") for their
-  // <choose> elements, leaving gated com-objects disabled (00 00). Once placed, heading a reached
-  // block, targeted by an active <Assign>, sharing a placed sibling ref, or holding a stored value
-  // (assumption for unplaced plain/union parameters), the choose matches. Effective access
-  // (ref.access ?? param.access) governs whether a ref is Access="None".
+  // <choose> elements, leaving gated com-objects disabled (00 00). Activation is per ParameterRef:
+  // once the tested ref itself is placed, heads a reached block, is targeted by an active <Assign>,
+  // or holds a stored value (assumption for unplaced plain/union parameters), its choose matches;
+  // placing, assigning, or storing on a sibling ref does not activate an unplaced ref's choose.
+  // Effective access (ref.access ?? param.access) governs whether a ref is Access="None".
   const xml = `<?xml version="1.0" encoding="utf-8"?>
 <KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-TEST"><ApplicationPrograms>
 <ApplicationProgram Id="M-TEST_A-45" ApplicationNumber="45" ApplicationVersion="1" MaskVersion="MV-07B0" MinEtsVersion="5.0" Name="Unplaced Memory Choose" DefaultLanguage="en-US">
@@ -1027,33 +1048,131 @@ describe("unplaced memory-backed and editable memoryless parameters in <choose>"
     expect(target.owned).toEqual([0xff, 0xff, 0xff, 0xff, 0xff, 0]);
   });
 
-  test("once placed, memory-backed and editable memoryless parameters match their tests and reject untaken branches", () => {
+  test("once placed, memory-backed and editable memoryless parameters match their own ref's tests and reject untaken branches without activating unplaced sibling refs", () => {
     const v = buildDeviceConfig(unplacedApp, new Map([["M-TEST_A-45_P-SW_R-1", "1"]]));
-    expect([...v.imageComObjects.keys()].sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 7]);
+    // R-1 is placed (activates O-1), while sibling R-2 stays unplaced (O-2 stays off).
+    expect([...v.imageComObjects.keys()].sort((a, b) => a - b)).toEqual([1, 3, 4, 5, 7]);
     expect(v.rejectedRefs.has("M-TEST_A-45_P-SUB_R-1")).toBe(true);
   });
 
-  test("a placed sibling ParameterRef activates chooses on its unplaced sibling ref", () => {
+  test("a placed sibling ParameterRef does not activate chooses on an unplaced sibling ref", () => {
     const v = buildDeviceConfig(unplacedApp, new Map([["M-TEST_A-45_P-SW_R-1", "2"]]));
-    expect([...v.imageComObjects.keys()].sort((a, b) => a - b)).toEqual([1, 2, 5, 7]);
+    // R-2 is placed (activates O-2), while unplaced sibling R-1's choose (O-1) stays skipped and rejects nothing.
+    expect([...v.imageComObjects.keys()].sort((a, b) => a - b)).toEqual([2, 5, 7]);
+    expect(v.rejectedRefs.has("M-TEST_A-45_P-SUB_R-1")).toBe(false);
   });
 
-  test("an active <Assign> targeting an unplaced memory-backed parameter activates its chooses, also from a nested Access=None block", () => {
+  test("an active <Assign> targeting an unplaced memory-backed ref activates only that ref's chooses, also from a nested Access=None block", () => {
     for (const sw of ["3", "4"]) {
       const v = buildDeviceConfig(unplacedApp, new Map([["M-TEST_A-45_P-SW_R-1", sw]]));
-      expect([...v.imageComObjects.keys()].sort((a, b) => a - b)).toEqual([1, 2, 5, 7]);
-      expect(comObjs(v)).toHaveLength(4);
+      // Assign targets R-1 (activates O-1), leaving unplaced/unassigned sibling R-2 (O-2) skipped.
+      expect([...v.imageComObjects.keys()].sort((a, b) => a - b)).toEqual([1, 5, 7]);
+      expect(comObjs(v)).toHaveLength(3);
     }
   });
 
-  test("a stored value on an unplaced memory-backed parameter activates its chooses (assumption)", () => {
+  test("a stored value on an unplaced memory-backed ref activates only that ref's chooses (assumption)", () => {
     const v = buildDeviceConfig(unplacedApp, new Map([["M-TEST_A-45_P-M1_R-1", "1"]]));
-    expect([...v.imageComObjects.keys()].sort((a, b) => a - b)).toEqual([1, 2, 5, 7]);
+    expect([...v.imageComObjects.keys()].sort((a, b) => a - b)).toEqual([1, 5, 7]);
   });
 
   test("an unplaced <choose> with an unsupported test token still refuses with PARAM_TEST_UNSUPPORTED", () => {
     const bad = parseAppConfig(xml.replace(`<when test="1"><ComObjectRefRef RefId="M-TEST_A-45_O-1_R-1" /></when>`, `<when test="on"><ComObjectRefRef RefId="M-TEST_A-45_O-1_R-1" /></when>`));
     expect(() => buildDeviceConfig(bad, new Map())).toThrow(expect.objectContaining({ code: "PARAM_TEST_UNSUPPORTED" }));
+  });
+});
+
+describe("unplaced ParameterRef with placed sibling in <choose> (20DF / 20DE patterns)", () => {
+  // M-0001_A-20DF / M-00A0_A-20DF pattern: union member UP-84 has ReadWrite R-91 (unplaced when
+  // P-SW=1) and Access="None" sibling R-229 (placed when P-SW=1). ETS writes UP-84 via placed R-229
+  // yet skips <choose ParamRefId="..._UP-84_R-91"><when test="0">, leaving its gated parameter
+  // unwritten. M-0001_A-20DE / M-00A0_A-20DE pattern: plain memoryless P-ML has ReadWrite R-108
+  // (unplaced when P-SW=1) and Access="Read" sibling R-107 (placed when P-SW=1); ETS skips
+  // <choose ParamRefId="..._P-ML_R-108"><when test="0">, leaving its gated memory-backed parameter
+  // unowned (LoadedImage mask 0x00).
+  const xml = `<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-TEST"><ApplicationPrograms>
+<ApplicationProgram Id="M-TEST_A-46" ApplicationNumber="46" ApplicationVersion="1" MaskVersion="MV-07B0" MinEtsVersion="5.0" Name="PerRefSibling" DefaultLanguage="en-US">
+  <Static>
+    <Code><RelativeSegment Id="M-TEST_A-46_RS-4" LoadStateMachine="4" Size="4" /></Code>
+    <ParameterTypes>
+      <ParameterType Id="M-TEST_A-46_PT-N"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="15" /></ParameterType>
+    </ParameterTypes>
+    <Parameters>
+      <Parameter Id="M-TEST_A-46_P-SW" Name="Switch" ParameterType="M-TEST_A-46_PT-N" Text="Switch" Value="1"><Memory CodeSegment="M-TEST_A-46_RS-4" Offset="0" BitOffset="0" /></Parameter>
+      <Union SizeInBit="8"><Memory CodeSegment="M-TEST_A-46_RS-4" Offset="1" BitOffset="0" />
+        <Parameter Id="M-TEST_A-46_UP-84" Name="UnionFlag" ParameterType="M-TEST_A-46_PT-N" Text="UnionFlag" Value="0" Offset="0" BitOffset="0" />
+      </Union>
+      <Parameter Id="M-TEST_A-46_P-ML" Name="MemlessFlag" ParameterType="M-TEST_A-46_PT-N" Text="MemlessFlag" Value="0" />
+      <Parameter Id="M-TEST_A-46_P-G1" Name="GatedByUnion" ParameterType="M-TEST_A-46_PT-N" Text="GatedByUnion" Value="1" Access="None"><Memory CodeSegment="M-TEST_A-46_RS-4" Offset="2" BitOffset="0" /></Parameter>
+      <Parameter Id="M-TEST_A-46_P-G2" Name="GatedByMemless" ParameterType="M-TEST_A-46_PT-N" Text="GatedByMemless" Value="2" Access="None"><Memory CodeSegment="M-TEST_A-46_RS-4" Offset="3" BitOffset="0" /></Parameter>
+    </Parameters>
+    <ParameterRefs>
+      <ParameterRef Id="M-TEST_A-46_P-SW_R-1" RefId="M-TEST_A-46_P-SW" />
+      <ParameterRef Id="M-TEST_A-46_UP-84_R-91" RefId="M-TEST_A-46_UP-84" />
+      <ParameterRef Id="M-TEST_A-46_UP-84_R-229" RefId="M-TEST_A-46_UP-84" Access="None" />
+      <ParameterRef Id="M-TEST_A-46_P-ML_R-107" RefId="M-TEST_A-46_P-ML" Access="Read" Value="0" />
+      <ParameterRef Id="M-TEST_A-46_P-ML_R-108" RefId="M-TEST_A-46_P-ML" />
+      <ParameterRef Id="M-TEST_A-46_P-G1_R-1" RefId="M-TEST_A-46_P-G1" />
+      <ParameterRef Id="M-TEST_A-46_P-G2_R-1" RefId="M-TEST_A-46_P-G2" />
+    </ParameterRefs>
+  </Static>
+  <Dynamic>
+    <ChannelIndependentBlock>
+      <ParameterBlock Id="M-TEST_A-46_PB-1" Name="main" Text="Main">
+        <ParameterRefRef RefId="M-TEST_A-46_P-SW_R-1" />
+        <choose ParamRefId="M-TEST_A-46_P-SW_R-1">
+          <when test="0">
+            <ParameterRefRef RefId="M-TEST_A-46_UP-84_R-91" />
+            <ParameterRefRef RefId="M-TEST_A-46_P-ML_R-108" />
+          </when>
+          <when test="1">
+            <ParameterRefRef RefId="M-TEST_A-46_UP-84_R-229" />
+            <ParameterRefRef RefId="M-TEST_A-46_P-ML_R-107" />
+          </when>
+        </choose>
+        <choose ParamRefId="M-TEST_A-46_UP-84_R-91">
+          <when test="0"><ParameterRefRef RefId="M-TEST_A-46_P-G1_R-1" /></when>
+        </choose>
+        <choose ParamRefId="M-TEST_A-46_P-ML_R-108">
+          <when test="0"><ParameterRefRef RefId="M-TEST_A-46_P-G2_R-1" /></when>
+        </choose>
+      </ParameterBlock>
+    </ChannelIndependentBlock>
+  </Dynamic>
+</ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+  const siblingApp = parseAppConfig(xml);
+
+  test("skips <choose> on unplaced union and plain refs even when Access=None or Access=Read siblings are placed", () => {
+    const v = buildDeviceConfig(siblingApp, new Map());
+    expect(v.imageValues.has("M-TEST_A-46_UP-84_R-229")).toBe(true);
+    expect(v.imageValues.has("M-TEST_A-46_P-G1_R-1")).toBe(false);
+    expect(v.imageValues.has("M-TEST_A-46_P-G2_R-1")).toBe(false);
+    const target = buildRelativeSegmentTarget(siblingApp, new Map(), 4, { ownIdleUnionDefaults: true })!;
+    // Offsets 0 (P-SW=1) and 1 (UP-84 via placed R-229=0) are owned; offsets 2 and 3 stay unowned.
+    expect(target.bytes.toString("hex")).toBe("01000000");
+    expect(target.owned).toEqual([0xff, 0xff, 0, 0]);
+  });
+
+  test("a stored value on the placed sibling or a stale leftover stored value on the unplaced ref does not wake up the unplaced ref's choose", () => {
+    for (const overrides of [
+      new Map([["M-TEST_A-46_UP-84_R-229", "0"], ["M-TEST_A-46_P-ML_R-107", "0"]]),
+      new Map([["M-TEST_A-46_UP-84_R-91", "1"], ["M-TEST_A-46_P-ML_R-108", "1"]]),
+    ]) {
+      const v = buildDeviceConfig(siblingApp, overrides);
+      expect(v.imageValues.has("M-TEST_A-46_P-G1_R-1")).toBe(false);
+      expect(v.imageValues.has("M-TEST_A-46_P-G2_R-1")).toBe(false);
+    }
+  });
+
+  test("once the tested refs themselves are placed, both chooses match and own their gated bytes", () => {
+    const params = new Map([["M-TEST_A-46_P-SW_R-1", "0"]]);
+    const v = buildDeviceConfig(siblingApp, params);
+    expect(v.imageValues.get("M-TEST_A-46_P-G1_R-1")).toBe("1");
+    expect(v.imageValues.get("M-TEST_A-46_P-G2_R-1")).toBe("2");
+    const target = buildRelativeSegmentTarget(siblingApp, params, 4, { ownIdleUnionDefaults: true })!;
+    expect(target.bytes.toString("hex")).toBe("00000102");
+    expect(target.owned).toEqual([0xff, 0xff, 0xff, 0xff]);
   });
 });
 

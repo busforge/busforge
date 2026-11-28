@@ -533,10 +533,11 @@ Both are tested by chooses that pick one of two union members for the millisecon
 
 A ref's `Value` is the default of that ref when it is the one shown; it is not a separate value.
 ETS shows it directly: switching the minutes to 1 sets the seconds to 0 once, and ETS's export then
-stores a value only for the minutes; the seconds written (0) come from `R-1`'s default. With the
-minutes at 0 it evaluates the choose on `R-1` as 5, the shared value, and writes the union member
-for 5 seconds (0 ms). Evaluating `R-1` with its own default 0 instead activates the other member
-too and writes 100 ms over it.
+stores a value only for the minutes; the seconds written (0) come from `R-1`'s default. The
+application pairs separate chooses on `R-107` and `R-1` (both for the milliseconds union and for a
+warning separator), and ETS evaluates only the choose whose `ParameterRef` is placed (§11): with
+the minutes at 0, only `R-107` is placed (5 seconds, 0 ms); with the minutes at 1, only `R-1` is
+placed (0 seconds, 100 ms).
 
 So a parameter has one value, and it is the placed ref's: one stored on a placed ref, else the
 default of the placed ref. A value the project stores on a ref that no active branch places is a
@@ -557,7 +558,9 @@ threshold channel C14 while the channel is off ("Telegram type" `P-6512` 3, `P-6
 the channel's other parameters at their defaults, and the one that switches it off again writes the
 segment's `<Data>` back for the hidden parameters (`tools/etsdiff.test.ts`, "structural flash
 switching channel C14").
-Only a parameter none of whose refs is placed reads a value stored on its refs (for a choose).
+Only a parameter none of whose refs is placed reads a stored value on an unplaced ref (for a choose,
+a union or non-property parameter with effective `Access` other than `"None"` reads only a value on
+the tested `ParameterRef` itself, §11).
 A placed ref with nothing stored keeps its own default, because applications select an internal
 parameter's value by which ref an active branch places; when several refs with different defaults
 are placed, each keeps its own, since which one ETS would use is unknown. Which refs are placed is
@@ -587,40 +590,52 @@ ParameterRef of a shown parameter that only an untaken branch places, gets no en
 table (`00 00`). With that second ref placed (its parameter set so that the branch placing it is taken),
 ETS writes the object's entry.
 
-Its `<when test="...">` branches still count when the underlying parameter is active through a placed
-sibling ParameterRef, an active `<Assign>`, a block heading, or a stored value: the Jung 400021SE's
-choose on its unplaced `R-1` (§9, sibling `R-107` placed), the OpenKNX RaumController's chooses on
-assigned `Access="None"` internals, and `M-00B6_A-4537-03-9C38`'s choose on an assigned memory-backed
+Its `<when test="...">` branches still count when the tested `ParameterRef` itself is active through an
+active `<Assign>`, a reached block heading, or a stored value: the OpenKNX RaumController's chooses on
+assigned `Access="None"` internals and `M-00B6_A-4537-03-9C38`'s choose on an assigned memory-backed
 parameter (`P-1264_R-1570`) take the branches their tests match, as ETS's downloads show.
 
-When no ParameterRef of a parameter is placed, the tested ref does not head a reached block, and no ref
-of the parameter holds a stored or assigned value, ETS matches none of its `<when test="...">` branches
-either (neither non-zero nor `0`), for **all union members** (any `Access`) and for **non-property
-parameters with effective `Access` other than `"None"`** (`ParameterRef/@Access`, else
-`Parameter/@Access`):
+When the tested `ParameterRef` itself is not placed, does not head a reached block, and holds no stored
+or assigned value, ETS matches none of its `<when test="...">` branches either (neither non-zero nor
+`0`), **even if a sibling `ParameterRef` of the same `Parameter` is placed or carries a value**, for
+**all union members** (any `Access`) and for **non-property parameters with effective `Access` other
+than `"None"`** (`ParameterRef/@Access`, else `Parameter/@Access`):
 
-- **Unions** overlay several parameters on the same bytes; only the member an active branch places is
+- **Unions** overlay several parameters on the same bytes; only the placed ref of an active member is
   meaningful. On the GVS AMMA, tests of `0` on unplaced Forced/Delay/Counter union members activate
   three com-objects (5, 6, 8) if evaluated at their static default; ETS leaves them out
-  (partial-download capture).
+  (partial-download capture). On `M-0001_A-20DF-22-4073-O000A` and `M-00A0_A-20DF-12-AEEA-O000A`,
+  `UP-84_R-91` (`ReadWrite`) is unplaced at defaults while sibling `UP-84_R-229` (`Access="None"`) is
+  placed and written to offset 198; ETS skips `<choose ParamRefId="..._UP-84_R-91"><when test="0">`,
+  leaving `MD-4_P-4_R-5` at offset 465 unwritten (`mask=0x00`, allocation fill `00`).
 - **Memoryless parameters** (`Access="Read"` and editable): on the Theben `M-0048_A-0103-11-72A2`,
   memoryless `Access="Read"` `P-68` (`Value="1"`) is unplaced at defaults and ETS leaves its gated
   com-objects (5, 6, 7) at `00 00`; on `M-021E_A-0016-11-6EC4`, unplaced editable memoryless parameters
-  likewise match neither `0` nor `2`.
+  likewise match neither `0` nor `2`. On `M-0001_A-20DE-22-6369-O000A` and
+  `M-00A0_A-20DE-12-560D-O000A`, memoryless `MD-3_P-68_R-108` (`ReadWrite`) is unplaced at defaults
+  while sibling `MD-3_P-68_R-107` (`Access="Read"`) is placed; ETS skips
+  `<choose ParamRefId="..._MD-3_P-68_R-108"><when test="0">`, leaving all five gated `Access="None"`
+  memory-backed parameters (`MD-3_P-91`, `P-92`, `P-93`, `P-97`, `P-100`) unwritten (`mask=0x00` in
+  ETS's `LoadedImage`).
 - **Plain memory-backed parameters**: on the I.Trust 1ITRGV_100 (`M-02AA_A-0081-10-72A7-O0085`), `P-37`
   (offset 68, `Value="1"`) and `P-184` (offset 468, `Value="1"`) are unplaced at defaults; ETS still
   writes their defaults into the parameter segment (`0x10` at 68, `0x11` at 468, under `MinEtsVersion`
   5.0 with no `DownloadInvisibleParameters`), yet does not match `<when test="1">` in `<choose>`,
   leaving com-objects 164 and 220 at `00 00`. On `M-021E_A-0016-11-6EC4`, unplaced memory-backed
   parameters with `Value="0"` or `"1"` likewise leave all of their gated com-objects at `00 00` while
-  ETS writes their memory defaults.
+  ETS writes their memory defaults. On the Jung 400021SE (`M-0004_A-7072-21-99A7-O000A`, §9), `P-505`
+  pairs separate chooses on `R-107` and `R-1`, so skipping the unplaced ref prevents a second copy of
+  its warning separator when the placed ref is edited.
 
-An active `<Assign>` target still counts (shown on OpenKNX and `M-00B6_A-4537-03-9C38`). A stored value
-in `0.xml` on an unplaced union or plain parameter still counts in Busforge as well; the captures show
-only the unstored case for those, so that stored-value half is an assumption. Unplaced `Access="None"`
-parameters without `<Memory>` (Merkers) still read as `0`, and unplaced non-`Access="None"`
-property-backed or `Access="None"` memory-backed parameters keep their default until an ETS download
-shows otherwise.
+An active `<Assign>` targeting the tested `ParameterRef` still counts when no sibling ref of its
+parameter is placed (shown on OpenKNX and `M-00B6_A-4537-03-9C38`; no capture shows an `<Assign>`
+targeting an unplaced ref alongside a placed sibling). A stored value in `0.xml` on the tested
+`ParameterRef` itself still counts in Busforge under the same condition (while a sibling ref is
+placed, a stored value on an unplaced ref is a leftover from an earlier configuration, §9, and does
+not activate its `<choose>`); the captures show only the unstored case for those, so that stored-value
+half is an assumption. Unplaced `Access="None"` parameters without `<Memory>` (Merkers) still read as
+`0`, and unplaced non-`Access="None"` property-backed or `Access="None"` memory-backed parameters keep
+their default until an ETS download shows otherwise.
 
 A page parameter that a choose tests heads a reached `ParameterBlock` (its `ParamRefId`) on every product
 the captures show (`TypeNone`, no value: Gira Tastsensor 3, Theben Meteodata 140 S, ABB US/U 4.2), and

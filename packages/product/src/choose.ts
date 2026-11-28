@@ -67,29 +67,37 @@ export function defaultBranchOf(app: AppConfig, defRefId: string, placed: boolea
   return (ref.access ?? param?.access) === "None" ? "open" : "skip";
 }
 
-// Whether a <choose ParamRefId="defRefId"> skips its <when test="..."> branches because no ref of
-// its parameter is placed, `defRefId` does not head a reached block, and no ref of its parameter
-// holds a stored or assigned value:
-// - Union members (any Access) hold no value while another member owns their memory (GVS AMMA:
-//   tests of 0 on idle Forced/Delay/Counter members placed no object in ETS).
+// Whether a <choose ParamRefId="defRefId"> skips its <when test="..."> branches because `defRefId`
+// itself is neither placed in an active branch, nor heading a reached block, nor holding a stored
+// or assigned value (ETS evaluates <choose> activity per ParameterRef, not per Parameter, so a
+// placed, stored, or assigned sibling ParameterRef of the same Parameter does not activate an
+// unplaced ref):
+// - Union members (any Access) hold no value while unplaced (GVS AMMA: tests of 0 on idle
+//   Forced/Delay/Counter members placed no object in ETS; M-0001_A-20DF-22-4073-O000A and
+//   M-00A0_A-20DF-12-AEEA-O000A: unplaced ReadWrite UP-84_R-91 skips <when test="0"> even while
+//   sibling UP-84_R-229 with Access="None" is placed).
 // - Non-union, non-property parameters with effective Access != "None" (`ref.access ?? p.access`)
-//   likewise match no <choose> test when unplaced and unstored, even when ETS still writes a
-//   memory-backed parameter's default into the parameter segment (Theben M-0048_A-0103-11-72A2:
-//   memoryless Access="Read" P-68 Value="1"; I.Trust 1ITRGV_100 M-02AA_A-0081-10-72A7-O0085:
-//   memory-backed P-37 offset 68 Value="1" and P-184 offset 468 Value="1" written as 0x10 and 0x11
-//   in RelMemory(4) while com-objects #164 and #220 stay 00 00; M-021E_A-0016-11-6EC4: unplaced
-//   memory-backed and memoryless editable parameters with Value="0"/"1"/"2" leave 14 objects 00 00).
+//   likewise match no <choose> test when the tested ref is unplaced and unstored, even when a
+//   sibling ref is placed or ETS still writes a memory-backed parameter's default into the
+//   parameter segment (Theben M-0048_A-0103-11-72A2: memoryless Access="Read" P-68 Value="1";
+//   I.Trust 1ITRGV_100 M-02AA_A-0081-10-72A7-O0085: memory-backed P-37 offset 68 Value="1" and
+//   P-184 offset 468 Value="1" written as 0x10 and 0x11 in RelMemory(4) while com-objects #164 and
+//   #220 stay 00 00; M-021E_A-0016-11-6EC4: unplaced memory-backed and memoryless editable
+//   parameters with Value="0"/"1"/"2" leave 14 objects 00 00; M-0001_A-20DE-22-6369-O000A and
+//   M-00A0_A-20DE-12-560D-O000A: unplaced ReadWrite MD-3_P-68_R-108 skips <when test="0"> even
+//   while sibling MD-3_P-68_R-107 with Access="Read" is placed, leaving all five gated parameters
+//   at mask 0x00 in ETS's LoadedImage).
 // Unplaced Access="None" Merkers (no <Memory>, no <Property>) still read as 0, and unplaced
 // non-Access="None" property-backed or Access="None" memory-backed parameters keep their default
 // until a capture shows otherwise.
 export function chooseSkipsTests(
   app: AppConfig,
   defRefId: string,
-  paramPlaced: boolean,
+  refPlaced: boolean,
   heads: boolean,
   hasStored: boolean,
 ): boolean {
-  if (paramPlaced || heads || hasStored) return false;
+  if (refPlaced || heads || hasStored) return false;
   const ref = app.refs.get(defRefId);
   const p = ref ? app.params.get(ref.paramId) : undefined;
   if (!p) return false;
@@ -155,10 +163,16 @@ export function isChooseSkipped(
 ): boolean {
   const ref = ctx.app.refs.get(defRefId);
   if (!ref) return false;
-  const paramPlaced = !!ctx.placement.placed.get(rewrite(ref.paramId))?.size;
-  const heads = ctx.placement.heads.has(rewrite(defRefId));
-  const hasStored = (ctx.refsOfParam.get(ref.paramId) ?? []).some((r) => env.has(rewrite(r)));
-  return chooseSkipsTests(ctx.app, defRefId, paramPlaced, heads, hasStored);
+  const instId = rewrite(defRefId);
+  const placedSet = ctx.placement.placed.get(rewrite(ref.paramId));
+  const refPlaced = !!placedSet?.has(defRefId);
+  const heads = ctx.placement.heads.has(instId);
+  // While a sibling ref of the same parameter is placed, a stored value on an unplaced ref is a
+  // leftover from an earlier configuration (docs/findings.md §9) and must not activate its
+  // <choose>. When no ref of the parameter is placed, an active <Assign> or stored value on
+  // `defRefId` itself still counts.
+  const hasStored = !placedSet?.size && env.has(instId);
+  return chooseSkipsTests(ctx.app, defRefId, refPlaced, heads, hasStored);
 }
 
 // Effective value of a ParameterRef against the settled placement and current working env:

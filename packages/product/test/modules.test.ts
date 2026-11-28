@@ -369,6 +369,26 @@ test("a module behind an unplaced memory-backed choose does not shift a later mo
   expect([...comObjectTable(app, new Map()).keys()]).toEqual([10]);
 });
 
+test("a module behind an unplaced ParameterRef choose stays skipped even when a sibling ref is placed and edited", () => {
+  const base = readFileSync(join(import.meta.dir, "fixtures", "sample-module-app.xml"), "utf8");
+  const xml = base
+    .replace("<Parameters />", '<Parameters><Parameter Id="M-TEST_A-2_P-M" Name="Gate" ParameterType="M-TEST_A-2_PT-OnOff" Text="Gate" Value="1"><Memory CodeSegment="M-TEST_A-2_RS-4" Offset="0" BitOffset="0" /></Parameter></Parameters>')
+    .replace("<ParameterRefs />", '<ParameterRefs><ParameterRef Id="M-TEST_A-2_P-M_R-1" RefId="M-TEST_A-2_P-M" /><ParameterRef Id="M-TEST_A-2_P-M_R-2" RefId="M-TEST_A-2_P-M" Access="None" /></ParameterRefs>')
+    .replace(/<Repeat Id="M-TEST_A-2_X-1"[\s\S]*?<\/Repeat>/,
+      `<ParameterBlock Id="M-TEST_A-2_PB-9" Name="p" Text="P"><ParameterRefRef RefId="M-TEST_A-2_P-M_R-2" /></ParameterBlock>` +
+      `<choose ParamRefId="M-TEST_A-2_P-M_R-1"><when test="1"><Module Id="M-TEST_A-2_MD-1_M-1" RefId="M-TEST_A-2_MD-1" Name="Skipped"><NumericArg RefId="M-TEST_A-2_MD-1_A-2" AllocatorRefId="M-TEST_A-2_AL-1" /></Module></when></choose>` +
+      `<Module Id="M-TEST_A-2_MD-1_M-2" RefId="M-TEST_A-2_MD-1" Name="Kept"><NumericArg RefId="M-TEST_A-2_MD-1_A-2" AllocatorRefId="M-TEST_A-2_AL-1" /></Module>`)
+    .replace("<Static>", '<Static><Allocators><Allocator Id="M-TEST_A-2_AL-1" Name="Obj" Start="10" maxInclusive="99" /></Allocators>');
+  const app = parseAppConfig(xml);
+  for (const overrides of [new Map<string, string>(), new Map([["M-TEST_A-2_P-M_R-2", "1"]])]) {
+    const inst = resolveModuleInstances(app, overrides);
+    expect(inst).toEqual([{ id: "MD-1_M-2_MI-1", refId: "MD-1_M-2", args: [{ refId: "MD-1_A-2", value: "10" }] }]);
+    const view = buildDeviceConfig(app, overrides);
+    expect(view.moduleInstances).toEqual(inst);
+    expect([...view.imageComObjects.keys()]).toEqual([10]);
+  }
+});
+
 test("Parameter BaseValue adds the module instance numeric argument across allocator, choose, UI, Assign, and memory image", () => {
   const xml = `<?xml version="1.0" encoding="utf-8"?>
 <KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-TEST"><ApplicationPrograms>
