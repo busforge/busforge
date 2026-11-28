@@ -11,7 +11,7 @@ import { tempDir } from "./test-temp.ts";
 import { segmentAllocationRefusal, type SimUnit } from "./sim-unit.ts";
 import type { SystemBBehaviour, UnitBehaviour } from "./sim-unit-model.ts";
 import { gzipSync } from "node:zlib";
-import { catalogueUnit, catalogueUnitFrom, catalogueUnitRecord, catalogueUnitSpec, chooseDonor, donorDigest, donorUnfit, DONOR_RULES, learnIdentity, normalizeProductStoreXml, precheckDonor, PRODUCT_STORE_TAGS, RETIRED_DONOR_RULES, unitMask, type CatalogueUnitSpec } from "./sim-unit-catalogue.ts";
+import { catalogueUnit, catalogueUnitFrom, catalogueUnitRecord, catalogueUnitSpec, chooseDonor, donorDigest, donorUnfit, DONOR_RULES, hasProgramIdStampSource, learnIdentity, normalizeProductStoreXml, precheckDonor, PRODUCT_STORE_TAGS, RETIRED_DONOR_RULES, unitMask, type CatalogueUnitSpec } from "./sim-unit-catalogue.ts";
 import { mismatchLines } from "./sim-unit-product.ts";
 import { framePairs, replayCapture } from "./sim-unit-replay.ts";
 import { ABB_USU42, AURO_M0081, GIRA_TS3, MDT_BE02001, MEANWELL_KNX40E, newSimUnit, OPENKNX_RAUMCONTROLLER, SIM_UNITS, THEBEN_DALI_GATEWAY, type SimUnitSpec } from "./sim-units.ts";
@@ -316,8 +316,13 @@ corpusDescribe("a catalogue unit's donor", () => {
       .toMatchObject({ kind: "refused", why: expect.stringContaining("no product unit: property 0/78: octet 5 is 05") });
     expect(precheckDonor(baseApp, injectLoad('<LdCtrlCompareProp ObjIdx="0" PropId="78" StartElement="2" InlineData="1234" />')))
       .toMatchObject({ kind: "refused", why: expect.stringContaining("no product unit: LdCtrlCompareProp with malformed/missing inline data or element addressing") });
-    expect(precheckDonor(baseApp, injectLoad('<LdCtrlCompareProp ObjIdx="4" PropId="13" InlineData="0000000000" />')))
+    // System 7 still stamps 3/13, so a contradicting LdCtrlCompareProp on 3/13 is refused offline; on MV-07B0 4/13
+    // stays the donor's unless LdCtrlCompareProp sets it, so a compare on 4/13 does not contradict an unstamped id.
+    const okXml = catalogueXml(`${okApp}.xml.gz`);
+    expect(precheckDonor(okApp, toProductStore(okXml.replace("</LoadProcedure>", '<LdCtrlCompareProp ObjIdx="3" PropId="13" InlineData="0000000000" /></LoadProcedure>'))))
       .toMatchObject({ kind: "refused", why: expect.stringContaining("no catalogue unit: the application's program id") });
+    expect(precheckDonor(baseApp, injectLoad('<LdCtrlCompareProp ObjIdx="4" PropId="13" InlineData="0000000000" />')))
+      .toMatchObject({ kind: "donor", donor: MEANWELL_KNX40E });
   });
 });
 
@@ -398,6 +403,63 @@ corpusDescribe("a catalogue unit", () => {
     expect([unit.refusals, unit.lines.at(-1)]).toEqual([[], "answered A_Memory_Read 4 at 0xb6ea: donor mdt-be02001"]);
   });
 
+  test("keeps the donor's 4/13 on MV-07B0 while allowing 4/13 writes while loading, overlays explicit LdCtrlCompareProp 4/13, and still stamps 3/13 on System 7", async () => {
+    const s = spec("M-0083_A-0137-20-7EB2", "gvs-amma");
+    const unit = catalogueUnit(s);
+    // Donor gvs-amma holds 0085007230 in 4/13; MV-07B0 does not stamp the target's 0083013720.
+    expect(unit.objects.get(4)!.get(13)!.elements![0].toString("hex")).toBe("0085007230");
+    expect(unit.properties.has("4/13")).toBe(false);
+    // Reading 4/13 answers the donor's value; unloading + loading object 4 lets a download write 4/13 and read it back.
+    const sim = unit.make();
+    const replies: Buffer[] = [];
+    sim.onCemi = (_src, _dst, tpdu) => { replies.push(Buffer.from(tpdu)); };
+    const send = async (tpdu: string) => {
+      await sim.sendCemi(cemiLData(s.interfaceIa, sim.deviceIa, Buffer.from(tpdu, "hex")));
+      await new Promise((r) => setTimeout(r, 5));
+    };
+    // Connectionless read of 4/13 before download -> donor's 0085007230.
+    await send("03d5040d1001");
+    expect(replies.at(-1)!.toString("hex")).toBe("03d6040d10010085007230");
+    expect(sim.lines.at(-1)).toBe("answered A_PropertyValue_Read 4/13 of 1 from 1: donor gvs-amma");
+    // Connected: unload 4, load 4, write target program id 0083013720 to 4/13, then read 4/13 back.
+    await send("80");
+    await send("43d70405100104");
+    await send("c2");
+    await send("47d70405100101");
+    await send("c6");
+    await send("4bd7040d10010083013720");
+    expect(replies.at(-1)!.toString("hex")).toBe("4bd6040d10010083013720");
+    await send("ca");
+    await send("4fd5040d1001");
+    expect(replies.at(-1)!.toString("hex")).toBe("4fd6040d10010083013720");
+    expect(sim.lines.at(-1)).toBe("answered A_PropertyValue_Read 4/13 of 1 from 1: this session");
+    expect(sim.refusals).toEqual([]);
+
+    // Explicit LdCtrlCompareProp on 4/13 overlays only its compared bits onto the donor's 4/13 (no target stamp).
+    const withCompare = s.appXml.replace(
+      "</LoadProcedure>",
+      '<LdCtrlCompareProp ObjIdx="4" PropId="13" InlineData="0000000020" Mask="00000000f0" /></LoadProcedure>',
+    );
+    const cmpSpec = catalogueUnitSpec(s.application, withCompare, { donor: "gvs-amma" });
+    if ("refused" in cmpSpec) throw new Error(cmpSpec.refused);
+    const cmpUnit = catalogueUnit(cmpSpec);
+    expect(cmpUnit.objects.get(4)!.get(13)!.elements![0].toString("hex")).toBe("0085007220");
+    expect(cmpUnit.properties.get("4/13")).toBe("product: LdCtrlCompareProp 4/13 0000000020 mask 00000000f0, over donor gvs-amma");
+
+    // System 7 (MV-0701) still stamps 3/13 with the application's own program id.
+    const mv0701App = "M-0002_A-9991-10-0001";
+    const mv0701Xml = catalogueXml("M-0002_A-A001-13-63C2.xml.gz")
+      .replaceAll("M-0002_A-A001-13-63C2", mv0701App)
+      .replace('ApplicationNumber="40961"', 'ApplicationNumber="39313"')
+      .replace('ApplicationVersion="19"', 'ApplicationVersion="16"')
+      .replace('InlineData="0000A00100"', 'InlineData="0000999100"');
+    const mv0701Spec = catalogueUnitSpec(mv0701App, mv0701Xml, { donor: "abb-usu-4.2" });
+    if ("refused" in mv0701Spec) throw new Error(mv0701Spec.refused);
+    const mv0701Unit = catalogueUnit(mv0701Spec);
+    expect(mv0701Unit.objects.get(3)!.get(13)!.elements![0].toString("hex")).toBe("0002999110");
+    expect(mv0701Unit.properties.get("3/13")).toBe("product: LdCtrlCompareProp 3/13 0000999100 mask 0000ffff00; product: the application's program id 0002999110");
+  });
+
   test("refuses a property neither the product nor the donor gives, with its reason", async () => {
     const unit = catalogueUnit(spec("M-0083_A-0137-20-7EB2", "gvs-amma")).make();
     const read = (o: number, pid: number) => cemiLData(0x11ff, unit.deviceIa, Buffer.from([0x03, 0xd5, o, pid, 0x10, 0x01]));
@@ -433,7 +495,29 @@ corpusDescribe("a catalogue row's unit", () => {
     const record = catalogueUnitRecord(catalogueUnit(spec(application, "gvs-amma")));
     const row = (unit: RowSpec["unit"], exported?: string): RowSpec => ({ format: ROW_FORMAT, unit, etsBuild: "ETS", simulator: "sim:1", ...(exported ? { export: exported } : {}) });
     const unit = rowUnit("r", dir, application, row(record, "export.xml"));
-    expect("donor" in unit && [unit.id, unit.donor.id, unit.rule, unit.learned]).toEqual([`${application}@gvs-amma`, "gvs-amma", DONOR_RULES["MV-07B0"], []]);
+    expect("donor" in unit && [unit.id, unit.donor.id, unit.rule, unit.learned, unit.stampProgramId]).toEqual([`${application}@gvs-amma`, "gvs-amma", DONOR_RULES["MV-07B0"], [], undefined]);
+    // Historical MV-07B0 rows whose row.json recorded 4/13 stamped with the application's program id replay with
+    // stampProgramId set, reproducing both plain and LdCtrlCompareProp-combined 4/13 property sources.
+    const stampedRecord = { ...record, properties: { ...record.properties, "4/13": "product: the application's program id 0083013720" } };
+    const stampedSpec = rowUnit("r-stamped", dir, application, row(stampedRecord, "export.xml")) as CatalogueUnitSpec;
+    expect(stampedSpec.stampProgramId).toBe(true);
+    const stampedUnit = catalogueUnit(stampedSpec);
+    expect(stampedUnit.objects.get(4)!.get(13)!.elements![0].toString("hex")).toBe("0083013720");
+    expect(catalogueUnitRecord(stampedUnit).properties).toEqual(stampedRecord.properties);
+    const cmpXml = catalogueXml(`${application}.xml.gz`).replace("</LoadProcedure>", '<LdCtrlCompareProp ObjIdx="4" PropId="13" InlineData="0000000020" Mask="00000000f0" /></LoadProcedure>');
+    writeFileSync(join(dir, "export-cmp.xml"), cmpXml);
+    const cmpStampedRecord = { ...record, properties: { ...record.properties, "4/13": "product: LdCtrlCompareProp 4/13 0000000020 mask 00000000f0; product: the application's program id 0083013720" } };
+    const cmpStampedSpec = rowUnit("r-cmp-stamped", dir, application, row(cmpStampedRecord, "export-cmp.xml")) as CatalogueUnitSpec;
+    expect(cmpStampedSpec.stampProgramId).toBe(true);
+    expect(catalogueUnitRecord(catalogueUnit(cmpStampedSpec)).properties["4/13"]).toBe(cmpStampedRecord.properties["4/13"]);
+    const cmpFreshRecord = { ...record, properties: { ...record.properties, "4/13": "product: LdCtrlCompareProp 4/13 0000000020 mask 00000000f0, over donor gvs-amma" } };
+    const cmpFreshSpec = rowUnit("r-cmp-fresh", dir, application, row(cmpFreshRecord, "export-cmp.xml")) as CatalogueUnitSpec;
+    expect(cmpFreshSpec.stampProgramId).toBeUndefined();
+    expect(catalogueUnitRecord(catalogueUnit(cmpFreshSpec)).properties["4/13"]).toBe(cmpFreshRecord.properties["4/13"]);
+    // A stamped 4/13 followed by an identity-loop source (e.g. a trailing zero-byte mismatch) still replays with stampProgramId.
+    expect(hasProgramIdStampSource('product: the application\'s program id 0083013720; identity loop: ETS6.log "x"')).toBe(true);
+    expect(hasProgramIdStampSource('identity loop: ETS6.log "Required data mismatch at SystemProperty(4/13)[$0000]: 0085007230 instead of 0083013720"')).toBe(false);
+    expect(hasProgramIdStampSource(undefined)).toBe(false);
     expect(() => rowUnit("r", dir, application, row(record))).toThrow("a catalogue unit's application program comes from the row's export, and row.json names none");
     expect(() => rowUnit("r", dir, "M-0083_A-0137-20-7EB3", row(record, "export.xml"))).toThrow("holds no application program M-0083_A-0137-20-7EB3");
     expect(() => rowUnit("r", dir, application, row({ ...record, rule: "MV-07B0: an older rule" }, "export.xml"))).toThrow("the row is to run again");
@@ -529,7 +613,20 @@ corpusDescribe("where ETS went by an answer of the unit", () => {
     ]);
     expect(branches("M-0002_A-A001-13-63C2/defaults", "1.1.201", "MV-0701")).toEqual([
       ["max-apdu", "PID 56 not answered (Lesen von Property(0/56, 1, 1) fehlgeschlagen: Empty response), ETS assumed 15; ETS negotiated 15, restricted by ByTargetDevice"],
+      ["prefer-partial", "ETS tried partial/differential download because of PreferPartialDownloadIfApplicationLoaded"],
       ["read-before-write", "the unit answered ETS 229 octets of its memory before ETS wrote there; ETS then wrote 19 of them and left 210 as the unit answered them"],
+    ]);
+    expect(branches("M-00C5_A-0366-11-7FCE/defaults", "1.1.55", "MV-07B0")).toContainEqual([
+      "prefer-partial",
+      "ETS tried partial/differential download because of PreferPartialDownloadIfApplicationLoaded",
+    ]);
+    expect(branches("M-0004_A-7072-21-99A7-O000A/defaults", "1.1.204", "MV-07B0")).toContainEqual([
+      "prefer-partial",
+      "ETS tried partial/differential download because of PreferPartialDownloadIfApplicationLoaded, then fell back (Partial download not possible because application program not loaded: load status=3)",
+    ]);
+    expect(branches("M-00A7_A-2101-10-A85C/defaults", "1.1.55", "MV-07B0")).toContainEqual([
+      "prefer-partial",
+      "ETS tried partial/differential download because of PreferPartialDownloadIfApplicationLoaded (Differential Image Stamp does not match, falling back to partial download)",
     ]);
   });
 });

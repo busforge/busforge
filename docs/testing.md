@@ -717,17 +717,21 @@ earlier run put over that.
 
 | Source | What the unit answers from it |
 |---|---|
-| the product (the application program) | the mask (the donor's must be the application's), the manufacturer (0/12), the application's program id (PID 13 of the application object), every bit its `LdCtrlCompareProp` steps expect, an unambiguous 6-byte hardware type (0/78) from `<Property ObjectIndex="0" PropertyId="78"/>` or `<ApplicationProgram HardwareType="..."/>` where no compare names 0/78, on System 7 the PEI type of its task segments, on MV-0705 the task segments and task control 1 it declares, which the unit checks a download's against |
+| the product (the application program) | the mask (the donor's must be the application's), the manufacturer (0/12), every bit its `LdCtrlCompareProp` steps expect, an unambiguous 6-byte hardware type (0/78) from `<Property ObjectIndex="0" PropertyId="78"/>` or `<ApplicationProgram HardwareType="..."/>` where no compare names 0/78, on System 7 the application's program id (3/13) and the PEI type of its task segments, on MV-0705 the task segments and task control 1 it declares, which the unit checks a download's against |
 | the identity loop | each value an ETS6.log `Required data mismatch` line required (`learnIdentity`, `rerunIdentity` against what the unit answered) |
-| the donor | everything else, as its collection and its captures show it: serial, order info, hardware type where nothing above names one, descriptions, maximum APDU, segment places, load states, restart, link timing |
+| the donor | everything else, as its collection and its captures show it: serial, order info, hardware type where nothing above names one, descriptions, maximum APDU, segment places, load states, restart, link timing, and on System B its program id (4/13) where no `LdCtrlCompareProp` names it |
 
 A value is put over the donor's element bit by bit, at the donor's length; bits past it must be zero (ETS takes a
 shorter answer with a zero tail). What neither source gives is refused, never filled in: a property the product
 gives only some bits of and the donor never showed, a value longer than the donor's element with bits set past it,
 a value given whole and shorter than the donor's element (what the unit answers after it nobody gave), a segment
-the donor places nowhere or cannot fit, a task segment for another application than the product's. The unit answers
-the product's program id as the application it holds, as each donor answered its own when it was collected; its
-memory and segments at the start are the donor's application's (what an MV-0701 download reads before it writes).
+the donor places nowhere or cannot fit, a task segment for another application than the product's. On System 7 the
+unit answers the product's program id (3/13) as the application it holds (its task segments carry it and System 7's
+full download checks it); on System B the unit keeps the donor's own 4/13 unless `LdCtrlCompareProp` declares one,
+avoiding the mismatched state where a loaded donor (`4/5=1`) carries the target application's `4/13` alongside another
+application's segments (which caused ETS to take `PreferPartialDownloadIfApplicationLoaded`'s partial path against the
+donor's segments). Its memory and segments at the start are the donor's application's
+(what an MV-0701 download reads before it writes).
 
 **The donor** is chosen by one rule per mask, never per product, from the own units there are (`DONOR_RULES`):
 a unit of the mask qualifies where its application leaves its memory as written after a restart (another
@@ -851,9 +855,10 @@ its application program and its behaviour, the rule that chose it, the identity 
 otherwise than its donor, each held against the unit built today, so a row whose unit moved runs again (except a
 stored row recorded under a known retired rule in `RETIRED_DONOR_RULES` whose application now has no qualifying donor,
 which stays replayable on its recorded donor while `donorDigest` and its property sources hold and carries
-`rulePicksNow` in the manifest, and a row whose `0/78` the identity loop alone gave, which replays with
+`rulePicksNow` in the manifest, a row whose `0/78` the identity loop alone gave, which replays with
 `skipPropertyHardwareType` (skipping `<Property ObjectIndex="0" PropertyId="78"/>` and `<ApplicationProgram
-HardwareType="..."/>`) so the property sources ETS saw stay intact); ETS's build, the simulator's endpoint ETS was set to, the export
+HardwareType="..."/>`), and a stored MV-07B0 row whose `row.json` recorded `4/13` stamped with the application's
+program id, which replays with `stampProgramId`, so the property sources ETS saw stay intact); ETS's build, the simulator's endpoint ETS was set to, the export
 where there is one, the calibration where there is one), `configuration.json` (the device's
 configuration ETS downloaded, which Busforge downloads), ETS's capture `ets.log` with the simulator's
 lines `ets.log.sim.txt`, `ets6.log.txt`, and `explained.json` (the row's verdict today and every
@@ -866,7 +871,9 @@ of their own. A catalogue unit's application program comes from the row's export
 `catalogue/`. The tool writes the verdicts into `internal/ets-sweep/manifest.json`, with each row's unit source
 (own, or the donor and its rule, and the donor the rule picks today where that is another), a catalogue unit's
 property sources, and where ETS went by an answer of the unit (`etsBranches`: the maximum APDU it negotiated from
-PID 56, the memory verify mode it detected, the unit's answer to a confirmed restart, and on MV-0701 how many octets
+PID 56, the memory verify mode it detected, the unit's answer to a confirmed restart, whether ETS tried a partial or
+differential download for `PreferPartialDownloadIfApplicationLoaded` and any subsequent fallback (`Partial download
+not possible` or `Differential Image Stamp does not match, falling back to partial download`), and on MV-0701 how many octets
 the unit answered it before it wrote there and how many of them it then wrote, a write the line refused not
 counted), which a catalogue unit gives as its donor does:
 
