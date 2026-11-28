@@ -618,7 +618,7 @@ corpusDescribe("where ETS went by an answer of the unit", () => {
     ]);
     expect(branches("M-00C5_A-0366-11-7FCE/defaults", "1.1.55", "MV-07B0")).toContainEqual([
       "prefer-partial",
-      "ETS tried partial/differential download because of PreferPartialDownloadIfApplicationLoaded",
+      "ETS tried partial/differential download because of PreferPartialDownloadIfApplicationLoaded, then fell back (Partial download not possible because different application program: 72 9071 20 instead of 197 0366 11)",
     ]);
     expect(branches("M-0004_A-7072-21-99A7-O000A/defaults", "1.1.204", "MV-07B0")).toContainEqual([
       "prefer-partial",

@@ -237,10 +237,10 @@ describe("hardware type pre-seeding (declaredHardwareType)", () => {
   });
 });
 
-corpusDescribe("hardware type pre-seeding against stored two-attempt sweep rows", () => {
-  test("matches 100% byte-for-byte wherever it fires, with zero mismatches across all stored 0/78 identity-loop rows", () => {
+corpusDescribe("hardware type pre-seeding against stored sweep rows", () => {
+  test("matches 100% byte-for-byte on every 0/78 identity-loop row and reproduces every pre-seeded 0/78 row", () => {
     const root = corpusPath(SWEEP_DIR);
-    let checked = 0, matched = 0;
+    let checked = 0, matched = 0, preseeded = 0;
     const extracted = new Map<string, string | null>();
     for (const appName of readdirSync(root).sort()) {
       const ad = join(root, appName);
@@ -251,20 +251,29 @@ corpusDescribe("hardware type pre-seeding against stored two-attempt sweep rows"
         const spec = JSON.parse(readFileSync(join(vd, "row.json"), "utf8")) as RowSpec;
         if (typeof spec.unit === "string" || !spec.export) continue;
         const m78 = spec.unit.identity.flatMap((l) => mismatchLines(l)).find((m) => m.object === 0 && m.pid === 78);
-        if (!m78) continue;
-        checked++;
+        const prop78 = spec.unit.properties["0/78"];
+        const isPreseeded = typeof prop78 === "string" && (prop78.startsWith("product: Property 0/78 ") || prop78.startsWith("product: ApplicationProgram HardwareType "));
+        if (!m78 && !isPreseeded) continue;
         const raw = readFileSync(join(vd, spec.export));
         const xml = extractAppPrograms(spec.export.endsWith(".gz") ? gunzipSync(raw) : raw, [appName]).get(appName)!;
         const hw = declaredHardwareType(xml);
         extracted.set(appName, hw ? hw.bytes.toString("hex") : null);
-        if (hw) {
-          expect([appName, hw.bytes.toString("hex")]).toEqual([appName, m78.required.toString("hex")]);
-          matched++;
+        if (m78) {
+          checked++;
+          if (hw) {
+            expect([appName, hw.bytes.toString("hex")]).toEqual([appName, m78.required.toString("hex")]);
+            matched++;
+          }
+        } else {
+          expect(hw).not.toBeNull();
+          expect(`product: ${hw!.what}`).toBe(prop78);
+          preseeded++;
         }
       }
     }
-    expect(checked).toBeGreaterThanOrEqual(38);
-    expect(matched).toBeGreaterThanOrEqual(37);
+    expect(checked).toBeGreaterThanOrEqual(28);
+    expect(matched).toBeGreaterThanOrEqual(27);
+    expect(preseeded).toBeGreaterThanOrEqual(10);
     // Representative rows from every extraction pattern (single-enum, choose on Merker, Assign, AP@HardwareType, JS calc skip).
     expect(extracted.get("M-00C5_A-0366-11-7FCE")).toBe("0000c5030001");
     expect(extracted.get("M-0001_A-20DF-22-4073-O000A")).toBe("000a800000aa");
