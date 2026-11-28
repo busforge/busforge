@@ -475,7 +475,9 @@ function absoluteSegmentTargets(
 // `verify` mirrors DeviceSegmentTarget.verify: owned bytes minus Access="None" device-internal
 // markers, so a post-flash read-back asserts only user-facing bytes.
 // What ETS writes for a parameter the configuration does not show (docs/load-procedures.md, R14): its default,
-// or nothing, so its bytes keep the segment's template (<Data>, zeros where the segment has none). The
+// or nothing, so its bytes keep the segment's template (<Data>, zeros where the segment has none; in a filled
+// System B full download with a non-zero Fill, unowned bytes of a dataless segment stay at that allocation fill,
+// fullDownloadParamImage). The
 // application's <Options DownloadInvisibleParameters> and its MinEtsVersion decide, and only where an ETS
 // download shows the combination; the others refuse, and the builders refuse them only where the two answers
 // differ in a byte. `rejected`: every placement of the parameter lies in a branch of a choose ETS evaluated and
@@ -558,7 +560,29 @@ const hiddenRefusal = (refId: string, at: string, reason: string) =>
 // `defaulted`: inactive parameters written at their default although the values hold another value for them.
 export interface RelativeSegmentTarget { lsm: number; size: number; bytes: Buffer; owned: number[]; verify: number[]; markers: number[]; constant: number[]; constants: ConstantPlacement[]; defaulted: Set<string>; }
 
-type RelativeOpts = { lang?: string; moduleInstances?: ModuleInstance[]; ownIdleUnionDefaults?: boolean; textRefusals?: TextRefusals };
+// The parameter segment a filled System B full download (LdCtrlRelSegment Mode 1) leaves on the device:
+// on a segment without <Data>, unowned bytes stay at the allocation's `fillByte` (and fillAllocatedRuns
+// leaves them untouched) while owned bytes keep `target.bytes` (partially-owned bytes keeping zero in
+// their unowned bits, as ETS's download of M-00A6_A-0025-30-A50D into a simulated unit shows). Segments
+// that declare <Data> keep `target.bytes` unchanged.
+export function fullDownloadParamImage(
+  app: AppConfig,
+  target: Pick<RelativeSegmentTarget, "lsm" | "bytes" | "owned">,
+  fillByte: number,
+): Buffer {
+  if (target.bytes.length !== target.owned.length) {
+    throw new ProductError("FULL_DOWNLOAD_SEGMENT_UNKNOWN", `parameter image length ${target.bytes.length} does not match ownership length ${target.owned.length}`);
+  }
+  const seg = app.segments.find((s) => s.lsm === target.lsm);
+  if (!seg || seg.data.length > 0) return target.bytes;
+  const fill = fillByte & 0xff;
+  if (fill === 0) return target.bytes;
+  const out = Buffer.from(target.bytes);
+  for (let i = 0; i < out.length; i++) if (!target.owned[i]) out[i] = fill;
+  return out;
+}
+
+type RelativeOpts = { lang?: string; moduleInstances?: ModuleInstance[]; ownIdleUnionDefaults?: boolean; textRefusals?: TextRefusals; fullFill?: number };
 export function buildRelativeSegmentTarget(
   app: AppConfig,
   values: Map<string, string>,
@@ -706,10 +730,21 @@ function relativeSegmentTarget(app: AppConfig, values: Map<string, string>, lsm:
       placements.push({ paramRefId: ref.id, paramId: param.id, offset: param.offset, bitOffset: param.bitOffset ?? 0, sizeInBit: type.sizeInBit });
     }
   }
-  for (const u of unshown) {
-    if (opts.textRefusals === "skip" || !u.type || !Number.isFinite(u.type.sizeInBit) || holdsBits(owned, u.param, u.type.sizeInBit)) continue;
-    const written = withValue(img, u.param, u.type, u.value);
-    if (!written || !written.equals(img)) throw hiddenRefusal(u.refId, `offset ${u.param.offset} of the parameter segment (LSM ${lsm})`, u.reason);
+  // In a filled System B full download (`opts.fullFill` set), unowned bytes of a dataless segment stay at the
+  // allocation fill rather than 0x00, so an unknown hidden parameter rule compares against that filled template
+  // (while partially-owned bytes still keep zero in their unowned bits, matching ETS's RelMemory(4)). Partial
+  // downloads, parameter flashes and structural flashes leave `opts.fullFill` unset and compare against `img`.
+  if (unshown.length && opts.textRefusals !== "skip") {
+    const template = opts.fullFill !== undefined ? fullDownloadParamImage(app, { lsm, bytes: img, owned }, opts.fullFill) : img;
+    for (const u of unshown) {
+      if (!u.type || !Number.isFinite(u.type.sizeInBit) || holdsBits(owned, u.param, u.type.sizeInBit)) continue;
+      const written = withValue(img, u.param, u.type, u.value);
+      const at = u.param.offset;
+      const span = byteWidth(u.type.sizeInBit, u.param.bitOffset);
+      if (!written || at === undefined || !written.subarray(at, at + span).equals(template.subarray(at, at + span))) {
+        throw hiddenRefusal(u.refId, `offset ${u.param.offset} of the parameter segment (LSM ${lsm})`, u.reason);
+      }
+    }
   }
   if (contested) for (const [i, c] of contested.entries()) { owned[i] &= ~c; verify[i] &= ~c; markers[i] &= ~c; constant[i] &= ~c; }
   return { target: { lsm, size: seg.size, bytes: img, owned, verify, markers, constant, constants: placements, defaulted }, taken };

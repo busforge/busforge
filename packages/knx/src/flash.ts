@@ -332,7 +332,7 @@ export function fillAllocatedRuns(bytes: Buffer, inImage: ReadonlyArray<number>,
 // The segments' addresses are not known here: the device assigns them during the allocation, and
 // `writeSegment` resolves each one through PID_TABLE_REFERENCE at execution time.
 export function planSystemBFullDownload(tables: {
-  params: Buffer;   // LSM 4, the parameter image
+  params: Buffer;   // LSM 4, the parameter image (for a filled dataless segment, unowned bytes already hold fillByte)
   paramsInImage: ReadonlyArray<number>; // per byte of `params`: non-zero where ETS's image holds it
   comObj: Buffer;   // LSM 3, the com-object table (authored, not kept from the device)
   addr: Buffer;     // LSM 1, the group-address table
