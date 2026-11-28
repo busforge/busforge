@@ -59,6 +59,9 @@ export interface CfgParam {
   // that argument>`; the per-instance base is resolved either from the project 0.xml
   // (ModuleInstance args) or, for a from-scratch device, by re-running the allocators.
   baseOffsetArg?: string;
+  // For a module-def parameter: the Argument id added to its static Value (Parameter@BaseValue).
+  // The effective default value in an instance is `staticValue + <instance value of that argument>`.
+  baseValueArg?: string;
 }
 // `text`/`suffix` are the ref's own Text/SuffixText, which ETS shows instead of its Parameter's;
 // `textParamRefId` feeds the {{0}} / {{0:default}} placeholder in that text.
@@ -297,19 +300,105 @@ export function resolveParamRef(app: AppConfig, refId: string): { ref: CfgParamR
   return { ref, param, type: param ? app.types.get(param.typeId) : undefined };
 }
 
+// A module argument's value as a decimal integer (a memory BaseOffset, com-object BaseNumber,
+// or parameter BaseValue): else NaN, which every caller refuses. Number() alone would read ""
+// as 0 and "1.5" as 1.5, and place or configure the module with a guessed number.
+export const moduleArgNumber = (value: string): number => (/^-?\d+$/.test(value) ? Number(value) : NaN);
+
+// In 0.xml, a nested <SubModuleDefs> instance (e.g. MD-4_M-3_MI-1_SM-1_M-4_MI-1-1-1) still carries
+// its enclosing <Module>'s RefId (MD-4_M-3). Detect such nested instances by the `_MI-<n>_` segment
+// before the trailing submodule suffix.
+export const isSubModuleInstance = (inst: ModuleInstance): boolean => /_MI-[\d-]+_/.test(inst.id);
+
+// The declared <Argument> definition for a full argument id, if any ModuleDef declares it.
+function declaredModuleArg(app: AppConfig, fullArgId: string): ModuleArg | undefined {
+  for (const md of app.moduleDefs.values()) {
+    if (fullArgId.startsWith(`${md.id}_`)) return md.args.find((a) => a.id === fullArgId);
+  }
+  return undefined;
+}
+
+// The integer a module instance's numeric argument holds, by the argument's full id. Undefined where
+// the instance does not carry the argument, its declared Type is "Text", or its value is no integer;
+// of two arguments with one id the last counts.
+export function moduleInstanceArgNumber(app: AppConfig, inst: ModuleInstance, fullArgId: string): number | undefined {
+  if (declaredModuleArg(app, fullArgId)?.type === "Text") return undefined;
+  const arg = inst.args.findLast((a) => `${app.id}_${a.refId}` === fullArgId);
+  const value = arg ? moduleArgNumber(arg.value) : NaN;
+  return Number.isNaN(value) ? undefined : value;
+}
+
+export type ParamArgLookup = (argId: string, paramId: string) => number;
+
+export function moduleInstanceArgLookup(app: AppConfig, inst: ModuleInstance): ParamArgLookup {
+  return (argId, paramId) => {
+    const v = moduleInstanceArgNumber(app, inst, argId);
+    if (v === undefined) {
+      throw new ProductError("MODULE_ARG_UNRESOLVED",
+        `module instance ${inst.id}: parameter ${paramId} needs BaseValue argument ${argId}, which the instance does not carry as a numeric integer`);
+    }
+    return v;
+  };
+}
+
+// The module instance an instance-scoped refId belongs to (longest matching instance prefix),
+// or undefined for a top-level ref or when no matching instance is supplied.
+export function moduleInstanceForRef(app: AppConfig, refId: string, instances?: ModuleInstance[]): ModuleInstance | undefined {
+  if (!instances?.length) return undefined;
+  let best: ModuleInstance | undefined;
+  for (const inst of instances) {
+    if (refId.startsWith(`${app.id}_${inst.id}_`) && (!best || inst.id.length > best.id.length)) best = inst;
+  }
+  return best;
+}
+
+// Effective default value of a ParameterRef, applying Parameter@BaseValue inside a module instance
+// by adding the instance's numeric integer argument value to the parameter's static Value (ref Value
+// over Parameter Value). Missing or non-integer argument or static Value refuses rather than guessing.
+export function resolveParamDefault(
+  ref: CfgParamRef | undefined,
+  param: CfgParam | undefined,
+  paramArgValue?: ParamArgLookup,
+): string | undefined {
+  const raw = ref?.value ?? param?.value;
+  if (!param || param.baseValueArg === undefined) return raw;
+  const label = ref?.id ?? param.id;
+  if (!paramArgValue) {
+    throw new ProductError("MODULE_ARG_UNRESOLVED",
+      `parameter ${label} declares BaseValue="${param.baseValueArg}" outside any module instance`);
+  }
+  const base = paramArgValue(param.baseValueArg, label);
+  const staticNum = raw === undefined ? NaN : moduleArgNumber(raw.trim());
+  if (Number.isNaN(staticNum) || !Number.isSafeInteger(staticNum) || !Number.isSafeInteger(base) || !Number.isSafeInteger(staticNum + base)) {
+    throw new ProductError("MODULE_ARG_UNRESOLVED",
+      `parameter ${label} declares BaseValue="${param.baseValueArg}", but its static Value ${raw === undefined ? "is missing" : `"${raw}"`} cannot be added as an integer to ${base}`);
+  }
+  return String(staticNum + base);
+}
+
+// Effective default value of an instance-scoped (or top-level) ParameterRef id against `instances`.
+export function effectiveParamDefault(app: AppConfig, refId: string, instances?: ModuleInstance[]): string | undefined {
+  const { ref, param } = resolveParamRef(app, refId) ?? {};
+  if (!ref && !param) return undefined;
+  const inst = param?.baseValueArg !== undefined ? moduleInstanceForRef(app, refId, instances) : undefined;
+  return resolveParamDefault(ref, param, inst ? moduleInstanceArgLookup(app, inst) : undefined);
+}
+
 // Two stored values of a parameter are one value where they decode the same: no value is the parameter's
 // default, a float compares by number (ETS stores it in scientific notation, the UI as a decimal), and a
 // colour by its hex digits whatever their case (the read-back gives #RRGGBB, an edit may store #rrggbb).
 // The blanks at a value's edge count only for a text parameter: the catalogue and the project keep them
 // (parseAppConfig, the project's parse), and every other type reads its value without them.
+// `aInstances`/`bInstances` supply each side's module instances when comparing across configurations
+// whose allocators may have handed out different BaseValue arguments.
 export type SameParamValue = (refId: string, a: string | null, b: string | null) => boolean;
-export function sameParamValue(app: AppConfig): SameParamValue {
+export function sameParamValue(app: AppConfig, aInstances?: ModuleInstance[], bInstances: ModuleInstance[] | undefined = aInstances): SameParamValue {
   return (refId, a, b) => {
-    const { ref, param, type } = resolveParamRef(app, refId) ?? {};
+    const { type } = resolveParamRef(app, refId) ?? {};
     const base = type?.base;
     const read = (v: string) => (base === "Text" ? v : v.trim());
-    const def = ref?.value ?? param?.value ?? "";
-    const x = read(a ?? def), y = read(b ?? def);
+    const x = read(a ?? effectiveParamDefault(app, refId, aInstances) ?? "");
+    const y = read(b ?? effectiveParamDefault(app, refId, bInstances) ?? "");
     // An empty value (a parameter without a default) is no number: Number("") would read it as 0.
     return x === y || (x !== "" && y !== "" && ((base === "Float" && Number(x) === Number(y)) || (base === "Color" && x.toUpperCase() === y.toUpperCase())));
   };
@@ -569,6 +658,7 @@ function parseParams(staticKids: ONode[], unionScope: string): { params: Map<str
       // base, colliding with another channel's memory. Take the union's BaseOffset, exactly
       // as offset/bitOffset/codeSegment above already do.
       baseOffsetArg: unionMem ? unionMem.BaseOffset : ma?.BaseOffset,
+      ...(a.BaseValue !== undefined ? { baseValueArg: a.BaseValue } : {}),
       patchAlways: a.LegacyPatchAlways === "true" || undefined,
       union: union || undefined,
       unionId,

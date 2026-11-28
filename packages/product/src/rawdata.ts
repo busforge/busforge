@@ -30,7 +30,7 @@ export function refuseRawDataWrites(app: AppConfig, values: Map<string, string>,
       return out;
     });
   };
-  const same = sameParamValue(app);
+  const same = sameParamValue(app, base && base !== "unknown" ? base.instances : instances, instances);
   const now = rawValues(values, instances).flatMap((m) => [...m]);
   if (base === "unknown") {
     if (!now.length) return;

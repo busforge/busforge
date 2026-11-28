@@ -28,56 +28,9 @@ const TIMEOUT = 300_000;
 // internal/ets-download-record-deviations.md; a difference not listed here fails, and so does a listed
 // one that is gone.
 const KNOWN_DEVIATIONS = [
-  // ModuleDef MD-1 Parameter MD-1_P-41 declares BaseValue="..._MD-1_A-19" (NumericArg 4/5 on 20DE, 3 on 20DF);
-  // Busforge does not apply BaseValue yet and evaluates MD-1_P-41 as 0.
-  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 3 at 942: Busforge c3, ETS 00 (1 project)",
-  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 3 at 944: Busforge 93, ETS 00 (1 project)",
-  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 3 at 948: Busforge c3, ETS 00 (1 project)",
-  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 3 at 950: Busforge 93, ETS 00 (1 project)",
-  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 4 at 100: Busforge 42, ETS 44 (1 project)",
-  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 4 at 103: Busforge 42, ETS 44 (1 project)",
-  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 4 at 10578: Busforge 00, ETS 01 (1 project)",
-  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 4 at 10579: Busforge 00, ETS 90 (1 project)",
-  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 4 at 10582: Busforge 00, ETS 01 (1 project)",
-  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 4 at 10583: Busforge 00, ETS f4 (1 project)",
-  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 4 at 10590: Busforge 00, ETS 01 (1 project)",
-  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 4 at 10591: Busforge 00, ETS 90 (1 project)",
-  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 4 at 10594: Busforge 00, ETS 01 (1 project)",
-  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 4 at 10595: Busforge 00, ETS f4 (1 project)",
-  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 4 at 10597: Busforge 00, ETS 01 (1 project)",
-  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 4 at 167: Busforge 0a, ETS 1e (1 project)",
-  "insta-o000a-module-param-base-value: M-0001_A-20DE-22-6369-O000A object 4 at 168: Busforge 0a, ETS 1e (1 project)",
-  "insta-o000a-module-param-base-value: M-0001_A-20DF-22-4073-O000A object 3 at 942: Busforge c3, ETS 00 (1 project)",
-  "insta-o000a-module-param-base-value: M-0001_A-20DF-22-4073-O000A object 3 at 944: Busforge 93, ETS 00 (1 project)",
-  "insta-o000a-module-param-base-value: M-0001_A-20DF-22-4073-O000A object 4 at 10476: Busforge 03, ETS 01 (1 project)",
-  "insta-o000a-module-param-base-value: M-0001_A-20DF-22-4073-O000A object 4 at 10477: Busforge 00, ETS 02 (1 project)",
-  "insta-o000a-module-param-base-value: M-0001_A-20DF-22-4073-O000A object 4 at 167: Busforge 0a, ETS 1e (1 project)",
   // ETS's record of the com-object table dates from a download when object 3 had no link, and was not
   // written again after the project linked it; ETS's own later download writes 0x4f for the linked object.
   "gvs-amma-object-3-record-older-than-its-link: M-0085_A-0072-30-69AA object 3 at 6: Busforge 4f, ETS 4b (1 project)",
-  // Same ModuleDef MD-1 BaseValue omission on the Blumotix OEM variants (M-00A0, -O000A).
-  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 3 at 942: Busforge c3, ETS 00 (1 project)",
-  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 3 at 944: Busforge 93, ETS 00 (1 project)",
-  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 3 at 948: Busforge c3, ETS 00 (1 project)",
-  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 3 at 950: Busforge 93, ETS 00 (1 project)",
-  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 4 at 100: Busforge 42, ETS 44 (1 project)",
-  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 4 at 103: Busforge 42, ETS 44 (1 project)",
-  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 4 at 10578: Busforge 00, ETS 01 (1 project)",
-  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 4 at 10579: Busforge 00, ETS 90 (1 project)",
-  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 4 at 10582: Busforge 00, ETS 01 (1 project)",
-  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 4 at 10583: Busforge 00, ETS f4 (1 project)",
-  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 4 at 10590: Busforge 00, ETS 01 (1 project)",
-  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 4 at 10591: Busforge 00, ETS 90 (1 project)",
-  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 4 at 10594: Busforge 00, ETS 01 (1 project)",
-  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 4 at 10595: Busforge 00, ETS f4 (1 project)",
-  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 4 at 10597: Busforge 00, ETS 01 (1 project)",
-  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 4 at 167: Busforge 0a, ETS 1e (1 project)",
-  "insta-o000a-module-param-base-value: M-00A0_A-20DE-12-560D-O000A object 4 at 168: Busforge 0a, ETS 1e (1 project)",
-  "insta-o000a-module-param-base-value: M-00A0_A-20DF-12-AEEA-O000A object 3 at 942: Busforge c3, ETS 00 (1 project)",
-  "insta-o000a-module-param-base-value: M-00A0_A-20DF-12-AEEA-O000A object 3 at 944: Busforge 93, ETS 00 (1 project)",
-  "insta-o000a-module-param-base-value: M-00A0_A-20DF-12-AEEA-O000A object 4 at 10476: Busforge 03, ETS 01 (1 project)",
-  "insta-o000a-module-param-base-value: M-00A0_A-20DF-12-AEEA-O000A object 4 at 10477: Busforge 00, ETS 02 (1 project)",
-  "insta-o000a-module-param-base-value: M-00A0_A-20DF-12-AEEA-O000A object 4 at 167: Busforge 0a, ETS 1e (1 project)",
 ];
 
 // The devices with a record that are not compared, each with why: ETS marks a part of the device as

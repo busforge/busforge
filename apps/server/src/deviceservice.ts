@@ -3,7 +3,7 @@ import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { iaToNum, numToGa, formatGa, SENDER_ENTRY } from "@busforge/knx";
 import { extractAppPrograms, moduleInstanceOf, type Project, type DroppedLink, type DroppedLinkReason } from "@busforge/project";
-import { parseAppConfig, buildDeviceConfig, annotateCalculations, buildSecurityObject, hardwareRefusals, knxIpRefusals, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, effectiveComObjFlags, ProductError, imageWritableType, resolveParamRef, sameParamValue, type SameParamValue, takesValue, type EffectiveComObjFlags, type ComObjInstanceOverride, type AppConfig, type ModuleInstance, moduleInstanceArgNumber, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
+import { parseAppConfig, buildDeviceConfig, annotateCalculations, buildSecurityObject, hardwareRefusals, knxIpRefusals, comObjectUniverse, comObjectRefTexts, placeComObjOverrides, effectiveComObjFlags, ProductError, imageWritableType, resolveParamRef, resolveModuleInstances, sameParamValue, type SameParamValue, takesValue, type EffectiveComObjFlags, type ComObjInstanceOverride, type AppConfig, type ModuleInstance, moduleInstanceArgNumber, type ComObjectLink, type ComObjFlags, type DeviceConfigView, type MatrixOperation, type OperationState, type SecureTablesCtx, type OtherDevice } from "@busforge/product";
 import { getAppProgram, putAppProgram, catalogBaggageNames, pictureType } from "./db/catalog.ts";
 import { getDeviceParams, getDeviceParamBase, getDeviceParamAssumed, getDeviceModules, getDeviceAppProgramId, getDeviceProductRef, getDeviceForFlash, deviceHasApplication, getSourceFile, getDeviceChangedKeys, getDeviceLinks, getGaLinks, getLinkBaseGaps, getDeviceComObjOverrides, getDeviceComObjOverrideBase, getDeviceKnxIp } from "./db/deviceparams.ts";
 import { deviceCompatibility } from "./compatibility.ts";
@@ -304,15 +304,18 @@ export function baseOutsideType(app: AppConfig, baseline: Map<string, string>): 
 // A hidden parameter holds what the device keeps in the bytes of a setting it does not use (a residue or
 // fill as ETS leaves them, docs/load-procedures.md R14, or another union branch's bits) and is taken as
 // such. A parameter whose project value is already the baseline's is not changed by a revert.
+const resolvedModules = (app: AppConfig, stored: ModuleInstance[], values: Map<string, string>): ModuleInstance[] =>
+  stored.length || !app.hasModules ? stored : resolveModuleInstances(app, values);
+
 export function revertOutsideType(state: AppState, projectId: string, deviceId: string, refId?: string): string[] {
   const app = loadApp(state, projectId, deviceId);
   if (!app) return [];
   const base = getDeviceParamBase(state.db, projectId, deviceId), live = getDeviceParams(state.db, projectId, deviceId);
-  const same = sameParamValue(app);
+  const modules = getDeviceModules(state.db, projectId, deviceId);
+  const same = sameParamValue(app, resolvedModules(app, modules, base), resolvedModules(app, modules, live));
   const outside = [...baseOutsideType(app, base).keys()]
     .filter((r) => (refId === undefined || r === refId) && !same(r, base.get(r) ?? null, live.get(r) ?? null));
   if (refId !== undefined || !outside.length) return outside;
-  const modules = getDeviceModules(state.db, projectId, deviceId);
   let kept: string[] = [];
   for (let round = 0; round <= outside.length; round++) {
     const after = new Map(base);
@@ -326,10 +329,11 @@ export function revertOutsideType(state: AppState, projectId: string, deviceId: 
   throw new ApiError("REVERT_VALUE_NOT_OF_TYPE", `the device's state holds values that are no values of their parameters for ${outside.join(", ")}, and which of them the configuration after a revert shows does not settle; nothing was reverted`, 409, { params: outside });
 }
 
-export function paramValueSame(state: AppState, projectId: string, deviceId: string): SameParamValue {
+export function paramValueSame(state: AppState, projectId: string, deviceId: string, values?: Map<string, string>): SameParamValue {
   const app = loadApp(state, projectId, deviceId);
   if (!app) throw new ApiError("APP_PROGRAM_MISSING", "application program not found in project", 404);
-  return sameParamValue(app);
+  const modules = getDeviceModules(state.db, projectId, deviceId);
+  return sameParamValue(app, resolvedModules(app, modules, values ?? getDeviceParams(state.db, projectId, deviceId)));
 }
 
 export function resolveParamForEdit(state: AppState, projectId: string, deviceId: string, refId: string): { defaultValue?: string; float?: boolean } | undefined {
@@ -426,7 +430,7 @@ export function buildDeviceView(state: AppState, projectId: string, deviceId: st
   const baseline = getDeviceParamBase(db, projectId, deviceId);
   // Marks hold only where the baseline holds the value they are about (replaceParamBase keeps them so;
   // an imported artifact is not checked against its baseline).
-  const same = sameParamValue(app);
+  const same = sameParamValue(app, view.moduleInstances);
   const assumed = new Set([...getDeviceParamAssumed(db, projectId, deviceId)].filter(([ref, v]) => same(ref, baseline.get(ref) ?? null, v)).map(([ref]) => ref));
   const outside = baseOutsideType(app, baseline);
   const shownParams = new Set<string>();

@@ -19,7 +19,8 @@ import { putGroupKeys, getGroupKeys } from "../src/db/groupKeys.ts";
 import { putGroupSenders, listGroupSenders, addGroupSender, removeGroupSender, sendersByGroup, nextSendSequence } from "../src/db/groupSenders.ts";
 import { deleteGroupAddress } from "../src/db/groupedit.ts";
 import { appProgramId } from "@busforge/project";
-import { parseAppConfig, sameParamValue } from "@busforge/product";
+import { parseAppConfig, resolveModuleInstances, sameParamValue } from "@busforge/product";
+import { distinguishable } from "../src/routes/deviceops.ts";
 import { decodeGroupTpdu, undecodedSecureTelegram } from "../src/telegram.ts";
 import { tempDir } from "../../../tools/test-temp.ts";
 
@@ -1406,5 +1407,43 @@ describe("whether two stored values of a parameter are one value", () => {
   test("a colour compares by its hex digits whatever their case", () => {
     const same = sameParamValue(parseAppConfig(xml(' Value="#FFFFFF"').replace('<TypeFloat Encoding="IEEE-754 Single" />', '<TypeColor Space="RGB" />')));
     expect([same(R, "#a1b2c3", "#A1B2C3"), same(R, null, "#ffffff"), same(R, "#A1B2C3", "#A1B2C4")]).toEqual([true, true, false]);
+  });
+
+  test("distinguishable compares an unstored BaseValue enum against its static+arg default, not its static Value", async () => {
+    const app = parseAppConfig(`<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-T"><ApplicationPrograms>
+      <ApplicationProgram Id="M-T_A-2" ApplicationNumber="2" ApplicationVersion="1" MaskVersion="MV-07B0" MinEtsVersion="5.0" Name="BV" DefaultLanguage="en-US">
+        <Static>
+          <Code><RelativeSegment Id="M-T_A-2_RS-4" Name="P" Size="4" LoadStateMachine="4" Offset="0" /></Code>
+          <ParameterTypes>
+            <ParameterType Id="M-T_A-2_PT-M"><TypeRestriction Base="Value" SizeInBit="8"><Enumeration Text="A" Value="0" Id="M-T_A-2_PT-M_E0" /><Enumeration Text="B" Value="4" Id="M-T_A-2_PT-M_E4" /></TypeRestriction></ParameterType>
+            <ParameterType Id="M-T_A-2_PT-N"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="255" /></ParameterType>
+          </ParameterTypes>
+          <Parameters /><ParameterRefs />
+        </Static>
+        <ModuleDefs><ModuleDef Id="M-T_A-2_MD-1" Name="Ch">
+          <Arguments><Argument Id="M-T_A-2_MD-1_A-1" Name="Mode" /></Arguments>
+          <Static>
+            <Parameters>
+              <Parameter Id="M-T_A-2_MD-1_P-1" Name="M" ParameterType="M-T_A-2_PT-M" Text="M" Value="0" BaseValue="M-T_A-2_MD-1_A-1" />
+              <Parameter Id="M-T_A-2_MD-1_P-2" Name="Out" ParameterType="M-T_A-2_PT-N" Text="Out" Value="0"><Memory CodeSegment="M-T_A-2_RS-4" Offset="0" BitOffset="0" /></Parameter>
+            </Parameters>
+            <ParameterRefs>
+              <ParameterRef Id="M-T_A-2_MD-1_P-1_R-1" RefId="M-T_A-2_MD-1_P-1" />
+              <ParameterRef Id="M-T_A-2_MD-1_P-2_R-1" RefId="M-T_A-2_MD-1_P-2" Value="10" />
+              <ParameterRef Id="M-T_A-2_MD-1_P-2_R-2" RefId="M-T_A-2_MD-1_P-2" Value="44" />
+            </ParameterRefs>
+          </Static>
+          <Dynamic><ParameterBlock Id="M-T_A-2_MD-1_PB-1" Name="b" Text="Ch">
+            <ParameterRefRef RefId="M-T_A-2_MD-1_P-1_R-1" />
+            <choose ParamRefId="M-T_A-2_MD-1_P-1_R-1">
+              <when test="0"><ParameterRefRef RefId="M-T_A-2_MD-1_P-2_R-1" /></when>
+              <when test="4"><ParameterRefRef RefId="M-T_A-2_MD-1_P-2_R-2" /></when>
+            </choose>
+          </ParameterBlock></Dynamic>
+        </ModuleDef></ModuleDefs>
+        <Dynamic><ChannelIndependentBlock><Module Id="M-T_A-2_MD-1_M-1" RefId="M-T_A-2_MD-1" Name="C"><NumericArg RefId="M-T_A-2_MD-1_A-1" Value="4" /></Module></ChannelIndependentBlock></Dynamic>
+      </ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`);
+    const instances = resolveModuleInstances(app, new Map());
+    expect(await distinguishable(app, new Map(), "M-T_A-2_MD-1_M-1_MI-1_P-1_R-1", instances, false)).toBe(true);
   });
 });

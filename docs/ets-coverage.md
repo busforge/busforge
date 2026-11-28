@@ -81,6 +81,7 @@ Read and honoured:
 | `ParameterBlock` | `Inline="true"` | the block is part of its parent's page: its rows stand where it is authored among the parent's rows, it has no entry in the section index, and its heading comes from its `Text` or the parameter its `ParamRefId` names (none without either, never its `Name`); inside a `Grid`/`Table` block it follows the grid, whose cells share one geometry |
 | `ComObject` | `ReadOnInitFlag` | the sixth flag, alongside C/R/W/T/U |
 | `Parameter` | `InitialValue` | a device placed in Busforge, or given another product, starts a text parameter at its translation into the client's language; other forms refuse the placement where they reach the device ([device-memory-model.md](device-memory-model.md#which-parameter-types-reach-the-image-at-all)) |
+| `Parameter` | `BaseValue` | inside a `ModuleDef`, adds the module instance's numeric `Argument` value to the parameter's static `Value` (`ParameterRef/@Value` over `Parameter/@Value`) for `<choose>` evaluation, UI values/defaults, `<Assign>`, `<ParameterCalculation>`, and memory encoding; a missing or non-integer argument or static value refuses (`MODULE_ARG_UNRESOLVED`) |
 | `Options` | `TextParameterEncoding` | the bytes of a text parameter's characters beyond ASCII |
 | `TypeNumber` | `Increment`, `UIHint="Slider"`, `UIHint="CheckBox"` | spinner step, slider and checkbox |
 | `Parameter` | `LegacyPatchAlways` | parsed; the parameter is built and owned like any other, because ETS always writes its value over the `<Data>` byte (see [findings.md](findings.md) §8) |
@@ -91,7 +92,6 @@ Not read, with the reason:
 | Where | Attribute | Why it is still open |
 |---|---|---|
 | `ParameterBlock` | `ShowInComObjectTree` | a com-object grouping signal; the com-object list is flat today |
-| `Parameter` | `BaseValue` | on read-only mirror parameters inside modules, pointing at a module `Argument`. The per-instance numbering it describes is resolved through the module offset path instead. |
 
 Safe to ignore: `InternalDescription`, `Tag`, `DefaultUnionParameter`, `Icon`,
 `SecurityRequired`, plugin validation, and the sub-attributes of types that are unsupported anyway.

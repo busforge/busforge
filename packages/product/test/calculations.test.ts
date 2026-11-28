@@ -276,6 +276,41 @@ test("a calculation in a ModuleDef runs per placed instance, and one refused the
   expect(page.get(`${M}_MD-1_M-1_MI-1_P-1_R-1`)!.calculations!.map((m) => [m.name, m.state])).toEqual([["c2", "computed"], ["c1", "refused"]]);
 });
 
+test("a calculation in a ModuleDef reading a BaseValue input treats static+arg as its default and passes that value to the script", () => {
+  const M = "M-0005_A-0C03-01-0001";
+  const cfg = parseAppConfig(`<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/20"><ManufacturerData><Manufacturer RefId="M-0005"><ApplicationPrograms>
+<ApplicationProgram Id="${M}" ApplicationNumber="3075" ApplicationVersion="1" ProgramType="ApplicationProgram" MaskVersion="MV-07B0" MinEtsVersion="5.0" Name="ModBV" LoadProcedureStyle="MergedProcedure" PeiType="0" DefaultLanguage="en-US">
+<Static><Code><RelativeSegment Id="${M}_RS-1" Name="main" Size="8" LoadStateMachine="4" Offset="0"><Data>//////////8=</Data></RelativeSegment></Code>
+<ParameterTypes><ParameterType Id="${M}_PT-N" Name="N"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="255"/></ParameterType></ParameterTypes>
+<Parameters/><ParameterRefs/></Static>
+<ModuleDefs><ModuleDef Id="${M}_MD-1" Name="Ch">
+<Arguments><Argument Id="${M}_MD-1_A-1" Name="Idx"/></Arguments>
+<Static>
+<Parameters>
+  <Parameter Id="${M}_MD-1_P-1" Name="a" ParameterType="${M}_PT-N" Text="a" Value="0"><Memory CodeSegment="${M}_RS-1" Offset="0" BitOffset="0"/></Parameter>
+  <Parameter Id="${M}_MD-1_P-2" Name="idx" ParameterType="${M}_PT-N" Text="idx" Access="None" Value="1" BaseValue="${M}_MD-1_A-1"/>
+  <Parameter Id="${M}_MD-1_P-3" Name="b" ParameterType="${M}_PT-N" Text="b" Access="Read" Value="0"><Memory CodeSegment="${M}_RS-1" Offset="1" BitOffset="0"/></Parameter>
+</Parameters>
+<ParameterRefs>${[1, 2, 3].map((k) => `<ParameterRef Id="${M}_MD-1_P-${k}_R-${k}" RefId="${M}_MD-1_P-${k}"/>`).join("")}</ParameterRefs>
+<ParameterCalculations><ParameterCalculation Id="${M}_MD-1_PC-1" Name="c1" Language="JavaScript">
+  <LRTransformation>b = a + idx * 10;</LRTransformation>
+  <LParameters><ParameterRefRef RefId="${M}_MD-1_P-1_R-1"/><ParameterRefRef RefId="${M}_MD-1_P-2_R-2"/></LParameters>
+  <RParameters><ParameterRefRef RefId="${M}_MD-1_P-3_R-3"/></RParameters>
+</ParameterCalculation></ParameterCalculations></Static>
+<Dynamic><ParameterBlock Id="${M}_MD-1_PB-1" Name="b" Text="Ch"><ParameterRefRef RefId="${M}_MD-1_P-1_R-1"/><ParameterRefRef RefId="${M}_MD-1_P-2_R-2"/><ParameterRefRef RefId="${M}_MD-1_P-3_R-3"/></ParameterBlock></Dynamic>
+</ModuleDef></ModuleDefs>
+<Dynamic><ChannelIndependentBlock><Module Id="${M}_MD-1_M-1" RefId="${M}_MD-1" Name="C"><NumericArg RefId="${M}_MD-1_A-1" Value="2"/></Module></ChannelIndependentBlock></Dynamic>
+</ApplicationProgram></ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`);
+  const instances = resolveModuleInstances(cfg, new Map());
+  // At defaults, idx resolves to 1 + 2 = 3, matching its BaseValue default: calculation does not spuriously fire.
+  expect(applyCalculations(cfg, new Map(), instances).runs.map((r) => r.state)).toEqual(["defaults"]);
+  expect(() => refuseCalculationWrites(cfg, new Map(), instances)).not.toThrow();
+  // Once `a` moves off its default, the script receives idx = 3 -> b = 5 + 30 = 35.
+  const set = new Map([[`${M}_MD-1_M-1_MI-1_P-1_R-1`, "5"]]);
+  expect(applyCalculations(cfg, set, instances).runs.map((r) => [r.state, [...r.outputs]])).toEqual([["computed", [[`${M}_MD-1_M-1_MI-1_P-3_R-3`, "35"]]]]);
+});
+
 corpusDescribe("the ParameterCalculations of corpus applications", () => {
   const files = ["M-0004_A-7072-21-99A7-O000A.xml.gz", "M-0083_A-00B4-32-3919.xml.gz", "M-0083_A-00B6-32-9642.xml.gz", "M-00FA_A-A012-55-0000.xml.gz"];
   const loaded = new Map<string, { cfg: ReturnType<typeof parseAppConfig>; instances: ReturnType<typeof resolveModuleInstances> }>();

@@ -505,7 +505,20 @@ either layout. The effective device offset of a module parameter is
 its static offset in the ModuleDef + the per-instance value of the Memory@BaseOffset argument
 ```
 
-That per-instance base comes from one of two interchangeable sources:
+Similarly, a module `<Parameter>` declaring `BaseValue="<ArgumentId>"` resolves its effective
+default value per instance as
+
+```
+its static Value (ParameterRef/@Value over Parameter/@Value) + the per-instance value of that numeric Argument
+```
+
+This applies uniformly across the from-scratch module allocator, `<choose>` evaluation, `<Assign>`,
+`<ParameterCalculation>`, the UI view, and both memory-image builders (including hidden-parameter
+default checks). An explicit override or `<Assign>` target value replaces it directly without adding
+`BaseValue` a second time, and a missing, non-numeric (`Type="Text"`), or non-integer argument or
+static value refuses loudly (`MODULE_ARG_UNRESOLVED`).
+
+Both per-instance bases (`BaseOffset` and `BaseValue`) come from one of two interchangeable sources:
 
 - **An imported project**: ETS pins it into `0.xml` as `<ModuleInstance>` arguments.
 - **A device placed from the catalogue** (no project): Busforge re-runs the application's

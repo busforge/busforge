@@ -1,7 +1,6 @@
 import type { ConstantDifference } from "./deviceimage.ts";
-import type { AppConfig, CfgParam, CfgParamRef, CfgType, ComObjFlags, ComObjPriority, DcaInfo, DynNode, DynWhen, ModuleDefModel, ModuleInstance } from "./appconfig.ts";
-import { resolveParamRef } from "./appconfig.ts";
-import { resolveModuleInstances, moduleArgNumber } from "./modules.ts";
+import { isSubModuleInstance, moduleInstanceArgLookup, moduleInstanceArgNumber, resolveParamDefault, resolveParamRef, type AppConfig, type CfgParam, type CfgParamRef, type CfgType, type ComObjFlags, type ComObjPriority, type DcaInfo, type DynNode, type DynWhen, type ModuleDefModel, type ModuleInstance, type ParamArgLookup } from "./appconfig.ts";
+import { resolveModuleInstances } from "./modules.ts";
 import { ProductError } from "./errors.ts";
 import type { MatrixOperation, OperationVerdict } from "./compatibility.ts";
 import {
@@ -306,24 +305,16 @@ interface Scope {
   rewrite: (id: string) => string;     // module-def id -> device instance id (identity at top level)
   textArgs: Map<string, string>;       // arg name -> value, for {{name}} substitution
   argValue: (argId: string) => number; // resolved numeric arg, for com-object base numbering
+  paramArgValue?: ParamArgLookup;      // resolved numeric arg, for parameter BaseValue (undefined at top level -> resolveParamDefault refuses)
 }
-// Top-level scope: a BaseNumber argument can only be satisfied inside a module
-// instance; a com-object that demands one at top level is a malformed catalogue,
-// so refuse instead of silently numbering it from 0.
+// Top-level scope: a BaseNumber or BaseValue argument can only be satisfied inside a module
+// instance; a declaration that demands one at top level is a malformed catalogue, so refuse
+// instead of silently falling back to 0.
 const TOP: Scope = {
   rewrite: (id) => id,
   textArgs: new Map(),
   argValue: (argId) => { throw new ProductError("COMOBJ_ARG_UNRESOLVED", `com-object numbering references module argument ${argId} outside any module instance`); },
 };
-
-// The integer a module instance's argument holds, by the argument's full id: the base a module com-object's
-// number counts from. Undefined where the instance does not carry the argument or its value is no integer;
-// of two arguments with one id the last counts.
-export function moduleInstanceArgNumber(app: AppConfig, inst: ModuleInstance, fullArgId: string): number | undefined {
-  const arg = inst.args.findLast((a) => `${app.id}_${a.refId}` === fullArgId);
-  const value = arg ? moduleArgNumber(arg.value) : NaN;
-  return Number.isNaN(value) ? undefined : value;
-}
 
 // Map a requested language to one the catalogue actually carries. The UI sends a
 // short code ("de", "en") while catalogues use full identifiers ("de-DE",
@@ -504,7 +495,7 @@ function buildDeviceConfigReading(
     unsettled: new Set(),
   };
   const resolve = (defRefId: string, scope: Scope, e: Map<string, string> = env): string | undefined =>
-    resolveParamValue(chooseCtx, defRefId, scope.rewrite, e);
+    resolveParamValue(chooseCtx, defRefId, scope.rewrite, e, scope.paramArgValue);
   const tr = (elemId: string | undefined, attr: string, base: string): string => {
     const t = !elemId || language === app.defaultLanguage ? base : app.translations.get(language)?.get(elemId)?.get(attr) ?? base;
     return decode(t);
@@ -519,7 +510,7 @@ function buildDeviceConfigReading(
   const cap = (s: string): string => { const t = s.replace(/\r\n?/g, "\n").trim(); return t ? t.charAt(0).toLocaleUpperCase(language) + t.slice(1) : t; };
 
   const selectWhens = (defParamRefId: string, whens: DynWhen[], scope: Scope, e: Map<string, string> = env): DynWhen[] =>
-    selectChooseWhens(chooseCtx, defParamRefId, whens, scope.rewrite, e);
+    selectChooseWhens(chooseCtx, defParamRefId, whens, scope.rewrite, e, scope.paramArgValue);
 
   // A parameter's label as ETS shows it: the ParameterRef's own Text where it declares a non-empty
   // one (in the view's language), else its Parameter's. An empty ref Text keeps the Parameter's:
@@ -579,7 +570,7 @@ function buildDeviceConfigReading(
     // TypePicture shows an image from the product's baggage and holds no value.
     else if (type?.kind === "TypePicture" && type.pictureRefId) control = "picture";
 
-    const defaultValue = ref.value ?? param.value ?? "";
+    const defaultValue = resolveParamDefault(ref, param, scope.paramArgValue) ?? "";
     const typeLabel = control === "unsupported" ? unsupportedTypeLabel(type) : undefined;
     // ETS spinner step / slider hint live on the TypeNumber; a slider needs a
     // bounded range to render, so fall back to the plain number input without one.
@@ -662,9 +653,15 @@ function buildDeviceConfigReading(
         }
         return v;
       },
+      // Consulted when a parameter declares BaseValue="<ArgumentId>".
+      paramArgValue: moduleInstanceArgLookup(app, inst),
     };
   };
-  const instancesFor = (moduleNodeId: string) => instances.filter((mi) => `${app.id}_${mi.refId}` === moduleNodeId);
+  // In 0.xml, a nested <SubModuleDefs> instance still carries its enclosing <Module>'s RefId.
+  // Match only direct instances of `moduleNodeId` so a submodule instance is not instantiated
+  // under the outer ModuleDef; the image builders refuse imported submodule instances explicitly.
+  const instancesFor = (moduleNodeId: string) =>
+    instances.filter((mi) => `${app.id}_${mi.refId}` === moduleNodeId && !isSubModuleInstance(mi));
 
   // Where each shown inline block stands among its parent's items, keyed by its instance id (a
   // module's nodes are shared by its instances), and how many collect() has met: collect() records
@@ -857,17 +854,37 @@ function buildDeviceConfigReading(
   };
   // The placement the walks read (see resolveParamValue): the image pass's traversal, recording only
   // which refs it places, repeated until the placement it finds is the one it walked with.
-  const findPlacement = (): ChoosePlacement => {
+  const findPlacement = (): { found: ChoosePlacement; unresolvedArgError?: ProductError } => {
     const found = emptyPlacement();
     const penv = new Map(overrides);
+    let unresolvedArgError: ProductError | undefined;
     const visit = (nodes: DynNode[], scope: Scope) => {
       for (const n of nodes) {
         switch (n.kind) {
           case "paramRef":
             recordPlacedRef(app, found, n.refId, scope.rewrite);
             break;
-          case "assign": penv.set(scope.rewrite(n.target), n.value ?? (n.source ? resolve(n.source, scope, penv) ?? "" : "")); break;
-          case "choose": for (const w of selectWhens(n.paramRefId, n.whens, scope, penv)) visit(w.children, scope); break;
+          case "assign":
+            try {
+              penv.set(scope.rewrite(n.target), n.value ?? (n.source ? resolve(n.source, scope, penv) ?? "" : ""));
+            } catch (e) {
+              // Defer MODULE_ARG_UNRESOLVED until placement settles so a provisional pass-0 walk
+              // (before a placed sibling ref or forward Merker is discovered) does not abort a valid config.
+              if (e instanceof ProductError && e.code === "MODULE_ARG_UNRESOLVED") { unresolvedArgError ??= e; break; }
+              throw e;
+            }
+            break;
+          case "choose": {
+            let whens;
+            try {
+              whens = selectWhens(n.paramRefId, n.whens, scope, penv);
+            } catch (e) {
+              if (e instanceof ProductError && e.code === "MODULE_ARG_UNRESOLVED") { unresolvedArgError ??= e; break; }
+              throw e;
+            }
+            for (const w of whens) visit(w.children, scope);
+            break;
+          }
           case "container": if (!isSkippedRepeat(n)) visit(n.children, scope); break;
           case "block": if (n.paramRefId) found.heads.add(scope.rewrite(n.paramRefId)); visit(n.children, scope); break;
           case "module": { const def = app.moduleDefs.get(n.refId); if (def) for (const inst of instancesFor(n.id)) visit(def.dynamic, makeScope(n.refId, def, inst)); break; }
@@ -876,7 +893,7 @@ function buildDeviceConfigReading(
       }
     };
     visit(app.dynamic, TOP);
-    return found;
+    return { found, unresolvedArgError };
   };
   // A placement seen before without having settled is a cycle: the application admits no single
   // reading of its shared values, and picking one of the cycle's states would be a guess.
@@ -887,9 +904,12 @@ function buildDeviceConfigReading(
   const everUnsettled = new Set<string>();
   for (;;) {
     chooseCtx.unsettled.clear();
-    const next = findPlacement();
+    const { found: next, unresolvedArgError } = findPlacement();
     for (const id of chooseCtx.unsettled) everUnsettled.add(id);
-    if (samePlacement(next, chooseCtx.placement)) break;
+    if (samePlacement(next, chooseCtx.placement)) {
+      if (unresolvedArgError) throw unresolvedArgError;
+      break;
+    }
     if (seen.some((p) => samePlacement(p, next))) {
       throw new ProductError("CONFIG_NOT_RESOLVABLE", "the application's parameter visibility does not settle: which parameter references are active keeps changing with the values they share");
     }

@@ -18,7 +18,7 @@
 // crates/bussard-model/src/dynamic.rs, CalcRuns), Copyright (c) 2026 Tom Bocklisch, MIT License
 // (./script/LICENSE).
 
-import { resolveParamRef, sameParamValue, takesValue, type AppConfig, type CfgCalculation, type DynNode, type ModuleInstance } from "./appconfig.ts";
+import { moduleInstanceArgLookup, moduleInstanceForRef, resolveParamDefault, resolveParamRef, sameParamValue, takesValue, type AppConfig, type CfgCalculation, type DynNode, type ModuleInstance } from "./appconfig.ts";
 import { buildDeviceConfig, decodeTextEntities, isSkippedRepeat, resolveLanguage, type CalcRefusal, type CalcRefusalCode, type CalcState, type CfgCalculationMark, type DeviceConfigBuild } from "./config.ts";
 import { resolveModuleInstances } from "./modules.ts";
 import { runScript, scriptRefusal, ScriptError, type ScriptValue } from "./script/index.ts";
@@ -166,17 +166,20 @@ const scoper = (app: AppConfig, def: string | undefined, inst: ModuleInstance | 
 
 // The value of a parameter in a configuration: that of a ref of it the configuration places, else one stored on any
 // of its refs, else the default of the ref asked for.
-function valueReader(app: AppConfig, values: Map<string, string>, view: DeviceConfigBuild) {
+function valueReader(app: AppConfig, values: Map<string, string>, view: DeviceConfigBuild, instances: ModuleInstance[]) {
   const placed = new Map<string, string>(), stored = new Map<string, string>();
   for (const [into, from] of [[placed, view.imageValues], [stored, values]] as const) {
     for (const [ref, v] of from) { const key = paramKey(app, ref); if (key !== undefined && !into.has(key)) into.set(key, v); }
   }
   return (ref: string): string => {
     const key = paramKey(app, ref)!;
-    return placed.get(key) ?? stored.get(key) ?? defaultOf(app, ref);
+    return placed.get(key) ?? stored.get(key) ?? defaultOf(app, ref, moduleInstanceForRef(app, ref, instances));
   };
 }
-const defaultOf = (app: AppConfig, ref: string): string => { const r = resolveParamRef(app, ref); return r?.ref.value ?? r?.param?.value ?? ""; };
+const defaultOf = (app: AppConfig, ref: string, instance?: ModuleInstance): string => {
+  const r = resolveParamRef(app, ref);
+  return resolveParamDefault(r?.ref, r?.param, instance ? moduleInstanceArgLookup(app, instance) : undefined) ?? "";
+};
 
 // Every ref of the parameter a (ModuleDef) ref names, scoped to the instance.
 function siblingRefs(app: AppConfig, ref: string, scope: (r: string) => string): string[] {
@@ -225,12 +228,12 @@ export function applyCalculations(app: AppConfig, values: Map<string, string>, m
   if (!runnable.length) return unchanged(staticRuns);
 
   const instances = moduleInstances.length || !app.hasModules ? moduleInstances : resolveModuleInstances(app, values);
-  const same = sameParamValue(app);
+  const same = sameParamValue(app, instances);
   const view0 = buildDeviceConfig(app, values, undefined, instances);
 
   // One pass: every runnable calculation, in each module instance the configuration places, from `cur`.
   const pass = (cur: Map<string, string>, view: DeviceConfigBuild): CalculationRun[] => {
-    const valueOf = valueReader(app, cur, view);
+    const valueOf = valueReader(app, cur, view, instances);
     const runs: CalculationRun[] = [];
     for (const calc of runnable) {
       const def = calcModuleDef(app, calc.id);
@@ -244,7 +247,7 @@ export function applyCalculations(app: AppConfig, values: Map<string, string>, m
   const runOne = (calc: CfgCalculation, instance: ModuleInstance | undefined, valueOf: (ref: string) => string): CalculationRun => {
     const scope = scoper(app, calcModuleDef(app, calc.id), instance);
     const run: CalculationRun = { calc, label: calc.name || calc.id, instance, state: "defaults", inputs: calc.lRefs.map(scope), outputs: new Map(), keys: keysOf(calc, instance) };
-    if (!calc.lRefs.some((r) => !same(scope(r), valueOf(scope(r)), defaultOf(app, r)))) return run;
+    if (!calc.lRefs.some((r) => !same(scope(r), valueOf(scope(r)), defaultOf(app, r, scope(r) === r ? undefined : instance)))) return run;
     const variable = (r: string) => calc.aliases[r] ?? resolveParamRef(app, r)!.param!.name!;
     try {
       const inputs = calc.lRefs.map((r) => [variable(r), toScript(scriptKind(app, r)!, r, valueOf(scope(r)))] as const);
@@ -305,7 +308,7 @@ export function annotateCalculations(app: AppConfig, values: Map<string, string>
   // The module instances the image builders resolve for this configuration.
   const instances = moduleInstances.length || !app.hasModules ? moduleInstances : resolveModuleInstances(app, values);
   const applied = applyCalculations(app, values, instances);
-  const valueOf = valueReader(app, applied.values, applied.values === values ? view : buildDeviceConfig(app, applied.values, undefined, instances));
+  const valueOf = valueReader(app, applied.values, applied.values === values ? view : buildDeviceConfig(app, applied.values, undefined, instances), instances);
   const placed = new Set<string>(); // per instance and Parameter id: placed by an active branch
   for (const r of view.imageValues.keys()) { const k = paramKey(app, r); if (k !== undefined) placed.add(k); }
   const language = resolveLanguage(app, lang);

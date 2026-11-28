@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { buildDeviceConfig, editComObjOverride, initialValues, resolveParamRef, takesValue, type ComObjFlags, type ComObjOverrideEdit } from "@busforge/product";
+import { buildDeviceConfig, editComObjOverride, effectiveParamDefault, initialValues, resolveModuleInstances, resolveParamRef, takesValue, type ComObjFlags, type ComObjOverrideEdit } from "@busforge/product";
 import { addDevice, setDeviceAddress, renameDevice, projectExists, getGaMeta } from "../db/projects.ts";
 import { getCatalogProduct } from "../db/catalog.ts";
 import { getDeviceBaggage, projectHasBaggage } from "../db/baggage.ts";
@@ -109,7 +109,10 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
       // The parameter's default is taken whether or not the configuration shows it (pv is shown rows only).
       const app = loadApp(state, id, deviceId);
       const r = app ? resolveParamRef(app, body.paramRefId) : undefined;
-      if (r?.type && value !== (r.ref.value ?? r.param?.value) && takesValue(r.type, value) === false) return err("PARAM_VALUE_NOT_OF_TYPE", `${value} is no value parameter ${body.paramRefId} takes (no option of its enumeration, or a number outside its bounds)`);
+      const defaultVal = def ?? (app && r?.param?.baseValueArg !== undefined
+        ? effectiveParamDefault(app, body.paramRefId, (() => { const m = getDeviceModules(db, id, deviceId); return m.length || !app.hasModules ? m : resolveModuleInstances(app, getDeviceParams(db, id, deviceId)); })())
+        : (r?.ref.value ?? r?.param?.value));
+      if (r?.type && value !== defaultVal && takesValue(r.type, value) === false) return err("PARAM_VALUE_NOT_OF_TYPE", `${value} is no value parameter ${body.paramRefId} takes (no option of its enumeration, or a number outside its bounds)`);
       setDeviceParam(db, id, deviceId, body.paramRefId, value);
     }
     return json(buildDeviceView(state, id, deviceId, body.lang));

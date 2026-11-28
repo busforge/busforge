@@ -1,11 +1,12 @@
 import { test, expect } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseAppConfig } from "../src/appconfig.ts";
+import { parseAppConfig, sameParamValue } from "../src/appconfig.ts";
 import { toAppModel, unmappedParamRefs } from "../src/application.ts";
 import { resolveModuleInstances } from "../src/modules.ts";
 import { buildDeviceConfig, refuseUnreachedInstances } from "../src/config.ts";
 import { comObjectTable } from "../src/comobjtable.ts";
+import { buildAbsoluteSegmentTargets, buildRelativeSegmentTarget } from "../src/deviceimage.ts";
 import { readRealFixture } from "./real-catalogue.snapshot.ts";
 import { corpusDescribe } from "../../../tools/corpus-test.ts";
 
@@ -366,4 +367,272 @@ test("a module behind an unplaced memory-backed choose does not shift a later mo
   const view = buildDeviceConfig(app, new Map());
   expect([...view.imageComObjects.keys()]).toEqual([10]);
   expect([...comObjectTable(app, new Map()).keys()]).toEqual([10]);
+});
+
+test("Parameter BaseValue adds the module instance numeric argument across allocator, choose, UI, Assign, and memory image", () => {
+  const xml = `<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-TEST"><ApplicationPrograms>
+  <ApplicationProgram Id="M-TEST_A-35" ApplicationNumber="35" ApplicationVersion="1" MaskVersion="MV-07B0" MinEtsVersion="5.0" Name="BaseValue" DefaultLanguage="en-US">
+    <Static>
+      <Code><RelativeSegment Id="M-TEST_A-35_RS-4" Name="P" Size="16" LoadStateMachine="4" Offset="0" /></Code>
+      <Allocators><Allocator Id="M-TEST_A-35_AL-1" Name="Ch" Start="10" maxInclusive="99" /></Allocators>
+      <ParameterTypes>
+        <ParameterType Id="M-TEST_A-35_PT-N"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="255" /></ParameterType>
+      </ParameterTypes>
+      <Parameters />
+      <ParameterRefs />
+      <ComObjectTable />
+      <ComObjectRefs />
+    </Static>
+    <ModuleDefs>
+      <ModuleDef Id="M-TEST_A-35_MD-1" Name="Channel">
+        <Arguments>
+          <Argument Id="M-TEST_A-35_MD-1_A-1" Name="ModeArg" />
+          <Argument Id="M-TEST_A-35_MD-1_A-2" Name="MemBase" />
+          <Argument Id="M-TEST_A-35_MD-1_A-3" Name="IdxArg" Allocates="2" />
+        </Arguments>
+        <Static>
+          <Parameters>
+            <Parameter Id="M-TEST_A-35_MD-1_P-1" Name="Mode" ParameterType="M-TEST_A-35_PT-N" Text="Mode" Access="Read" Value="0" BaseValue="M-TEST_A-35_MD-1_A-1" />
+            <Parameter Id="M-TEST_A-35_MD-1_P-2" Name="Idx" ParameterType="M-TEST_A-35_PT-N" Text="Idx" Access="None" Value="1" BaseValue="M-TEST_A-35_MD-1_A-3" />
+            <Parameter Id="M-TEST_A-35_MD-1_P-3" Name="Out" ParameterType="M-TEST_A-35_PT-N" Text="Out" Value="0">
+              <Memory CodeSegment="M-TEST_A-35_RS-4" Offset="0" BitOffset="0" BaseOffset="M-TEST_A-35_MD-1_A-2" />
+            </Parameter>
+            <Parameter Id="M-TEST_A-35_MD-1_P-4" Name="Copied" ParameterType="M-TEST_A-35_PT-N" Text="Copied" Access="None" Value="0">
+              <Memory CodeSegment="M-TEST_A-35_RS-4" Offset="1" BitOffset="0" BaseOffset="M-TEST_A-35_MD-1_A-2" />
+            </Parameter>
+            <Union SizeInBit="8">
+              <Memory CodeSegment="M-TEST_A-35_RS-4" Offset="2" BitOffset="0" BaseOffset="M-TEST_A-35_MD-1_A-2" />
+              <Parameter Id="M-TEST_A-35_MD-1_UP-5" Name="UnionBV" ParameterType="M-TEST_A-35_PT-N" Text="UnionBV" Access="Read" Value="5" BaseValue="M-TEST_A-35_MD-1_A-1" Offset="0" BitOffset="0" />
+            </Union>
+          </Parameters>
+          <ParameterRefs>
+            <ParameterRef Id="M-TEST_A-35_MD-1_P-1_R-1" RefId="M-TEST_A-35_MD-1_P-1" />
+            <ParameterRef Id="M-TEST_A-35_MD-1_P-1_R-2" RefId="M-TEST_A-35_MD-1_P-1" Value="2" />
+            <ParameterRef Id="M-TEST_A-35_MD-1_P-2_R-1" RefId="M-TEST_A-35_MD-1_P-2" />
+            <ParameterRef Id="M-TEST_A-35_MD-1_P-3_R-1" RefId="M-TEST_A-35_MD-1_P-3" Value="10" />
+            <ParameterRef Id="M-TEST_A-35_MD-1_P-3_R-2" RefId="M-TEST_A-35_MD-1_P-3" Value="44" />
+            <ParameterRef Id="M-TEST_A-35_MD-1_P-4_R-1" RefId="M-TEST_A-35_MD-1_P-4" />
+            <ParameterRef Id="M-TEST_A-35_MD-1_UP-5_R-1" RefId="M-TEST_A-35_MD-1_UP-5" />
+          </ParameterRefs>
+        </Static>
+        <Dynamic>
+          <ParameterBlock Id="M-TEST_A-35_MD-1_PB-1" Name="b" Text="Ch">
+            <choose ParamRefId="M-TEST_A-35_MD-1_P-1_R-1">
+              <when test="0"><ParameterRefRef RefId="M-TEST_A-35_MD-1_P-3_R-1" /></when>
+              <when test="4"><ParameterRefRef RefId="M-TEST_A-35_MD-1_P-3_R-2" /></when>
+            </choose>
+            <ParameterRefRef RefId="M-TEST_A-35_MD-1_P-1_R-1" />
+            <ParameterRefRef RefId="M-TEST_A-35_MD-1_P-2_R-1" />
+            <ParameterRefRef RefId="M-TEST_A-35_MD-1_UP-5_R-1" />
+            <Assign TargetParamRefRef="M-TEST_A-35_MD-1_P-4_R-1" SourceParamRefRef="M-TEST_A-35_MD-1_P-2_R-1" />
+            <choose ParamRefId="M-TEST_A-35_MD-1_P-2_R-1">
+              <when test="13">
+                <Module Id="M-TEST_A-35_MD-2_M-9" RefId="M-TEST_A-35_MD-2" Name="Sub">
+                  <NumericArg RefId="M-TEST_A-35_MD-2_A-1" Value="7" />
+                </Module>
+              </when>
+            </choose>
+          </ParameterBlock>
+        </Dynamic>
+      </ModuleDef>
+      <ModuleDef Id="M-TEST_A-35_MD-2" Name="Nested">
+        <Arguments><Argument Id="M-TEST_A-35_MD-2_A-1" Name="SubVal" /></Arguments>
+        <Static>
+          <Parameters>
+            <Parameter Id="M-TEST_A-35_MD-2_P-1" Name="SubP" ParameterType="M-TEST_A-35_PT-N" Text="SubP" Value="1" BaseValue="M-TEST_A-35_MD-2_A-1">
+              <Memory CodeSegment="M-TEST_A-35_RS-4" Offset="12" BitOffset="0" />
+            </Parameter>
+          </Parameters>
+          <ParameterRefs><ParameterRef Id="M-TEST_A-35_MD-2_P-1_R-1" RefId="M-TEST_A-35_MD-2_P-1" /></ParameterRefs>
+        </Static>
+        <Dynamic><ParameterBlock Id="M-TEST_A-35_MD-2_PB-1" Name="s" Text="Sub"><ParameterRefRef RefId="M-TEST_A-35_MD-2_P-1_R-1" /></ParameterBlock></Dynamic>
+      </ModuleDef>
+    </ModuleDefs>
+    <Dynamic>
+      <ChannelIndependentBlock>
+        <Module Id="M-TEST_A-35_MD-1_M-1" RefId="M-TEST_A-35_MD-1" Name="C1">
+          <NumericArg RefId="M-TEST_A-35_MD-1_A-1" Value="0" />
+          <NumericArg RefId="M-TEST_A-35_MD-1_A-2" Value="0" />
+          <NumericArg RefId="M-TEST_A-35_MD-1_A-3" AllocatorRefId="M-TEST_A-35_AL-1" />
+        </Module>
+        <Module Id="M-TEST_A-35_MD-1_M-2" RefId="M-TEST_A-35_MD-1" Name="C2">
+          <NumericArg RefId="M-TEST_A-35_MD-1_A-1" Value="4" />
+          <NumericArg RefId="M-TEST_A-35_MD-1_A-2" Value="4" />
+          <NumericArg RefId="M-TEST_A-35_MD-1_A-3" AllocatorRefId="M-TEST_A-35_AL-1" />
+        </Module>
+      </ChannelIndependentBlock>
+    </Dynamic>
+  </ApplicationProgram>
+</ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`;
+  const app = parseAppConfig(xml);
+  // Allocator evaluates BaseValue for MD-1_P-2 (1 + 10 = 11 on C1, 1 + 12 = 13 on C2), so only C2 instantiates MD-2_M-9.
+  const inst = resolveModuleInstances(app, new Map());
+  expect(inst.map((i) => i.id)).toEqual(["MD-1_M-1_MI-1", "MD-1_M-2_MI-1", "MD-2_M-9_MI-1"]);
+
+  const view = buildDeviceConfig(app, new Map(), undefined, inst);
+  const shown = new Map(view.blocks.flatMap((b) => b.items).filter((i) => i.kind === "param").map((i) => [i.param.refId, i.param]));
+  // Forward-placed MD-1_P-1 (Value=0 + ModeArg): C1 -> 0 (Out=10), C2 -> 4 (Out=44); UI value and defaultValue both carry BaseValue.
+  expect(shown.get("M-TEST_A-35_MD-1_M-1_MI-1_P-1_R-1")).toMatchObject({ value: "0", defaultValue: "0" });
+  expect(shown.get("M-TEST_A-35_MD-1_M-2_MI-1_P-1_R-1")).toMatchObject({ value: "4", defaultValue: "4" });
+  expect(shown.get("M-TEST_A-35_MD-1_M-2_MI-1_UP-5_R-1")).toMatchObject({ value: "9", defaultValue: "9" });
+  // Memory image: C1 [10, 11, 5, 0], C2 [44, 13, 9, 0], nested MD-2_P-1 (1 + 7 = 8) at offset 12.
+  const target = buildRelativeSegmentTarget(app, new Map(), 4, { moduleInstances: inst })!;
+  expect([...target.bytes.subarray(0, 3)]).toEqual([10, 11, 5]);
+  expect([...target.bytes.subarray(4, 7)]).toEqual([44, 13, 9]);
+  expect(target.bytes[12]).toBe(8);
+  // Explicit override replaces BaseValue without adding it a second time.
+  const overridden = buildRelativeSegmentTarget(app, new Map([["M-TEST_A-35_MD-1_M-2_MI-1_UP-5_R-1", "21"]]), 4, { moduleInstances: inst })!;
+  expect(overridden.bytes[6]).toBe(21);
+  // ParameterRef/@Value overrides Parameter/@Value before BaseValue is added (2 + 4 = 6 on C2).
+  const same = sameParamValue(app, inst);
+  expect(same("M-TEST_A-35_MD-1_M-2_MI-1_P-1_R-1", null, "4")).toBe(true);
+  expect(same("M-TEST_A-35_MD-1_M-2_MI-1_P-1_R-1", null, "0")).toBe(false);
+  expect(same("M-TEST_A-35_MD-1_M-2_MI-1_P-1_R-2", null, "6")).toBe(true);
+  // Two-sided sameParamValue compares each side against its own module instances when allocator args shift.
+  const shiftedInst = inst.map((i) => (i.id === "MD-1_M-2_MI-1" ? { ...i, args: i.args.map((a) => (a.refId === "MD-1_A-1" ? { ...a, value: "7" } : a)) } : i));
+  expect(sameParamValue(app, inst, shiftedInst)("M-TEST_A-35_MD-1_M-2_MI-1_P-1_R-1", null, null)).toBe(false);
+  expect(sameParamValue(app, inst, shiftedInst)("M-TEST_A-35_MD-1_M-2_MI-1_P-1_R-1", null, "4")).toBe(true);
+  expect(sameParamValue(app, inst, shiftedInst)("M-TEST_A-35_MD-1_M-2_MI-1_P-1_R-1", "7", null)).toBe(true);
+  // Nested SubModuleDefs instance carrying the outer Module's RefId in 0.xml is not instantiated under MD-1,
+  // and image builders refuse it loudly (SUBMODULE_UNSUPPORTED) instead of silently omitting its bytes.
+  const withSub = [...inst, { id: "MD-1_M-2_MI-1_SM-1_M-1_MI-1-1", refId: "MD-1_M-2", args: [{ refId: "SM-1_A-1", value: "0" }] }];
+  expect(() => buildDeviceConfig(app, new Map(), undefined, withSub)).not.toThrow();
+  expect(() => buildRelativeSegmentTarget(app, new Map(), 4, { moduleInstances: withSub })).toThrow(expect.objectContaining({ code: "SUBMODULE_UNSUPPORTED" }));
+});
+
+test("BaseValue refuses loudly on missing/non-numeric argument, Text argument, non-integer static Value, or top-level declaration", () => {
+  const mk = (extra: { paramAttr?: string; argDecl?: string; argXml?: string; topParam?: string }) => parseAppConfig(`<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-TEST"><ApplicationPrograms>
+  <ApplicationProgram Id="M-TEST_A-36" ApplicationNumber="36" ApplicationVersion="1" MaskVersion="MV-07B0" Name="BadBV" DefaultLanguage="en-US">
+    <Static>
+      <ParameterTypes><ParameterType Id="M-TEST_A-36_PT-N"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="255" /></ParameterType></ParameterTypes>
+      <Parameters>${extra.topParam ?? ""}</Parameters>
+      <ParameterRefs>${extra.topParam ? '<ParameterRef Id="M-TEST_A-36_P-T_R-1" RefId="M-TEST_A-36_P-T" />' : ""}</ParameterRefs>
+    </Static>
+    <ModuleDefs>
+      <ModuleDef Id="M-TEST_A-36_MD-1" Name="M">
+        <Arguments>${extra.argDecl ?? '<Argument Id="M-TEST_A-36_MD-1_A-1" Name="A1" />'}</Arguments>
+        <Static>
+          <Parameters><Parameter Id="M-TEST_A-36_MD-1_P-1" Name="P" ParameterType="M-TEST_A-36_PT-N" Text="P" Access="Read" ${extra.paramAttr ?? 'Value="0" BaseValue="M-TEST_A-36_MD-1_A-1"'} /></Parameters>
+          <ParameterRefs><ParameterRef Id="M-TEST_A-36_MD-1_P-1_R-1" RefId="M-TEST_A-36_MD-1_P-1" /></ParameterRefs>
+        </Static>
+        <Dynamic>
+          <ParameterBlock Id="M-TEST_A-36_MD-1_PB-1" Name="b" Text="B">
+            <ParameterRefRef RefId="M-TEST_A-36_MD-1_P-1_R-1" />
+            <choose ParamRefId="M-TEST_A-36_MD-1_P-1_R-1"><when test="1" /></choose>
+          </ParameterBlock>
+        </Dynamic>
+      </ModuleDef>
+    </ModuleDefs>
+    <Dynamic><ChannelIndependentBlock>
+      ${extra.topParam ? '<ParameterBlock Id="M-TEST_A-36_PB-T" Name="t" Text="T"><ParameterRefRef RefId="M-TEST_A-36_P-T_R-1" /></ParameterBlock>' : `<Module Id="M-TEST_A-36_MD-1_M-1" RefId="M-TEST_A-36_MD-1" Name="M">${extra.argXml ?? ""}</Module>`}
+    </ChannelIndependentBlock></Dynamic>
+  </ApplicationProgram>
+</ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`);
+  const err = expect.objectContaining({ code: "MODULE_ARG_UNRESOLVED" });
+  // Missing argument on instance
+  const missingArg = mk({ argXml: "" });
+  expect(() => resolveModuleInstances(missingArg, new Map())).toThrow(err);
+  expect(() => buildDeviceConfig(missingArg, new Map(), undefined, [{ id: "MD-1_M-1_MI-1", refId: "MD-1_M-1", args: [] }])).toThrow(err);
+  // Declared Type="Text" argument refuses even when its value consists of digits
+  const textArg = mk({ argDecl: '<Argument Id="M-TEST_A-36_MD-1_A-1" Name="A1" Type="Text" />', argXml: '<TextArg RefId="M-TEST_A-36_MD-1_A-1" Value="4" />' });
+  expect(() => resolveModuleInstances(textArg, new Map())).toThrow(err);
+  expect(() => buildDeviceConfig(textArg, new Map(), undefined, [{ id: "MD-1_M-1_MI-1", refId: "MD-1_M-1", args: [{ refId: "MD-1_A-1", value: "4" }] }])).toThrow(err);
+  // Non-numeric argument values (XML trims attribute edges, so " 4" is tested on a ModuleInstance directly)
+  for (const bad of ["", "1.5", "abc", "0x10"]) {
+    const app = mk({ argXml: `<NumericArg RefId="M-TEST_A-36_MD-1_A-1" Value="${bad}" />` });
+    expect(() => resolveModuleInstances(app, new Map())).toThrow(err);
+  }
+  for (const bad of ["", "1.5", "abc", " 4", "0x10"]) {
+    const app = mk({ argXml: '<NumericArg RefId="M-TEST_A-36_MD-1_A-1" Value="0" />' });
+    expect(() => buildDeviceConfig(app, new Map(), undefined, [{ id: "MD-1_M-1_MI-1", refId: "MD-1_M-1", args: [{ refId: "MD-1_A-1", value: bad }] }])).toThrow(err);
+  }
+  // Missing or non-integer static Value
+  for (const attr of ['BaseValue="M-TEST_A-36_MD-1_A-1"', 'Value="" BaseValue="M-TEST_A-36_MD-1_A-1"', 'Value="1.5" BaseValue="M-TEST_A-36_MD-1_A-1"', 'Value="abc" BaseValue="M-TEST_A-36_MD-1_A-1"']) {
+    const app = mk({ paramAttr: attr, argXml: '<NumericArg RefId="M-TEST_A-36_MD-1_A-1" Value="2" />' });
+    expect(() => resolveModuleInstances(app, new Map())).toThrow(err);
+    expect(() => buildDeviceConfig(app, new Map(), undefined, [{ id: "MD-1_M-1_MI-1", refId: "MD-1_M-1", args: [{ refId: "MD-1_A-1", value: "2" }] }])).toThrow(err);
+  }
+  // Top-level parameter declaring BaseValue outside any module instance
+  const top = mk({ topParam: '<Parameter Id="M-TEST_A-36_P-T" Name="T" ParameterType="M-TEST_A-36_PT-N" Text="T" Value="0" BaseValue="M-TEST_A-36_MD-1_A-1" />' });
+  expect(() => buildDeviceConfig(top, new Map())).toThrow(err);
+});
+
+test("BaseValue: hidden absolute-segment check uses static+arg and provisional pass-0 Assign converges in buildDeviceConfig", () => {
+  // 1) AbsoluteSegment: hidden BaseValue module param (Value="0" + Arg=4 -> effective default 4).
+  // Under MinEtsVersion="5.0" (hidden default rule = "default"), a hidden module param is refused whenever
+  // its effective default differs from <Data>, and accepted when <Data> already matches it.
+  const absXml = (dataByte: number) => parseAppConfig(`<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-TEST"><ApplicationPrograms>
+  <ApplicationProgram Id="M-TEST_A-37" ApplicationNumber="37" ApplicationVersion="1" MaskVersion="MV-0705" MinEtsVersion="5.0" Name="AbsBV" DefaultLanguage="en-US">
+    <Static>
+      <Code><AbsoluteSegment Id="M-TEST_A-37_AS-1" Address="16384" Size="4"><Data>${Buffer.from([dataByte, 0, 0, 0]).toString("base64")}</Data></AbsoluteSegment></Code>
+      <ParameterTypes><ParameterType Id="M-TEST_A-37_PT-N"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="255" /></ParameterType></ParameterTypes>
+      <Parameters />
+      <ParameterRefs />
+    </Static>
+    <ModuleDefs>
+      <ModuleDef Id="M-TEST_A-37_MD-1" Name="M">
+        <Arguments><Argument Id="M-TEST_A-37_MD-1_A-1" Name="A1" /></Arguments>
+        <Static>
+          <Parameters>
+            <Parameter Id="M-TEST_A-37_MD-1_P-1" Name="H" ParameterType="M-TEST_A-37_PT-N" Text="H" Value="0" BaseValue="M-TEST_A-37_MD-1_A-1">
+              <Memory CodeSegment="M-TEST_A-37_AS-1" Offset="0" BitOffset="0" />
+            </Parameter>
+          </Parameters>
+          <ParameterRefs><ParameterRef Id="M-TEST_A-37_MD-1_P-1_R-1" RefId="M-TEST_A-37_MD-1_P-1" /></ParameterRefs>
+        </Static>
+        <Dynamic><ParameterBlock Id="M-TEST_A-37_MD-1_PB-1" Name="b" Text="B" /></Dynamic>
+      </ModuleDef>
+    </ModuleDefs>
+    <Dynamic><ChannelIndependentBlock>
+      <Module Id="M-TEST_A-37_MD-1_M-1" RefId="M-TEST_A-37_MD-1" Name="M"><NumericArg RefId="M-TEST_A-37_MD-1_A-1" Value="4" /></Module>
+    </ChannelIndependentBlock></Dynamic>
+  </ApplicationProgram>
+</ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`);
+  // <Data> holds 0x00 (static Value), which differs from effective default 4 -> must refuse, not bypass.
+  expect(() => buildAbsoluteSegmentTargets(absXml(0x00), new Map())).toThrow(expect.objectContaining({ code: "PARAM_HIDDEN_UNSUPPORTED" }));
+  // <Data> holds 0x04 (effective default 4) -> matches, no refusal.
+  expect(() => buildAbsoluteSegmentTargets(absXml(0x04), new Map())).not.toThrow();
+
+  // 2) Provisional pass-0 Assign reading an unplaced ref without Value before its placed sibling with Value="5" is discovered:
+  // both resolveModuleInstances and buildDeviceConfig converge cleanly to 5 + 4 = 9.
+  const provApp = parseAppConfig(`<?xml version="1.0" encoding="utf-8"?>
+<KNX xmlns="http://knx.org/xml/project/23"><ManufacturerData><Manufacturer RefId="M-TEST"><ApplicationPrograms>
+  <ApplicationProgram Id="M-TEST_A-38" ApplicationNumber="38" ApplicationVersion="1" MaskVersion="MV-07B0" Name="ProvBV" DefaultLanguage="en-US">
+    <Static>
+      <ParameterTypes><ParameterType Id="M-TEST_A-38_PT-N"><TypeNumber SizeInBit="8" Type="unsignedInt" minInclusive="0" maxInclusive="255" /></ParameterType></ParameterTypes>
+      <Parameters /><ParameterRefs />
+    </Static>
+    <ModuleDefs>
+      <ModuleDef Id="M-TEST_A-38_MD-1" Name="M">
+        <Arguments><Argument Id="M-TEST_A-38_MD-1_A-1" Name="A1" /></Arguments>
+        <Static>
+          <Parameters>
+            <Parameter Id="M-TEST_A-38_MD-1_P-1" Name="Src" ParameterType="M-TEST_A-38_PT-N" Text="Src" BaseValue="M-TEST_A-38_MD-1_A-1" />
+            <Parameter Id="M-TEST_A-38_MD-1_P-2" Name="Dst" ParameterType="M-TEST_A-38_PT-N" Text="Dst" Access="None" Value="0" />
+          </Parameters>
+          <ParameterRefs>
+            <ParameterRef Id="M-TEST_A-38_MD-1_P-1_R-1" RefId="M-TEST_A-38_MD-1_P-1" />
+            <ParameterRef Id="M-TEST_A-38_MD-1_P-1_R-2" RefId="M-TEST_A-38_MD-1_P-1" Value="5" />
+            <ParameterRef Id="M-TEST_A-38_MD-1_P-2_R-1" RefId="M-TEST_A-38_MD-1_P-2" />
+          </ParameterRefs>
+        </Static>
+        <Dynamic>
+          <ParameterBlock Id="M-TEST_A-38_MD-1_PB-1" Name="b" Text="B">
+            <Assign TargetParamRefRef="M-TEST_A-38_MD-1_P-2_R-1" SourceParamRefRef="M-TEST_A-38_MD-1_P-1_R-1" />
+            <ParameterRefRef RefId="M-TEST_A-38_MD-1_P-1_R-2" />
+          </ParameterBlock>
+        </Dynamic>
+      </ModuleDef>
+    </ModuleDefs>
+    <Dynamic><ChannelIndependentBlock>
+      <Module Id="M-TEST_A-38_MD-1_M-1" RefId="M-TEST_A-38_MD-1" Name="M"><NumericArg RefId="M-TEST_A-38_MD-1_A-1" Value="4" /></Module>
+    </ChannelIndependentBlock></Dynamic>
+  </ApplicationProgram>
+</ApplicationPrograms></Manufacturer></ManufacturerData></KNX>`);
+  const inst = resolveModuleInstances(provApp, new Map());
+  const view = buildDeviceConfig(provApp, new Map(), undefined, inst);
+  expect(view.imageValues.get("M-TEST_A-38_MD-1_M-1_MI-1_P-2_R-1")).toBe("9");
 });

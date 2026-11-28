@@ -1,6 +1,5 @@
-import { parseAppConfig, type AppConfig, type CfgType, type ModuleInstance } from "./appconfig.ts";
+import { isSubModuleInstance, moduleArgNumber, parseAppConfig, type AppConfig, type CfgType, type ModuleInstance } from "./appconfig.ts";
 import { ProductError } from "./errors.ts";
-import { moduleArgNumber } from "./modules.ts";
 
 // The memory-image model used to build/decode a parameter image: parameter types
 // (sizes), parameters (with memory location), parameter refs, and the default
@@ -132,6 +131,7 @@ function materializeModuleParams(
 ): void {
   const defIds = [...app.moduleDefs.keys()];
   for (const inst of instances) {
+    if (isSubModuleInstance(inst)) continue; // nested <SubModuleDefs> instance; refused by the image builders
     const nodeFullId = `${app.id}_${inst.refId}`;          // e.g. M-0048_…_MD-7_M-19
     const defId = defIds.find((d) => nodeFullId.startsWith(`${d}_M-`));
     if (!defId) continue;

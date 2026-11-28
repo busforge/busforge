@@ -1,4 +1,4 @@
-import type { AppConfig, DynNode, ModuleInstance } from "./appconfig.ts";
+import { moduleInstanceArgLookup, type AppConfig, type DynNode, type ModuleInstance, type ParamArgLookup } from "./appconfig.ts";
 import {
   buildRefsOfParam,
   emptyPlacement,
@@ -12,11 +12,6 @@ import {
   type ChoosePlacement,
 } from "./choose.ts";
 import { ProductError } from "./errors.ts";
-
-// A module argument's value as a number where it is used as one (a memory base offset, a com-object
-// base number): a decimal integer, else NaN, which every caller refuses. Number() alone would read
-// "" as 0 and "1.5" as 1.5, and place the module there.
-export const moduleArgNumber = (value: string): number => (/^-?\d+$/.test(value) ? Number(value) : NaN);
 
 // Re-run a device's module allocators to produce the same ModuleInstance set that ETS
 // pins into a project 0.xml. This is the FROM-SCRATCH path: when there is no imported
@@ -92,22 +87,32 @@ function allocate(
 
   const strip = (id: string) => (id.startsWith(`${app.id}_`) ? id.slice(app.id.length + 1) : id);
 
-  const walk = (nodes: DynNode[], rewrite: (s: string) => string) => {
+  const walk = (nodes: DynNode[], rewrite: (s: string) => string, paramArgValue?: ParamArgLookup) => {
     for (const n of nodes) {
       switch (n.kind) {
         case "block":
           if (n.paramRefId) nextPlacement.heads.add(rewrite(n.paramRefId));
-          walk(n.children, rewrite);
+          walk(n.children, rewrite, paramArgValue);
           break;
         case "container": {
           const count = repeatCountOf(n);
-          if (count !== undefined) for (let i = 0; i < count; i++) walk(n.children, rewrite);
-          else walk(n.children, rewrite);
+          if (count !== undefined) for (let i = 0; i < count; i++) walk(n.children, rewrite, paramArgValue);
+          else walk(n.children, rewrite, paramArgValue);
           break;
         }
-        case "choose":
-          for (const w of selectChooseWhens(chooseCtx, n.paramRefId, n.whens, rewrite, workEnv)) walk(w.children, rewrite);
+        case "choose": {
+          let whens;
+          try {
+            whens = selectChooseWhens(chooseCtx, n.paramRefId, n.whens, rewrite, workEnv, paramArgValue);
+          } catch (e) {
+            // Defer MODULE_ARG_UNRESOLVED until placement settles so a provisional pass-0 branch
+            // (before a Merker's placement is known) does not abort a valid config.
+            if (e instanceof ProductError && e.code === "MODULE_ARG_UNRESOLVED") { unresolvedArgError ??= e; break; }
+            throw e;
+          }
+          for (const w of whens) walk(w.children, rewrite, paramArgValue);
           break;
+        }
         case "module": {
           const def = app.moduleDefs.get(n.refId);
           if (!def) break;
@@ -138,12 +143,13 @@ function allocate(
             if (val !== undefined) args.push({ refId: strip(na.argId), value: val });
           }
           for (const ta of n.textArgs) args.push({ refId: strip(ta.argId), value: ta.value });
-          out.push({ id: instId, refId: strip(n.id), args });
+          const inst: ModuleInstance = { id: instId, refId: strip(n.id), args };
+          out.push(inst);
           // Descend into the module's own dynamic so nested modules allocate in order and
-          // module-internal choose branches resolve against this instance's values.
+          // module-internal choose branches resolve against this instance's values and BaseValue args.
           const instFull = `${app.id}_${instId}`;
           const childRewrite = (id: string) => rewrite(id.startsWith(`${n.refId}_`) ? instFull + id.slice(n.refId.length) : id);
-          walk(def.dynamic, childRewrite);
+          walk(def.dynamic, childRewrite, moduleInstanceArgLookup(app, inst));
           break;
         }
         // Leaves. ParameterRefRef records placement for selectChooseWhens and resolveParamValue;
@@ -153,7 +159,12 @@ function allocate(
           recordPlacedRef(app, nextPlacement, n.refId, rewrite);
           break;
         case "assign":
-          workEnv.set(rewrite(n.target), n.value ?? (n.source ? resolveParamValue(chooseCtx, n.source, rewrite, workEnv) ?? "" : ""));
+          try {
+            workEnv.set(rewrite(n.target), n.value ?? (n.source ? resolveParamValue(chooseCtx, n.source, rewrite, workEnv, paramArgValue) ?? "" : ""));
+          } catch (e) {
+            if (e instanceof ProductError && e.code === "MODULE_ARG_UNRESOLVED") { unresolvedArgError ??= e; break; }
+            throw e;
+          }
           break;
         case "comObjRef": case "separator": case "button": case "unsupported":
           break;

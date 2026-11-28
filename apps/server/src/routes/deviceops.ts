@@ -1,4 +1,4 @@
-import { parseAppConfig, collectApp, takesValue, resolveParamRef, resolveModuleInstances, buildDeviceConfig, assumableMemorylessRefs, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, CollectCancelled, comObjectTableChanges, knxIpRefusals, HARDWARE_PEI_PROGRAM_REFUSAL, hardwareRefusals, type CollectApp, type AppConfig, type DeviceReadbackInfo, type MatrixOperation, type ModuleInstance, type WriteGate, type KnxIpDevice } from "@busforge/product";
+import { parseAppConfig, collectApp, takesValue, resolveParamRef, effectiveParamDefault, resolveModuleInstances, buildDeviceConfig, assumableMemorylessRefs, buildAbsoluteSegmentTargets, buildRelativeSegmentTarget, CollectCancelled, comObjectTableChanges, knxIpRefusals, HARDWARE_PEI_PROGRAM_REFUSAL, hardwareRefusals, type CollectApp, type AppConfig, type DeviceReadbackInfo, type MatrixOperation, type ModuleInstance, type WriteGate, type KnxIpDevice } from "@busforge/product";
 import { getProjectConnection, getGaMeta } from "../db/projects.ts";
 import type { Database } from "bun:sqlite";
 import type { Connection } from "../db/connections.ts";
@@ -23,11 +23,12 @@ import type { AppState } from "../app.ts";
 // application that the device does not hold, once, with a value its type allows. A parameter with a
 // memory or property location is refused: the device holds it, so a read decides its value.
 interface Assumed { refId: string; value: string; isDefault: boolean }
-function assumedValues(app: AppConfig, raw: unknown): Assumed[] {
+function assumedValues(app: AppConfig, raw: unknown, resolveInstances: () => ModuleInstance[]): Assumed[] {
   if (raw === undefined) return [];
   const bad = (m: string) => new ApiError("READBACK_ASSUMPTION_INVALID", m);
   if (!Array.isArray(raw)) throw bad("assume must be a list of { paramRefId, value }");
   const out: Assumed[] = [];
+  let instances: ModuleInstance[] | undefined;
   for (const a of raw as { paramRefId?: unknown; value?: unknown }[]) {
     if (typeof a?.paramRefId !== "string" || typeof a.value !== "string") throw bad("each assumed value needs a paramRefId and a value, both strings");
     const refId = a.paramRefId, value = a.value;
@@ -36,7 +37,8 @@ function assumedValues(app: AppConfig, raw: unknown): Assumed[] {
     if (!ref || !param || !type) throw new ApiError("READBACK_ASSUMPTION_UNKNOWN_PARAM", `${refId} is no parameter of this application`);
     if (param.hasMemory || param.onProperty) throw new ApiError("READBACK_ASSUMPTION_HAS_MEMORY", `${refId} has a ${param.hasMemory ? "memory" : "property"} location: the device holds its value, it cannot be assumed`);
     if (takesValue(type, value) !== true) throw bad(`${value} is not a value ${refId} takes`);
-    out.push({ refId, value, isDefault: value === (ref.value ?? param.value) });
+    const def = param.baseValueArg !== undefined ? effectiveParamDefault(app, refId, (instances ??= resolveInstances())) : (ref.value ?? param.value);
+    out.push({ refId, value, isDefault: value === def });
   }
   return out;
 }
@@ -48,7 +50,7 @@ function assumedValues(app: AppConfig, raw: unknown): Assumed[] {
 // com-object flags into the baseline, so its image check compared the table under them) flags and
 // priority tell no value apart, only the objects and their sizes. Yields between builds: it runs inside a bus job.
 export async function distinguishable(app: AppConfig, values: Map<string, string>, refId: string, modules: ModuleInstance[], flagsFromDevice: boolean): Promise<boolean> {
-  const { ref, param, type } = resolveParamRef(app, refId) ?? {};
+  const { type } = resolveParamRef(app, refId) ?? {};
   if (!type || !type.enums.length) return false;
   const written = (v: Map<string, string>): string | null => {
     try {
@@ -63,7 +65,7 @@ export async function distinguishable(app: AppConfig, values: Map<string, string
   };
   const mine = written(values);
   if (mine === null) return false;
-  const own = values.get(refId) ?? ref?.value ?? param?.value;
+  const own = values.get(refId) ?? effectiveParamDefault(app, refId, modules);
   for (const e of type.enums) {
     const o = String(e.value);
     if (o === own) continue;
@@ -384,7 +386,9 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     const deviceId = decodeURIComponent(seg[4]);
     const { dev, conn, appXml } = busOpPreamble(state, id, deviceId);
     const body = (await req.json().catch(() => ({}))) as { assume?: unknown; compareHidden?: unknown };
-    const assumed = assumedValues(parseAppConfig(appXml), body.assume);
+    const parsedApp = parseAppConfig(appXml);
+    const modules = getDeviceModules(db, id, deviceId);
+    const assumed = assumedValues(parsedApp, body.assume, () => (modules.length || !parsedApp.hasModules ? modules : resolveModuleInstances(parsedApp, getDeviceParams(db, id, deviceId))));
     if (body.compareHidden !== undefined && typeof body.compareHidden !== "boolean") return err("READBACK_COMPARE_HIDDEN_INVALID", "compareHidden must be true or false");
     // Refuse up front for device classes whose state we cannot read at all: reading anyway
     // would fabricate a "verified" parameter baseline or corrupt the link baseline. System B
@@ -392,13 +396,12 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
     // recognised-but-unimplemented family (e.g. System 2 / BCU2) resolves to UnsupportedProfile
     // (all capabilities false) and is refused here. Honest
     // refusal beats false confidence.
-    const rbCaps = classify(parseAppConfig(appXml)).capabilities();
+    const rbCaps = classify(parsedApp).capabilities();
     if (!rbCaps.readParams && !rbCaps.readLinks) {
       return err("DEVICE_READBACK_UNSUPPORTED", "reading this device's state back off the bus is not supported yet; its values cannot be verified against the device");
     }
     // Only record drift for refs the device config actually exposes (matches
     // what the UI shows; keeps module devices from flagging flat-model refs).
-    const modules = getDeviceModules(db, id, deviceId);
     const configFor = (values: Map<string, string>) => deviceConfigRefs(state, id, deviceId, values, modules);
     // The baselines are persisted inside the queued job, so a write queued behind this read sees
     // them (and its gap count) when it starts, not whatever was there when it was submitted.
@@ -455,7 +458,7 @@ export async function handle(req: Request, url: URL, seg: string[], state: AppSt
         const programmed = read.paramsRead && read.linksRead && lb?.gaps === 0 && read.programIdMatches === true && read.loaded === true && read.imageMatches === true;
         db.transaction(() => {
           for (const a of assumed) { if (a.isDefault) deleteDeviceParam(db, id, deviceId, a.refId); else setDeviceParam(db, id, deviceId, a.refId, a.value); }
-          if (read.paramsRead) replaceParamBase(db, id, deviceId, withAssumed(read.paramBase), paramValueSame(state, id, deviceId));
+          if (read.paramsRead) replaceParamBase(db, id, deviceId, withAssumed(read.paramBase), paramValueSame(state, id, deviceId, withAssumed(read.paramBase)));
           // Each assumed value takes this read's verdict: an unproven one is marked on the value the
           // baseline now holds, a proven one loses an earlier mark.
           for (const a of assumed) { if (unproven.includes(a.refId)) markParamAssumed(db, id, deviceId, a.refId, a.isDefault ? null : a.value); else clearParamAssumed(db, id, deviceId, a.refId); }

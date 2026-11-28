@@ -1,4 +1,4 @@
-import type { AppConfig, CfgParam, DynNode, DynWhen } from "./appconfig.ts";
+import { resolveParamDefault, type AppConfig, type CfgParam, type DynNode, type DynWhen, type ParamArgLookup } from "./appconfig.ts";
 import { ProductError } from "./errors.ts";
 
 // Shared <choose> branch-selection and parameter value-resolution logic used by
@@ -177,6 +177,7 @@ export function resolveParamValue(
   defRefId: string,
   rewrite: (id: string) => string,
   env: Map<string, string>,
+  paramArgValue?: ParamArgLookup,
 ): string | undefined {
   const instId = rewrite(defRefId);
   const ref = ctx.app.refs.get(defRefId);
@@ -191,22 +192,21 @@ export function resolveParamValue(
   if (param && (ref.access ?? param.access) === "None" && !param.hasMemory) {
     if (env.has(instId)) return env.get(instId);
     const placedThis = !!ctx.placement.placed.get(rewrite(ref.paramId))?.has(defRefId);
-    return placedThis ? ref.value ?? param.value : undefined;
+    return placedThis ? resolveParamDefault(ref, param, paramArgValue) : undefined;
   }
-  const paramDefault = param?.value;
   const siblings = (ctx.refsOfParam.get(ref.paramId) ?? []).filter((r) => r !== defRefId);
   const placed = [...(ctx.placement.placed.get(rewrite(ref.paramId)) ?? [])];
   const isPlaced = placed.includes(defRefId);
   const placedSiblings = placed.filter((r) => r !== defRefId);
   if (isPlaced) {
     if (env.has(instId)) return env.get(instId);
-    return storedOn(placedSiblings, rewrite, env) ?? ref.value ?? paramDefault;
+    return storedOn(placedSiblings, rewrite, env) ?? resolveParamDefault(ref, param, paramArgValue);
   }
   if (placedSiblings.length) {
     const stored = storedOn(placedSiblings, rewrite, env);
     if (stored !== undefined) return stored;
-    const defaults = new Set(placedSiblings.map((r) => ctx.app.refs.get(r)?.value ?? paramDefault));
-    return defaults.size === 1 ? [...defaults][0] : ref.value ?? paramDefault;
+    const defaults = new Set(placedSiblings.map((r) => resolveParamDefault(ctx.app.refs.get(r), param, paramArgValue)));
+    return defaults.size === 1 ? [...defaults][0] : resolveParamDefault(ref, param, paramArgValue);
   }
   const stored = (env.has(instId) ? env.get(instId) : undefined) ?? storedOn(siblings, rewrite, env);
   if (stored !== undefined) return stored;
@@ -214,7 +214,7 @@ export function resolveParamValue(
     const hasAnyStored = (ctx.refsOfParam.get(ref.paramId) ?? []).some((r) => env.has(rewrite(r)));
     if (!hasAnyStored) return undefined;
   }
-  return ref.value ?? paramDefault;
+  return resolveParamDefault(ref, param, paramArgValue);
 }
 
 // ETS evaluates EVERY matching <when> of a <choose>, not just the first (Theben RMG 8 S:
@@ -228,11 +228,12 @@ export function selectChooseWhens(
   whens: DynWhen[],
   rewrite: (id: string) => string,
   env: Map<string, string>,
+  paramArgValue?: ParamArgLookup,
 ): DynWhen[] {
   if (isChooseSkipped(ctx, defParamRefId, rewrite, env)) {
     for (const w of whens) if (!w.isDefault && w.test !== undefined) validateTest(w.test);
   } else {
-    const v = Number(resolveParamValue(ctx, defParamRefId, rewrite, env) ?? 0);
+    const v = Number(resolveParamValue(ctx, defParamRefId, rewrite, env, paramArgValue) ?? 0);
     const matched = whens.filter((w) => !w.isDefault && w.test !== undefined && matchTest(w.test, v));
     if (matched.length) return matched;
   }
