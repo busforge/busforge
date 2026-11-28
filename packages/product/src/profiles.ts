@@ -1082,10 +1082,11 @@ function baselineComObjects(cfg: AppConfig, ctx: FlagBaseline) {
 // the device's own association table links (on the others the device shows none).
 function refuseSystemBUnknownFlags(baseline: () => BaselineObjects, ctx: FlagBaseline, held: { addr: Buffer; assoc: Buffer; long: boolean; comObj: Buffer }, written: Buffer): void {
   const heldCount = held.comObj.length >= 2 ? held.comObj.readUInt16BE(0) : 0;
+  const writtenCount = written.readUInt16BE(0);
   const changed = new Map<number, OverridableBit[]>();
-  for (let n = 1; n <= written.readUInt16BE(0); n++) {
+  for (let n = 1; n <= Math.max(writtenCount, heldCount); n++) {
     const at = 2 + (n - 1) * 2;
-    if (n > heldCount) changed.set(n, changedEntryBits(0xff, "systemB"));
+    if (n > heldCount || n > writtenCount || at >= held.comObj.length) changed.set(n, changedEntryBits(0xff, "systemB"));
     else if (written[at] !== held.comObj[at]) changed.set(n, changedEntryBits(written[at] ^ held.comObj[at], "systemB"));
   }
   if (!changed.size) return;
@@ -1605,10 +1606,11 @@ export class SystemBProfile extends DeviceProfile {
     // last writer of an overlapping region. Same shape as the System 7 path below.
     // A text field the codec refuses is left out of the comparison here (textRefusals), not the whole read.
     const target = support.readParams ? buildRelativeSegmentTarget(cfg, ctx.liveParams, LSM, { moduleInstances: instances, textRefusals: "skip" }) : null;
-    // The com-object table's count is bounded by the configuration the device was last written with,
-    // whose module instances it holds.
+    // The com-object table's count is bounded by every object declared for the configuration's
+    // module instances (including inactive module objects, which the device may still hold if its
+    // live configuration drifted from the local baseline).
     const written = ctx.baseParams ?? ctx.liveParams;
-    const declared = builtBefore(() => support.readLinks ? buildDeviceConfig(cfg, written, undefined, moduleAwareModel(cfg, written, ctx.moduleInstances ?? []).instances).maxComObjectNumber : 0);
+    const declared = builtBefore(() => support.readLinks ? Math.max(0, buildDeviceConfig(cfg, written, undefined, moduleAwareModel(cfg, written, ctx.moduleInstances ?? []).instances).maxDeclaredComObject ?? 0) : 0);
 
     // loadedTableAddr, not tableAddr: a device that was never programmed points its parameter
     // segment at address 0, and reading there would decode whatever bytes happen to live at the

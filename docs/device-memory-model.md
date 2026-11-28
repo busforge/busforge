@@ -546,13 +546,19 @@ addresses to object 0 in the association table: objects 0 (`C W`) and 1 (`C R T`
 device does with object 0 is not shown, and no manufacturer's application in the test corpus
 numbers a System B object 0 outside a module. A write that would have to carry object 0's flags is refused: a project
 override of them (`COM_OBJECT_OVERRIDE_UNWRITABLE`) and a secured group address on it
-(`COM_OBJECT_NUMBER_INVALID`). An application that declares no object numbered 1 or higher would
-get a table of no entries, which no capture shows; its full download and group-address flash are
-refused before they are offered (`COM_OBJECT_TABLE_EMPTY`). The device page offers no flag
-edit on object 0, and a read-back takes no flags of it.
+(`COM_OBJECT_NUMBER_INVALID`). An application that declares neither an object numbered 1 or higher
+nor a module object with `BaseNumber` has its full download and group-address flash refused before
+they are offered (`COM_OBJECT_TABLE_EMPTY`): for a non-modular application without com-objects, ETS
+allocates object 3 without writing bytes or recording it in `LoadedImage`, and no capture shows an
+empty table written for an active object 0. The device page offers no flag edit on object 0, and a
+read-back takes no flags of it.
 
-A configuration that activates no object (every output of the GVS AMMA disabled) still gets the
-table: ETS writes the declared count with every entry `0x0000`, and so does Busforge.
+A configuration that activates no object (for example, every output of the GVS AMMA disabled) still
+gets the table: where `<Static><ComObjectTable>` declares flat objects, ETS writes the declared
+count with every entry `0x0000`, and so does Busforge. On a modular application whose
+`<ComObjectTable />` declares no flat objects and whose active configuration reaches zero
+communication objects (such as the VIMAR 01506 at defaults), ETS allocates 2 bytes and writes count
+0 (`00 00`), and Busforge writes the same.
 
 The size field is the KNX "value field type" code, which is genuinely irregular (5 bytes is
 code 15, not 11), so it is written out rather than computed. The size comes from ETS's
@@ -571,13 +577,14 @@ bus arbitration order, not data.
    than the highest com-object number the firmware actually uses, the device reads and
    writes past the end of its own heap array.
 
-So the table must be as long as the highest com-object number the application **declares**
-(across every choose branch and every module instance), not the highest number the current
-configuration activates. Sizing it to the active maximum was hardware-fatal: an OpenKNX
-application declares objects up to 1359 and its modules address them by fixed number, so a
-table claiming 138 sent the firmware off the end of its array on boot, and the device
-death-looped and reverted to factory. `buildDeviceConfig` reports `maxComObjectNumber` and
-`buildComObjectTable` sizes to it.
+So the table must be as long as the highest com-object number the application **declares** (across
+every choose branch and every module instance), not the highest number the current configuration
+activates. Sizing it to the active maximum was hardware-fatal: an OpenKNX application declares
+objects up to 1359 and its modules address them by fixed number, so a table claiming 138 sent the
+firmware off the end of its array on boot, and the device death-looped and reverted to factory. The
+one captured exception is a modular application with an empty `<ComObjectTable />` and zero active
+com-objects, where ETS allocates 2 bytes (`00 00`, count 0). `buildDeviceConfig` reports
+`maxComObjectNumber` and `buildComObjectTable` sizes to it.
 
 ### The Communication flag on unlinked objects
 

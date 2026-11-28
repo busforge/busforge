@@ -295,8 +295,9 @@ A table sized to the highest *active* object number sends the firmware off the e
 array on boot. On an OpenKNX device that meant a watchdog reset loop and, after five fast
 resets, the firmware erasing its own KNX flash region back to factory. The table must be as
 long as the highest object number the application **declares**, across every choose branch and
-every module instance. See [device-memory-model.md](device-memory-model.md), "The com-object
-table (L3)".
+every module instance (except when `<ComObjectTable />` declares no flat objects and zero
+com-objects are active, where ETS allocates 2 bytes `00 00`). See
+[device-memory-model.md](device-memory-model.md), "The com-object table (L3)".
 
 ### 2. Unlinked objects must have their Communication flag cleared
 

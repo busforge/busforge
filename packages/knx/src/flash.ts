@@ -92,7 +92,7 @@ export function planSecurityObjectLoad(t: SecurityObjectTables): LoadStep[] {
     { op: "writeSecurityProp", pid: SECURITY_PID.SECURITY_IA_TABLE, start: 0, elementSize: 2, data: Buffer.alloc(2) },
     ...(t.senders.length ? [{ op: "writeSecurityProp", pid: SECURITY_PID.SECURITY_IA_TABLE, start: 1, elementSize: SENDER_ENTRY, data: t.senders } as LoadStep] : []),
     ...(t.groupKeys.length ? [{ op: "writeSecurityProp", pid: SECURITY_PID.GROUP_KEY_TABLE, start: 1, elementSize: GROUP_KEY_ENTRY, data: t.groupKeys } as LoadStep] : []),
-    { op: "writeSecurityProp", pid: SECURITY_PID.GO_SECURITY_FLAGS, start: 1, elementSize: 1, data: t.goFlags },
+    ...(t.goFlags.length ? [{ op: "writeSecurityProp", pid: SECURITY_PID.GO_SECURITY_FLAGS, start: 1, elementSize: 1, data: t.goFlags } as LoadStep] : []),
     { op: "securityLsm", event: LSM.LOAD_COMPLETED },
   ];
 }
